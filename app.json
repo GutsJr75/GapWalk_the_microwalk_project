@@ -1,0 +1,44 @@
+{
+  "expo": {
+    "name": "GapWalk",
+    "slug": "gapwalk",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "scheme": "gapwalk",
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.gapwalk.app",
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "GapWalk needs your location to track distance and show your walking route.",
+        "UIBackgroundModes": [
+          "location"
+        ]
+      }
+    },
+    "android": {
+      "package": "com.gapwalk.app",
+      "permissions": [
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_BACKGROUND_LOCATION"
+      ]
+    },
+    "plugins": [
+      "expo-notifications",
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "Allow GapWalk to use your location to track walking distance."
+        }
+      ],
+      "expo-sqlite",
+      "expo-web-browser",
+      "expo-asset",
+      "expo-font"
+    ]
+  }
+}
