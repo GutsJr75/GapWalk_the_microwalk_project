@@ -1,6 +1,7 @@
-﻿import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
+import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { View, StyleSheet, ScrollView, RefreshControl, Alert, TouchableOpacity, Modal, Animated, Easing, useWindowDimensions, Platform } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
+import { useFocusEffect } from '@react-navigation/native';
 import { RootStackParamList } from '../../App';
 import { Text } from '../components/Text';
 import { Button } from '../components/Button';
@@ -15,12 +16,13 @@ import { plansRepo } from '../lib/repositories/plansRepo';
 import { sessionsRepo } from '../lib/repositories/sessionsRepo';
 import { scheduleSourceRepo } from '../lib/repositories/scheduleSourceRepo';
 import { eventsRepo } from '../lib/repositories/eventsRepo';
+import { gapEngine } from '../lib/gapEngine';
 import { notificationService, isNotificationsSupported } from '../lib/notifications';
 import { googleCalendarService } from '../lib/googleCalendar';
-import { timeUtils } from '../lib/time';
 import { NudgePlan } from '../lib/types';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { calculateStreak, getMotivationalMessage, calculateWeeklyStats, StreakData } from '../lib/statsUtils';
+import { calculateStreak, calculateWeeklyStats, StreakData } from '../lib/statsUtils';
+import { addMinutes, format, isAfter, isBefore, parseISO, subMinutes } from 'date-fns';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Dashboard'>;
 
@@ -34,39 +36,15 @@ const formatTime12 = (t: string): string => {
   return `${hour12}:${m} ${period}`;
 };
 
-/** Group nudge plans that share the same gap (gapStart-gapEnd) */
-interface GroupedGap {
+interface PlanOpportunity {
   key: string;
+  plan: NudgePlan;
   timeRange: string;
-  gapStart: string;
-  gapEnd: string;
-  plans: NudgePlan[];
-  totalAvailableMinutes: number;
-  usedMinutes: number;
+  walkWindowLabel: string;
+  notifyLabel: string;
 }
 
-/** Group plans by gap. totalAvailableMinutes = distributed microwalk minutes (sum of suggested durations). */
-function groupPlansByRange(plans: NudgePlan[]): GroupedGap[] {
-  const map = new Map<string, GroupedGap>();
-  for (const p of plans) {
-    const key = `${p.gapStart}__${p.gapEnd}`;
-    if (!map.has(key)) {
-      map.set(key, {
-        key,
-        timeRange: timeUtils.formatTimeRange(p.gapStart, p.gapEnd),
-        gapStart: p.gapStart,
-        gapEnd: p.gapEnd,
-        plans: [],
-        totalAvailableMinutes: 0,
-        usedMinutes: 0,
-      });
-    }
-    const g = map.get(key)!;
-    g.plans.push(p);
-    g.totalAvailableMinutes += p.suggestedDurationMinutes;
-  }
-  return Array.from(map.values());
-}
+const formatDateTime = (iso: string): string => format(parseISO(iso), 'h:mm a');
 
 const BurgerIcon = ({ onPress, color }: { onPress: () => void; color: string }) => (
   <TouchableOpacity onPress={onPress} style={styles.burgerBtn} hitSlop={10}>
@@ -81,7 +59,7 @@ export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
     preferences, setPreferences, hasSetPreferences, setHasSetPreferences,
     todayMinutesWalked, todayNotificationCount, upcomingPlans,
     setTodayStats, setUpcomingPlans,
-    themeMode,
+    themeMode, language,
   } = useAppStore();
   const [refreshing, setRefreshing] = useState(false);
   const [menuVisible, setMenuVisible] = useState(false);
@@ -90,20 +68,132 @@ export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
   const [weeklyStats, setWeeklyStats] = useState({ totalMinutes: 0, totalSessions: 0, daysActive: 0 });
   const [showCelebration, setShowCelebration] = useState(false);
   const celebrationAnim = useRef(new Animated.Value(0)).current;
-  const fadeAnim = useRef(new Animated.Value(1)).current;
   const { width, height } = useWindowDimensions();
   const dashboardScrollRef = useRef<ScrollView>(null);
 
-  useEffect(() => { load(); }, []);
+  const reconcileTodayPlans = useCallback(async (prefs: NonNullable<typeof preferences>, minutesWalked: number) => {
+    const now = new Date();
+    const todaysPlans = await plansRepo.getTodayPlans();
+    const activePlans = todaysPlans.filter(
+      (plan) => (plan.status === 'planned' || plan.status === 'notified') && isAfter(parseISO(plan.gapEnd), now)
+    );
+
+    const remainingTargetMinutes = Math.max(0, prefs.dailyTargetMinutes - minutesWalked);
+    if (remainingTargetMinutes <= 0) {
+      for (const plan of activePlans) {
+        await plansRepo.updateStatus(plan.id, 'cancelled');
+      }
+      return;
+    }
+
+    const events = await eventsRepo.getAll();
+    const planningPrefs = { ...prefs, dailyTargetMinutes: remainingTargetMinutes };
+    const rebuilt = await gapEngine.generatePlansForDate(now, events, planningPrefs);
+
+    const normalize = (plan: NudgePlan): string =>
+      `${plan.gapStart}|${plan.gapEnd}|${plan.walkStart}|${plan.suggestedDurationMinutes}`;
+
+    const existingKeys = activePlans.map(normalize).sort();
+    const rebuiltKeys = rebuilt.map(normalize).sort();
+    const samePlanShape =
+      existingKeys.length === rebuiltKeys.length &&
+      existingKeys.every((key, idx) => key === rebuiltKeys[idx]);
+
+    const hasInvalidDuration = activePlans.some((plan) => plan.suggestedDurationMinutes <= 0);
+    const exceedsPlanCount = activePlans.length > prefs.notificationCountPerDay;
+
+    if (!samePlanShape || hasInvalidDuration || exceedsPlanCount) {
+      for (const plan of activePlans) {
+        await plansRepo.updateStatus(plan.id, 'cancelled');
+      }
+      if (rebuilt.length > 0) {
+        await plansRepo.saveMany(rebuilt);
+      }
+    }
+
+    if (isNotificationsSupported) {
+      await notificationService.cancelAllNotifications();
+      const futurePlans = await plansRepo.getUpcomingPlans(100);
+      await notificationService.scheduleMultipleNudges(futurePlans, prefs);
+    }
+  }, []);
+
+  const load = useCallback(async (): Promise<NudgePlan[]> => {
+    const prefsFromDb = await preferencesRepo.get();
+    if (prefsFromDb) {
+      setPreferences(prefsFromDb);
+      setHasSetPreferences(true);
+    }
+
+    const mins = await sessionsRepo.getTodayMinutes();
+
+    if (prefsFromDb) {
+      await reconcileTodayPlans(prefsFromDb, mins);
+    }
+
+    const cnt = await plansRepo.getTodayNotifiedCount();
+    setTodayStats(mins, cnt);
+    const refreshedUpcoming = await plansRepo.getUpcomingPlans(20);
+    setUpcomingPlans(refreshedUpcoming);
+
+    const allSessions = await sessionsRepo.getAll();
+    setStreak(calculateStreak(allSessions));
+    setWeeklyStats(calculateWeeklyStats(allSessions));
+    return refreshedUpcoming;
+  }, [reconcileTodayPlans, setHasSetPreferences, setPreferences, setTodayStats, setUpcomingPlans]);
+
+  useFocusEffect(
+    useCallback(() => {
+      load();
+    }, [load])
+  );
 
   useEffect(() => {
     if (!isNotificationsSupported) return;
-    const subscription = notificationService.addNotificationResponseListener((response) => {
+    const responseSubscription = notificationService.addNotificationResponseListener(async (response) => {
       const data = response.notification.request.content.data as { type?: string; planId?: string };
-      if (data.type === 'walk_nudge' && data.planId) navigation.navigate('Walking', { planId: data.planId });
+      if (data.type !== 'walk_nudge' || !data.planId) return;
+
+      try {
+        const plan = await plansRepo.getById(data.planId);
+        if (!plan) return;
+        if (plan.status === 'cancelled' || plan.status === 'completed' || plan.status === 'skipped') return;
+
+        const prefsFromDb = await preferencesRepo.get();
+        if (prefsFromDb) {
+          const minsToday = await sessionsRepo.getTodayMinutes();
+          if (minsToday >= prefsFromDb.dailyTargetMinutes) {
+            await plansRepo.updateStatus(plan.id, 'cancelled');
+            return;
+          }
+        }
+
+        navigation.navigate('Walking', { planId: data.planId });
+      } catch (error) {
+        console.error('Failed to handle notification tap:', error);
+      }
     });
-    return () => subscription.remove();
-  }, [navigation]);
+
+    const receivedSubscription = notificationService.addNotificationReceivedListener(async (notification) => {
+      const data = notification.request.content.data as { type?: string; planId?: string };
+      if (data.type !== 'walk_nudge' || !data.planId) return;
+      try {
+        const plan = await plansRepo.getById(data.planId);
+        if (!plan) return;
+        if (plan.status === 'planned') {
+          await plansRepo.updateStatus(plan.id, 'notified');
+          await load();
+        }
+      } catch (error) {
+        console.error('Failed to handle foreground notification:', error);
+      }
+    });
+
+    return () => {
+      responseSubscription.remove();
+      receivedSubscription.remove();
+    };
+  }, [navigation, load]);
 
   useEffect(() => {
     if (preferences && todayMinutesWalked >= preferences.dailyTargetMinutes && todayMinutesWalked > 0) {
@@ -156,66 +246,99 @@ export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
     ]).start(() => setShowCelebration(false));
   };
 
-  const load = async () => {
-    const prefs = await preferencesRepo.get();
-    if (prefs) { setPreferences(prefs); setHasSetPreferences(true); }
-    const mins = await sessionsRepo.getTodayMinutes();
-    const cnt = await plansRepo.getTodayNotifiedCount();
-    setTodayStats(mins, cnt);
-    setUpcomingPlans(await plansRepo.getUpcomingPlans(10));
-    
-    // Load streak and weekly stats
-    const allSessions = await sessionsRepo.getAll();
-    const streakData = calculateStreak(allSessions);
-    setStreak(streakData);
-    const weekly = calculateWeeklyStats(allSessions);
-    setWeeklyStats(weekly);
-  };
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    await load();
+    setRefreshing(false);
+  }, [load]);
 
-  const onRefresh = useCallback(async () => { setRefreshing(true); await load(); setRefreshing(false); }, []);
+  const cancelOpportunity = useCallback((opportunity: PlanOpportunity) => {
+    const performCancel = async () => {
+      try {
+        const now = new Date();
+        const todayKey = format(now, 'yyyy-MM-dd');
+        const todayPlans = await plansRepo.getTodayPlans();
 
-  const hasOtherGroups = (excluding: GroupedGap) =>
-    groupedWalks.length > 1 && groupedWalks.some(g => g.key !== excluding.key);
+        // Cancel all still-active plans in this same gap window so we truly move to the next gap.
+        const sameGapActivePlans = todayPlans.filter(
+          (plan) =>
+            (plan.status === 'planned' || plan.status === 'notified') &&
+            plan.gapStart === opportunity.plan.gapStart &&
+            plan.gapEnd === opportunity.plan.gapEnd &&
+            isAfter(parseISO(plan.walkStart), now)
+        );
 
-  const skipGroup = (group: GroupedGap) => {
-    const doSkip = async () => {
-      for (const p of group.plans) {
-        await plansRepo.updateStatus(p.id, 'cancelled');
+        if (sameGapActivePlans.length > 0) {
+          for (const plan of sameGapActivePlans) {
+            await plansRepo.updateStatus(plan.id, 'cancelled');
+          }
+        } else {
+          await plansRepo.updateStatus(opportunity.plan.id, 'cancelled');
+        }
+
+        const refreshedUpcoming = await plansRepo.getUpcomingPlans(20);
+        setUpcomingPlans(refreshedUpcoming);
+
+        if (isNotificationsSupported && preferences) {
+          await notificationService.cancelAllNotifications();
+          const futurePlans = await plansRepo.getUpcomingPlans(100);
+          await notificationService.scheduleMultipleNudges(futurePlans, preferences);
+        }
+
+        const remainingToday = refreshedUpcoming
+          .filter((plan) => plan.date === todayKey)
+          .filter((plan) => plan.status === 'planned' || plan.status === 'notified')
+          .sort((a, b) => a.walkStart.localeCompare(b.walkStart));
+
+        if (!preferences || remainingToday.length === 0) {
+          Alert.alert('No gaps found for today', 'No gaps are found for today.');
+          return;
+        }
+
+        const next = remainingToday[0];
+        const nextWalkStart = parseISO(next.walkStart);
+        let nextNotify = nextWalkStart;
+        if (preferences.whenToNotify === 'delay') {
+          nextNotify = subMinutes(nextWalkStart, preferences.notifyDelayMinutes ?? 5);
+          const nextGapStart = parseISO(next.gapStart);
+          if (isBefore(nextNotify, nextGapStart)) {
+            nextNotify = nextGapStart;
+          }
+        }
+        const nextEndRaw = addMinutes(parseISO(next.walkStart), next.suggestedDurationMinutes);
+        const nextGapEnd = parseISO(next.gapEnd);
+        const nextEnd = isAfter(nextEndRaw, nextGapEnd) ? nextGapEnd : nextEndRaw;
+
+        Alert.alert(
+          'Next gap selected',
+          `Walk time: ${format(nextWalkStart, 'h:mm a')} - ${format(nextEnd, 'h:mm a')}\nNotification time: ${format(nextNotify, 'h:mm a')}`
+        );
+      } catch (error) {
+        console.error('Failed to cancel walk opportunity:', error);
+        Alert.alert('Could not cancel opportunity', 'Please try again.');
       }
-      await load();
     };
 
-    if (hasOtherGroups(group)) {
-      Alert.alert(
-        'Skip this session?',
-        'You can use another time slot from the list above, or skip this session entirely.',
-        [
-          { text: 'Cancel', style: 'cancel' },
-          { text: 'Find another time', onPress: doSkip },
-          { text: 'Skip entirely', onPress: doSkip, style: 'destructive' },
-        ]
+    // Alert.alert button callbacks don't fire on web (react-native-web limitation)
+    if (Platform.OS === 'web' && typeof (globalThis as any).confirm === 'function') {
+      const ok = (globalThis as any).confirm(
+        'Cancel this walk opportunity?\n\nIf you cancel, GapWalk will try to use your next best available gap today.'
       );
-    } else {
-      Alert.alert(
-        'Skip this session?',
-        'There are no other time slots available today. You might miss your daily goal.',
-        [
-          { text: 'Cancel', style: 'cancel' },
-          { text: 'Yes, skip', onPress: doSkip, style: 'destructive' },
-        ]
-      );
+      if (ok) {
+        void performCancel();
+      }
+      return;
     }
-  };
 
-  const handleNotifyMe = async (group: GroupedGap) => {
-    const plan = group.plans[0];
-    if (!plan) return;
-    if (isNotificationsSupported) {
-      await notificationService.showImmediateNudge(plan.id, group.totalAvailableMinutes);
-    } else {
-      navigation.navigate('Walking', { planId: plan.id });
-    }
-  };
+    Alert.alert(
+      'Cancel this walk opportunity?',
+      'If you cancel, GapWalk will try to use your next best available gap today.',
+      [
+        { text: 'No', style: 'cancel' },
+        { text: 'Yes, cancel', style: 'destructive', onPress: () => { void performCancel(); } },
+      ]
+    );
+  }, [preferences, setUpcomingPlans]);
 
   const closeMenu = () => {
     Animated.timing(menuSlide, {
@@ -268,11 +391,48 @@ export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
   };
 
   const today = new Date();
-  const dayName = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][today.getDay()];
-  const monthDay = today.toLocaleDateString('en-US', { month: 'long', day: 'numeric' });
+  const locale = language === 'es' ? 'es-ES' : 'en-US';
+  const dayNameRaw = today.toLocaleDateString(locale, { weekday: 'long' });
+  const dayName = dayNameRaw.charAt(0).toUpperCase() + dayNameRaw.slice(1);
+  const monthDay = today.toLocaleDateString(locale, { month: 'long', day: 'numeric' });
 
-  // Consolidate upcoming plans by time range
-  const groupedWalks = useMemo(() => groupPlansByRange(upcomingPlans), [upcomingPlans]);
+  const todayKey = format(today, 'yyyy-MM-dd');
+  const goalReached = !!preferences && todayMinutesWalked >= preferences.dailyTargetMinutes;
+  const activeTodayPlans = useMemo(
+    () =>
+      upcomingPlans
+        .filter((plan) => plan.date === todayKey)
+        .filter((plan) => plan.status === 'planned' || plan.status === 'notified')
+        .sort((a, b) => a.walkStart.localeCompare(b.walkStart)),
+    [todayKey, upcomingPlans]
+  );
+
+  const opportunities = useMemo<PlanOpportunity[]>(() => {
+    if (!preferences || goalReached) return [];
+
+    return activeTodayPlans.map((plan) => {
+      const walkStart = parseISO(plan.walkStart);
+      const walkEndRaw = addMinutes(walkStart, plan.suggestedDurationMinutes);
+      const gapStart = parseISO(plan.gapStart);
+      const gapEnd = parseISO(plan.gapEnd);
+      const walkEnd = isAfter(walkEndRaw, gapEnd) ? gapEnd : walkEndRaw;
+      let notifyAt = walkStart;
+      if (preferences.whenToNotify === 'delay') {
+        notifyAt = subMinutes(walkStart, preferences.notifyDelayMinutes ?? 5);
+        if (isBefore(notifyAt, gapStart)) {
+          notifyAt = gapStart;
+        }
+      }
+
+      return {
+        key: plan.id,
+        plan,
+        timeRange: `${formatDateTime(plan.gapStart)} - ${formatDateTime(plan.gapEnd)}`,
+        walkWindowLabel: `Walk time: ${format(walkStart, 'h:mm a')} - ${format(walkEnd, 'h:mm a')}`,
+        notifyLabel: `Notification time: ${format(notifyAt, 'h:mm a')}`,
+      };
+    });
+  }, [activeTodayPlans, goalReached, preferences]);
 
   const horizontalPadding = Math.max(width * 0.1, 16);
   const verticalPadding = Math.max(height * 0.05, 16);
@@ -327,10 +487,9 @@ export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
         ]}
       >
         <View style={styles.header}>
-          <View style={styles.headerLeft} />
           <View style={styles.headerCenter}>
             <Text variant="title" style={styles.heading}>Today</Text>
-            <Text variant="bodySmall" color={theme.colors.textMuted}>{dayName}, {monthDay}</Text>
+            <Text variant="bodySmall" color={theme.colors.textMuted} style={styles.headingDate}>{dayName}, {monthDay}</Text>
           </View>
           <View style={styles.headerRight}>
             <BurgerIcon onPress={openMenu} color={palette.textPrimary} />
@@ -388,7 +547,9 @@ export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
 
         {/* Ready prompt */}
         <Text variant="body" style={styles.readyText}>
-          Ready to start? Your first walk is just a tap away!
+          {streak.lastActiveDate
+            ? 'Ready to walk?'
+            : 'Ready to start? Your first walk is just a tap away!'}
         </Text>
 
         {/* Achievements & Streak Card */}
@@ -440,34 +601,43 @@ export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
 
         <Text variant="body" style={styles.gapTitle}>Walking Opportunities</Text>
         <Text variant="muted" style={styles.gapSubtitle}>
-          When your next walking session is available. GapWalk will notify you to start.
+          See exactly when to walk and when GapWalk will notify you.
         </Text>
 
-        {groupedWalks.length === 0 ? (
+        {goalReached ? (
+          <Card elevated style={styles.emptyCard}>
+            <Text variant="body" style={styles.emptyText}>Goal reached for today</Text>
+            <Text variant="bodySmall" color={theme.colors.textMuted} style={styles.emptyHint}>
+              Nice work. Extra walks are still tracked, but reminders pause until tomorrow.
+            </Text>
+          </Card>
+        ) : opportunities.length === 0 ? (
           <Card elevated style={styles.emptyCard}>
             <Text variant="body" style={styles.emptyIcon}>{'\uD83D\uDEB6'}</Text>
             <Text variant="body" style={styles.emptyText}>No opportunities yet</Text>
-            <Text variant="bodySmall" color={theme.colors.textMuted} style={styles.emptyHint}>Pull down to refresh, or start a manual walk below.</Text>
+            <Text variant="bodySmall" color={theme.colors.textMuted} style={styles.emptyHint}>
+              No suitable gaps were found right now. Pull to refresh, or start a manual walk below.
+            </Text>
           </Card>
         ) : (
-          groupedWalks.map(group => (
+          opportunities.map((opportunity) => (
             <GapItem
-              key={group.key}
-              timeRange={group.timeRange}
-              duration={group.totalAvailableMinutes}
-              opportunities={group.plans.length}
-              usedMinutes={group.usedMinutes}
-              onSkip={() => skipGroup(group)}
-              onNotifyMe={() => handleNotifyMe(group)}
+              key={opportunity.key}
+              timeRange={opportunity.timeRange}
+              walkWindowLabel={opportunity.walkWindowLabel}
+              notifyLabel={opportunity.notifyLabel}
+              duration={opportunity.plan.suggestedDurationMinutes}
+              usedMinutes={0}
+              onCancel={() => cancelOpportunity(opportunity)}
             />
           ))
         )}
 
         <Card elevated style={styles.prefsCard}>
-          <Text variant="body" style={styles.prefLabel}>Your Preferences</Text>
+          <Text variant="body" style={styles.prefLabel}>Other preferences</Text>
           <View style={styles.prefsGrid}>
             <View style={styles.prefItem}>
-              <Text variant="bodySmall" color={theme.colors.textMuted}>Buffer</Text>
+              <Text variant="bodySmall" color={theme.colors.textMuted}>Buffer time</Text>
               <Text variant="body" style={styles.prefValue}>{preferences.bufferMinutes} min</Text>
             </View>
             <View style={styles.prefItem}>
@@ -477,7 +647,7 @@ export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
           </View>
           <View style={styles.prefsGrid}>
             <View style={styles.prefItem}>
-              <Text variant="bodySmall" color={theme.colors.textMuted}>Notify</Text>
+              <Text variant="bodySmall" color={theme.colors.textMuted}>Notify me</Text>
               <Text variant="body" style={styles.prefValue}>
                 {preferences.whenToNotify === 'now'
                   ? 'Immediately'
@@ -485,6 +655,10 @@ export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
                   ? `${preferences.notifyDelayMinutes} min before`
                   : 'Next gap'}
               </Text>
+            </View>
+            <View style={styles.prefItem}>
+              <Text variant="bodySmall" color={theme.colors.textMuted}>Minimum reminder gap</Text>
+              <Text variant="body" style={styles.prefValue}>{preferences.notificationMinGapMinutes} min</Text>
             </View>
           </View>
         </Card>
@@ -546,11 +720,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 16,
   },
-  headerLeft: { width: 32, alignItems: 'flex-start' },
-  headerCenter: { alignItems: 'center' },
+  headerCenter: { flex: 1, alignItems: 'flex-start' },
   headerRight: { width: 32, alignItems: 'flex-end' },
-  heading: { textAlign: 'center' },
-  headingSub: { textAlign: 'center', marginBottom: 20, marginTop: 4 },
+  heading: { textAlign: 'left', fontSize: theme.fontSize.xl + 2 },
+  headingSub: { textAlign: 'left', marginBottom: 20, marginTop: 4 },
+  headingDate: { textAlign: 'left' },
   burgerBtn: {
     padding: 3,
     transform: [{ scale: 0.8 }], // make overall icon ~20% smaller
@@ -573,8 +747,8 @@ const styles = StyleSheet.create({
     borderWidth: 0,
     width: '100%',
   },
-  qsTitle: { fontWeight: theme.fontWeight.semibold, marginBottom: 12, marginTop: 10 },
-  gapTitle: { fontWeight: theme.fontWeight.semibold, marginTop: 24, marginBottom: 4 },
+  qsTitle: { fontWeight: theme.fontWeight.semibold, fontSize: theme.fontSize.md + 2, marginBottom: 12, marginTop: 10 },
+  gapTitle: { fontWeight: theme.fontWeight.semibold, fontSize: theme.fontSize.md + 2, marginTop: 24, marginBottom: 4 },
   gapSubtitle: { fontSize: theme.fontSize.sm, marginBottom: 12, lineHeight: 20 },
   emptyCard: { alignItems: 'center', paddingVertical: 28, paddingHorizontal: 20, marginBottom: 12 },
   emptyIcon: { fontSize: 28, marginBottom: 8 },

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, StyleSheet, Alert, ActivityIndicator } from 'react-native';
+import { View, StyleSheet, Alert, ActivityIndicator, Platform } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import * as AuthSession from 'expo-auth-session';
 import * as DocumentPicker from 'expo-document-picker';
@@ -9,9 +9,12 @@ import { Text } from '../components/Text';
 import { Button } from '../components/Button';
 import { Card } from '../components/Card';
 import { theme } from '../theme';
-import { parseICSFile } from '../lib/ics';
+import { buildWeeklyTemplateFromIcsEvents, parseICSFile } from '../lib/ics';
 import { eventsRepo } from '../lib/repositories/eventsRepo';
+import { manualScheduleRepo } from '../lib/repositories/manualScheduleRepo';
+import { plansRepo } from '../lib/repositories/plansRepo';
 import { scheduleSourceRepo } from '../lib/repositories/scheduleSourceRepo';
+import { syncNudgePlansForCurrentSchedule } from '../lib/scheduleSync';
 import { useAppStore } from '../store';
 import {
   googleCalendarService,
@@ -29,11 +32,59 @@ const discovery = {
   revocationEndpoint: 'https://oauth2.googleapis.com/revoke',
 };
 
-export const ScheduleSetupScreen: React.FC<Props> = ({ navigation }) => {
+export const ScheduleSetupScreen: React.FC<Props> = ({ navigation, route }) => {
   const [selectedOption, setSelectedOption] = useState<ScheduleOption>(null);
   const [loading, setLoading] = useState(false);
   const [syncStatus, setSyncStatus] = useState<string | null>(null);
-  const { setScheduleSource } = useAppStore();
+  const { setScheduleSource, scheduleSource, preferences, setUpcomingPlans } = useAppStore();
+  const manageMode = !!route.params?.manageMode;
+
+  const exitScreen = () => {
+    if (navigation.canGoBack()) {
+      navigation.goBack();
+      return;
+    }
+    navigation.navigate(manageMode ? 'ScheduleOverview' : 'Dashboard');
+  };
+
+  const navigateToManualSchedule = () => {
+    if (manageMode) {
+      navigation.navigate('ManualSchedule', { manageMode: true });
+      return;
+    }
+    navigation.navigate('ManualSchedule');
+  };
+
+  const finishAfterSave = async () => {
+    try {
+      await syncNudgePlansForCurrentSchedule(preferences);
+      const refreshedUpcoming = await plansRepo.getUpcomingPlans(20);
+      setUpcomingPlans(refreshedUpcoming);
+    } catch (error) {
+      console.error('Failed to sync opportunities after schedule update:', error);
+    }
+  };
+
+  const completeFlow = () => {
+    if (manageMode) {
+      exitScreen();
+      return;
+    }
+    navigation.navigate('Preferences', {});
+  };
+
+  const showMessage = (title: string, message: string, onAcknowledge?: () => void) => {
+    if (Platform.OS === 'web' && typeof (globalThis as any).alert === 'function') {
+      (globalThis as any).alert(`${title}\n\n${message}`);
+      onAcknowledge?.();
+      return;
+    }
+    if (onAcknowledge) {
+      Alert.alert(title, message, [{ text: 'OK', onPress: onAcknowledge }]);
+      return;
+    }
+    Alert.alert(title, message);
+  };
 
   // expo-auth-session hook for Google OAuth
   const authConfig = getGoogleAuthConfig();
@@ -52,7 +103,7 @@ export const ScheduleSetupScreen: React.FC<Props> = ({ navigation }) => {
     if (response?.type === 'success') {
       const { access_token } = response.params;
       if (access_token) {
-        handleGoogleSync(access_token);
+        void handleGoogleSync(access_token);
       }
     } else if (response?.type === 'error') {
       setLoading(false);
@@ -61,6 +112,17 @@ export const ScheduleSetupScreen: React.FC<Props> = ({ navigation }) => {
       setLoading(false);
     }
   }, [response]);
+
+  useEffect(() => {
+    if (!manageMode || !scheduleSource) return;
+    if (scheduleSource.type === 'manual') {
+      setSelectedOption('manual');
+    } else if (scheduleSource.type === 'ics') {
+      setSelectedOption('import');
+    } else if (scheduleSource.type === 'google') {
+      setSelectedOption('google');
+    }
+  }, [manageMode, scheduleSource]);
 
   const toggle = (opt: ScheduleOption) => {
     if (opt === 'google') return; // Google Calendar is upcoming feature, not selectable
@@ -84,7 +146,7 @@ export const ScheduleSetupScreen: React.FC<Props> = ({ navigation }) => {
           'No Events Found',
           'Your Google Calendar has no events in the next 14 days. You can add events manually instead.',
           [
-            { text: 'Input Manually', onPress: () => { setLoading(false); setSyncStatus(null); navigation.navigate('ManualSchedule'); } },
+            { text: 'Input Manually', onPress: () => { setLoading(false); setSyncStatus(null); navigateToManualSchedule(); } },
             { text: 'OK', style: 'cancel', onPress: () => { setLoading(false); setSyncStatus(null); } },
           ]
         );
@@ -93,8 +155,8 @@ export const ScheduleSetupScreen: React.FC<Props> = ({ navigation }) => {
 
       setSyncStatus(`Saving ${events.length} events...`);
 
-      // Clear old google events and save new ones
-      await eventsRepo.deleteBySource('google');
+      // Keep one active schedule source by replacing all existing busy events.
+      await eventsRepo.deleteAll();
       await eventsRepo.saveMany(events);
 
       // Save schedule source with token
@@ -106,14 +168,15 @@ export const ScheduleSetupScreen: React.FC<Props> = ({ navigation }) => {
       };
       await scheduleSourceRepo.save(source);
       setScheduleSource(source);
+      await finishAfterSave();
 
       setSyncStatus(null);
       setLoading(false);
 
       Alert.alert(
-        'Calendar Linked',
+        manageMode ? 'Schedule Updated' : 'Calendar Linked',
         `Successfully imported ${events.length} events from Google Calendar.`,
-        [{ text: 'Continue', onPress: () => navigation.navigate('Preferences', {}) }]
+        [{ text: manageMode ? 'Done' : 'Continue', onPress: completeFlow }]
       );
     } catch (error) {
       console.error('Google Calendar sync error:', error);
@@ -152,45 +215,133 @@ export const ScheduleSetupScreen: React.FC<Props> = ({ navigation }) => {
   const handleImport = async () => {
     try {
       setLoading(true);
+      setSyncStatus('Opening file picker...');
       const result = await DocumentPicker.getDocumentAsync({
-        type: 'text/calendar',
+        type: ['text/calendar', 'application/octet-stream', '.ics', 'text/plain'],
         copyToCacheDirectory: true,
       });
-      if (result.canceled) { setLoading(false); return; }
+      if (result.canceled) {
+        setLoading(false);
+        setSyncStatus(null);
+        return;
+      }
       const file = result.assets[0];
-      const resp = await fetch(file.uri);
-      const content = await resp.text();
+      setSyncStatus(`Reading ${file.name || 'calendar file'}...`);
+
+      let content = '';
+      const webFile = (file as any).file;
+      if (Platform.OS === 'web' && webFile && typeof webFile.text === 'function') {
+        content = await webFile.text();
+      } else {
+        const resp = await fetch(file.uri);
+        if (!resp.ok) {
+          throw new Error(`Could not read selected file (${resp.status}).`);
+        }
+        content = await resp.text();
+      }
+
+      if (!content.trim()) {
+        throw new Error('The selected ICS file is empty.');
+      }
+
+      setSyncStatus('Parsing calendar...');
       const parseResult = await parseICSFile(content);
-      if (parseResult.errors.length > 0) Alert.alert('Import Warning', parseResult.errors.join('\n'));
-      if (parseResult.events.length === 0) { Alert.alert('No Events', 'No events found in the ICS file.'); setLoading(false); return; }
+      if (parseResult.errors.length > 0) {
+        const warningText = parseResult.errors.slice(0, 3).join('\n');
+        showMessage('Import Warning', warningText);
+      }
+      if (parseResult.events.length === 0) {
+        setLoading(false);
+        setSyncStatus(null);
+        showMessage('No Events', 'No events found in the ICS file.');
+        return;
+      }
+
+      setSyncStatus(`Importing ${parseResult.events.length} events...`);
+      const weeklyTemplate = buildWeeklyTemplateFromIcsEvents(parseResult.events);
+      if (weeklyTemplate.length === 0) {
+        showMessage(
+          'Import Note',
+          'The ICS file was imported, but no timed events were available for the weekly grid preview.'
+        );
+      }
+      await eventsRepo.deleteAll();
       await eventsRepo.saveMany(parseResult.events);
+      await manualScheduleRepo.deleteAll();
+      await manualScheduleRepo.saveMany(weeklyTemplate);
       const source = { type: 'ics' as const, filename: file.name, lastImportedAt: new Date().toISOString() };
       await scheduleSourceRepo.save(source);
       setScheduleSource(source);
+      setSyncStatus('Refreshing walking opportunities...');
+      await finishAfterSave();
       setLoading(false);
+      setSyncStatus(null);
+      if (manageMode) {
+        navigation.navigate('ManualSchedule', {
+          manageMode: true,
+          importedFilename: file.name || 'calendar.ics',
+        });
+        return;
+      }
       navigation.navigate('Preferences', {});
-    } catch {
+    } catch (error) {
+      console.error('ICS import failed:', error);
       setLoading(false);
-      Alert.alert('Import Failed', 'Failed to import ICS file. Please try again.');
+      setSyncStatus(null);
+      const msg = error instanceof Error ? error.message : 'Failed to import ICS file. Please try again.';
+      showMessage('Import Failed', msg);
     }
   };
 
   /* ── Continue ── */
-  const handleContinue = async () => {
+  const runSelectedOption = async () => {
     if (!selectedOption) return;
     if (selectedOption === 'google') await startGoogleAuth();
     else if (selectedOption === 'import') await handleImport();
-    else navigation.navigate('ManualSchedule');
+    else navigateToManualSchedule();
+  };
+
+  const handleContinue = () => {
+    if (!selectedOption || loading) return;
+    if (!manageMode) {
+      void runSelectedOption();
+      return;
+    }
+
+    const message = selectedOption === 'import'
+      ? 'Save this schedule source and replace your current schedule data? Walking opportunities will be refreshed.'
+      : 'Continue to manual schedule editing? Changes are applied only after you save.';
+
+    if (Platform.OS === 'web' && typeof (globalThis as any).confirm === 'function') {
+      const ok = (globalThis as any).confirm(message);
+      if (ok) {
+        void runSelectedOption();
+      }
+      return;
+    }
+
+    Alert.alert(
+      'Save schedule changes?',
+      message,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Save', onPress: () => { void runSelectedOption(); } },
+      ]
+    );
   };
 
   return (
     <Container scrollable>
       <View style={styles.content}>
-        <Text variant="title" style={styles.title}>Set up your schedule</Text>
+        <Text variant="title" style={styles.title}>{manageMode ? 'Manage your schedule' : 'Set up your schedule'}</Text>
         <Text variant="body" color={theme.colors.textMuted} style={styles.subtitle}>
-          Tell us when you're busy so GapWalk can find walking windows.
+          {manageMode
+            ? 'Change your schedule source or update existing schedule data.'
+            : 'Tell us when you are busy so GapWalk can find walking windows.'}
         </Text>
-        <Text variant="body" style={styles.sectionLabel}>Choose how to add your schedule</Text>
+        <Text variant="body" style={styles.sectionLabel}>
+          {manageMode ? 'Choose how GapWalk should read your schedule' : 'Choose how to add your schedule'}
+        </Text>
 
         {/* Google Calendar – upcoming feature (not available yet) */}
         <Card
@@ -244,13 +395,32 @@ export const ScheduleSetupScreen: React.FC<Props> = ({ navigation }) => {
       </View>
 
       <View style={styles.footer}>
-        <Button
-          title="Continue"
-          onPress={handleContinue}
-          disabled={!selectedOption || selectedOption === 'google' || loading}
-          loading={loading && !syncStatus}
-          full
-        />
+        {manageMode ? (
+          <View style={styles.footerActions}>
+            <Button
+              title="Cancel"
+              variant="secondary"
+              onPress={exitScreen}
+              style={styles.footerBtn}
+              disabled={loading}
+            />
+            <Button
+              title="Save"
+              onPress={handleContinue}
+              disabled={!selectedOption || selectedOption === 'google' || loading}
+              loading={loading && !syncStatus}
+              style={styles.footerBtn}
+            />
+          </View>
+        ) : (
+          <Button
+            title="Continue"
+            onPress={handleContinue}
+            disabled={!selectedOption || selectedOption === 'google' || loading}
+            loading={loading && !syncStatus}
+            full
+          />
+        )}
         <Text variant="muted" style={styles.privacy}>
           Your schedule stays private. Privacy is our utmost importance.
         </Text>
@@ -325,6 +495,13 @@ const styles = StyleSheet.create({
     alignSelf: 'center',
     width: '100%',
     maxWidth: theme.layout.contentMaxWidth,
+  },
+  footerActions: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  footerBtn: {
+    flex: 1,
   },
   privacy: { textAlign: 'center', marginTop: 14 },
 });

@@ -4,13 +4,13 @@ import Svg, { Circle, G } from 'react-native-svg';
 import { Card } from './Card';
 import { Text } from './Text';
 import { theme } from '../theme';
+import { useAppStore } from '../store';
 
 interface StatCardProps {
   title: string;
   current: number;
   target: number;
   unitLabel?: string;
-  // If we need different styles later, we can add a variant prop
 }
 
 export const StatCard: React.FC<StatCardProps> = ({
@@ -19,18 +19,19 @@ export const StatCard: React.FC<StatCardProps> = ({
   target,
   unitLabel = 'minutes',
 }) => {
+  const { themeMode } = useAppStore();
+  const isDark = themeMode === 'dark';
+
   const pct = target > 0 ? Math.min((current / target), 1) : 0;
   const animatedValue = useRef(new Animated.Value(0)).current;
   const scaleAnim = useRef(new Animated.Value(1)).current;
-  
-  // Circle config
+
   const size = 100;
   const strokeWidth = 8;
   const radius = (size - strokeWidth) / 2;
   const circumference = radius * 2 * Math.PI;
 
   useEffect(() => {
-    // Animate progress circle
     Animated.timing(animatedValue, {
       toValue: pct,
       duration: 800,
@@ -38,7 +39,6 @@ export const StatCard: React.FC<StatCardProps> = ({
       useNativeDriver: false,
     }).start();
 
-    // Pulse animation when progress changes
     if (current > 0) {
       Animated.sequence([
         Animated.timing(scaleAnim, {
@@ -69,17 +69,19 @@ export const StatCard: React.FC<StatCardProps> = ({
   }, []);
 
   const currentStrokeDashoffset = circumference - animatedPct * circumference;
+  const trackStroke = isDark ? 'rgba(255,255,255,0.1)' : 'rgba(15,23,42,0.12)';
+  const goalText = '\uD83C\uDF89 Goal achieved!';
 
   return (
     <Card style={styles.card} elevated>
       <Text variant="body" style={styles.title}>{title}</Text>
-      
+
       <View style={styles.circleContainer}>
         <Animated.View style={[styles.svgWrapper, { transform: [{ scale: scaleAnim }] }]}>
           <Svg width={size} height={size}>
             <G rotation="-90" origin={`${size / 2}, ${size / 2}`}>
               <Circle
-                stroke="rgba(255,255,255,0.1)"
+                stroke={trackStroke}
                 strokeWidth={strokeWidth}
                 cx={size / 2}
                 cy={size / 2}
@@ -108,7 +110,7 @@ export const StatCard: React.FC<StatCardProps> = ({
       </View>
 
       <Text variant="bodySmall" style={styles.completion}>
-        {pct >= 1 ? '🎉 Goal achieved!' : `Completion: ${current} ${unitLabel}/${target} ${unitLabel}`}
+        {pct >= 1 ? goalText : `Completion: ${current} ${unitLabel}/${target} ${unitLabel}`}
       </Text>
     </Card>
   );

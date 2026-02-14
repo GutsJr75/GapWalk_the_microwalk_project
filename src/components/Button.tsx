@@ -3,6 +3,7 @@ import { TouchableOpacity, Text, StyleSheet, ActivityIndicator, ViewStyle, TextS
 import { theme } from '../theme';
 import { useAppStore } from '../store';
 import { useThemePalette } from '../theme/palette';
+import { translateLiteral } from '../lib/i18n';
 
 interface ButtonProps {
   title: string;
@@ -25,9 +26,10 @@ export const Button: React.FC<ButtonProps> = ({
   textStyle,
   full = false,
 }) => {
-  const { themeMode } = useAppStore();
+  const { themeMode, language } = useAppStore();
   const isDark = themeMode === 'dark';
   const palette = useThemePalette();
+  const localizedTitle = React.useMemo(() => translateLiteral(title, language), [title, language]);
 
   return (
     <TouchableOpacity
@@ -70,7 +72,7 @@ export const Button: React.FC<ButtonProps> = ({
             textStyle,
           ]}
         >
-          {title}
+          {localizedTitle}
         </Text>
       )}
     </TouchableOpacity>

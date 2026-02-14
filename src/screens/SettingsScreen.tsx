@@ -1,5 +1,5 @@
 ﻿import React from 'react';
-import { View, StyleSheet, TouchableOpacity } from 'react-native';
+import { View, StyleSheet, TouchableOpacity, Alert, Platform } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../../App';
 import { Container } from '../components/Container';
@@ -8,6 +8,7 @@ import { Card } from '../components/Card';
 import { Button } from '../components/Button';
 import { theme } from '../theme';
 import { useAppStore } from '../store';
+import { translateLiteral } from '../lib/i18n';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Settings'>;
 
@@ -20,6 +21,28 @@ export const SettingsScreen: React.FC<Props> = ({ navigation }) => {
       return;
     }
     navigation.navigate('Dashboard');
+  };
+
+  const confirmLanguageChange = (next: 'en' | 'es') => {
+    if (next === language) return;
+
+    const targetLabel = next === 'es' ? 'Spanish' : 'English';
+    const title = translateLiteral('Change language?', language);
+    const message = translateLiteral(
+      `Are you sure you want to switch the app language to ${targetLabel}?`,
+      language
+    );
+
+    if (Platform.OS === 'web' && typeof (globalThis as any).confirm === 'function') {
+      const ok = (globalThis as any).confirm(`${title}\n\n${message}`);
+      if (ok) setLanguage(next);
+      return;
+    }
+
+    Alert.alert(title, message, [
+      { text: translateLiteral('Cancel', language), style: 'cancel' },
+      { text: translateLiteral('Yes, change', language), onPress: () => setLanguage(next) },
+    ]);
   };
 
   return (
@@ -57,13 +80,13 @@ export const SettingsScreen: React.FC<Props> = ({ navigation }) => {
           <View style={styles.row}>
             <Button
               title="English"
-              onPress={() => setLanguage('en')}
+              onPress={() => confirmLanguageChange('en')}
               variant={language === 'en' ? 'primary' : 'secondary'}
               style={styles.pill}
             />
             <Button
               title={"Espa\u00F1ol"}
-              onPress={() => setLanguage('es')}
+              onPress={() => confirmLanguageChange('es')}
               variant={language === 'es' ? 'primary' : 'secondary'}
               style={styles.pill}
             />

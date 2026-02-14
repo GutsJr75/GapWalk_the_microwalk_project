@@ -1,5 +1,5 @@
 import ICAL from 'ical.js';
-import { BusyEvent } from './types';
+import { BusyEvent, ManualScheduleEntry } from './types';
 
 export interface ICSParseResult {
   events: BusyEvent[];
@@ -74,4 +74,47 @@ export const parseICSFile = async (fileContent: string): Promise<ICSParseResult>
       errors: [`Failed to parse ICS file: ${err instanceof Error ? err.message : 'Unknown error'}`],
     };
   }
+};
+
+const pad2 = (n: number): string => String(n).padStart(2, '0');
+
+/**
+ * Convert imported ICS events into a weekly template used by the schedule grid.
+ * Duplicates (same day/title/time) are removed.
+ */
+export const buildWeeklyTemplateFromIcsEvents = (events: BusyEvent[]): ManualScheduleEntry[] => {
+  const seen = new Set<string>();
+  const template: ManualScheduleEntry[] = [];
+
+  for (const event of events) {
+    const start = new Date(event.start);
+    const end = new Date(event.end);
+    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) continue;
+
+    // Skip invalid or zero/negative spans.
+    if (end.getTime() <= start.getTime()) continue;
+
+    const dayOfWeek = start.getDay();
+    const startTime = `${pad2(start.getHours())}:${pad2(start.getMinutes())}`;
+    const endTime = `${pad2(end.getHours())}:${pad2(end.getMinutes())}`;
+    const title = (event.title || 'Busy').trim();
+
+    const dedupeKey = `${dayOfWeek}|${startTime}|${endTime}|${title.toLowerCase()}`;
+    if (seen.has(dedupeKey)) continue;
+    seen.add(dedupeKey);
+
+    template.push({
+      id: `ics-${dayOfWeek}-${startTime}-${endTime}-${template.length}`,
+      title,
+      dayOfWeek,
+      startTime,
+      endTime,
+    });
+  }
+
+  return template.sort((a, b) => {
+    if (a.dayOfWeek !== b.dayOfWeek) return a.dayOfWeek - b.dayOfWeek;
+    if (a.startTime !== b.startTime) return a.startTime.localeCompare(b.startTime);
+    return a.endTime.localeCompare(b.endTime);
+  });
 };

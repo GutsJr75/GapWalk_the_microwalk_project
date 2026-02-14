@@ -65,6 +65,7 @@ const initializeTables = async () => {
       daily_target_minutes INTEGER NOT NULL DEFAULT 20,
       buffer_minutes INTEGER NOT NULL DEFAULT 2,
       notification_count_per_day INTEGER NOT NULL DEFAULT 3,
+      notification_min_gap_minutes INTEGER NOT NULL DEFAULT 60,
       quiet_hours_start TEXT NOT NULL DEFAULT '23:00',
       quiet_hours_end TEXT NOT NULL DEFAULT '06:00',
       min_walk_minutes INTEGER NOT NULL DEFAULT 6,
@@ -174,6 +175,7 @@ const runMigrations = async () => {
   await ensureColumn('preferences', 'grace_period_minutes', 'INTEGER DEFAULT 2');
   await ensureColumn('preferences', 'when_to_notify', "TEXT DEFAULT 'now'");
   await ensureColumn('preferences', 'notify_delay_minutes', 'INTEGER DEFAULT 5');
+  await ensureColumn('preferences', 'notification_min_gap_minutes', 'INTEGER DEFAULT 60');
 };
 
 export const isDatabaseAvailable = async (): Promise<boolean> => {

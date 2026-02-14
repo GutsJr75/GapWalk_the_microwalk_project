@@ -27,6 +27,7 @@ export interface Preferences {
   dailyTargetMinutes: number;
   bufferMinutes: number;
   notificationCountPerDay: number;
+  notificationMinGapMinutes: number; // minimum time between reminders
   quietHoursStart: string; // "HH:mm"
   quietHoursEnd: string; // "HH:mm"
   minWalkMinutes: number;
@@ -81,6 +82,7 @@ export const DEFAULT_PREFERENCES: Preferences = {
   dailyTargetMinutes: 15,
   bufferMinutes: 2,
   notificationCountPerDay: 2,
+  notificationMinGapMinutes: 60,
   quietHoursStart: '23:00',
   quietHoursEnd: '06:00',
   minWalkMinutes: 6,

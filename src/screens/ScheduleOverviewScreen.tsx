@@ -1,6 +1,7 @@
 import React from 'react';
 import { View, StyleSheet, TouchableOpacity } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
+import { useFocusEffect } from '@react-navigation/native';
 import { RootStackParamList } from '../../App';
 import { Container } from '../components/Container';
 import { Text } from '../components/Text';
@@ -8,11 +9,27 @@ import { Button } from '../components/Button';
 import { Card } from '../components/Card';
 import { theme } from '../theme';
 import { useAppStore } from '../store';
+import { scheduleSourceRepo } from '../lib/repositories/scheduleSourceRepo';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'ScheduleOverview'>;
 
 export const ScheduleOverviewScreen: React.FC<Props> = ({ navigation }) => {
-  const { scheduleSource } = useAppStore();
+  const { scheduleSource, setScheduleSource } = useAppStore();
+
+  useFocusEffect(
+    React.useCallback(() => {
+      let active = true;
+      const load = async () => {
+        const latest = await scheduleSourceRepo.get();
+        if (!active) return;
+        setScheduleSource(latest);
+      };
+      void load();
+      return () => {
+        active = false;
+      };
+    }, [setScheduleSource])
+  );
 
   const sourceLabel = !scheduleSource
     ? 'Not set yet'
@@ -30,6 +47,25 @@ export const ScheduleOverviewScreen: React.FC<Props> = ({ navigation }) => {
     navigation.navigate('Dashboard');
   };
 
+  const openSourceSetup = () => {
+    navigation.navigate('ScheduleSetup', { manageMode: true });
+  };
+
+  const updateCurrentSchedule = () => {
+    if (scheduleSource?.type === 'manual' || !scheduleSource) {
+      navigation.navigate('ManualSchedule', { manageMode: true });
+      return;
+    }
+    if (scheduleSource.type === 'ics') {
+      navigation.navigate('ManualSchedule', {
+        manageMode: true,
+        importedFilename: scheduleSource.filename,
+      });
+      return;
+    }
+    navigation.navigate('ScheduleSetup', { manageMode: true });
+  };
+
   return (
     <Container scrollable>
       <View style={styles.content}>
@@ -39,38 +75,81 @@ export const ScheduleOverviewScreen: React.FC<Props> = ({ navigation }) => {
           </TouchableOpacity>
         </View>
 
-        <Text variant="title" style={styles.title}>Your Schedule</Text>
+        <Text variant="title" style={styles.title}>Manage Schedule</Text>
         <Text variant="muted" style={styles.sub}>
-          See how GapWalk is reading your schedule, and change it anytime.
+          Change your schedule source or update your current schedule without repeating onboarding.
         </Text>
 
         <Card elevated style={styles.card}>
           <Text variant="bodySmall" style={styles.label}>Current source</Text>
-          <Text variant="body" style={styles.current}>{sourceLabel}</Text>
+          {scheduleSource?.type === 'ics' && !!scheduleSource.filename ? (
+            <Text variant="body" style={styles.current}>
+              File:{' '}
+              <Text variant="body" style={styles.fileName}>
+                {scheduleSource.filename}
+              </Text>
+            </Text>
+          ) : (
+            <Text variant="body" style={styles.current}>{sourceLabel}</Text>
+          )}
         </Card>
 
-        <Card elevated style={styles.card}>
-          <Text variant="bodySmall" style={styles.label}>What you can do</Text>
-          <Text variant="bodySmall" style={styles.bodyText}>
-            - Change how GapWalk reads your schedule (manual, calendar file, or Google Calendar).
+        <Card elevated style={[styles.card, styles.guideCard]}>
+          <Text variant="body" style={styles.guideHeading}>How This Works</Text>
+          <Text variant="bodySmall" style={styles.guideSub}>
+            Choose an action below. Your schedule updates are applied only after you save.
           </Text>
-          <Text variant="bodySmall" style={styles.bodyText}>
-            - Update the blocks in your manual schedule so gaps stay accurate.
+
+          <View style={styles.guideList}>
+            <View style={styles.guideItem}>
+              <View style={styles.guideIndex}>
+                <Text variant="bodySmall" style={styles.guideIndexText}>1</Text>
+              </View>
+              <View style={styles.guideItemTextWrap}>
+                <Text variant="bodySmall" style={styles.guideItemTitle}>Change Schedule Source</Text>
+                <Text variant="bodySmall" style={styles.guideItemDesc}>
+                  Switch how GapWalk reads your schedule, such as manual entry or calendar import.
+                </Text>
+              </View>
+            </View>
+
+            <View style={styles.guideItem}>
+              <View style={styles.guideIndex}>
+                <Text variant="bodySmall" style={styles.guideIndexText}>2</Text>
+              </View>
+              <View style={styles.guideItemTextWrap}>
+                <Text variant="bodySmall" style={styles.guideItemTitle}>Update and Sync Opportunities</Text>
+                <Text variant="bodySmall" style={styles.guideItemDesc}>
+                  Save your changes to refresh today's walking opportunities automatically.
+                </Text>
+              </View>
+            </View>
+          </View>
+
+          <Text variant="bodySmall" style={styles.guideNote}>
+            Tip: If you open this screen and make no changes, you can cancel safely.
           </Text>
         </Card>
 
         <View style={styles.actions}>
           <Button
             title="Change schedule source"
-            onPress={() => navigation.navigate('ScheduleSetup')}
+            onPress={openSourceSetup}
             full
             style={styles.actionBtn}
           />
           <Button
-            title="Edit manual schedule"
-            onPress={() => navigation.navigate('ManualSchedule')}
+            title={scheduleSource?.type === 'manual' || !scheduleSource ? 'Update current schedule' : 'Update imported schedule'}
+            onPress={updateCurrentSchedule}
             full
             variant="secondary"
+            style={styles.actionBtn}
+          />
+          <Button
+            title="Cancel"
+            onPress={handleBack}
+            full
+            variant="muted"
             style={styles.actionBtn}
           />
         </View>
@@ -96,7 +175,40 @@ const styles = StyleSheet.create({
   card: { marginBottom: 16 },
   label: { color: theme.colors.textMuted, marginBottom: 4 },
   current: { fontWeight: theme.fontWeight.semibold },
-  bodyText: { marginTop: 4 },
+  fileName: { color: theme.colors.accentPrimary, fontWeight: theme.fontWeight.semibold },
+  guideCard: { paddingVertical: 16 },
+  guideHeading: { fontWeight: theme.fontWeight.semibold, marginBottom: 6 },
+  guideSub: { color: theme.colors.textMuted, marginBottom: 12, lineHeight: 18 },
+  guideList: { gap: 10 },
+  guideItem: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderRadius: theme.borderRadius.sm,
+    backgroundColor: 'rgba(46,233,166,0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(46,233,166,0.18)',
+  },
+  guideIndex: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(46,233,166,0.16)',
+    marginTop: 1,
+  },
+  guideIndexText: {
+    color: theme.colors.accentPrimary,
+    fontWeight: theme.fontWeight.bold,
+    fontSize: theme.fontSize.xs,
+  },
+  guideItemTextWrap: { flex: 1 },
+  guideItemTitle: { fontWeight: theme.fontWeight.semibold, marginBottom: 2 },
+  guideItemDesc: { color: theme.colors.textMuted, lineHeight: 18 },
+  guideNote: { marginTop: 12, color: theme.colors.textMuted, fontStyle: 'italic' },
   actions: { marginTop: 12, gap: 10 },
   actionBtn: { },
 });

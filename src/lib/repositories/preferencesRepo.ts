@@ -8,6 +8,7 @@ export const preferencesRepo = {
       daily_target_minutes: number;
       buffer_minutes: number;
       notification_count_per_day: number;
+      notification_min_gap_minutes?: number;
       quiet_hours_start: string;
       quiet_hours_end: string;
       min_walk_minutes: number;
@@ -22,6 +23,7 @@ export const preferencesRepo = {
       dailyTargetMinutes: result.daily_target_minutes,
       bufferMinutes: result.buffer_minutes,
       notificationCountPerDay: result.notification_count_per_day,
+      notificationMinGapMinutes: result.notification_min_gap_minutes ?? DEFAULT_PREFERENCES.notificationMinGapMinutes,
       quietHoursStart: result.quiet_hours_start,
       quietHoursEnd: result.quiet_hours_end,
       minWalkMinutes: result.min_walk_minutes,
@@ -36,13 +38,14 @@ export const preferencesRepo = {
     await db.runAsync(
       `INSERT OR REPLACE INTO preferences 
        (id, daily_target_minutes, buffer_minutes, notification_count_per_day, 
-        quiet_hours_start, quiet_hours_end, min_walk_minutes,
+        notification_min_gap_minutes, quiet_hours_start, quiet_hours_end, min_walk_minutes,
         grace_period_minutes, when_to_notify, notify_delay_minutes, updated_at)
-       VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+       VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
       [
         prefs.dailyTargetMinutes,
         prefs.bufferMinutes,
         prefs.notificationCountPerDay,
+        prefs.notificationMinGapMinutes,
         prefs.quietHoursStart,
         prefs.quietHoursEnd,
         prefs.minWalkMinutes,

@@ -22,14 +22,11 @@ import { Card } from '../components/Card';
 import { Modal } from '../components/Modal';
 import { theme } from '../theme';
 import { getThemePalette } from '../theme/palette';
-import { Preferences, DEFAULT_PREFERENCES, WhenToNotify } from '../lib/types';
+import { Preferences, DEFAULT_PREFERENCES } from '../lib/types';
 import { preferencesRepo } from '../lib/repositories/preferencesRepo';
-import { eventsRepo } from '../lib/repositories/eventsRepo';
-import { plansRepo } from '../lib/repositories/plansRepo';
-import { gapEngine } from '../lib/gapEngine';
 import { notificationService, isNotificationsSupported } from '../lib/notifications';
+import { syncNudgePlansForCurrentSchedule } from '../lib/scheduleSync';
 import { useAppStore } from '../store';
-import { addDays } from 'date-fns';
 
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
   UIManager.setLayoutAnimationEnabledExperimental(true);
@@ -291,27 +288,30 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation }) => {
   if (prefs.bufferMinutes < 0) bufferError = 'Buffer cannot be negative.';
   else if (prefs.bufferMinutes > 30) bufferError = 'Please enter a value between 0 and 30 minutes.';
 
-  const canContinue = !dailyTargetError && !notifError && !bufferError && !savingPrefs;
+  let reminderGapError: string | null = null;
+  if (prefs.notificationMinGapMinutes < 30) reminderGapError = 'Use at least 30 minutes between reminders.';
+  else if (prefs.notificationMinGapMinutes > 360) reminderGapError = 'Maximum spacing is 6 hours (360 minutes).';
+
+  const canContinue = !dailyTargetError && !notifError && !bufferError && !reminderGapError && !savingPrefs;
 
   /* â”€â”€ save â”€â”€ */
   const savePreferences = async (p: Preferences) => {
     if (savingPrefs) return;
     setSavingPrefs(true);
+    const normalizedPrefs: Preferences = {
+      ...p,
+      notificationMinGapMinutes: Math.max(30, Math.min(360, Math.floor(p.notificationMinGapMinutes || 60))),
+    };
     let lastError: unknown = null;
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
-        await preferencesRepo.save(p);
-        setPreferences(p);
+        await preferencesRepo.save(normalizedPrefs);
+        setPreferences(normalizedPrefs);
         setHasSetPreferences(true);
         const perm = notificationsSupported ? await notificationService.requestPermissions() : false;
         setHasNotificationPermission(perm);
         try {
-          const events = await eventsRepo.getAll();
-          for (let i = 0; i < 2; i++) {
-            const plans = await gapEngine.generatePlansForDate(addDays(new Date(), i), events, p);
-            await plansRepo.saveMany(plans);
-            await notificationService.scheduleMultipleNudges(plans, p);
-          }
+          await syncNudgePlansForCurrentSchedule(normalizedPrefs);
         } catch (e) { console.error(e); }
         setSavingPrefs(false);
         navigation.navigate('Dashboard');
@@ -451,6 +451,25 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation }) => {
             </View>
           </View>
 
+          {/* Reminder spacing limiter */}
+          <View style={styles.field}>
+            <View style={styles.fieldHeader}>
+              <Text variant="bodySmall" style={styles.fieldLabel}>Minimum time between reminders</Text>
+              <InfoTip text="Prevents reminder overload. Recommended: 60 min. You can set between 30 min and 6 hours." />
+            </View>
+            <View style={styles.inputRow}>
+              <TextInput
+                style={[styles.input, themedInput]}
+                value={String(prefs.notificationMinGapMinutes)}
+                onChangeText={t => update('notificationMinGapMinutes', parseInt(t) || 0)}
+                keyboardType="number-pad"
+                placeholderTextColor={palette.textMuted}
+              />
+              <Text variant="muted" style={styles.unit}>min</Text>
+            </View>
+            {reminderGapError && <Text variant="bodySmall" style={styles.errorText}>{reminderGapError}</Text>}
+          </View>
+
           {/* Quiet Hours */}
           <View style={styles.field}>
             <Text variant="bodySmall" style={styles.fieldLabel}>Quiet Hours</Text>
@@ -480,6 +499,7 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation }) => {
           <Text variant="bodySmall" style={styles.skipItem}>Walking goal: <Text variant="bodySmall" style={styles.skipBold}>{DEFAULT_PREFERENCES.dailyTargetMinutes} min</Text></Text>
           <Text variant="bodySmall" style={styles.skipItem}>Buffer: <Text variant="bodySmall" style={styles.skipBold}>{DEFAULT_PREFERENCES.bufferMinutes} min</Text></Text>
           <Text variant="bodySmall" style={styles.skipItem}>Reminders: <Text variant="bodySmall" style={styles.skipBold}>{DEFAULT_PREFERENCES.notificationCountPerDay}/day</Text></Text>
+          <Text variant="bodySmall" style={styles.skipItem}>Reminder spacing: <Text variant="bodySmall" style={styles.skipBold}>{DEFAULT_PREFERENCES.notificationMinGapMinutes} min</Text></Text>
           <Text variant="bodySmall" style={styles.skipItem}>Quiet hours: <Text variant="bodySmall" style={styles.skipBold}>{formatTime12(DEFAULT_PREFERENCES.quietHoursStart)} - {formatTime12(DEFAULT_PREFERENCES.quietHoursEnd)}</Text></Text>
           <Text variant="bodySmall" style={styles.skipItem}>Notify: <Text variant="bodySmall" style={styles.skipBold}>{notifyLabel('gap')}</Text></Text>
         </View>

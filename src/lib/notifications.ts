@@ -3,13 +3,22 @@ import * as Device from 'expo-device';
 import Constants from 'expo-constants';
 import { Platform } from 'react-native';
 import { NudgePlan, Preferences } from './types';
-import { parseISO, addMinutes } from 'date-fns';
+import { parseISO, subMinutes, isBefore } from 'date-fns';
 
 const isExpoGo =
   Constants.executionEnvironment === 'storeClient' ||
   Constants.appOwnership === 'expo';
 
-export const isNotificationsSupported = !isExpoGo;
+const hasNativeNotificationApis =
+  typeof Notifications.scheduleNotificationAsync === 'function' &&
+  typeof Notifications.cancelAllScheduledNotificationsAsync === 'function' &&
+  typeof Notifications.addNotificationResponseReceivedListener === 'function' &&
+  typeof Notifications.addNotificationReceivedListener === 'function';
+
+export const isNotificationsSupported =
+  Platform.OS !== 'web' &&
+  !isExpoGo &&
+  hasNativeNotificationApis;
 
 if (isNotificationsSupported) {
   Notifications.setNotificationHandler({
@@ -25,7 +34,7 @@ if (isNotificationsSupported) {
 
 const noopSubscription: Notifications.Subscription = {
   remove: () => {
-    // no-op in Expo Go
+    // no-op when notifications are unavailable (web / Expo Go)
   },
 };
 
@@ -68,7 +77,7 @@ export const notificationService = {
    * Respects the user's whenToNotify preference and grace period.
    *
    * - "now" : schedule at walkStart (gap start + buffer + grace)
-   * - "delay": schedule at walkStart + notifyDelayMinutes
+   * - "delay": schedule notifyDelayMinutes before walkStart (clamped to gap start)
    * - "next_gap": caller should handle; this just schedules at walkStart
    */
   async scheduleNudge(plan: NudgePlan, prefs?: Preferences): Promise<string | null> {
@@ -77,27 +86,31 @@ export const notificationService = {
     try {
       let notifyTime = parseISO(plan.walkStart);
 
-      // Apply "delay" if preference is set
+      // Apply "delay" as "minutes before walk start", never before gap start.
       if (prefs?.whenToNotify === 'delay') {
-        notifyTime = addMinutes(notifyTime, prefs.notifyDelayMinutes ?? 5);
+        notifyTime = subMinutes(notifyTime, prefs.notifyDelayMinutes ?? 5);
+        const gapStart = parseISO(plan.gapStart);
+        if (isBefore(notifyTime, gapStart)) {
+          notifyTime = gapStart;
+        }
       }
 
       const now = new Date();
       if (notifyTime <= now) return null;
 
-      const gracePeriod = prefs?.gracePeriodMinutes ?? 2;
-      const bodyText = gracePeriod > 0
-        ? `You have ~${plan.suggestedDurationMinutes} min free. Walk starts in ${gracePeriod} min!`
+      const walkStart = parseISO(plan.walkStart);
+      const minutesUntilWalk = Math.max(0, Math.round((walkStart.getTime() - notifyTime.getTime()) / 60000));
+      const bodyText = minutesUntilWalk > 0
+        ? `You have ~${plan.suggestedDurationMinutes} min free. Walk starts in ${minutesUntilWalk} min.`
         : `You have ~${plan.suggestedDurationMinutes} min free. Want a quick walk?`;
 
       const notificationId = await Notifications.scheduleNotificationAsync({
         content: {
-          title: 'Gap time! 🚶',
+          title: 'Gap time! \uD83D\uDEB6',
           body: bodyText,
-          data: { 
+          data: {
             planId: plan.id,
             type: 'walk_nudge',
-            gracePeriodMinutes: gracePeriod,
           },
           sound: true,
         },
@@ -161,7 +174,7 @@ export const notificationService = {
     if (!isNotificationsSupported) return;
     await Notifications.scheduleNotificationAsync({
       content: {
-        title: 'Time for a walk! 🚶',
+        title: 'Time for a walk! \uD83D\uDEB6',
         body: `You have ${durationMinutes} min available. Tap to start your micro walk.`,
         data: { planId, type: 'walk_nudge' },
         sound: true,

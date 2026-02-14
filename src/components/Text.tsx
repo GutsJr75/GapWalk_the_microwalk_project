@@ -3,6 +3,7 @@ import { Text as RNText, StyleSheet, TextStyle, Platform, StyleProp } from 'reac
 import { theme } from '../theme';
 import { useAppStore } from '../store';
 import { getThemePalette } from '../theme/palette';
+import { AppLanguage, translateLiteral } from '../lib/i18n';
 
 interface TextProps {
   children: React.ReactNode;
@@ -27,7 +28,7 @@ export const Text: React.FC<TextProps> = ({
   style,
   numberOfLines,
 }) => {
-  const { themeMode } = useAppStore();
+  const { themeMode, language } = useAppStore();
   const palette = getThemePalette(themeMode);
 
   const resolvedColor =
@@ -46,6 +47,11 @@ export const Text: React.FC<TextProps> = ({
     return [style, { color: mappedInlineColor }];
   }, [style, themeMode]);
 
+  const localizedChildren = React.useMemo(
+    () => localizeNode(children, language),
+    [children, language]
+  );
+
   return (
     <RNText
       style={[
@@ -61,9 +67,28 @@ export const Text: React.FC<TextProps> = ({
       ]}
       numberOfLines={numberOfLines}
     >
-      {children}
+      {localizedChildren}
     </RNText>
   );
+};
+
+const localizeNode = (node: React.ReactNode, language: AppLanguage): React.ReactNode => {
+  if (typeof node === 'string') {
+    return translateLiteral(node, language);
+  }
+
+  if (Array.isArray(node)) {
+    return node.map((child) => localizeNode(child, language));
+  }
+
+  if (React.isValidElement(node) && node.props?.children) {
+    return React.cloneElement(node as React.ReactElement<any>, {
+      ...node.props,
+      children: localizeNode(node.props.children, language),
+    });
+  }
+
+  return node;
 };
 
 const styles = StyleSheet.create({

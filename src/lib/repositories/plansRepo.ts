@@ -90,6 +90,37 @@ export const plansRepo = {
       createdAt: row.created_at,
     }));
   },
+
+  async getByDate(date: string): Promise<NudgePlan[]> {
+    const db = await getDatabase();
+
+    const rows = await db.getAllAsync<{
+      id: string;
+      date: string;
+      gap_start: string;
+      gap_end: string;
+      walk_start: string;
+      suggested_duration_minutes: number;
+      status: string;
+      reason: string | null;
+      created_at: string;
+    }>(
+      'SELECT * FROM nudge_plans WHERE date = ? ORDER BY walk_start ASC',
+      [date]
+    );
+
+    return rows.map(row => ({
+      id: row.id,
+      date: row.date,
+      gapStart: row.gap_start,
+      gapEnd: row.gap_end,
+      walkStart: row.walk_start,
+      suggestedDurationMinutes: row.suggested_duration_minutes,
+      status: row.status as NudgePlanStatus,
+      reason: row.reason || undefined,
+      createdAt: row.created_at,
+    }));
+  },
   
   async getUpcomingPlans(limit = 3): Promise<NudgePlan[]> {
     const db = await getDatabase();

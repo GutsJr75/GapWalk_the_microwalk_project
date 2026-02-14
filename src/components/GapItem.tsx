@@ -2,51 +2,71 @@ import React from 'react';
 import { View, StyleSheet, TouchableOpacity } from 'react-native';
 import { Text } from './Text';
 import { theme } from '../theme';
+import { useAppStore } from '../store';
+import { useThemePalette } from '../theme/palette';
 
 interface GapItemProps {
-  /** Time range when gap is available (e.g. "10:00–11:59 PM") */
+  /** Time range when gap is available (e.g. "3:00 PM - 7:00 PM") */
   timeRange: string;
-  /** Distributed microwalk minutes for this gap (based on preferences & notification count) */
+  /** Exact suggested walk window (e.g. "Walk: 3:05 PM - 3:17 PM") */
+  walkWindowLabel: string;
+  /** Exact notification timing for this opportunity */
+  notifyLabel: string;
+  /** Suggested walk minutes for this opportunity */
   duration: number;
-  /** Number of walk opportunities (sessions) in this time range */
-  opportunities?: number;
   /** Minutes already walked in this range */
   usedMinutes?: number;
-  onSkip: () => void;
-  /** When present, shows "Notify Me" button to send a walk reminder notification */
-  onNotifyMe?: () => void;
+  /** Cancel this opportunity and move to the next best one */
+  onCancel: () => void;
 }
 
 export const GapItem: React.FC<GapItemProps> = ({
   timeRange,
+  walkWindowLabel,
+  notifyLabel,
   duration,
-  opportunities = 1,
   usedMinutes = 0,
-  onSkip,
-  onNotifyMe,
+  onCancel,
 }) => {
+  const { themeMode } = useAppStore();
+  const isDark = themeMode === 'dark';
+  const palette = useThemePalette();
+
   const remaining = Math.max(0, duration - usedMinutes);
   const pct = duration > 0 ? Math.min(1, usedMinutes / duration) : 0;
 
+  const containerTheme = {
+    backgroundColor: palette.bgSurfaceElevated,
+    borderColor: palette.borderSoft,
+  };
+
+  const badgeTheme = {
+    backgroundColor: isDark ? 'rgba(46,233,166,0.12)' : 'rgba(46,233,166,0.2)',
+  };
+
+  const barTrackTheme = {
+    backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(15,23,42,0.14)',
+  };
+
+  const cancelBtnTheme = {
+    backgroundColor: isDark ? 'rgba(239,68,68,0.1)' : 'rgba(239,68,68,0.14)',
+  };
+
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, containerTheme]}>
       <View style={styles.left}>
         <Text variant="body" style={styles.time}>{timeRange}</Text>
-        <Text variant="muted" style={styles.gapLabel}>Gap available in your schedule</Text>
+        <Text variant="muted" style={styles.gapLabel}>{walkWindowLabel}</Text>
+        <Text variant="muted" style={styles.notifyLabel}>{notifyLabel}</Text>
         <View style={styles.meta}>
-          <View style={styles.badge}>
+          <View style={[styles.badge, badgeTheme]}>
             <Text variant="bodySmall" style={styles.badgeText}>
-              {remaining} min for microwalks
+              {remaining} min planned
             </Text>
           </View>
-          {opportunities > 1 && (
-            <Text variant="muted" style={styles.oppText}>
-              {opportunities} sessions
-            </Text>
-          )}
         </View>
 
-        <View style={styles.barTrack}>
+        <View style={[styles.barTrack, barTrackTheme]}>
           <View style={[styles.barFill, { width: `${pct * 100}%` }]} />
         </View>
         <Text variant="muted" style={styles.barLabel}>
@@ -55,13 +75,8 @@ export const GapItem: React.FC<GapItemProps> = ({
       </View>
 
       <View style={styles.actions}>
-        {onNotifyMe && (
-          <TouchableOpacity onPress={onNotifyMe} hitSlop={8} style={styles.notifyBtn}>
-            <Text variant="bodySmall" style={styles.notifyText}>Notify Me</Text>
-          </TouchableOpacity>
-        )}
-        <TouchableOpacity onPress={onSkip} hitSlop={8} style={styles.skipBtn}>
-          <Text variant="bodySmall" style={styles.skipText}>Skip</Text>
+        <TouchableOpacity onPress={onCancel} hitSlop={8} style={[styles.cancelBtn, cancelBtnTheme]}>
+          <Text variant="bodySmall" style={styles.cancelText}>Cancel</Text>
         </TouchableOpacity>
       </View>
     </View>
@@ -82,8 +97,9 @@ const styles = StyleSheet.create({
   },
   left: { flex: 1 },
   time: { fontWeight: theme.fontWeight.semibold, marginBottom: 2 },
-  gapLabel: { fontSize: theme.fontSize.xs, marginBottom: 6 },
-  meta: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 },
+  gapLabel: { fontSize: theme.fontSize.xs, marginBottom: 2 },
+  notifyLabel: { fontSize: theme.fontSize.xs, marginBottom: 6 },
+  meta: { flexDirection: 'row', alignItems: 'center', marginBottom: 8 },
   badge: {
     backgroundColor: 'rgba(46,233,166,0.12)',
     borderRadius: 6,
@@ -93,9 +109,6 @@ const styles = StyleSheet.create({
   badgeText: {
     color: theme.colors.accentPrimary,
     fontWeight: theme.fontWeight.medium,
-    fontSize: theme.fontSize.xs,
-  },
-  oppText: {
     fontSize: theme.fontSize.xs,
   },
   barTrack: {
@@ -113,24 +126,14 @@ const styles = StyleSheet.create({
   barLabel: {
     fontSize: 11,
   },
-  actions: { gap: 6, alignItems: 'flex-end', marginLeft: 10, paddingTop: 2 },
-  notifyBtn: {
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-    borderRadius: theme.borderRadius.sm,
-    backgroundColor: 'rgba(46,233,166,0.15)',
-  },
-  notifyText: {
-    color: theme.colors.accentPrimary,
-    fontWeight: theme.fontWeight.semibold,
-  },
-  skipBtn: {
+  actions: { alignItems: 'flex-end', marginLeft: 10, paddingTop: 2 },
+  cancelBtn: {
     paddingVertical: 6,
     paddingHorizontal: 12,
     borderRadius: theme.borderRadius.sm,
     backgroundColor: 'rgba(239,68,68,0.1)',
   },
-  skipText: {
+  cancelText: {
     color: theme.colors.error,
     fontWeight: theme.fontWeight.medium,
   },

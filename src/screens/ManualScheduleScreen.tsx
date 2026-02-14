@@ -18,10 +18,13 @@ import { Text } from '../components/Text';
 import { Button } from '../components/Button';
 import { Modal } from '../components/Modal';
 import { theme } from '../theme';
+import { getThemePalette } from '../theme/palette';
 import { ManualScheduleEntry } from '../lib/types';
 import { manualScheduleRepo } from '../lib/repositories/manualScheduleRepo';
 import { eventsRepo } from '../lib/repositories/eventsRepo';
+import { plansRepo } from '../lib/repositories/plansRepo';
 import { scheduleSourceRepo } from '../lib/repositories/scheduleSourceRepo';
+import { syncNudgePlansForCurrentSchedule } from '../lib/scheduleSync';
 import { useAppStore } from '../store';
 import { addDays, setHours, setMinutes, startOfDay } from 'date-fns';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -29,7 +32,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 type Props = NativeStackScreenProps<RootStackParamList, 'ManualSchedule'>;
 const DAY_TAB_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] as const;
 const DAY_FULL_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'] as const;
-// 6:00 AM to next day 6:00 AM = 24 hours = 48 × 30-min slots
+// 6:00 AM to next day 6:00 AM = 24 hours = 48 x 30-min slots
 const GRID_START_MIN = 6 * 60;   // 6:00 AM
 const GRID_END_MIN = 6 * 60 + 24 * 60;   // next day 6:00 AM (1800)
 const SLOT_MINUTES = 30;
@@ -124,6 +127,7 @@ interface TwoDigitTimeInputProps {
   onBlurNormalize: () => void;
   placeholder: string;
   style: StyleProp<TextStyle>;
+  placeholderTextColor?: string;
 }
 
 const TwoDigitTimeInput: React.FC<TwoDigitTimeInputProps> = ({
@@ -133,19 +137,25 @@ const TwoDigitTimeInput: React.FC<TwoDigitTimeInputProps> = ({
   onBlurNormalize,
   placeholder,
   style,
-}) => (
-  <TextInput
-    style={style}
-    value={value}
-    onChangeText={(nextText) => onChange(normalizeTyping(mode, nextText))}
-    onBlur={onBlurNormalize}
-    keyboardType="number-pad"
-    maxLength={2}
-    placeholder={placeholder}
-    placeholderTextColor={theme.colors.textMuted}
-    selectTextOnFocus
-  />
-);
+  placeholderTextColor,
+}) => {
+  const { themeMode } = useAppStore();
+  const palette = getThemePalette(themeMode);
+
+  return (
+    <TextInput
+      style={style}
+      value={value}
+      onChangeText={(nextText) => onChange(normalizeTyping(mode, nextText))}
+      onBlur={onBlurNormalize}
+      keyboardType="number-pad"
+      maxLength={2}
+      placeholder={placeholder}
+      placeholderTextColor={placeholderTextColor ?? palette.textMuted}
+      selectTextOnFocus
+    />
+  );
+};
 
 interface TemplateEvent {
   id: string;
@@ -177,10 +187,28 @@ const createEmptyEntriesByDay = (): Record<number, TemplateEvent[]> => ({
   6: [],
 });
 
-export const ManualScheduleScreen: React.FC<Props> = ({ navigation }) => {
+const buildScheduleSignature = (entriesByDay: Record<number, TemplateEvent[]>): string => {
+  const normalized = [0, 1, 2, 3, 4, 5, 6].map((day) => {
+    const items = [...(entriesByDay[day] ?? [])]
+      .map((e) => ({ title: e.title.trim(), startTime: e.startTime, endTime: e.endTime }))
+      .sort((a, b) => {
+        if (a.startTime !== b.startTime) return a.startTime.localeCompare(b.startTime);
+        if (a.endTime !== b.endTime) return a.endTime.localeCompare(b.endTime);
+        return a.title.localeCompare(b.title);
+      });
+    return { day, items };
+  });
+  return JSON.stringify(normalized);
+};
+
+export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => {
   const today = new Date();
   const todayIndex = Number.isFinite(today.getDay()) ? today.getDay() : 1;
+  const manageMode = !!route.params?.manageMode;
+  const importedFilename = route.params?.importedFilename?.trim();
+  const usingIcsTemplate = !!importedFilename;
   const [entriesByDay, setEntriesByDay] = useState<Record<number, TemplateEvent[]>>(createEmptyEntriesByDay());
+  const [initialSignature, setInitialSignature] = useState<string>(buildScheduleSignature(createEmptyEntriesByDay()));
   const [showAdd, setShowAdd] = useState(false);
   const [editingEventId, setEditingEventId] = useState<string | null>(null);
   const [savingDone, setSavingDone] = useState(false);
@@ -200,7 +228,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation }) => {
   });
   const [hoveredSlot, setHoveredSlot] = useState<number | null>(null);
   const gridScrollRef = useRef<ScrollView>(null);
-  const { setScheduleSource } = useAppStore();
+  const { setScheduleSource, setUpcomingPlans, preferences, themeMode } = useAppStore();
 
   // Hide scrollbar (web) and auto-scroll to 8:00 AM on mount
   useEffect(() => {
@@ -238,31 +266,90 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation }) => {
       const loadSavedTemplate = async () => {
         try {
           const saved = await manualScheduleRepo.getAll();
-          if (!active || saved.length === 0) return;
           const grouped = createEmptyEntriesByDay();
-          for (const entry of saved) {
-            if (entry.dayOfWeek < 0 || entry.dayOfWeek > 6) continue;
-            grouped[entry.dayOfWeek] = [
-              ...grouped[entry.dayOfWeek],
-              {
-                id: entry.id,
-                title: entry.title,
-                startTime: entry.startTime,
-                endTime: entry.endTime,
-              },
-            ];
+          if (saved.length > 0) {
+            for (const entry of saved) {
+              if (entry.dayOfWeek < 0 || entry.dayOfWeek > 6) continue;
+              grouped[entry.dayOfWeek] = [
+                ...grouped[entry.dayOfWeek],
+                {
+                  id: entry.id,
+                  title: entry.title,
+                  startTime: entry.startTime,
+                  endTime: entry.endTime,
+                },
+              ];
+            }
           }
+          if (!active) return;
           setEntriesByDay(grouped);
+          setInitialSignature(buildScheduleSignature(grouped));
         } catch (error) {
+          if (!active) return;
+          const empty = createEmptyEntriesByDay();
+          setEntriesByDay(empty);
+          setInitialSignature(buildScheduleSignature(empty));
           console.error('Failed to load saved manual schedule:', error);
         }
       };
-      loadSavedTemplate();
+      void loadSavedTemplate();
       return () => {
         active = false;
       };
     }, [])
   );
+
+  const currentSignature = useMemo(() => buildScheduleSignature(entriesByDay), [entriesByDay]);
+  const hasUnsavedChanges = currentSignature !== initialSignature;
+
+  const showMessage = (title: string, message: string, onAcknowledge?: () => void) => {
+    if (Platform.OS === 'web' && typeof (globalThis as any).alert === 'function') {
+      (globalThis as any).alert(`${title}\n\n${message}`);
+      onAcknowledge?.();
+      return;
+    }
+    if (onAcknowledge) {
+      Alert.alert(title, message, [{ text: 'OK', onPress: onAcknowledge }]);
+      return;
+    }
+    Alert.alert(title, message);
+  };
+
+  const confirmDiscardChanges = (onDiscard: () => void) => {
+    if (!hasUnsavedChanges) {
+      onDiscard();
+      return;
+    }
+    const message = 'Discard unsaved schedule changes?';
+    if (Platform.OS === 'web' && typeof (globalThis as any).confirm === 'function') {
+      const ok = (globalThis as any).confirm(message);
+      if (ok) onDiscard();
+      return;
+    }
+    Alert.alert(
+      'Discard changes?',
+      message,
+      [
+        { text: 'Keep editing', style: 'cancel' },
+        { text: 'Discard', style: 'destructive', onPress: onDiscard },
+      ]
+    );
+  };
+
+  const exitManualScreen = () => {
+    const goOut = () => {
+      if (manageMode) {
+        navigation.navigate('ScheduleOverview');
+        return;
+      }
+      if (navigation.canGoBack()) {
+        navigation.goBack();
+        return;
+      }
+      navigation.navigate('ScheduleSetup');
+    };
+    confirmDiscardChanges(goOut);
+  };
 
   const to24Hour = (hourText: string, minuteText: string, period: 'AM' | 'PM'): string | null => {
     if (!isValidHour(hourText) || !isValidMinute(minuteText)) return null;
@@ -459,13 +546,8 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation }) => {
     return `${hour12}:${String(m).padStart(2, '0')} ${period}`;
   };
 
-  const handleDone = async () => {
+  const performSave = async () => {
     if (savingDone) return;
-    const total = Object.values(entriesByDay).reduce((sum, arr) => sum + arr.length, 0);
-    if (total === 0) {
-      Alert.alert('Empty', 'Add at least one event.');
-      return;
-    }
     setSaveError(null);
     setSavingDone(true);
 
@@ -479,6 +561,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation }) => {
       }))
     );
 
+    const eventSource: 'ics' | 'manual' = usingIcsTemplate ? 'ics' : 'manual';
     const base = startOfDay(new Date());
     const events = Array.from({ length: 14 }, (_, offset) => {
       const date = addDays(base, offset);
@@ -492,39 +575,90 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation }) => {
           title: e.title,
           start: setMinutes(setHours(date, sh), sm).toISOString(),
           end: setMinutes(setHours(date, eh), em).toISOString(),
-          source: 'manual' as const,
+          source: eventSource,
           isAllDay: false,
           createdAt: new Date().toISOString(),
         };
       });
     }).flat();
 
-    // Attempt the save up to 2 times (retry once on failure).
+    // Attempt save up to 2 times (retry once on failure).
     let lastError: unknown = null;
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
         await manualScheduleRepo.deleteAll();
         await manualScheduleRepo.saveMany(weeklyTemplate);
-        await eventsRepo.deleteBySource('manual');
+        await eventsRepo.deleteAll();
         await eventsRepo.saveMany(events);
-        const src = { type: 'manual' as const, lastImportedAt: new Date().toISOString() };
+        const src = usingIcsTemplate
+          ? { type: 'ics' as const, filename: importedFilename, lastImportedAt: new Date().toISOString() }
+          : { type: 'manual' as const, lastImportedAt: new Date().toISOString() };
         await scheduleSourceRepo.save(src);
         setScheduleSource(src);
+
+        await syncNudgePlansForCurrentSchedule(preferences);
+        const refreshedUpcoming = await plansRepo.getUpcomingPlans(20);
+        setUpcomingPlans(refreshedUpcoming);
+
+        setInitialSignature(currentSignature);
         setSavingDone(false);
+
+        if (manageMode) {
+          showMessage(
+            'Schedule saved',
+            'Your schedule was updated and walking opportunities were synced.',
+            exitManualScreen
+          );
+          return;
+        }
+
         navigation.navigate('Preferences', {});
-        return; // success
+        return;
       } catch (err) {
         lastError = err;
         console.error(`Save schedule attempt ${attempt + 1} failed:`, err);
-        // Small delay before retry
         if (attempt === 0) await new Promise((r) => setTimeout(r, 500));
       }
     }
 
-    // Both attempts failed — show actual error info.
     const msg = lastError instanceof Error ? lastError.message : String(lastError);
     setSaveError(`Save failed: ${msg}`);
     setSavingDone(false);
+  };
+
+  const handleDone = () => {
+    if (savingDone) return;
+    const total = Object.values(entriesByDay).reduce((sum, arr) => sum + arr.length, 0);
+    if (total === 0) {
+      showMessage('Empty', 'Add at least one event.');
+      return;
+    }
+    if (manageMode && !hasUnsavedChanges) {
+      showMessage(
+        'No changes',
+        'No changes were detected. Your existing imported schedule is already active.',
+        exitManualScreen
+      );
+      return;
+    }
+
+    const message = 'Save this schedule and refresh walking opportunities?';
+    if (Platform.OS === 'web' && typeof (globalThis as any).confirm === 'function') {
+      const ok = (globalThis as any).confirm(message);
+      if (ok) {
+        void performSave();
+      }
+      return;
+    }
+
+    Alert.alert(
+      'Save schedule?',
+      message,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Save', onPress: () => { void performSave(); } },
+      ]
+    );
   };
 
   const entriesByDaySorted = useMemo(() => {
@@ -537,31 +671,53 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation }) => {
   }, [entriesByDay]);
 
   const handleBack = () => {
-    if (navigation.canGoBack()) {
-      navigation.goBack();
-      return;
-    }
-    navigation.navigate('ScheduleSetup');
+    exitManualScreen();
   };
 
   const { width: winWidth, height: winHeight } = useWindowDimensions();
   const gridBodyMaxHeight = Math.max(320, winHeight - 220);
   const selectedDayEvents = entriesByDaySorted[selectedDay] ?? [];
+  const palette = getThemePalette(themeMode);
+  const isDark = themeMode === 'dark';
+  const gridLineStrong = isDark ? 'rgba(255,255,255,0.1)' : palette.borderStrong;
+  const gridLineSoft = isDark ? 'rgba(255,255,255,0.06)' : palette.borderSoft;
+  const gridAltBg = isDark ? 'rgba(255,255,255,0.02)' : 'rgba(15,23,42,0.03)';
+  const eventBorderColor = isDark ? 'rgba(0,0,0,0.08)' : 'rgba(15,23,42,0.2)';
+  const themedInput = {
+    backgroundColor: isDark ? theme.colors.bgApp : palette.bgSurfaceElevated,
+    borderColor: isDark ? 'rgba(255,255,255,0.08)' : palette.borderStrong,
+    borderWidth: 1,
+    color: palette.textPrimary,
+  };
+  const themedChip = {
+    backgroundColor: isDark ? theme.colors.bgApp : palette.bgSurfaceElevated,
+    borderColor: isDark ? 'rgba(255,255,255,0.1)' : palette.borderStrong,
+    borderWidth: 1,
+  };
 
   return (
-    <SafeAreaView style={styles.safe}>
+    <SafeAreaView style={[styles.safe, { backgroundColor: palette.bgApp }]}>
       <View style={styles.header}>
         <View style={styles.headerTopRow}>
           <TouchableOpacity onPress={handleBack} style={styles.backBtn} activeOpacity={0.8}>
             <Text variant="bodySmall" style={styles.backText}>Back</Text>
           </TouchableOpacity>
         </View>
-        <Text variant="title" style={styles.title}>Set up your schedule</Text>
-        <Text variant="muted" style={styles.sub}>Build your weekly schedule</Text>
+        <Text variant="title" style={styles.title}>{manageMode ? 'Update your schedule' : 'Set up your schedule'}</Text>
+        <Text variant="muted" style={styles.sub}>
+          {manageMode ? 'Edit and save to refresh walking opportunities.' : 'Build your weekly schedule'}
+        </Text>
+        {usingIcsTemplate && (
+          <View style={styles.icsBadge}>
+            <Text variant="bodySmall" style={styles.icsBadgeText} numberOfLines={1}>
+              ICS file: {importedFilename}
+            </Text>
+          </View>
+        )}
       </View>
 
       {/* Day tabs (Google Calendar style: select one day) */}
-      <View style={styles.dayTabsWrap}>
+      <View style={[styles.dayTabsWrap, { borderBottomColor: gridLineSoft }]}>
         {DAY_TAB_LABELS.map((d, idx) => {
           const active = idx === selectedDay;
           return (
@@ -579,7 +735,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation }) => {
 
       {/* Day view: scrollable time grid for selected day only */}
       <View style={[styles.gridContainer, { paddingHorizontal: GRID_PADDING }]}>
-        <View style={styles.gridWrap}>
+        <View style={[styles.gridWrap, { backgroundColor: palette.bgSurface, borderColor: gridLineStrong, shadowColor: palette.shadow, shadowOpacity: isDark ? 0.25 : 0.12 }]}>
           <ScrollView
             ref={gridScrollRef}
             style={[styles.gridBodyScroll, { maxHeight: gridBodyMaxHeight }]}
@@ -587,14 +743,14 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation }) => {
             showsVerticalScrollIndicator={false}
           >
             <View style={styles.gridBodyRow}>
-              <View style={styles.gridTimeCol}>
+              <View style={[styles.gridTimeCol, { backgroundColor: palette.bgSurface, borderRightColor: gridLineStrong }]}>
                 {SLOT_INDICES.map((idx) => (
                   <View
                     key={idx}
                     style={[
                       styles.gridTimeSlot,
                       idx % 2 === 1 && styles.gridTimeSlotHalf,
-                      idx % 2 === 0 && styles.gridHourLine,
+                      idx % 2 === 0 && [styles.gridHourLine, { borderTopColor: gridLineStrong }],
                     ]}
                   >
                     {idx % 2 === 0 ? (
@@ -602,7 +758,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation }) => {
                         {FULL_HOUR_LABELS[idx / 2]}
                       </Text>
                     ) : (
-                      <View style={styles.gridTimeHalfLine} />
+                      <View style={[styles.gridTimeHalfLine, { borderTopColor: gridLineSoft }]} />
                     )}
                   </View>
                 ))}
@@ -614,9 +770,9 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation }) => {
                     <View
                       key={slotIndex}
                       style={[
-                        styles.gridSlot,
-                        slotIndex % 2 === 1 && styles.gridSlotAlt,
-                        slotIndex % 2 === 0 && styles.gridSlotHourBorder,
+                        styles.gridSlot, { borderBottomColor: gridLineSoft },
+                        slotIndex % 2 === 1 && [styles.gridSlotAlt, { backgroundColor: gridAltBg }],
+                        slotIndex % 2 === 0 && [styles.gridSlotHourBorder, { borderBottomColor: gridLineStrong }],
                         isHovered && styles.gridSlotHover,
                       ]}
                       {...(Platform.OS === 'web' && {
@@ -648,13 +804,13 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation }) => {
                     return (
                       <TouchableOpacity
                         key={ev.id}
-                        style={[styles.gridEventBlock, { top, height: finalHeight, paddingVertical: paddingV }]}
+                        style={[styles.gridEventBlock, { top, height: finalHeight, paddingVertical: paddingV, borderColor: eventBorderColor }]}
                         onPress={() => openModalFromEvent(ev, selectedDay)}
                         activeOpacity={0.9}
                       >
                         <Text numberOfLines={finalHeight < 80 ? 1 : 2} style={StyleSheet.flatten([styles.gridEventTitle, { fontSize: titleFontSize }])}>{ev.title}</Text>
                         <Text numberOfLines={1} style={StyleSheet.flatten([styles.gridEventTime, { fontSize: timeFontSize }])}>
-                          {formatTime12(ev.startTime)} – {formatTime12(ev.endTime)}
+                          {formatTime12(ev.startTime)} - {formatTime12(ev.endTime)}
                         </Text>
                       </TouchableOpacity>
                     );
@@ -668,7 +824,26 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation }) => {
 
       <View style={[styles.footer, { paddingHorizontal: GRID_PADDING }]}>
         {!!saveError && <Text variant="muted" style={styles.saveError}>{saveError}</Text>}
-        <Button title="Done" onPress={handleDone} full loading={savingDone} disabled={savingDone} />
+        {manageMode ? (
+          <View style={styles.footerActions}>
+            <Button
+              title="Cancel"
+              variant="secondary"
+              onPress={handleBack}
+              style={styles.footerBtn}
+              disabled={savingDone}
+            />
+            <Button
+              title="Save"
+              onPress={handleDone}
+              style={styles.footerBtn}
+              loading={savingDone}
+              disabled={savingDone}
+            />
+          </View>
+        ) : (
+          <Button title="Done" onPress={handleDone} full loading={savingDone} disabled={savingDone} />
+        )}
         <Text variant="muted" style={styles.privacy}>Your schedule stays private. Privacy is our utmost importance.</Text>
       </View>
 
@@ -680,11 +855,11 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation }) => {
         <View style={styles.mForm}>
           <Text variant="muted">Title</Text>
           <TextInput
-            style={styles.input}
+            style={[styles.input, themedInput]}
             value={form.title}
             onChangeText={(t) => setForm((prev) => ({ ...prev, title: t }))}
             placeholder="e.g. Work, Class"
-            placeholderTextColor={theme.colors.textMuted}
+            placeholderTextColor={palette.textMuted}
           />
 
           <Text variant="muted">Days (select one or more)</Text>
@@ -692,7 +867,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation }) => {
             {DAY_TAB_LABELS.map((d, idx) => (
               <TouchableOpacity
                 key={d}
-                style={[styles.repeatDayChip, form.repeatDays.includes(idx) && styles.repeatDayChipActive]}
+                style={[styles.repeatDayChip, themedChip, form.repeatDays.includes(idx) && styles.repeatDayChipActive]}
                 onPress={() => toggleRepeatDay(idx)}
               >
                 <Text variant="bodySmall" style={StyleSheet.flatten([styles.repeatDayChipText, form.repeatDays.includes(idx) && styles.repeatDayChipTextActive])}>{d}</Text>
@@ -705,11 +880,11 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation }) => {
 
           <Text variant="muted">Description (optional)</Text>
           <TextInput
-            style={[styles.input, styles.inputMultiline]}
+            style={[styles.input, styles.inputMultiline, themedInput]}
             value={form.description}
             onChangeText={(t) => setForm((prev) => ({ ...prev, description: t }))}
             placeholder="Add a description"
-            placeholderTextColor={theme.colors.textMuted}
+            placeholderTextColor={palette.textMuted}
             multiline
             numberOfLines={2}
           />
@@ -721,7 +896,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation }) => {
                 <View style={styles.clockRow}>
                   <TwoDigitTimeInput
                     mode="hour"
-                    style={[styles.input, styles.timeInput]}
+                    style={[styles.input, styles.timeInput, themedInput]}
                     value={form.startHourRaw}
                     onChange={(value) => setForm((prev) => ({ ...prev, startHourRaw: value }))}
                     onBlurNormalize={() =>
@@ -735,7 +910,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation }) => {
                   <Text variant="body">:</Text>
                   <TwoDigitTimeInput
                     mode="minute"
-                    style={[styles.input, styles.timeInput]}
+                    style={[styles.input, styles.timeInput, themedInput]}
                     value={form.startMinuteRaw}
                     onChange={(value) => setForm((prev) => ({ ...prev, startMinuteRaw: value }))}
                     onBlurNormalize={() =>
@@ -751,7 +926,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation }) => {
                   {(['AM', 'PM'] as const).map((p) => (
                     <TouchableOpacity
                       key={`start-${p}`}
-                      style={[styles.periodBtn, form.startPeriod === p && styles.periodBtnActive]}
+                      style={[styles.periodBtn, themedChip, form.startPeriod === p && styles.periodBtnActive]}
                       onPress={() => setForm((prev) => ({ ...prev, startPeriod: p }))}
                     >
                       <Text variant="bodySmall" color={form.startPeriod === p ? theme.colors.bgApp : theme.colors.textPrimary}>{p}</Text>
@@ -767,7 +942,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation }) => {
                 <View style={styles.clockRow}>
                   <TwoDigitTimeInput
                     mode="hour"
-                    style={[styles.input, styles.timeInput]}
+                    style={[styles.input, styles.timeInput, themedInput]}
                     value={form.endHourRaw}
                     onChange={(value) => setForm((prev) => ({ ...prev, endHourRaw: value }))}
                     onBlurNormalize={() =>
@@ -781,7 +956,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation }) => {
                   <Text variant="body">:</Text>
                   <TwoDigitTimeInput
                     mode="minute"
-                    style={[styles.input, styles.timeInput]}
+                    style={[styles.input, styles.timeInput, themedInput]}
                     value={form.endMinuteRaw}
                     onChange={(value) => setForm((prev) => ({ ...prev, endMinuteRaw: value }))}
                     onBlurNormalize={() =>
@@ -797,7 +972,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation }) => {
                   {(['AM', 'PM'] as const).map((p) => (
                     <TouchableOpacity
                       key={`end-${p}`}
-                      style={[styles.periodBtn, form.endPeriod === p && styles.periodBtnActive]}
+                      style={[styles.periodBtn, themedChip, form.endPeriod === p && styles.periodBtnActive]}
                       onPress={() => setForm((prev) => ({ ...prev, endPeriod: p }))}
                     >
                       <Text variant="bodySmall" color={form.endPeriod === p ? theme.colors.bgApp : theme.colors.textPrimary}>{p}</Text>
@@ -854,6 +1029,20 @@ const styles = StyleSheet.create({
   sub: {
     textAlign: 'center',
     marginBottom: theme.spacing.md,
+  },
+  icsBadge: {
+    alignSelf: 'center',
+    maxWidth: '100%',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: theme.borderRadius.sm,
+    backgroundColor: 'rgba(46,233,166,0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(46,233,166,0.24)',
+  },
+  icsBadgeText: {
+    color: theme.colors.accentPrimary,
+    fontWeight: theme.fontWeight.medium,
   },
   dayTabsWrap: {
     flexDirection: 'row',
@@ -1037,6 +1226,13 @@ const styles = StyleSheet.create({
     alignSelf: 'center',
     width: '100%',
     maxWidth: theme.layout.contentMaxWidth,
+  },
+  footerActions: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  footerBtn: {
+    flex: 1,
   },
   privacy: { textAlign: 'center', marginTop: 12 },
   mForm: { gap: 12 },

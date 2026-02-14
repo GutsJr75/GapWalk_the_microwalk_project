@@ -21,8 +21,8 @@ import { SettingsScreen } from './src/screens/SettingsScreen';
 
 export type RootStackParamList = {
   Intro: undefined;
-  ScheduleSetup: undefined;
-  ManualSchedule: undefined;
+  ScheduleSetup: { manageMode?: boolean } | undefined;
+  ManualSchedule: { manageMode?: boolean; importedFilename?: string } | undefined;
   Preferences: { skipScheduleSource?: boolean };
   Dashboard: undefined;
   Walking: { planId?: string };

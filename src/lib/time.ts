@@ -88,6 +88,6 @@ export const timeUtils = {
   formatTimeRange(start: string, end: string): string {
     const startDate = parseISO(start);
     const endDate = parseISO(end);
-    return `${format(startDate, 'h:mm')}–${format(endDate, 'h:mm a')}`;
+    return `${format(startDate, 'h:mm a')} - ${format(endDate, 'h:mm a')}`;
   },
 };

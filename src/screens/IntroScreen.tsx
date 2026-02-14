@@ -7,12 +7,14 @@ import { Text } from '../components/Text';
 import { Button } from '../components/Button';
 import { theme } from '../theme';
 import { useAppStore } from '../store';
+import { useThemePalette } from '../theme/palette';
 import Svg, { Path } from 'react-native-svg';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Intro'>;
 
 export const IntroScreen: React.FC<Props> = ({ navigation }) => {
   const { hasSetPreferences } = useAppStore();
+  const palette = useThemePalette();
   const [showHowItWorks, setShowHowItWorks] = useState(false);
   const howAnim = useRef(new Animated.Value(0)).current;
   const { height: viewportHeight } = useWindowDimensions();
@@ -83,7 +85,7 @@ export const IntroScreen: React.FC<Props> = ({ navigation }) => {
               <Text variant="heading" style={styles.headingGap}>Gap</Text>
               <Text variant="heading" style={styles.headingWalk}>Walk</Text>
             </View>
-            <Text variant="body" color={theme.colors.textPrimary} style={styles.subtitle}>
+            <Text variant="body" style={styles.subtitle}>
               Busy schedule? No time to exercise? Turn your daily schedule gaps into short, realistic walks.
             </Text>
           </View>
@@ -92,36 +94,36 @@ export const IntroScreen: React.FC<Props> = ({ navigation }) => {
             <Text variant="title" style={styles.sectionTitle}>Why it works</Text>
 
             <View style={styles.feature}>
-              <View style={styles.iconCircle}>
+              <View style={[styles.iconCircle, { backgroundColor: palette.bgSurfaceElevated }]}>
                 <Text style={styles.iconEmoji}>{'\uD83D\uDCC5'}</Text>
               </View>
               <View style={styles.featureText}>
                 <Text variant="body" style={styles.featureTitle}>Fits real gaps</Text>
-                <Text variant="bodySmall" color={theme.colors.textPrimary}>
+                <Text variant="bodySmall">
                   GapWalk only sends you notifications during schedule gaps that actually exist between your commitments.
                 </Text>
               </View>
             </View>
 
             <View style={styles.feature}>
-              <View style={styles.iconCircle}>
+              <View style={[styles.iconCircle, { backgroundColor: palette.bgSurfaceElevated }]}>
                 <Text style={styles.iconEmoji}>{'\uD83D\uDEB6'}</Text>
               </View>
               <View style={styles.featureText}>
                 <Text variant="body" style={styles.featureTitle}>Small walks add up</Text>
-                <Text variant="bodySmall" color={theme.colors.textPrimary}>
+                <Text variant="bodySmall">
                   Micro-walks throughout the day contribute to your health without the pressure of long workouts.
                 </Text>
               </View>
             </View>
 
             <View style={styles.featureLast}>
-              <View style={styles.iconCircle}>
+              <View style={[styles.iconCircle, { backgroundColor: palette.bgSurfaceElevated }]}>
                 <Text style={styles.iconEmoji}>{'\uD83D\uDD14'}</Text>
               </View>
               <View style={styles.featureText}>
                 <Text variant="body" style={styles.featureTitle}>Smart reminders</Text>
-                <Text variant="bodySmall" color={theme.colors.textPrimary}>
+                <Text variant="bodySmall">
                   Get gentle notifications at the right moments - never during class, meetings, or quiet hours.
                 </Text>
               </View>
@@ -131,15 +133,31 @@ export const IntroScreen: React.FC<Props> = ({ navigation }) => {
           <View style={[styles.howSection, { marginTop: whyToHowGap }]}>
             <TouchableOpacity
               onPress={() => setShowHowItWorks((prev) => !prev)}
-              style={styles.howCard}
+              style={[
+                styles.howCard,
+                {
+                  backgroundColor: palette.bgSurfaceElevated,
+                  borderColor: palette.borderStrong,
+                },
+              ]}
               activeOpacity={0.8}
             >
-              <Text variant="body" color={theme.colors.textPrimary} style={styles.howLabel}>How it works</Text>
-              <Animated.View style={[styles.chevron, { transform: [{ rotate: chevronRotate }] }]}>
+              <Text variant="body" style={styles.howLabel}>How it works</Text>
+              <Animated.View
+                style={[
+                  styles.chevron,
+                  {
+                    transform: [{ rotate: chevronRotate }],
+                    backgroundColor: palette.bgSurface,
+                    borderColor: palette.borderSoft,
+                    shadowColor: palette.shadow,
+                  },
+                ]}
+              >
                 <Svg width={16} height={16} viewBox="0 0 24 24">
                   <Path
                     d="M6 9l6 6 6-6"
-                    stroke={theme.colors.textMuted}
+                    stroke={palette.textMuted}
                     strokeWidth={2}
                     strokeLinecap="round"
                     strokeLinejoin="round"
@@ -161,22 +179,30 @@ export const IntroScreen: React.FC<Props> = ({ navigation }) => {
               pointerEvents={showHowItWorks ? 'auto' : 'none'}
             >
               <Animated.View style={[styles.howDetailsInner, { transform: [{ translateY: detailsTranslateY }] }]}>
-                <View style={styles.howDetails}>
+                <View
+                  style={[
+                    styles.howDetails,
+                    {
+                      backgroundColor: palette.bgSurface,
+                      borderColor: palette.borderSoft,
+                    },
+                  ]}
+                >
                   <View style={styles.step}>
                     <Text variant="body" style={styles.stepNumber}>1</Text>
-                    <Text variant="bodySmall" color={theme.colors.textPrimary} style={styles.stepText}>
+                    <Text variant="bodySmall" style={styles.stepText}>
                       Add your weekly schedule or import a calendar file.
                     </Text>
                   </View>
                   <View style={styles.step}>
                     <Text variant="body" style={styles.stepNumber}>2</Text>
-                    <Text variant="bodySmall" color={theme.colors.textPrimary} style={styles.stepText}>
+                    <Text variant="bodySmall" style={styles.stepText}>
                       GapWalk finds free gaps between your events.
                     </Text>
                   </View>
                   <View style={styles.step}>
                     <Text variant="body" style={styles.stepNumber}>3</Text>
-                    <Text variant="bodySmall" color={theme.colors.textPrimary} style={styles.stepText}>
+                    <Text variant="bodySmall" style={styles.stepText}>
                       You get notified at the right moments for a quick walk.
                     </Text>
                   </View>
@@ -288,6 +314,7 @@ const styles = StyleSheet.create({
   howCard: {
     minHeight: 52,
     backgroundColor: theme.colors.bgSurfaceElevated,
+    borderWidth: 1,
     borderRadius: theme.borderRadius.lg,
     paddingVertical: 14,
     paddingHorizontal: 16,
@@ -357,5 +384,4 @@ const styles = StyleSheet.create({
     marginTop: 12,
   },
 });
-
 
