@@ -5,6 +5,10 @@ import { Platform } from 'react-native';
 import { NudgePlan, Preferences } from './types';
 import { parseISO, subMinutes, isBefore } from 'date-fns';
 
+export const WALK_NUDGE_CATEGORY_ID = 'walk_nudge_actions';
+export const WALK_NUDGE_ACTION_START = 'START_WALK';
+export const WALK_NUDGE_ACTION_SKIP = 'SKIP_GAP';
+
 const isExpoGo =
   Constants.executionEnvironment === 'storeClient' ||
   Constants.appOwnership === 'expo';
@@ -45,8 +49,9 @@ export const notificationService = {
   async requestPermissions(): Promise<boolean> {
     if (!isNotificationsSupported) return false;
 
-    if (!Device.isDevice) {
-      console.log('Must use physical device for notifications');
+    // iOS simulator does not support local push reliably; Android emulators can.
+    if (!Device.isDevice && Platform.OS === 'ios') {
+      console.log('Use a physical iOS device for notifications');
       return false;
     }
     
@@ -68,6 +73,24 @@ export const notificationService = {
         lightColor: '#6366F1',
       });
     }
+
+    await Notifications.setNotificationCategoryAsync(WALK_NUDGE_CATEGORY_ID, [
+      {
+        identifier: WALK_NUDGE_ACTION_START,
+        buttonTitle: 'Start now',
+        options: {
+          opensAppToForeground: true,
+        },
+      },
+      {
+        identifier: WALK_NUDGE_ACTION_SKIP,
+        buttonTitle: 'Maybe later',
+        options: {
+          opensAppToForeground: true,
+          isDestructive: true,
+        },
+      },
+    ]);
     
     return true;
   },
@@ -101,13 +124,14 @@ export const notificationService = {
       const walkStart = parseISO(plan.walkStart);
       const minutesUntilWalk = Math.max(0, Math.round((walkStart.getTime() - notifyTime.getTime()) / 60000));
       const bodyText = minutesUntilWalk > 0
-        ? `You have ~${plan.suggestedDurationMinutes} min free. Walk starts in ${minutesUntilWalk} min.`
-        : `You have ~${plan.suggestedDurationMinutes} min free. Want a quick walk?`;
+        ? `You've got about ${plan.suggestedDurationMinutes} free min. Best start is in ${minutesUntilWalk} min. Ready for a quick walk?`
+        : `You've got about ${plan.suggestedDurationMinutes} free min right now. Ready for a quick walk?`;
 
       const notificationId = await Notifications.scheduleNotificationAsync({
         content: {
-          title: 'Gap time! \uD83D\uDEB6',
+          title: 'You have a walking window \uD83D\uDEB6',
           body: bodyText,
+          categoryIdentifier: WALK_NUDGE_CATEGORY_ID,
           data: {
             planId: plan.id,
             type: 'walk_nudge',
@@ -116,7 +140,7 @@ export const notificationService = {
         },
         trigger: { 
           type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
-          seconds: Math.floor((notifyTime.getTime() - Date.now()) / 1000),
+          seconds: Math.max(1, Math.ceil((notifyTime.getTime() - Date.now()) / 1000)),
           repeats: false,
         },
       });
@@ -174,8 +198,9 @@ export const notificationService = {
     if (!isNotificationsSupported) return;
     await Notifications.scheduleNotificationAsync({
       content: {
-        title: 'Time for a walk! \uD83D\uDEB6',
-        body: `You have ${durationMinutes} min available. Tap to start your micro walk.`,
+        title: 'Quick walk opportunity \uD83D\uDEB6',
+        body: `You've got ${durationMinutes} free min right now. Ready for a quick walk?`,
+        categoryIdentifier: WALK_NUDGE_CATEGORY_ID,
         data: { planId, type: 'walk_nudge' },
         sound: true,
       },

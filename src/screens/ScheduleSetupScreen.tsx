@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, StyleSheet, Alert, ActivityIndicator, Platform } from 'react-native';
+import { View, StyleSheet, Alert, ActivityIndicator, Platform, LayoutAnimation, UIManager } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import * as AuthSession from 'expo-auth-session';
 import * as DocumentPicker from 'expo-document-picker';
@@ -8,13 +8,17 @@ import { Container } from '../components/Container';
 import { Text } from '../components/Text';
 import { Button } from '../components/Button';
 import { Card } from '../components/Card';
+import { AppIcon } from '../components/AppIcon';
+import { ScreenHeader } from '../components/ScreenHeader';
 import { theme } from '../theme';
 import { buildWeeklyTemplateFromIcsEvents, parseICSFile } from '../lib/ics';
+import { ManualScheduleEntry } from '../lib/types';
 import { eventsRepo } from '../lib/repositories/eventsRepo';
-import { manualScheduleRepo } from '../lib/repositories/manualScheduleRepo';
 import { plansRepo } from '../lib/repositories/plansRepo';
 import { scheduleSourceRepo } from '../lib/repositories/scheduleSourceRepo';
 import { syncNudgePlansForCurrentSchedule } from '../lib/scheduleSync';
+import { SAVE_CONFIRM_ACTION, SAVE_CONFIRM_MESSAGE, SAVE_CONFIRM_TITLE } from '../lib/confirmMessages';
+import { analyticsService } from '../lib/analytics';
 import { useAppStore } from '../store';
 import {
   googleCalendarService,
@@ -32,12 +36,17 @@ const discovery = {
   revocationEndpoint: 'https://oauth2.googleapis.com/revoke',
 };
 
+if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
+  UIManager.setLayoutAnimationEnabledExperimental(true);
+}
+
 export const ScheduleSetupScreen: React.FC<Props> = ({ navigation, route }) => {
   const [selectedOption, setSelectedOption] = useState<ScheduleOption>(null);
   const [loading, setLoading] = useState(false);
   const [syncStatus, setSyncStatus] = useState<string | null>(null);
   const { setScheduleSource, scheduleSource, preferences, setUpcomingPlans } = useAppStore();
   const manageMode = !!route.params?.manageMode;
+  const isE2E = process.env.EXPO_PUBLIC_E2E === '1';
 
   const exitScreen = () => {
     if (navigation.canGoBack()) {
@@ -52,7 +61,7 @@ export const ScheduleSetupScreen: React.FC<Props> = ({ navigation, route }) => {
       navigation.navigate('ManualSchedule', { manageMode: true });
       return;
     }
-    navigation.navigate('ManualSchedule');
+    navigation.navigate('ManualSchedule', { startWithEmpty: true });
   };
 
   const finishAfterSave = async () => {
@@ -126,11 +135,12 @@ export const ScheduleSetupScreen: React.FC<Props> = ({ navigation, route }) => {
 
   const toggle = (opt: ScheduleOption) => {
     if (opt === 'google') return; // Google Calendar is upcoming feature, not selectable
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
     setSelectedOption(selectedOption === opt ? null : opt);
   };
 
   const onGoogleCardPress = () => {
-    Alert.alert('Coming soon', 'Link Google Calendar will be available in a future update. Use Import or Input Manually for now.');
+    Alert.alert('Coming soon', 'Link Google Calendar will be available in a future update. Use Import or Input manually for now.');
   };
 
   /* ── Google Calendar sync ── */
@@ -146,7 +156,7 @@ export const ScheduleSetupScreen: React.FC<Props> = ({ navigation, route }) => {
           'No Events Found',
           'Your Google Calendar has no events in the next 14 days. You can add events manually instead.',
           [
-            { text: 'Input Manually', onPress: () => { setLoading(false); setSyncStatus(null); navigateToManualSchedule(); } },
+            { text: 'Input manually', onPress: () => { setLoading(false); setSyncStatus(null); navigateToManualSchedule(); } },
             { text: 'OK', style: 'cancel', onPress: () => { setLoading(false); setSyncStatus(null); } },
           ]
         );
@@ -257,33 +267,27 @@ export const ScheduleSetupScreen: React.FC<Props> = ({ navigation, route }) => {
         return;
       }
 
-      setSyncStatus(`Importing ${parseResult.events.length} events...`);
-      const weeklyTemplate = buildWeeklyTemplateFromIcsEvents(parseResult.events);
+      setSyncStatus('Preparing weekly grid preview...');
+      const weeklyTemplate: ManualScheduleEntry[] = buildWeeklyTemplateFromIcsEvents(parseResult.events);
+      analyticsService.track('ics_import_parsed', {
+        filename: file.name || 'calendar.ics',
+        eventsParsed: parseResult.events.length,
+        weeklyTemplateEntries: weeklyTemplate.length,
+      });
       if (weeklyTemplate.length === 0) {
         showMessage(
           'Import Note',
           'The ICS file was imported, but no timed events were available for the weekly grid preview.'
         );
       }
-      await eventsRepo.deleteAll();
-      await eventsRepo.saveMany(parseResult.events);
-      await manualScheduleRepo.deleteAll();
-      await manualScheduleRepo.saveMany(weeklyTemplate);
-      const source = { type: 'ics' as const, filename: file.name, lastImportedAt: new Date().toISOString() };
-      await scheduleSourceRepo.save(source);
-      setScheduleSource(source);
-      setSyncStatus('Refreshing walking opportunities...');
-      await finishAfterSave();
       setLoading(false);
       setSyncStatus(null);
-      if (manageMode) {
-        navigation.navigate('ManualSchedule', {
-          manageMode: true,
-          importedFilename: file.name || 'calendar.ics',
-        });
-        return;
-      }
-      navigation.navigate('Preferences', {});
+      navigation.navigate('ManualSchedule', {
+        ...(manageMode ? { manageMode: true } : { requireSaveBeforeContinue: true }),
+        importedFilename: file.name || 'calendar.ics',
+        importedEventCount: parseResult.events.length,
+        prefillTemplate: weeklyTemplate,
+      });
     } catch (error) {
       console.error('ICS import failed:', error);
       setLoading(false);
@@ -293,12 +297,67 @@ export const ScheduleSetupScreen: React.FC<Props> = ({ navigation, route }) => {
     }
   };
 
+  const handleE2ESampleImport = async () => {
+    try {
+      setLoading(true);
+      setSyncStatus('Loading sample calendar...');
+      const sampleIcs = [
+        'BEGIN:VCALENDAR',
+        'VERSION:2.0',
+        'PRODID:-//GapWalk//E2E Sample//EN',
+        'BEGIN:VEVENT',
+        'UID:e2e-1',
+        'DTSTAMP:20260101T080000Z',
+        'DTSTART:20260106T090000Z',
+        'DTEND:20260106T103000Z',
+        'SUMMARY:E2E Sample Meeting',
+        'END:VEVENT',
+        'BEGIN:VEVENT',
+        'UID:e2e-2',
+        'DTSTAMP:20260101T080000Z',
+        'DTSTART:20260107T140000Z',
+        'DTEND:20260107T150000Z',
+        'SUMMARY:E2E Sample Class',
+        'END:VEVENT',
+        'END:VCALENDAR',
+      ].join('\n');
+
+      const parseResult = await parseICSFile(sampleIcs);
+      const weeklyTemplate: ManualScheduleEntry[] = buildWeeklyTemplateFromIcsEvents(parseResult.events);
+      analyticsService.track('ics_import_parsed', {
+        filename: 'sample-e2e.ics',
+        eventsParsed: parseResult.events.length,
+        weeklyTemplateEntries: weeklyTemplate.length,
+        source: 'e2e_sample',
+      });
+      setLoading(false);
+      setSyncStatus(null);
+
+      navigation.navigate('ManualSchedule', {
+        ...(manageMode ? { manageMode: true } : { requireSaveBeforeContinue: true }),
+        importedFilename: 'sample-e2e.ics',
+        importedEventCount: parseResult.events.length,
+        prefillTemplate: weeklyTemplate,
+      });
+    } catch (error) {
+      console.error('E2E sample import failed:', error);
+      setLoading(false);
+      setSyncStatus(null);
+      showMessage('Import Failed', 'Could not load sample import data.');
+    }
+  };
+
   /* ── Continue ── */
   const runSelectedOption = async () => {
     if (!selectedOption) return;
     if (selectedOption === 'google') await startGoogleAuth();
-    else if (selectedOption === 'import') await handleImport();
-    else navigateToManualSchedule();
+    else if (selectedOption === 'import') {
+      analyticsService.track('schedule_source_selected', { source: 'import', manageMode });
+      await handleImport();
+    } else {
+      analyticsService.track('schedule_source_selected', { source: 'manual', manageMode });
+      navigateToManualSchedule();
+    }
   };
 
   const handleContinue = () => {
@@ -308,9 +367,7 @@ export const ScheduleSetupScreen: React.FC<Props> = ({ navigation, route }) => {
       return;
     }
 
-    const message = selectedOption === 'import'
-      ? 'Save this schedule source and replace your current schedule data? Walking opportunities will be refreshed.'
-      : 'Continue to manual schedule editing? Changes are applied only after you save.';
+    const message = SAVE_CONFIRM_MESSAGE;
 
     if (Platform.OS === 'web' && typeof (globalThis as any).confirm === 'function') {
       const ok = (globalThis as any).confirm(message);
@@ -321,11 +378,11 @@ export const ScheduleSetupScreen: React.FC<Props> = ({ navigation, route }) => {
     }
 
     Alert.alert(
-      'Save schedule changes?',
+      SAVE_CONFIRM_TITLE,
       message,
       [
         { text: 'Cancel', style: 'cancel' },
-        { text: 'Save', onPress: () => { void runSelectedOption(); } },
+        { text: SAVE_CONFIRM_ACTION, onPress: () => { void runSelectedOption(); } },
       ]
     );
   };
@@ -333,12 +390,14 @@ export const ScheduleSetupScreen: React.FC<Props> = ({ navigation, route }) => {
   return (
     <Container scrollable>
       <View style={styles.content}>
-        <Text variant="title" style={styles.title}>{manageMode ? 'Manage your schedule' : 'Set up your schedule'}</Text>
-        <Text variant="body" color={theme.colors.textMuted} style={styles.subtitle}>
-          {manageMode
-            ? 'Change your schedule source or update existing schedule data.'
-            : 'Tell us when you are busy so GapWalk can find walking windows.'}
-        </Text>
+        <ScreenHeader
+          title={manageMode ? 'Manage your schedule' : 'Set up your schedule'}
+          subtitle={
+            manageMode
+              ? 'Change your schedule source or update existing schedule data.'
+              : 'Tell us when you are busy so GapWalk can find walking windows.'
+          }
+        />
         <Text variant="body" style={styles.sectionLabel}>
           {manageMode ? 'Choose how GapWalk should read your schedule' : 'Choose how to add your schedule'}
         </Text>
@@ -348,9 +407,13 @@ export const ScheduleSetupScreen: React.FC<Props> = ({ navigation, route }) => {
           selected={false}
           onPress={onGoogleCardPress}
           style={[styles.googleCard, styles.upcomingCard]}
+          testID="schedule-option-google"
         >
           <View style={styles.cardHeader}>
-            <Text variant="body" style={[styles.cardTitle, styles.upcomingCardTitle]}>Link Google Calendar</Text>
+            <View style={styles.cardTitleRow}>
+              <AppIcon name="calendar" size={15} color={theme.colors.textMuted} />
+              <Text variant="body" style={[styles.cardTitle, styles.upcomingCardTitle]}>Link Google Calendar</Text>
+            </View>
             <View style={styles.upcomingBadge}>
               <Text variant="bodySmall" style={styles.upcomingBadgeText}>Upcoming feature</Text>
             </View>
@@ -366,8 +429,12 @@ export const ScheduleSetupScreen: React.FC<Props> = ({ navigation, route }) => {
             selected={selectedOption === 'import'}
             onPress={() => toggle('import')}
             style={styles.halfCard}
+            testID="schedule-option-import"
           >
-            <Text variant="body" style={styles.cardTitle}>Import</Text>
+            <View style={styles.cardTitleRow}>
+              <AppIcon name="calendar" size={15} color={theme.colors.accentPrimary} />
+              <Text variant="body" style={styles.cardTitle}>Import</Text>
+            </View>
             <Text variant="bodySmall" color={theme.colors.textMuted} style={styles.cardDesc}>
               Upload a .ics file so GapWalk can see when you're busy.
             </Text>
@@ -377,10 +444,14 @@ export const ScheduleSetupScreen: React.FC<Props> = ({ navigation, route }) => {
             selected={selectedOption === 'manual'}
             onPress={() => toggle('manual')}
             style={styles.halfCard}
+            testID="schedule-option-manual"
           >
-            <Text variant="body" style={styles.cardTitle}>Input Manually</Text>
+            <View style={styles.cardTitleRow}>
+              <AppIcon name="adjust" size={15} color={theme.colors.accentPrimary} />
+              <Text variant="body" style={styles.cardTitle}>Input manually</Text>
+            </View>
             <Text variant="bodySmall" color={theme.colors.textMuted} style={styles.cardDesc}>
-              Build your weekly schedule on a simple calendar.
+              Build your weekly schedule and one-time events on a simple calendar.
             </Text>
           </Card>
         </View>
@@ -391,6 +462,17 @@ export const ScheduleSetupScreen: React.FC<Props> = ({ navigation, route }) => {
             <ActivityIndicator size="small" color={theme.colors.accentPrimary} />
             <Text variant="bodySmall" color={theme.colors.accentPrimary} style={styles.syncText}>{syncStatus}</Text>
           </View>
+        )}
+
+        {isE2E && !manageMode && (
+          <Button
+            title="Use sample import (E2E)"
+            variant="muted"
+            onPress={() => { void handleE2ESampleImport(); }}
+            testID="e2e-sample-import-btn"
+            style={styles.e2eBtn}
+            disabled={loading}
+          />
         )}
       </View>
 
@@ -403,6 +485,7 @@ export const ScheduleSetupScreen: React.FC<Props> = ({ navigation, route }) => {
               onPress={exitScreen}
               style={styles.footerBtn}
               disabled={loading}
+              testID="schedule-setup-cancel"
             />
             <Button
               title="Save"
@@ -410,6 +493,7 @@ export const ScheduleSetupScreen: React.FC<Props> = ({ navigation, route }) => {
               disabled={!selectedOption || selectedOption === 'google' || loading}
               loading={loading && !syncStatus}
               style={styles.footerBtn}
+              testID="schedule-setup-continue"
             />
           </View>
         ) : (
@@ -419,10 +503,11 @@ export const ScheduleSetupScreen: React.FC<Props> = ({ navigation, route }) => {
             disabled={!selectedOption || selectedOption === 'google' || loading}
             loading={loading && !syncStatus}
             full
+            testID="schedule-setup-continue"
           />
         )}
         <Text variant="muted" style={styles.privacy}>
-          Your schedule stays private. Privacy is our utmost importance.
+          Your schedule stays private. Privacy is our top priority.
         </Text>
       </View>
     </Container>
@@ -433,13 +518,11 @@ const styles = StyleSheet.create({
   content: {
     flex: 1,
     paddingHorizontal: theme.layout.contentHorizontal,
-    paddingTop: 28,
+    paddingTop: theme.spacing.lg,
     alignSelf: 'center',
     width: '100%',
     maxWidth: theme.layout.contentMaxWidth,
   },
-  title: { marginBottom: 6, textAlign: 'center' },
-  subtitle: { marginBottom: 28, textAlign: 'center', lineHeight: 20 },
   sectionLabel: { marginBottom: 16, fontWeight: theme.fontWeight.semibold, textAlign: 'center' },
   googleCard: { marginBottom: 12 },
   row: { flexDirection: 'row', gap: 12 },
@@ -450,8 +533,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 6,
   },
-  cardTitle: { fontWeight: theme.fontWeight.semibold, marginBottom: 6 },
-  cardDesc: { lineHeight: 18 },
+  cardTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  cardTitle: { fontWeight: theme.fontWeight.semibold },
+  cardDesc: { lineHeight: 18, marginTop: 6 },
   recommendedBadge: {
     backgroundColor: 'rgba(46,233,166,0.12)',
     borderRadius: 6,
@@ -489,6 +577,9 @@ const styles = StyleSheet.create({
     marginTop: 20,
   },
   syncText: { fontWeight: theme.fontWeight.medium },
+  e2eBtn: {
+    marginTop: 12,
+  },
   footer: {
     paddingHorizontal: theme.layout.contentHorizontal,
     paddingVertical: 24,

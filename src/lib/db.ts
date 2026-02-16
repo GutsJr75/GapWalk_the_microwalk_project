@@ -83,6 +83,7 @@ const initializeTables = async () => {
       active_seconds INTEGER NOT NULL DEFAULT 0,
       paused_seconds INTEGER NOT NULL DEFAULT 0,
       distance_meters REAL,
+      steps INTEGER DEFAULT 0,
       calories REAL,
       used_location INTEGER DEFAULT 0,
       created_at TEXT DEFAULT CURRENT_TIMESTAMP
@@ -112,6 +113,30 @@ const initializeTables = async () => {
       day_of_week INTEGER NOT NULL,
       start_time TEXT NOT NULL,
       end_time TEXT NOT NULL,
+      is_one_time INTEGER DEFAULT 0,
+      one_time_date TEXT,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+
+  // Analytics events table
+  await db.execAsync(`
+    CREATE TABLE IF NOT EXISTS analytics_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      payload_json TEXT,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+
+  // Crash reports table
+  await db.execAsync(`
+    CREATE TABLE IF NOT EXISTS crash_reports (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      message TEXT NOT NULL,
+      stack TEXT,
+      is_fatal INTEGER DEFAULT 0,
+      context_json TEXT,
       created_at TEXT DEFAULT CURRENT_TIMESTAMP
     );
   `);
@@ -123,6 +148,9 @@ const initializeTables = async () => {
     CREATE INDEX IF NOT EXISTS idx_nudge_plans_date ON nudge_plans(date);
     CREATE INDEX IF NOT EXISTS idx_nudge_plans_status ON nudge_plans(status);
     CREATE INDEX IF NOT EXISTS idx_walk_sessions_start ON walk_sessions(start);
+    CREATE INDEX IF NOT EXISTS idx_analytics_events_name ON analytics_events(name);
+    CREATE INDEX IF NOT EXISTS idx_analytics_events_created_at ON analytics_events(created_at);
+    CREATE INDEX IF NOT EXISTS idx_crash_reports_created_at ON crash_reports(created_at);
   `);
 
   // Ensure older local databases are upgraded with newer columns.
@@ -143,6 +171,27 @@ const ensureColumn = async (
 };
 
 const runMigrations = async () => {
+  if (!db) return;
+  await db.execAsync(`
+    CREATE TABLE IF NOT EXISTS analytics_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      payload_json TEXT,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS crash_reports (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      message TEXT NOT NULL,
+      stack TEXT,
+      is_fatal INTEGER DEFAULT 0,
+      context_json TEXT,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_analytics_events_name ON analytics_events(name);
+    CREATE INDEX IF NOT EXISTS idx_analytics_events_created_at ON analytics_events(created_at);
+    CREATE INDEX IF NOT EXISTS idx_crash_reports_created_at ON crash_reports(created_at);
+  `);
+
   // schedule_source expansions
   await ensureColumn('schedule_source', 'google_connected', 'INTEGER DEFAULT 0');
   await ensureColumn('schedule_source', 'google_access_token', 'TEXT');
@@ -159,6 +208,7 @@ const runMigrations = async () => {
 
   // walk_sessions expansions
   await ensureColumn('walk_sessions', 'distance_meters', 'REAL');
+  await ensureColumn('walk_sessions', 'steps', 'INTEGER DEFAULT 0');
   await ensureColumn('walk_sessions', 'calories', 'REAL');
   await ensureColumn('walk_sessions', 'used_location', 'INTEGER DEFAULT 0');
   await ensureColumn('walk_sessions', 'created_at', 'TEXT DEFAULT CURRENT_TIMESTAMP');
@@ -170,6 +220,8 @@ const runMigrations = async () => {
 
   // manual_schedule_entries expansions
   await ensureColumn('manual_schedule_entries', 'created_at', 'TEXT DEFAULT CURRENT_TIMESTAMP');
+  await ensureColumn('manual_schedule_entries', 'is_one_time', 'INTEGER DEFAULT 0');
+  await ensureColumn('manual_schedule_entries', 'one_time_date', 'TEXT');
 
   // preferences: new notification-related columns
   await ensureColumn('preferences', 'grace_period_minutes', 'INTEGER DEFAULT 2');
@@ -199,6 +251,8 @@ export const resetDatabase = async () => {
     DROP TABLE IF EXISTS walk_sessions;
     DROP TABLE IF EXISTS nudge_plans;
     DROP TABLE IF EXISTS manual_schedule_entries;
+    DROP TABLE IF EXISTS analytics_events;
+    DROP TABLE IF EXISTS crash_reports;
   `);
 
   await initializeTables();

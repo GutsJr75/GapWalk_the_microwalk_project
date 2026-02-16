@@ -9,6 +9,7 @@ import { theme } from '../theme';
 import { useAppStore } from '../store';
 import { useThemePalette } from '../theme/palette';
 import Svg, { Path } from 'react-native-svg';
+import { analyticsService } from '../lib/analytics';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Intro'>;
 
@@ -60,6 +61,9 @@ export const IntroScreen: React.FC<Props> = ({ navigation }) => {
   });
 
   const handleCta = () => {
+    analyticsService.track('onboarding_cta_pressed', {
+      hasSetPreferences,
+    });
     if (hasSetPreferences) {
       navigation.navigate('Dashboard');
     } else {
@@ -217,6 +221,7 @@ export const IntroScreen: React.FC<Props> = ({ navigation }) => {
             title={hasSetPreferences ? 'Go to Dashboard' : 'Get Started'}
             onPress={handleCta}
             full
+            testID="intro-get-started"
           />
           <Text variant="muted" style={styles.footer}>
             No account needed - 100% free - Your data stays on device.
@@ -384,4 +389,3 @@ const styles = StyleSheet.create({
     marginTop: 12,
   },
 });
-

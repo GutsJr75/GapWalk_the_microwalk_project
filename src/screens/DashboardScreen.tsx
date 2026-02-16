@@ -8,6 +8,7 @@ import { Button } from '../components/Button';
 import { StatCard } from '../components/StatCard';
 import { GapItem } from '../components/GapItem';
 import { Card } from '../components/Card';
+import { AppIcon } from '../components/AppIcon';
 import { theme } from '../theme';
 import { getThemePalette } from '../theme/palette';
 import { useAppStore } from '../store';
@@ -17,7 +18,7 @@ import { sessionsRepo } from '../lib/repositories/sessionsRepo';
 import { scheduleSourceRepo } from '../lib/repositories/scheduleSourceRepo';
 import { eventsRepo } from '../lib/repositories/eventsRepo';
 import { gapEngine } from '../lib/gapEngine';
-import { notificationService, isNotificationsSupported } from '../lib/notifications';
+import { isNotificationsSupported, notificationService } from '../lib/notifications';
 import { googleCalendarService } from '../lib/googleCalendar';
 import { NudgePlan } from '../lib/types';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -46,8 +47,16 @@ interface PlanOpportunity {
 
 const formatDateTime = (iso: string): string => format(parseISO(iso), 'h:mm a');
 
-const BurgerIcon = ({ onPress, color }: { onPress: () => void; color: string }) => (
-  <TouchableOpacity onPress={onPress} style={styles.burgerBtn} hitSlop={10}>
+const BurgerIcon = ({
+  onPress,
+  color,
+  testID,
+}: {
+  onPress: () => void;
+  color: string;
+  testID?: string;
+}) => (
+  <TouchableOpacity onPress={onPress} style={styles.burgerBtn} hitSlop={10} testID={testID} accessibilityLabel={testID}>
     <View style={[styles.burgerLine, { backgroundColor: color }]} />
     <View style={[styles.burgerLine, { backgroundColor: color }]} />
     <View style={[styles.burgerLine, { backgroundColor: color }]} />
@@ -147,53 +156,6 @@ export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
       load();
     }, [load])
   );
-
-  useEffect(() => {
-    if (!isNotificationsSupported) return;
-    const responseSubscription = notificationService.addNotificationResponseListener(async (response) => {
-      const data = response.notification.request.content.data as { type?: string; planId?: string };
-      if (data.type !== 'walk_nudge' || !data.planId) return;
-
-      try {
-        const plan = await plansRepo.getById(data.planId);
-        if (!plan) return;
-        if (plan.status === 'cancelled' || plan.status === 'completed' || plan.status === 'skipped') return;
-
-        const prefsFromDb = await preferencesRepo.get();
-        if (prefsFromDb) {
-          const minsToday = await sessionsRepo.getTodayMinutes();
-          if (minsToday >= prefsFromDb.dailyTargetMinutes) {
-            await plansRepo.updateStatus(plan.id, 'cancelled');
-            return;
-          }
-        }
-
-        navigation.navigate('Walking', { planId: data.planId });
-      } catch (error) {
-        console.error('Failed to handle notification tap:', error);
-      }
-    });
-
-    const receivedSubscription = notificationService.addNotificationReceivedListener(async (notification) => {
-      const data = notification.request.content.data as { type?: string; planId?: string };
-      if (data.type !== 'walk_nudge' || !data.planId) return;
-      try {
-        const plan = await plansRepo.getById(data.planId);
-        if (!plan) return;
-        if (plan.status === 'planned') {
-          await plansRepo.updateStatus(plan.id, 'notified');
-          await load();
-        }
-      } catch (error) {
-        console.error('Failed to handle foreground notification:', error);
-      }
-    });
-
-    return () => {
-      responseSubscription.remove();
-      receivedSubscription.remove();
-    };
-  }, [navigation, load]);
 
   useEffect(() => {
     if (preferences && todayMinutesWalked >= preferences.dailyTargetMinutes && todayMinutesWalked > 0) {
@@ -355,7 +317,7 @@ export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
   };
 
   const navigateToScheduleOverview = () => { closeMenu(); navigation.navigate('ScheduleOverview'); };
-  const navigateToPreferences = () => { closeMenu(); navigation.navigate('Preferences', {}); };
+  const navigateToPreferences = () => { closeMenu(); navigation.push('Preferences', { manageMode: true }); };
   const navigateToSettings = () => { closeMenu(); navigation.navigate('Settings'); };
   const navigateToHome = () => { closeMenu(); navigation.navigate('Intro'); };
   const resyncGoogleCalendar = async () => {
@@ -398,6 +360,16 @@ export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
 
   const todayKey = format(today, 'yyyy-MM-dd');
   const goalReached = !!preferences && todayMinutesWalked >= preferences.dailyTargetMinutes;
+  const remainingGoalMinutes = preferences
+    ? Math.max(0, preferences.dailyTargetMinutes - todayMinutesWalked)
+    : 0;
+  const readyPrompt = goalReached
+    ? 'Goal reached. Bonus walk?'
+    : remainingGoalMinutes <= 0
+      ? 'Ready to walk?'
+      : remainingGoalMinutes <= 5
+        ? `Only ${remainingGoalMinutes} min to hit your goal.`
+        : `${remainingGoalMinutes} min left toward today’s goal.`;
   const activeTodayPlans = useMemo(
     () =>
       upcomingPlans
@@ -437,11 +409,20 @@ export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
   const horizontalPadding = Math.max(width * 0.1, 16);
   const verticalPadding = Math.max(height * 0.05, 16);
   const palette = getThemePalette(themeMode);
+  const topGlowColor = themeMode === 'dark' ? 'rgba(46,233,166,0.08)' : 'rgba(46,233,166,0.13)';
+  const bottomGlowColor = themeMode === 'dark' ? 'rgba(56,189,248,0.09)' : 'rgba(56,189,248,0.11)';
+  const renderBackdrop = (
+    <View style={styles.backdrop} pointerEvents="none">
+      <View style={[styles.glow, styles.glowTop, { backgroundColor: topGlowColor }]} />
+      <View style={[styles.glow, styles.glowBottom, { backgroundColor: bottomGlowColor }]} />
+    </View>
+  );
 
   /* ---------- Variant A: no preferences ---------- */
   if (!hasSetPreferences || !preferences) {
     return (
       <SafeAreaView style={[styles.safe, { backgroundColor: palette.bgApp }]}>
+        {renderBackdrop}
         <ScrollView
           contentContainerStyle={[
             styles.scroll,
@@ -464,7 +445,7 @@ export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
           <Card elevated style={styles.promptCard}>
             <Text variant="body" style={styles.promptTitle}>Get started</Text>
             <Text variant="bodySmall" color={theme.colors.textMuted} style={styles.promptText}>Set up your preferences so GapWalk can find the best walking windows in your schedule.</Text>
-            <Button title="Set Up Preferences" onPress={() => navigation.navigate('Preferences', {})} />
+            <Button title="Set up preferences" onPress={() => navigation.navigate('Preferences', {})} />
           </Card>
         </ScrollView>
       </SafeAreaView>
@@ -474,6 +455,7 @@ export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
   /* ---------- Variant B: preferences set ---------- */
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: palette.bgApp }]}>
+      {renderBackdrop}
       <View
         style={[
           styles.headerFrame,
@@ -492,7 +474,7 @@ export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
             <Text variant="bodySmall" color={theme.colors.textMuted} style={styles.headingDate}>{dayName}, {monthDay}</Text>
           </View>
           <View style={styles.headerRight}>
-            <BurgerIcon onPress={openMenu} color={palette.textPrimary} />
+            <BurgerIcon onPress={openMenu} color={palette.textPrimary} testID="dashboard-open-menu" />
           </View>
         </View>
       </View>
@@ -546,11 +528,7 @@ export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
         )}
 
         {/* Ready prompt */}
-        <Text variant="body" style={styles.readyText}>
-          {streak.lastActiveDate
-            ? 'Ready to walk?'
-            : 'Ready to start? Your first walk is just a tap away!'}
-        </Text>
+        <Text variant="body" style={styles.readyText}>{readyPrompt}</Text>
 
         {/* Achievements & Streak Card */}
         <Card elevated style={styles.streakCard}>
@@ -667,6 +645,7 @@ export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
           title="Start Manual Walk"
           onPress={() => navigation.navigate('Walking', {})}
           style={styles.walkBtn}
+          testID="dashboard-start-manual-walk"
         />
       </ScrollView>
 
@@ -692,17 +671,35 @@ export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
             ]}
           >
             <Text variant="title" style={styles.menuTitle}>Options</Text>
-            <TouchableOpacity style={styles.menuItem} onPress={navigateToScheduleOverview}>
-              <Text variant="body">Visit / Update your schedule</Text>
+            <TouchableOpacity style={styles.menuItem} onPress={navigateToScheduleOverview} testID="dashboard-menu-schedule">
+              <View style={styles.menuItemRow}>
+                <AppIcon name="calendar" size={16} color={palette.textPrimary} />
+                <Text variant="body" style={styles.menuItemLabel}>Manage schedule</Text>
+                <AppIcon name="chevronRight" size={16} color={palette.textMuted} />
+              </View>
             </TouchableOpacity>
-            <TouchableOpacity style={styles.menuItem} onPress={navigateToPreferences}>
-              <Text variant="body">Edit your Choices</Text>
+            <TouchableOpacity style={styles.menuItem} onPress={navigateToPreferences} testID="dashboard-menu-preferences">
+              <View style={styles.menuItemRow}>
+                <AppIcon name="adjust" size={16} color={palette.textPrimary} />
+                <Text variant="body" style={styles.menuItemLabel}>Edit your choices</Text>
+                <AppIcon name="chevronRight" size={16} color={palette.textMuted} />
+              </View>
             </TouchableOpacity>
-            <TouchableOpacity style={styles.menuItem} onPress={navigateToSettings}>
-              <Text variant="body">Settings</Text>
+            <TouchableOpacity style={styles.menuItem} onPress={navigateToSettings} testID="dashboard-menu-settings">
+              <View style={styles.menuItemRow}>
+                <AppIcon name="settings" size={16} color={palette.textPrimary} />
+                <Text variant="body" style={styles.menuItemLabel}>Settings</Text>
+                <AppIcon name="chevronRight" size={16} color={palette.textMuted} />
+              </View>
             </TouchableOpacity>
             <View style={styles.menuFooter}>
-              <Button title="Back to Home Screen" onPress={navigateToHome} variant="danger" style={styles.menuHomeBtn} />
+              <Button
+                title="Log out"
+                onPress={navigateToHome}
+                variant="danger"
+                style={styles.menuHomeBtn}
+                testID="dashboard-menu-home"
+              />
             </View>
           </Animated.View>
         </View>
@@ -712,7 +709,24 @@ export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
 };
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: theme.colors.bgApp },
+  safe: { flex: 1, backgroundColor: theme.colors.bgApp, overflow: 'hidden' },
+  backdrop: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  glow: {
+    position: 'absolute',
+    width: 260,
+    height: 260,
+    borderRadius: 130,
+  },
+  glowTop: {
+    top: -120,
+    right: -80,
+  },
+  glowBottom: {
+    bottom: -130,
+    left: -70,
+  },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -779,9 +793,18 @@ const styles = StyleSheet.create({
   },
   menuTitle: { marginBottom: 30, textAlign: 'center' },
   menuItem: {
-    paddingVertical: 16,
+    paddingVertical: 15,
+    paddingHorizontal: 4,
     borderBottomWidth: 1,
     borderBottomColor: 'rgba(255,255,255,0.05)',
+  },
+  menuItemRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  menuItemLabel: {
+    flex: 1,
   },
   menuFooter: {
     marginTop: 'auto',
@@ -875,6 +898,3 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
 });
-
-
-

@@ -20,7 +20,8 @@ const darkPalette: ThemePalette = {
   bgSurface: theme.colors.bgSurface,
   bgSurfaceElevated: theme.colors.bgSurfaceElevated,
   textPrimary: theme.colors.textPrimary,
-  textMuted: theme.colors.textMuted,
+  // Increased contrast for secondary text legibility in dark mode.
+  textMuted: '#8b9bbd',
   borderSoft: 'rgba(255,255,255,0.06)',
   borderStrong: 'rgba(255,255,255,0.12)',
   overlay: 'rgba(0,0,0,0.7)',
@@ -33,7 +34,8 @@ const lightPalette: ThemePalette = {
   bgSurface: '#f1f4f8',
   bgSurfaceElevated: '#dde4ee',
   textPrimary: '#111827',
-  textMuted: '#64748b',
+  // Darker muted text to meet AA contrast across light surfaces.
+  textMuted: '#475569',
   borderSoft: 'rgba(15,23,42,0.10)',
   borderStrong: 'rgba(15,23,42,0.18)',
   overlay: 'rgba(2,6,23,0.45)',

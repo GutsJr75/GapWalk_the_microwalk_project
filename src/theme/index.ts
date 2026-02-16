@@ -38,8 +38,8 @@ export const theme = {
   },
 
   fontSize: {
-    xs: 11,
-    sm: 13,
+    xs: 12,
+    sm: 14,
     md: 16,
     lg: 17,
     xl: 24,
@@ -61,7 +61,7 @@ export const theme = {
     contentMaxWidth: 393,
     contentHorizontal: 18,
     sectionVertical: 30,
-    buttonHeight: 43,
+    buttonHeight: 46,
   },
 } as const;
 

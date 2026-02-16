@@ -20,12 +20,16 @@ import { Text } from '../components/Text';
 import { Button } from '../components/Button';
 import { Card } from '../components/Card';
 import { Modal } from '../components/Modal';
+import { ScreenHeader } from '../components/ScreenHeader';
+import { AppIcon, AppIconName } from '../components/AppIcon';
 import { theme } from '../theme';
 import { getThemePalette } from '../theme/palette';
 import { Preferences, DEFAULT_PREFERENCES } from '../lib/types';
 import { preferencesRepo } from '../lib/repositories/preferencesRepo';
 import { notificationService, isNotificationsSupported } from '../lib/notifications';
 import { syncNudgePlansForCurrentSchedule } from '../lib/scheduleSync';
+import { SAVE_CONFIRM_ACTION, SAVE_CONFIRM_MESSAGE, SAVE_CONFIRM_TITLE } from '../lib/confirmMessages';
+import { analyticsService } from '../lib/analytics';
 import { useAppStore } from '../store';
 
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
@@ -116,11 +120,14 @@ const TwoDigitTimeInput: React.FC<TwoDigitTimeInputProps> = ({ mode, value, onCh
 const Section: React.FC<{
   title: string;
   subtitle?: string;
+  icon?: AppIconName;
   defaultExpanded?: boolean;
   children: React.ReactNode;
-}> = ({ title, subtitle, defaultExpanded = false, children }) => {
+}> = ({ title, subtitle, icon, defaultExpanded = false, children }) => {
   const [expanded, setExpanded] = useState(defaultExpanded);
   const rotateAnim = useRef(new Animated.Value(defaultExpanded ? 1 : 0)).current;
+  const { themeMode } = useAppStore();
+  const palette = getThemePalette(themeMode);
 
   const toggle = () => {
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
@@ -133,11 +140,30 @@ const Section: React.FC<{
   return (
     <Card style={styles.sectionCard} elevated>
       <TouchableOpacity onPress={toggle} activeOpacity={0.7} style={styles.sectionHeader}>
-        <View style={styles.sectionHeaderText}>
+        <View style={styles.sectionHeaderTextWrap}>
+          {icon && (
+            <View style={styles.sectionIconWrap}>
+              <AppIcon name={icon} size={14} color={theme.colors.accentPrimary} />
+            </View>
+          )}
+          <View style={styles.sectionHeaderText}>
           <Text variant="body" style={styles.sectionTitle}>{title}</Text>
           {subtitle && <Text variant="muted" style={styles.sectionSubtitle}>{subtitle}</Text>}
+          </View>
         </View>
-        <Animated.Text style={[styles.chevron, { transform: [{ rotate }] }]}>{'\u25BC'}</Animated.Text>
+        <Animated.View
+          style={[
+            styles.chevronButton,
+            {
+              backgroundColor: palette.bgSurface,
+              borderColor: palette.borderSoft,
+              shadowColor: palette.shadow,
+              transform: [{ rotate }],
+            },
+          ]}
+        >
+          <AppIcon name="chevronDown" size={15} color={palette.textMuted} />
+        </Animated.View>
       </TouchableOpacity>
       {expanded && <View style={styles.sectionBody}>{children}</View>}
     </Card>
@@ -191,11 +217,11 @@ const InfoTip: React.FC<{ text: string }> = ({ text }) => {
 };
 
 /* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• main screen â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
-export const PreferencesScreen: React.FC<Props> = ({ navigation }) => {
+export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
   const { preferences: storedPreferences, setPreferences, setHasSetPreferences, setHasNotificationPermission, themeMode } = useAppStore();
+  const manageMode = !!route.params?.manageMode;
   const [prefs, setPrefs] = useState<Preferences>(DEFAULT_PREFERENCES);
   const [hasChanges, setHasChanges] = useState(false);
-  const [showSkipModal, setShowSkipModal] = useState(false);
   const [showQuietModal, setShowQuietModal] = useState(false);
   const [quietError, setQuietError] = useState<string | null>(null);
   const [savingPrefs, setSavingPrefs] = useState(false);
@@ -245,7 +271,13 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation }) => {
     setHasChanges(true);
   };
 
-  const handleBack = () => { if (navigation.canGoBack()) { navigation.goBack(); return; } navigation.navigate('ManualSchedule'); };
+  const handleBack = () => {
+    if (navigation.canGoBack()) {
+      navigation.goBack();
+      return;
+    }
+    navigation.navigate('ManualSchedule');
+  };
 
   /* â”€â”€ quiet hours â”€â”€ */
   const openQuietModal = () => {
@@ -313,6 +345,12 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation }) => {
         try {
           await syncNudgePlansForCurrentSchedule(normalizedPrefs);
         } catch (e) { console.error(e); }
+        analyticsService.track('preferences_saved', {
+          dailyTargetMinutes: normalizedPrefs.dailyTargetMinutes,
+          notificationCountPerDay: normalizedPrefs.notificationCountPerDay,
+          whenToNotify: normalizedPrefs.whenToNotify,
+          notifyDelayMinutes: normalizedPrefs.notifyDelayMinutes,
+        });
         setSavingPrefs(false);
         navigation.navigate('Dashboard');
         return;
@@ -327,7 +365,88 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation }) => {
     setSavingPrefs(false);
   };
 
-  const proceedWithRecommended = async () => { setShowSkipModal(false); await savePreferences(DEFAULT_PREFERENCES); };
+  const confirmAndSavePreferences = (
+    nextPrefs: Preferences,
+    options?: {
+      title?: string;
+      message?: string;
+      actionLabel?: string;
+      onConfirm?: () => void;
+    }
+  ) => {
+    if (savingPrefs) return;
+    const title = options?.title ?? SAVE_CONFIRM_TITLE;
+    const message = options?.message ?? SAVE_CONFIRM_MESSAGE;
+    const actionLabel = options?.actionLabel ?? SAVE_CONFIRM_ACTION;
+
+    if (Platform.OS === 'web' && typeof (globalThis as any).confirm === 'function') {
+      const ok = (globalThis as any).confirm(message);
+      if (ok) {
+        options?.onConfirm?.();
+        void savePreferences(nextPrefs);
+      }
+      return;
+    }
+    Alert.alert(
+      title,
+      message,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: actionLabel,
+          onPress: () => {
+            options?.onConfirm?.();
+            void savePreferences(nextPrefs);
+          },
+        },
+      ]
+    );
+  };
+
+  const handleManageCancel = () => {
+    if (!hasChanges) {
+      navigation.navigate('Dashboard');
+      return;
+    }
+
+    const discardMessage = 'If you cancel now, your unsaved changes will be discarded. Do you want to continue?';
+    if (Platform.OS === 'web' && typeof (globalThis as any).confirm === 'function') {
+      if ((globalThis as any).confirm(discardMessage)) {
+        navigation.navigate('Dashboard');
+      }
+      return;
+    }
+    Alert.alert(
+      'Discard changes?',
+      discardMessage,
+      [
+        { text: 'Keep editing', style: 'cancel' },
+        { text: 'Discard', style: 'destructive', onPress: () => navigation.navigate('Dashboard') },
+      ]
+    );
+  };
+
+  const handleOnboardingContinue = () => {
+    if (savingPrefs || !canContinue) return;
+    if (!hasChanges) {
+      confirmAndSavePreferences(DEFAULT_PREFERENCES, {
+        title: 'Use recommended preferences?',
+        message: 'Do you want to proceed with GapWalk’s recommended choices?',
+        actionLabel: 'Yes, continue',
+      });
+      return;
+    }
+    confirmAndSavePreferences(prefs);
+  };
+
+  const handleManageSave = () => {
+    if (savingPrefs || !canContinue) return;
+    confirmAndSavePreferences(prefs, {
+      title: 'Save preferences?',
+      message: 'Do you want to save these preference changes?',
+      actionLabel: 'Save',
+    });
+  };
 
   /* â”€â”€ derive "When to Notify" selection key for the 3 simple radio options â”€â”€ */
   type NotifyChoice = 'gap' | '5min' | '10min';
@@ -343,29 +462,19 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation }) => {
   };
   const notifyChoice = getNotifyChoice();
 
-  const notifyLabel = (c: NotifyChoice): string => {
-    switch (c) {
-      case 'gap': return 'Immediately';
-      case '5min': return '5 minutes before';
-      case '10min': return '10 minutes before';
-    }
-  };
-
   /* â•â•â•â•â•â•â•â•â•â•â• render â•â•â•â•â•â•â•â•â•â•â• */
   return (
     <Container scrollable>
       <View style={styles.content}>
-        {/* header */}
-        <View style={styles.topRow}>
-          <TouchableOpacity onPress={handleBack} style={styles.backBtn} activeOpacity={0.8}>
-            <Text variant="bodySmall" style={styles.backText}>Back</Text>
-          </TouchableOpacity>
-        </View>
-        <Text variant="title" style={styles.title}>Preferences</Text>
-        <Text variant="muted" style={styles.sub}>You can change this anytime.</Text>
+        <ScreenHeader
+          title="Preferences"
+          subtitle={manageMode ? 'Review your choices and save when ready.' : 'You can change this anytime.'}
+          onBack={manageMode ? undefined : handleBack}
+          backTestID={manageMode ? undefined : 'preferences-back'}
+        />
 
         {/* â•â•â•â•â•â•â•â•â•â• Walking Goals â•â•â•â•â•â•â•â•â•â• */}
-        <Section title="Walking Goals" subtitle="Target, buffer & reminders" defaultExpanded>
+        <Section title="Walking Goals" subtitle="Target, buffer & reminders" icon="adjust" defaultExpanded>
           {/* Walking Goal */}
           <View style={styles.field}>
             <View style={styles.fieldHeader}>
@@ -428,7 +537,7 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation }) => {
         </Section>
 
         {/* â•â•â•â•â•â•â•â•â•â• Other Settings â•â•â•â•â•â•â•â•â•â• */}
-        <Section title="Other Settings" subtitle="Notifications & quiet hours">
+        <Section title="Other Settings" subtitle="Notifications & quiet hours" icon="settings">
           {/* When to Notify (simplified radio) */}
           <View style={styles.field}>
             <Text variant="bodySmall" style={styles.fieldLabel}>When to notify</Text>
@@ -484,31 +593,38 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation }) => {
       {/* footer */}
       <View style={styles.footer}>
         <View style={styles.btnRow}>
-          {!hasChanges && (
-            <Button title="Skip for now" onPress={() => setShowSkipModal(true)} variant="muted" style={styles.btnHalf} />
+          {manageMode ? (
+            <>
+              <Button
+                title="Cancel"
+                onPress={handleManageCancel}
+                variant="danger"
+                style={styles.btnHalf}
+                disabled={savingPrefs}
+                testID="preferences-cancel"
+              />
+              <Button
+                title="Save"
+                onPress={handleManageSave}
+                style={styles.btnHalf}
+                loading={savingPrefs}
+                disabled={!canContinue}
+                testID="preferences-save"
+              />
+            </>
+          ) : (
+            <Button
+              title="Continue"
+              onPress={handleOnboardingContinue}
+              style={styles.btnHalf}
+              loading={savingPrefs}
+              disabled={!canContinue}
+              testID="preferences-continue"
+            />
           )}
-          <Button title="Continue" onPress={() => savePreferences(prefs)} style={styles.btnHalf} loading={savingPrefs} disabled={!canContinue} />
         </View>
-        <Text variant="muted" style={styles.privacy}>Your schedule stays private. Privacy is our utmost importance.</Text>
+        <Text variant="muted" style={styles.privacy}>Your schedule stays private. Privacy is our top priority.</Text>
       </View>
-
-      {/* skip modal */}
-      <Modal visible={showSkipModal} onClose={() => setShowSkipModal(false)} title="Use Recommended Settings?">
-        <Text variant="bodySmall" style={styles.skipIntro}>If you skip, GapWalk will use these recommended defaults:</Text>
-        <View style={styles.skipList}>
-          <Text variant="bodySmall" style={styles.skipItem}>Walking goal: <Text variant="bodySmall" style={styles.skipBold}>{DEFAULT_PREFERENCES.dailyTargetMinutes} min</Text></Text>
-          <Text variant="bodySmall" style={styles.skipItem}>Buffer: <Text variant="bodySmall" style={styles.skipBold}>{DEFAULT_PREFERENCES.bufferMinutes} min</Text></Text>
-          <Text variant="bodySmall" style={styles.skipItem}>Reminders: <Text variant="bodySmall" style={styles.skipBold}>{DEFAULT_PREFERENCES.notificationCountPerDay}/day</Text></Text>
-          <Text variant="bodySmall" style={styles.skipItem}>Reminder spacing: <Text variant="bodySmall" style={styles.skipBold}>{DEFAULT_PREFERENCES.notificationMinGapMinutes} min</Text></Text>
-          <Text variant="bodySmall" style={styles.skipItem}>Quiet hours: <Text variant="bodySmall" style={styles.skipBold}>{formatTime12(DEFAULT_PREFERENCES.quietHoursStart)} - {formatTime12(DEFAULT_PREFERENCES.quietHoursEnd)}</Text></Text>
-          <Text variant="bodySmall" style={styles.skipItem}>Notify: <Text variant="bodySmall" style={styles.skipBold}>{notifyLabel('gap')}</Text></Text>
-        </View>
-        <Text variant="muted" style={styles.skipNote}>You can change these anytime in Preferences.</Text>
-        <View style={styles.modalBtns}>
-          <Button title="Keep Editing" onPress={() => setShowSkipModal(false)} variant="outline" style={styles.modalBtn} />
-          <Button title="Continue" onPress={proceedWithRecommended} style={styles.modalBtn} />
-        </View>
-      </Modal>
 
       {/* quiet hours modal */}
       <Modal visible={showQuietModal} onClose={() => setShowQuietModal(false)} title="Quiet Hours">
@@ -559,24 +675,32 @@ const styles = StyleSheet.create({
   content: {
     flex: 1,
     paddingHorizontal: theme.layout.contentHorizontal,
-    paddingTop: 26,
+    paddingTop: theme.spacing.lg,
     alignSelf: 'center',
     width: '100%',
     maxWidth: theme.layout.contentMaxWidth,
   },
-  topRow: { width: '100%', marginBottom: theme.spacing.sm, alignItems: 'flex-start' },
-  backBtn: { paddingVertical: 4, paddingHorizontal: 2, marginLeft: -32 },
-  backText: { color: theme.colors.textMuted, fontWeight: theme.fontWeight.semibold },
-  title: { marginBottom: 4, textAlign: 'center', fontSize: theme.fontSize.xl + 2 },
-  sub: { marginBottom: 16, textAlign: 'center' },
 
   /* section */
   sectionCard: { marginBottom: 16, paddingVertical: 0, paddingHorizontal: 0 },
   sectionHeader: { flexDirection: 'row', alignItems: 'center', paddingVertical: 14, paddingHorizontal: 16 },
+  sectionHeaderTextWrap: { flexDirection: 'row', alignItems: 'flex-start', gap: 10, flex: 1 },
+  sectionIconWrap: { marginTop: 2 },
   sectionHeaderText: { flex: 1 },
   sectionTitle: { fontWeight: theme.fontWeight.semibold },
   sectionSubtitle: { fontSize: theme.fontSize.xs, marginTop: 2 },
-  chevron: { fontSize: 12, color: theme.colors.textMuted },
+  chevronButton: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    shadowOpacity: 0.12,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 2,
+  },
   sectionBody: { paddingHorizontal: 16, paddingBottom: 16 },
 
   /* fields */
@@ -683,15 +807,6 @@ const styles = StyleSheet.create({
   btnHalf: { flex: 1 },
   privacy: { textAlign: 'center' },
 
-  /* skip modal */
-  modalBtns: { flexDirection: 'row', gap: 10, marginTop: 14 },
-  modalBtn: { flex: 1 },
-  skipIntro: { marginBottom: 12, fontWeight: theme.fontWeight.semibold },
-  skipList: { marginBottom: 12, gap: 6, paddingLeft: 18 },
-  skipItem: { lineHeight: 22 },
-  skipBold: { fontWeight: theme.fontWeight.bold, color: theme.colors.accentPrimary },
-  skipNote: { marginBottom: 4, textAlign: 'center' },
-
   /* quiet modal */
   qDesc: { marginBottom: 16, textAlign: 'center' },
   qTimeGroup: { marginBottom: 10 },
@@ -706,11 +821,3 @@ const styles = StyleSheet.create({
   /* validation */
   errorText: { color: theme.colors.error, marginTop: 6, fontSize: theme.fontSize.sm, lineHeight: 18 },
 });
-
-
-
-
-
-
-
-

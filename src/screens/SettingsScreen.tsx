@@ -1,19 +1,25 @@
 ﻿import React from 'react';
-import { View, StyleSheet, TouchableOpacity, Alert, Platform } from 'react-native';
+import { View, StyleSheet, Alert, Platform } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../../App';
 import { Container } from '../components/Container';
 import { Text } from '../components/Text';
 import { Card } from '../components/Card';
 import { Button } from '../components/Button';
+import { ScreenHeader } from '../components/ScreenHeader';
+import { AppIcon } from '../components/AppIcon';
 import { theme } from '../theme';
 import { useAppStore } from '../store';
 import { translateLiteral } from '../lib/i18n';
+import { plansRepo } from '../lib/repositories/plansRepo';
+import { notificationPlanActions } from '../lib/notificationPlanActions';
+import { analyticsRepo } from '../lib/repositories/analyticsRepo';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Settings'>;
 
 export const SettingsScreen: React.FC<Props> = ({ navigation }) => {
   const { themeMode, setThemeMode, language, setLanguage } = useAppStore();
+  const isE2E = process.env.EXPO_PUBLIC_E2E === '1';
 
   const handleBack = () => {
     if (navigation.canGoBack()) {
@@ -45,20 +51,56 @@ export const SettingsScreen: React.FC<Props> = ({ navigation }) => {
     ]);
   };
 
+  const simulateNotificationStart = async () => {
+    const first = (await plansRepo.getUpcomingPlans(1))[0];
+    if (!first) {
+      Alert.alert('No upcoming plan', 'Create a schedule first so we can simulate a start action.');
+      return;
+    }
+
+    const result = await notificationPlanActions.canStartPlan(first.id);
+    if (!result.allowed) {
+      Alert.alert('Blocked', 'Start action was blocked (likely daily goal already reached).');
+      return;
+    }
+
+    navigation.navigate('Walking', { planId: first.id });
+  };
+
+  const simulateNotificationSkip = async () => {
+    const first = (await plansRepo.getUpcomingPlans(1))[0];
+    if (!first) {
+      Alert.alert('No upcoming plan', 'Create a schedule first so we can simulate skip action.');
+      return;
+    }
+    await notificationPlanActions.skipGap(first.id);
+    Alert.alert('Simulated', 'Skip action simulated for the next upcoming plan.');
+  };
+
+  const showTelemetrySnapshot = async () => {
+    const events = await analyticsRepo.getRecentEvents(20);
+    const crashes = await analyticsRepo.getRecentCrashes(5);
+    Alert.alert(
+      'Telemetry Snapshot',
+      `Recent events: ${events.length}\nRecent crashes: ${crashes.length}`
+    );
+  };
+
   return (
     <Container scrollable>
       <View style={styles.content}>
-        <View style={styles.topRow}>
-          <TouchableOpacity onPress={handleBack} style={styles.backBtn} activeOpacity={0.8}>
-            <Text variant="bodySmall" style={styles.backText}>Back</Text>
-          </TouchableOpacity>
-        </View>
-
-        <Text variant="title" style={styles.title}>Settings</Text>
-        <Text variant="muted" style={styles.sub}>Tweak how GapWalk looks and speaks.</Text>
+        <ScreenHeader
+          title="Settings"
+          subtitle="Tweak how GapWalk looks and speaks."
+          onBack={handleBack}
+          backTestID="settings-back"
+        />
 
         <Card elevated style={styles.card}>
-          <Text variant="bodySmall" style={styles.label}>Appearance</Text>
+          <View style={styles.cardLabelRow}>
+            <AppIcon name="settings" size={14} color={theme.colors.accentPrimary} />
+            <Text variant="bodySmall" style={styles.label}>Appearance</Text>
+          </View>
           <View style={styles.row}>
             <Button
               title="Dark"
@@ -76,7 +118,10 @@ export const SettingsScreen: React.FC<Props> = ({ navigation }) => {
         </Card>
 
         <Card elevated style={styles.card}>
-          <Text variant="bodySmall" style={styles.label}>Language</Text>
+          <View style={styles.cardLabelRow}>
+            <AppIcon name="adjust" size={14} color={theme.colors.accentPrimary} />
+            <Text variant="bodySmall" style={styles.label}>Language</Text>
+          </View>
           <View style={styles.row}>
             <Button
               title="English"
@@ -92,6 +137,37 @@ export const SettingsScreen: React.FC<Props> = ({ navigation }) => {
             />
           </View>
         </Card>
+
+        {isE2E && (
+          <Card elevated style={styles.card}>
+            <View style={styles.cardLabelRow}>
+              <AppIcon name="sync" size={14} color={theme.colors.accentPrimary} />
+              <Text variant="bodySmall" style={styles.label}>E2E Notification Actions</Text>
+            </View>
+            <View style={styles.stack}>
+              <Button
+                title="Simulate Start Action"
+                onPress={() => { void simulateNotificationStart(); }}
+                testID="e2e-notification-start"
+                full
+              />
+              <Button
+                title="Simulate Skip Action"
+                onPress={() => { void simulateNotificationSkip(); }}
+                testID="e2e-notification-skip"
+                full
+                variant="secondary"
+              />
+              <Button
+                title="Show Telemetry Snapshot"
+                onPress={() => { void showTelemetrySnapshot(); }}
+                testID="e2e-telemetry-snapshot"
+                full
+                variant="muted"
+              />
+            </View>
+          </Card>
+        )}
       </View>
     </Container>
   );
@@ -101,20 +177,15 @@ const styles = StyleSheet.create({
   content: {
     flex: 1,
     paddingHorizontal: theme.layout.contentHorizontal,
-    paddingTop: 26,
+    paddingTop: theme.spacing.lg,
     alignSelf: 'center',
     width: '100%',
     maxWidth: theme.layout.contentMaxWidth,
   },
-  topRow: { width: '100%', marginBottom: theme.spacing.sm, alignItems: 'flex-start' },
-  backBtn: { paddingVertical: 4, paddingHorizontal: 2, marginLeft: -32 },
-  backText: { color: theme.colors.textMuted, fontWeight: theme.fontWeight.semibold },
-  title: { marginBottom: 4, textAlign: 'center', fontSize: theme.fontSize.xl + 2 },
-  sub: { marginBottom: 20, textAlign: 'center' },
   card: { marginBottom: 16 },
   label: { color: theme.colors.textMuted, marginBottom: 8 },
+  cardLabelRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   row: { flexDirection: 'row', gap: 10 },
   pill: { flex: 1 },
+  stack: { gap: 10 },
 });
-
-

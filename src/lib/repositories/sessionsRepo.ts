@@ -8,8 +8,8 @@ export const sessionsRepo = {
     await db.runAsync(
       `INSERT OR REPLACE INTO walk_sessions 
        (id, nudge_plan_id, start, end, active_seconds, paused_seconds, 
-        distance_meters, calories, used_location, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        distance_meters, steps, calories, used_location, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         session.id,
         session.nudgePlanId || null,
@@ -18,6 +18,7 @@ export const sessionsRepo = {
         session.activeSeconds,
         session.pausedSeconds,
         session.distanceMeters || null,
+        session.steps || 0,
         session.calories || null,
         session.usedLocation ? 1 : 0,
         session.createdAt,
@@ -35,6 +36,7 @@ export const sessionsRepo = {
       active_seconds: number;
       paused_seconds: number;
       distance_meters: number | null;
+      steps: number | null;
       calories: number | null;
       used_location: number;
       created_at: string;
@@ -50,6 +52,7 @@ export const sessionsRepo = {
       activeSeconds: row.active_seconds,
       pausedSeconds: row.paused_seconds,
       distanceMeters: row.distance_meters || undefined,
+      steps: row.steps ?? 0,
       calories: row.calories || undefined,
       usedLocation: row.used_location === 1,
       createdAt: row.created_at,
@@ -70,6 +73,7 @@ export const sessionsRepo = {
       active_seconds: number;
       paused_seconds: number;
       distance_meters: number | null;
+      steps: number | null;
       calories: number | null;
       used_location: number;
       created_at: string;
@@ -86,6 +90,7 @@ export const sessionsRepo = {
       activeSeconds: row.active_seconds,
       pausedSeconds: row.paused_seconds,
       distanceMeters: row.distance_meters || undefined,
+      steps: row.steps ?? 0,
       calories: row.calories || undefined,
       usedLocation: row.used_location === 1,
       createdAt: row.created_at,
@@ -108,6 +113,7 @@ export const sessionsRepo = {
       active_seconds: number;
       paused_seconds: number;
       distance_meters: number | null;
+      steps: number | null;
       calories: number | null;
       used_location: number;
       created_at: string;
@@ -121,6 +127,7 @@ export const sessionsRepo = {
       activeSeconds: row.active_seconds,
       pausedSeconds: row.paused_seconds,
       distanceMeters: row.distance_meters || undefined,
+      steps: row.steps ?? 0,
       calories: row.calories || undefined,
       usedLocation: row.used_location === 1,
       createdAt: row.created_at,

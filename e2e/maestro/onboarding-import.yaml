@@ -1,0 +1,43 @@
+appId: com.gapwalk.app
+name: onboarding-import
+---
+- launchApp:
+    clearState: true
+- extendedWaitUntil:
+    visible:
+      id: intro-get-started
+    timeout: 20000
+- tapOn:
+    id: intro-get-started
+- extendedWaitUntil:
+    visible:
+      id: schedule-option-import
+    timeout: 20000
+- tapOn:
+    id: schedule-option-import
+- tapOn:
+    id: e2e-sample-import-btn
+- extendedWaitUntil:
+    visible:
+      id: manual-save
+    timeout: 20000
+- tapOn:
+    id: manual-save
+- tapOn: Save
+- extendedWaitUntil:
+    visible:
+      id: manual-continue
+    timeout: 20000
+- tapOn:
+    id: manual-continue
+- extendedWaitUntil:
+    visible:
+      id: preferences-continue
+    timeout: 20000
+- tapOn:
+    id: preferences-continue
+- tapOn: Save
+- extendedWaitUntil:
+    visible:
+      id: dashboard-open-menu
+    timeout: 30000

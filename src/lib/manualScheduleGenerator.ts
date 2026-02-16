@@ -1,5 +1,5 @@
 import { ManualScheduleEntry, BusyEvent } from './types';
-import { addDays, setHours, setMinutes, startOfWeek, format } from 'date-fns';
+import { addDays, setHours, setMinutes, startOfDay, startOfWeek } from 'date-fns';
 
 /**
  * Generate BusyEvent instances from a weekly template of ManualScheduleEntries
@@ -12,11 +12,34 @@ export const generateBusyEventsFromTemplate = (
   weeksAhead = 4
 ): BusyEvent[] => {
   const events: BusyEvent[] = [];
-  const today = new Date();
+  const today = startOfDay(new Date());
   const currentWeekStart = startOfWeek(today);
+  const rangeEnd = addDays(today, weeksAhead * 7);
+
+  for (const entry of entries) {
+    if (!entry.isOneTime || !entry.oneTimeDate) continue;
+    const eventDate = new Date(`${entry.oneTimeDate}T00:00:00`);
+    if (Number.isNaN(eventDate.getTime())) continue;
+    const normalizedDate = startOfDay(eventDate);
+    if (normalizedDate < today || normalizedDate >= rangeEnd) continue;
+    const [startHour, startMin] = entry.startTime.split(':').map(Number);
+    const [endHour, endMin] = entry.endTime.split(':').map(Number);
+    const start = setMinutes(setHours(normalizedDate, startHour), startMin);
+    const end = setMinutes(setHours(normalizedDate, endHour), endMin);
+    events.push({
+      id: `manual-once-${entry.id}-${entry.oneTimeDate}`,
+      title: entry.title,
+      start: start.toISOString(),
+      end: end.toISOString(),
+      source: 'manual',
+      isAllDay: false,
+      createdAt: new Date().toISOString(),
+    });
+  }
 
   for (let week = 0; week < weeksAhead; week++) {
     for (const entry of entries) {
+      if (entry.isOneTime) continue;
       const eventDate = addDays(currentWeekStart, week * 7 + entry.dayOfWeek);
       const [startHour, startMin] = entry.startTime.split(':').map(Number);
       const [endHour, endMin] = entry.endTime.split(':').map(Number);

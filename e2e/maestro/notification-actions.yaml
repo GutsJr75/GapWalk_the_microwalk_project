@@ -1,0 +1,56 @@
+appId: com.gapwalk.app
+name: notification-actions
+---
+- launchApp:
+    clearState: true
+- runFlow:
+    file: helpers/bootstrap-onboarding-manual.yaml
+- tapOn:
+    id: dashboard-open-menu
+- tapOn:
+    id: dashboard-menu-settings
+- extendedWaitUntil:
+    visible:
+      id: e2e-notification-start
+    timeout: 20000
+- tapOn:
+    id: e2e-notification-start
+- extendedWaitUntil:
+    visible:
+      id: walking-end
+    timeout: 20000
+- tapOn:
+    id: walking-location-deny
+    optional: true
+- tapOn:
+    id: walking-end
+- tapOn:
+    id: walking-end-confirm
+- tapOn:
+    id: walking-location-deny
+    optional: true
+- extendedWaitUntil:
+    visible:
+      id: dashboard-open-menu
+    timeout: 30000
+- tapOn:
+    id: dashboard-open-menu
+- tapOn:
+    id: dashboard-menu-settings
+- extendedWaitUntil:
+    visible:
+      id: e2e-notification-skip
+    timeout: 20000
+- tapOn:
+    id: e2e-notification-skip
+- tapOn:
+    text: OK
+    optional: true
+- tapOn:
+    id: e2e-telemetry-snapshot
+- assertVisible: Telemetry Snapshot
+- tapOn:
+    text: OK
+    optional: true
+- assertVisible:
+    id: settings-back

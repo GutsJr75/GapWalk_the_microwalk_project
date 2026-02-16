@@ -51,6 +51,7 @@ export const GapItem: React.FC<GapItemProps> = ({
   const cancelBtnTheme = {
     backgroundColor: isDark ? 'rgba(239,68,68,0.1)' : 'rgba(239,68,68,0.14)',
   };
+  const badgeTextColor = isDark ? theme.colors.accentPrimary : '#0f5132';
 
   return (
     <View style={[styles.container, containerTheme]}>
@@ -60,7 +61,7 @@ export const GapItem: React.FC<GapItemProps> = ({
         <Text variant="muted" style={styles.notifyLabel}>{notifyLabel}</Text>
         <View style={styles.meta}>
           <View style={[styles.badge, badgeTheme]}>
-            <Text variant="bodySmall" style={styles.badgeText}>
+            <Text variant="bodySmall" style={[styles.badgeText, { color: badgeTextColor }]}>
               {remaining} min planned
             </Text>
           </View>
@@ -107,7 +108,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
   },
   badgeText: {
-    color: theme.colors.accentPrimary,
     fontWeight: theme.fontWeight.medium,
     fontSize: theme.fontSize.xs,
   },

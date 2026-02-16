@@ -1,5 +1,5 @@
 ﻿import React from 'react';
-import { View, StyleSheet, ViewStyle, TouchableOpacity, StyleProp } from 'react-native';
+import { View, StyleSheet, ViewStyle, Pressable, StyleProp } from 'react-native';
 import { theme } from '../theme';
 import { useThemePalette } from '../theme/palette';
 
@@ -10,6 +10,7 @@ interface CardProps {
   onPress?: () => void;
   disabled?: boolean;
   elevated?: boolean;
+  testID?: string;
 }
 
 export const Card: React.FC<CardProps> = ({
@@ -19,28 +20,42 @@ export const Card: React.FC<CardProps> = ({
   onPress,
   disabled = false,
   elevated = false,
+  testID,
 }) => {
-  const Wrapper = onPress ? TouchableOpacity : View;
   const palette = useThemePalette();
+  const cardBaseStyle = [
+    styles.card,
+    {
+      backgroundColor: elevated ? palette.bgSurfaceElevated : palette.bgSurface,
+      borderColor: palette.borderSoft,
+    },
+    selected && styles.selectedCard,
+    disabled && styles.disabledCard,
+    style,
+  ];
+
+  if (onPress) {
+    return (
+      <Pressable
+        style={({ pressed }) => [
+          cardBaseStyle,
+          pressed && !disabled && styles.pressedCard,
+        ]}
+        onPress={onPress}
+        disabled={disabled}
+        android_ripple={{ color: 'rgba(15,23,42,0.08)' }}
+        testID={testID}
+        accessibilityLabel={testID}
+      >
+        {children}
+      </Pressable>
+    );
+  }
 
   return (
-    <Wrapper
-      style={[
-        styles.card,
-        {
-          backgroundColor: elevated ? palette.bgSurfaceElevated : palette.bgSurface,
-          borderColor: palette.borderSoft,
-        },
-        selected && styles.selectedCard,
-        disabled && styles.disabledCard,
-        style,
-      ]}
-      onPress={onPress}
-      disabled={disabled || !onPress}
-      activeOpacity={0.7}
-    >
+    <View style={cardBaseStyle} testID={testID} accessibilityLabel={testID}>
       {children}
-    </Wrapper>
+    </View>
   );
 };
 
@@ -61,5 +76,7 @@ const styles = StyleSheet.create({
   disabledCard: {
     opacity: 0.4,
   },
+  pressedCard: {
+    transform: [{ scale: 0.992 }],
+  },
 });
-

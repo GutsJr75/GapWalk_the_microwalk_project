@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, StyleSheet, TouchableOpacity } from 'react-native';
+import { View, StyleSheet } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useFocusEffect } from '@react-navigation/native';
 import { RootStackParamList } from '../../App';
@@ -7,6 +7,8 @@ import { Container } from '../components/Container';
 import { Text } from '../components/Text';
 import { Button } from '../components/Button';
 import { Card } from '../components/Card';
+import { ScreenHeader } from '../components/ScreenHeader';
+import { AppIcon } from '../components/AppIcon';
 import { theme } from '../theme';
 import { useAppStore } from '../store';
 import { scheduleSourceRepo } from '../lib/repositories/scheduleSourceRepo';
@@ -14,7 +16,8 @@ import { scheduleSourceRepo } from '../lib/repositories/scheduleSourceRepo';
 type Props = NativeStackScreenProps<RootStackParamList, 'ScheduleOverview'>;
 
 export const ScheduleOverviewScreen: React.FC<Props> = ({ navigation }) => {
-  const { scheduleSource, setScheduleSource } = useAppStore();
+  const { scheduleSource, setScheduleSource, themeMode } = useAppStore();
+  const mintTextOnTint = themeMode === 'dark' ? theme.colors.accentPrimary : '#0f5132';
 
   useFocusEffect(
     React.useCallback(() => {
@@ -69,19 +72,17 @@ export const ScheduleOverviewScreen: React.FC<Props> = ({ navigation }) => {
   return (
     <Container scrollable>
       <View style={styles.content}>
-        <View style={styles.topRow}>
-          <TouchableOpacity onPress={handleBack} style={styles.backBtn} activeOpacity={0.8}>
-            <Text variant="bodySmall" style={styles.backText}>Back</Text>
-          </TouchableOpacity>
-        </View>
-
-        <Text variant="title" style={styles.title}>Manage Schedule</Text>
-        <Text variant="muted" style={styles.sub}>
-          Change your schedule source or update your current schedule without repeating onboarding.
-        </Text>
+        <ScreenHeader
+          title="Manage your schedule"
+          subtitle="Change your schedule source or update your current schedule without repeating onboarding."
+          onBack={handleBack}
+        />
 
         <Card elevated style={styles.card}>
-          <Text variant="bodySmall" style={styles.label}>Current source</Text>
+          <View style={styles.labelRow}>
+            <AppIcon name="calendar" size={14} color={theme.colors.accentPrimary} />
+            <Text variant="bodySmall" style={styles.label}>Current source</Text>
+          </View>
           {scheduleSource?.type === 'ics' && !!scheduleSource.filename ? (
             <Text variant="body" style={styles.current}>
               File:{' '}
@@ -95,7 +96,10 @@ export const ScheduleOverviewScreen: React.FC<Props> = ({ navigation }) => {
         </Card>
 
         <Card elevated style={[styles.card, styles.guideCard]}>
-          <Text variant="body" style={styles.guideHeading}>How This Works</Text>
+          <View style={styles.labelRow}>
+            <AppIcon name="adjust" size={14} color={theme.colors.accentPrimary} />
+            <Text variant="body" style={styles.guideHeading}>How it works</Text>
+          </View>
           <Text variant="bodySmall" style={styles.guideSub}>
             Choose an action below. Your schedule updates are applied only after you save.
           </Text>
@@ -103,10 +107,10 @@ export const ScheduleOverviewScreen: React.FC<Props> = ({ navigation }) => {
           <View style={styles.guideList}>
             <View style={styles.guideItem}>
               <View style={styles.guideIndex}>
-                <Text variant="bodySmall" style={styles.guideIndexText}>1</Text>
+                <AppIcon name="calendar" size={14} color={mintTextOnTint} />
               </View>
               <View style={styles.guideItemTextWrap}>
-                <Text variant="bodySmall" style={styles.guideItemTitle}>Change Schedule Source</Text>
+                <Text variant="bodySmall" style={styles.guideItemTitle}>Change schedule source</Text>
                 <Text variant="bodySmall" style={styles.guideItemDesc}>
                   Switch how GapWalk reads your schedule, such as manual entry or calendar import.
                 </Text>
@@ -115,10 +119,10 @@ export const ScheduleOverviewScreen: React.FC<Props> = ({ navigation }) => {
 
             <View style={styles.guideItem}>
               <View style={styles.guideIndex}>
-                <Text variant="bodySmall" style={styles.guideIndexText}>2</Text>
+                <AppIcon name="sync" size={14} color={mintTextOnTint} />
               </View>
               <View style={styles.guideItemTextWrap}>
-                <Text variant="bodySmall" style={styles.guideItemTitle}>Update and Sync Opportunities</Text>
+                <Text variant="bodySmall" style={styles.guideItemTitle}>Update and sync opportunities</Text>
                 <Text variant="bodySmall" style={styles.guideItemDesc}>
                   Save your changes to refresh today's walking opportunities automatically.
                 </Text>
@@ -162,18 +166,14 @@ const styles = StyleSheet.create({
   content: {
     flex: 1,
     paddingHorizontal: theme.layout.contentHorizontal,
-    paddingTop: 26,
+    paddingTop: theme.spacing.lg,
     alignSelf: 'center',
     width: '100%',
     maxWidth: theme.layout.contentMaxWidth,
   },
-  topRow: { width: '100%', marginBottom: theme.spacing.sm, alignItems: 'flex-start' },
-  backBtn: { paddingVertical: 4, paddingHorizontal: 2, marginLeft: -32 },
-  backText: { color: theme.colors.textMuted, fontWeight: theme.fontWeight.semibold },
-  title: { marginBottom: 4, textAlign: 'center', fontSize: theme.fontSize.xl + 2 },
-  sub: { marginBottom: 20, textAlign: 'center' },
   card: { marginBottom: 16 },
-  label: { color: theme.colors.textMuted, marginBottom: 4 },
+  labelRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 4 },
+  label: { color: theme.colors.textMuted },
   current: { fontWeight: theme.fontWeight.semibold },
   fileName: { color: theme.colors.accentPrimary, fontWeight: theme.fontWeight.semibold },
   guideCard: { paddingVertical: 16 },
@@ -200,11 +200,6 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(46,233,166,0.16)',
     marginTop: 1,
   },
-  guideIndexText: {
-    color: theme.colors.accentPrimary,
-    fontWeight: theme.fontWeight.bold,
-    fontSize: theme.fontSize.xs,
-  },
   guideItemTextWrap: { flex: 1 },
   guideItemTitle: { fontWeight: theme.fontWeight.semibold, marginBottom: 2 },
   guideItemDesc: { color: theme.colors.textMuted, lineHeight: 18 },
@@ -212,4 +207,3 @@ const styles = StyleSheet.create({
   actions: { marginTop: 12, gap: 10 },
   actionBtn: { },
 });
-

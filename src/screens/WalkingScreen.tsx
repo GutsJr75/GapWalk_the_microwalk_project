@@ -1,429 +1,739 @@
-import React, { useEffect, useState, useRef } from 'react';
-import { View, StyleSheet, Animated, Easing } from 'react-native';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Animated, Easing, Platform, Pressable, StyleSheet, View } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import * as Location from 'expo-location';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { RootStackParamList } from '../../App';
-import { Container } from '../components/Container';
 import { Text } from '../components/Text';
 import { Button } from '../components/Button';
-import { Card } from '../components/Card';
 import { Modal } from '../components/Modal';
 import { theme } from '../theme';
-import { WalkSession, NudgePlan } from '../lib/types';
-import { sessionsRepo } from '../lib/repositories/sessionsRepo';
+import { useThemePalette } from '../theme/palette';
+import { NudgePlan, WalkSession } from '../lib/types';
 import { plansRepo } from '../lib/repositories/plansRepo';
+import { sessionsRepo } from '../lib/repositories/sessionsRepo';
+import { analyticsService } from '../lib/analytics';
 import { useAppStore } from '../store';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Walking'>;
 
-interface Coord { latitude: number; longitude: number }
+interface Coord {
+  latitude: number;
+  longitude: number;
+}
+
+interface PathPoint {
+  coord: Coord;
+  timestampMs: number;
+}
+
+const DEFAULT_COORD: Coord = { latitude: 37.7749, longitude: -122.4194 };
+const STRIDE_METERS = 0.78;
+const WALKING_SPEED_THRESHOLD_MPS = 0.65;
+const MIN_SEGMENT_METERS = 0.35;
+const MAX_VALID_JUMP_METERS = 80;
+
+let MapViewImpl: any = null;
+let MarkerImpl: any = null;
+let PolylineImpl: any = null;
+let PROVIDER_GOOGLE_IMPL: any = null;
+
+if (Platform.OS !== 'web') {
+  const maps = require('react-native-maps');
+  MapViewImpl = maps.default;
+  MarkerImpl = maps.Marker;
+  PolylineImpl = maps.Polyline;
+  PROVIDER_GOOGLE_IMPL = maps.PROVIDER_GOOGLE;
+}
+
+const DARK_MAP_STYLE: Array<Record<string, unknown>> = [
+  { elementType: 'geometry', stylers: [{ color: '#1b2230' }] },
+  { elementType: 'labels.text.fill', stylers: [{ color: '#6f7b93' }] },
+  { elementType: 'labels.text.stroke', stylers: [{ color: '#1b2230' }] },
+  { featureType: 'poi', elementType: 'labels.text.fill', stylers: [{ color: '#5a657d' }] },
+  { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#2a3345' }] },
+  { featureType: 'road', elementType: 'geometry.stroke', stylers: [{ color: '#20293a' }] },
+  { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#0f1728' }] },
+];
+
+const formatClock = (seconds: number): string => {
+  const clamped = Math.max(0, Math.floor(seconds));
+  const mins = Math.floor(clamped / 60);
+  const secs = String(clamped % 60).padStart(2, '0');
+  return `${mins} min ${secs} sec`;
+};
+
+const formatMiles = (distanceMeters: number): string => `${(distanceMeters / 1609.34).toFixed(2)} mi`;
+
+const haversineMeters = (a: Coord, b: Coord): number => {
+  const R = 6371e3;
+  const p1 = (a.latitude * Math.PI) / 180;
+  const p2 = (b.latitude * Math.PI) / 180;
+  const dPhi = ((b.latitude - a.latitude) * Math.PI) / 180;
+  const dLambda = ((b.longitude - a.longitude) * Math.PI) / 180;
+  const x = Math.sin(dPhi / 2) ** 2 + Math.cos(p1) * Math.cos(p2) * Math.sin(dLambda / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x));
+};
 
 export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
-  const { planId } = route.params;
-  const { hasLocationPermission, setHasLocationPermission } = useAppStore();
+  const planId = route.params?.planId;
+  const insets = useSafeAreaInsets();
+  const palette = useThemePalette();
+  const { themeMode, setHasLocationPermission } = useAppStore();
 
   const [plan, setPlan] = useState<NudgePlan | null>(null);
+  const [activeSeconds, setActiveSeconds] = useState(0);
+  const [pausedSeconds, setPausedSeconds] = useState(0);
+  const [ticks, setTicks] = useState(0);
   const [paused, setPaused] = useState(false);
-  const [activeS, setActiveS] = useState(0);
-  const [pausedS, setPausedS] = useState(0);
-  const [startISO] = useState(new Date().toISOString());
-  const pauseRef = useRef<number | null>(null);
-  const [showLocPrompt, setShowLocPrompt] = useState(false);
-  const [tracking, setTracking] = useState(false);
-  const [distance, setDistance] = useState(0);
-  const [calories, setCalories] = useState(0);
-  const [showEnd, setShowEnd] = useState(false);
-  const [lowTime, setLowTime] = useState(false);
-  const [milestoneReached, setMilestoneReached] = useState<number | null>(null);
-  const timerRef = useRef<NodeJS.Timeout | null>(null);
+  const [distanceMeters, setDistanceMeters] = useState(0);
+  const [steps, setSteps] = useState(0);
+  const [showEndModal, setShowEndModal] = useState(false);
+  const [showCompletion, setShowCompletion] = useState(false);
+  const [permissionDenied, setPermissionDenied] = useState(false);
+  const [isTracking, setIsTracking] = useState(false);
+  const [isWalking, setIsWalking] = useState(false);
+  const [hadWalkingSignal, setHadWalkingSignal] = useState(false);
+  const [currentCoord, setCurrentCoord] = useState<Coord | null>(null);
+  const [routeCoords, setRouteCoords] = useState<Coord[]>([]);
+
+  const startIsoRef = useRef(new Date().toISOString());
+  const pauseStartedAtRef = useRef<number | null>(null);
+  const pausedRef = useRef(false);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const watchRef = useRef<Location.LocationSubscription | null>(null);
-  const lastPt = useRef<Coord | null>(null);
-  const pulseAnim = useRef(new Animated.Value(1)).current;
-  const milestoneAnim = useRef(new Animated.Value(0)).current;
+  const lastPointRef = useRef<PathPoint | null>(null);
+  const mapRef = useRef<any>(null);
+
+  const completionPopAnim = useRef(new Animated.Value(0)).current;
+  const completionBurstAnim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
-    if (planId) plansRepo.getById(planId).then(p => { if (p) { setPlan(p); plansRepo.updateStatus(planId, 'started'); }});
-    timerRef.current = setInterval(() => {
-      if (!paused) {
-        setActiveS(p => {
-          const newSeconds = p + 1;
-          const newMinutes = Math.floor(newSeconds / 60);
-          // Check for milestones (1, 2, 3, 5, 10 minutes)
-          if ([60, 120, 180, 300, 600].includes(newSeconds) && newSeconds % 60 === 0) {
-            setMilestoneReached(newMinutes);
-            setTimeout(() => setMilestoneReached(null), 3000);
-            Animated.sequence([
-              Animated.timing(milestoneAnim, {
-                toValue: 1,
-                duration: 300,
-                easing: Easing.out(Easing.cubic),
-                useNativeDriver: true,
-              }),
-              Animated.delay(2000),
-              Animated.timing(milestoneAnim, {
-                toValue: 0,
-                duration: 200,
-                useNativeDriver: true,
-              }),
-            ]).start();
-          }
-          return newSeconds;
-        });
-        setCalories(c => c + 0.05);
+    pausedRef.current = paused;
+  }, [paused]);
+
+  useEffect(() => {
+    setSteps(Math.max(0, Math.round(distanceMeters / STRIDE_METERS)));
+  }, [distanceMeters]);
+
+  const applyLocationPoint = useCallback((location: Location.LocationObject) => {
+    const nextCoord: Coord = {
+      latitude: location.coords.latitude,
+      longitude: location.coords.longitude,
+    };
+
+    const nextTimestamp = typeof location.timestamp === 'number' ? location.timestamp : Date.now();
+    const previous = lastPointRef.current;
+
+    setCurrentCoord(nextCoord);
+
+    if (!pausedRef.current) {
+      setRouteCoords((prev) => {
+        const next = [...prev, nextCoord];
+        return next.length > 500 ? next.slice(next.length - 500) : next;
+      });
+    }
+
+    if (previous) {
+      const segmentMeters = haversineMeters(previous.coord, nextCoord);
+      const dtSeconds = Math.max(1, Math.round((nextTimestamp - previous.timestampMs) / 1000));
+      const speedFromSensor = typeof location.coords.speed === 'number' && location.coords.speed >= 0
+        ? location.coords.speed
+        : null;
+      const estimatedSpeed = segmentMeters / dtSeconds;
+      const effectiveSpeed = speedFromSensor ?? estimatedSpeed;
+      const moving = !pausedRef.current && effectiveSpeed >= WALKING_SPEED_THRESHOLD_MPS;
+
+      setIsWalking(moving);
+      if (moving) {
+        setHadWalkingSignal(true);
       }
-    }, 1000);
-    
-    // Pulse animation for timer
-    Animated.loop(
-      Animated.sequence([
-        Animated.timing(pulseAnim, {
-          toValue: 1.05,
-          duration: 1000,
-          easing: Easing.inOut(Easing.ease),
-          useNativeDriver: true,
-        }),
-        Animated.timing(pulseAnim, {
-          toValue: 1,
-          duration: 1000,
-          easing: Easing.inOut(Easing.ease),
-          useNativeDriver: true,
-        }),
-      ])
-    ).start();
-    
-    const t = setTimeout(() => { if (!hasLocationPermission) setShowLocPrompt(true); }, 2000);
-    return () => { clearTimeout(t); if (timerRef.current) clearInterval(timerRef.current); watchRef.current?.remove(); };
+
+      if (!pausedRef.current && segmentMeters >= MIN_SEGMENT_METERS && segmentMeters <= MAX_VALID_JUMP_METERS) {
+        setDistanceMeters((prevDistance) => prevDistance + segmentMeters);
+      }
+    }
+
+    lastPointRef.current = { coord: nextCoord, timestampMs: nextTimestamp };
   }, []);
 
+  const requestPermissionAndTrack = useCallback(async () => {
+    try {
+      const existing = await Location.getForegroundPermissionsAsync();
+      let status = existing.status;
+
+      if (status !== 'granted') {
+        const requested = await Location.requestForegroundPermissionsAsync();
+        status = requested.status;
+      }
+
+      if (status !== 'granted') {
+        setPermissionDenied(true);
+        setHasLocationPermission(false);
+        setIsTracking(false);
+        return;
+      }
+
+      setPermissionDenied(false);
+      setHasLocationPermission(true);
+
+      const initial = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+      applyLocationPoint(initial);
+      setRouteCoords([
+        {
+          latitude: initial.coords.latitude,
+          longitude: initial.coords.longitude,
+        },
+      ]);
+
+      setIsTracking(true);
+      watchRef.current = await Location.watchPositionAsync(
+        {
+          accuracy: Location.Accuracy.BestForNavigation,
+          timeInterval: 1500,
+          distanceInterval: 2,
+          mayShowUserSettingsDialog: true,
+        },
+        applyLocationPoint
+      );
+    } catch (error) {
+      console.error('Failed to initialize location tracking:', error);
+      setPermissionDenied(true);
+      setIsTracking(false);
+    }
+  }, [applyLocationPoint, setHasLocationPermission]);
+
   useEffect(() => {
-    if (timerRef.current) clearInterval(timerRef.current);
+    void (async () => {
+      if (planId) {
+        const found = await plansRepo.getById(planId);
+        if (found) {
+          setPlan(found);
+          await plansRepo.updateStatus(planId, 'started');
+        }
+      }
+      await requestPermissionAndTrack();
+    })();
+
     timerRef.current = setInterval(() => {
-      if (!paused) { setActiveS(p => p + 1); setCalories(c => c + 0.05); }
+      setTicks((prev) => prev + 1);
+      if (!pausedRef.current) {
+        setActiveSeconds((prev) => prev + 1);
+      }
     }, 1000);
-  }, [paused]);
+
+    return () => {
+      if (timerRef.current) clearInterval(timerRef.current);
+      watchRef.current?.remove();
+    };
+  }, [planId, requestPermissionAndTrack]);
 
   const togglePause = () => {
     if (paused) {
-      if (pauseRef.current) setPausedS(p => p + Math.floor((Date.now() - (pauseRef.current || 0)) / 1000));
-      pauseRef.current = null;
-      setPaused(false);
-    } else {
-      pauseRef.current = Date.now();
-      setPaused(true);
-      if (plan) {
-        const rem = (new Date(plan.gapEnd).getTime() - Date.now()) / 60000;
-        if (rem <= 2) setLowTime(true);
+      const pauseStarted = pauseStartedAtRef.current;
+      if (pauseStarted) {
+        setPausedSeconds((prev) => prev + Math.floor((Date.now() - pauseStarted) / 1000));
       }
+      pauseStartedAtRef.current = null;
+      setPaused(false);
+      return;
+    }
+
+    pauseStartedAtRef.current = Date.now();
+    setPaused(true);
+    setIsWalking(false);
+  };
+
+  const remainingSeconds = useMemo(() => {
+    if (!plan) return activeSeconds;
+    const endMs = new Date(plan.gapEnd).getTime();
+    return Math.max(0, Math.floor((endMs - Date.now()) / 1000));
+  }, [activeSeconds, plan, ticks]);
+
+  const targetSeconds = useMemo(() => {
+    if (!plan) return null;
+    const startMs = new Date(startIsoRef.current).getTime();
+    const endMs = new Date(plan.gapEnd).getTime();
+    return Math.max(60, Math.floor((endMs - startMs) / 1000));
+  }, [plan]);
+
+  const progressRatio = targetSeconds
+    ? Math.max(0, Math.min(1, 1 - remainingSeconds / targetSeconds))
+    : Math.max(0, Math.min(1, activeSeconds / 900));
+
+  const statusLabel = paused
+    ? 'Paused'
+    : permissionDenied
+      ? 'Location off'
+      : isTracking
+        ? (isWalking ? 'Walking now' : 'Not moving yet')
+        : 'Locating';
+
+  const statusColor = paused
+    ? '#f59e0b'
+    : isWalking
+      ? theme.colors.accentPrimary
+      : permissionDenied
+        ? '#ef4444'
+        : palette.textMuted;
+
+  const zoomBy = async (delta: number) => {
+    const map = mapRef.current;
+    if (!map?.getCamera || !map?.animateCamera) return;
+
+    try {
+      const camera = await map.getCamera();
+      const currentZoom = typeof camera?.zoom === 'number' ? camera.zoom : 16;
+      const nextZoom = Math.max(13, Math.min(20, currentZoom + delta));
+      map.animateCamera({ zoom: nextZoom, center: currentCoord || DEFAULT_COORD }, { duration: 180 });
+    } catch {
+      // no-op
     }
   };
 
-  const [showCompletion, setShowCompletion] = useState(false);
-  const completionAnim = useRef(new Animated.Value(0)).current;
+  const recenterMap = () => {
+    const map = mapRef.current;
+    if (!map?.animateCamera || !currentCoord) return;
+    map.animateCamera({ center: currentCoord, zoom: 17 }, { duration: 220 });
+  };
 
-  const save = async () => {
-    const s: WalkSession = { id: `s-${Date.now()}`, nudgePlanId: planId, start: startISO, end: new Date().toISOString(), activeSeconds: activeS, pausedSeconds: pausedS, distanceMeters: distance, calories: Math.round(calories), usedLocation: tracking, createdAt: new Date().toISOString() };
-    await sessionsRepo.save(s);
-    if (planId) await plansRepo.updateStatus(planId, 'completed');
-    
-    // Show completion celebration
+  const saveSession = async () => {
+    const pauseStarted = pauseStartedAtRef.current;
+    const finalPausedSeconds = paused && pauseStarted
+      ? pausedSeconds + Math.floor((Date.now() - pauseStarted) / 1000)
+      : pausedSeconds;
+
+    const session: WalkSession = {
+      id: `s-${Date.now()}`,
+      nudgePlanId: planId,
+      start: startIsoRef.current,
+      end: new Date().toISOString(),
+      activeSeconds,
+      pausedSeconds: finalPausedSeconds,
+      distanceMeters,
+      steps,
+      usedLocation: isTracking && !permissionDenied,
+      createdAt: new Date().toISOString(),
+    };
+
+    await sessionsRepo.save(session);
+    if (planId) {
+      await plansRepo.updateStatus(planId, 'completed');
+    }
+
+    analyticsService.track('walk_completed', {
+      planId: planId || null,
+      activeSeconds,
+      pausedSeconds: finalPausedSeconds,
+      distanceMeters: Math.round(distanceMeters),
+      steps,
+      usedLocation: isTracking && !permissionDenied,
+      hadWalkingSignal,
+    });
+
     setShowCompletion(true);
-    Animated.sequence([
-      Animated.timing(completionAnim, {
+    completionPopAnim.setValue(0);
+    completionBurstAnim.setValue(0);
+
+    Animated.parallel([
+      Animated.timing(completionPopAnim, {
         toValue: 1,
-        duration: 400,
+        duration: 360,
         easing: Easing.out(Easing.cubic),
         useNativeDriver: true,
       }),
-      Animated.delay(2000),
-      Animated.timing(completionAnim, {
-        toValue: 0,
-        duration: 300,
-        easing: Easing.in(Easing.cubic),
+      Animated.timing(completionBurstAnim, {
+        toValue: 1,
+        duration: 900,
+        easing: Easing.out(Easing.quad),
         useNativeDriver: true,
       }),
-    ]).start(() => {
+    ]).start();
+
+    setTimeout(() => {
       setShowCompletion(false);
       navigation.navigate('Dashboard');
-    });
+    }, 2200);
   };
 
-  const confirmEnd = async () => { 
-    setShowEnd(false); 
-    await save();
+  const confirmEnd = async () => {
+    setShowEndModal(false);
+    await saveSession();
   };
 
-  const allowLoc = async () => {
-    const { status } = await Location.requestForegroundPermissionsAsync();
-    if (status === 'granted') { setHasLocationPermission(true); setShowLocPrompt(false); startTrack(); }
-    else setShowLocPrompt(false);
-  };
+  const sheetBg = themeMode === 'dark' ? 'rgba(6, 18, 43, 0.95)' : 'rgba(247, 251, 255, 0.97)';
+  const topBarBg = themeMode === 'dark' ? '#061633' : '#f1f6ff';
+  const sheetBorder = themeMode === 'dark' ? 'rgba(255,255,255,0.08)' : 'rgba(15,23,42,0.14)';
 
-  const startTrack = async () => {
-    setTracking(true);
-    watchRef.current = await Location.watchPositionAsync(
-      { accuracy: Location.Accuracy.High, timeInterval: 3000, distanceInterval: 10 },
-      loc => {
-        const pt = { latitude: loc.coords.latitude, longitude: loc.coords.longitude };
-        if (lastPt.current) setDistance(d => d + haversine(lastPt.current!, pt));
-        lastPt.current = pt;
-      },
-    );
-  };
-
-  const haversine = (a: Coord, b: Coord) => {
-    const R = 6371e3;
-    const f1 = a.latitude * Math.PI / 180, f2 = b.latitude * Math.PI / 180;
-    const df = (b.latitude - a.latitude) * Math.PI / 180, dl = (b.longitude - a.longitude) * Math.PI / 180;
-    const x = Math.sin(df / 2) ** 2 + Math.cos(f1) * Math.cos(f2) * Math.sin(dl / 2) ** 2;
-    return R * 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x));
-  };
-
-  const fmt = (s: number) => {
-    const mins = Math.floor(s / 60);
-    const secs = String(s % 60).padStart(2, '0');
-    return `${mins}:${secs}`;
-  };
-
-  const remaining = () => {
-    if (plan) { const r = Math.max(0, Math.floor((new Date(plan.gapEnd).getTime() - Date.now()) / 1000)); return fmt(r); }
-    return fmt(activeS);
-  };
+  const completionOverlayBg = themeMode === 'dark' ? 'rgba(2, 8, 20, 0.82)' : 'rgba(236, 245, 255, 0.82)';
+  const completionCardBg = themeMode === 'dark' ? '#0f1f3d' : '#f7fbff';
 
   return (
-    <Container safeArea>
-      <View style={styles.body}>
-        <Text variant="title" style={styles.title}>{paused ? 'Paused' : 'Walking'}</Text>
-        <Text variant="bodySmall" color={theme.colors.textMuted} style={styles.titleHint}>
-          {paused ? 'Tap Resume to continue your walk.' : 'Keep going! Every step counts.'}
-        </Text>
+    <SafeAreaView style={[styles.safe, { backgroundColor: palette.bgApp }]} edges={['top', 'left', 'right']}>
+      <View style={[styles.topBar, { backgroundColor: topBarBg, borderBottomColor: sheetBorder }]}>
+        <Text variant="title" style={styles.topTitle}>Walking</Text>
+      </View>
 
-        <Animated.View style={{ transform: [{ scale: pulseAnim }] }}>
-          <Card elevated style={styles.timerCard}>
-            <Text variant="bodySmall" color={theme.colors.textMuted} style={styles.timerLabel}>
-              {plan ? 'Time remaining' : 'Active time'}
-            </Text>
-            <Text variant="heading" style={styles.bigTime}>{remaining()}</Text>
-            {!paused && (
-              <Text variant="bodySmall" color={theme.colors.textMuted} style={styles.timerHint}>
-                Keep moving! 🚶
-              </Text>
+      <View style={styles.mapArea}>
+        {MapViewImpl ? (
+          <MapViewImpl
+            ref={mapRef}
+            style={StyleSheet.absoluteFill}
+            provider={Platform.OS === 'android' ? PROVIDER_GOOGLE_IMPL : undefined}
+            initialRegion={{
+              latitude: currentCoord?.latitude ?? DEFAULT_COORD.latitude,
+              longitude: currentCoord?.longitude ?? DEFAULT_COORD.longitude,
+              latitudeDelta: 0.008,
+              longitudeDelta: 0.008,
+            }}
+            customMapStyle={themeMode === 'dark' ? DARK_MAP_STYLE : undefined}
+            showsUserLocation={isTracking && !permissionDenied}
+            showsMyLocationButton={false}
+            scrollEnabled
+            zoomEnabled
+            rotateEnabled
+            pitchEnabled
+          >
+            {PolylineImpl && routeCoords.length > 1 && (
+              <PolylineImpl
+                coordinates={routeCoords}
+                strokeColor={theme.colors.accentPrimary}
+                strokeWidth={5}
+                lineCap="round"
+                lineJoin="round"
+              />
             )}
-          </Card>
-        </Animated.View>
+            {MarkerImpl && currentCoord && (
+              <MarkerImpl coordinate={currentCoord} pinColor="#2cb7ff" />
+            )}
+          </MapViewImpl>
+        ) : (
+          <View style={styles.mapFallback}>
+            <Text variant="bodySmall" color={palette.textMuted}>Map view is unavailable on web preview.</Text>
+          </View>
+        )}
 
-        {/* Milestone Celebration */}
-        {milestoneReached !== null && (
+        <View style={styles.mapShade} pointerEvents="none" />
+
+        <View style={styles.zoomStack}>
+          <Pressable style={[styles.zoomBtn, { borderColor: sheetBorder }]} onPress={() => { void zoomBy(1); }}>
+            <Text variant="title" style={styles.zoomText}>+</Text>
+          </Pressable>
+          <Pressable style={[styles.zoomBtn, { borderColor: sheetBorder }]} onPress={() => { void zoomBy(-1); }}>
+            <Text variant="title" style={styles.zoomText}>-</Text>
+          </Pressable>
+          <Pressable style={[styles.zoomBtn, { borderColor: sheetBorder }]} onPress={recenterMap}>
+            <Text variant="bodySmall" style={styles.zoomText}>◎</Text>
+          </Pressable>
+        </View>
+
+        <View style={[styles.statusPill, { backgroundColor: sheetBg, borderColor: sheetBorder }]}>
+          <View style={[styles.statusDot, { backgroundColor: statusColor }]} />
+          <Text variant="bodySmall" color={palette.textPrimary}>{statusLabel}</Text>
+        </View>
+
+        {permissionDenied && (
+          <View style={[styles.permissionCard, { backgroundColor: sheetBg, borderColor: sheetBorder }]}>
+            <Text variant="bodySmall" style={styles.permissionTitle}>Enable location to show live route and step count.</Text>
+            <View style={styles.permissionActions}>
+              <Button
+                title="Not now"
+                onPress={() => setPermissionDenied(false)}
+                variant="outline"
+                style={styles.permissionBtn}
+                testID="walking-location-deny"
+              />
+              <Button
+                title="Enable"
+                onPress={() => {
+                  void requestPermissionAndTrack();
+                }}
+                style={styles.permissionBtn}
+                testID="walking-location-allow"
+              />
+            </View>
+          </View>
+        )}
+      </View>
+
+      <View style={[styles.sheet, { backgroundColor: sheetBg, borderTopColor: sheetBorder, paddingBottom: Math.max(insets.bottom + 8, 18) }]}>
+        <View style={[styles.progressTrack, { backgroundColor: themeMode === 'dark' ? 'rgba(255,255,255,0.24)' : 'rgba(15,23,42,0.24)' }]}>
+          <View style={[styles.progressFill, { width: `${Math.max(progressRatio * 100, 5)}%` }]} />
+        </View>
+
+        <Text variant="body" style={styles.timerLabel}>{plan ? 'Remaining Time' : 'Session Time'}</Text>
+        <Text variant="heading" style={styles.timerValue}>{formatClock(remainingSeconds)}</Text>
+
+        <View style={styles.metricRow}>
+          <View style={[styles.metricCard, { backgroundColor: themeMode === 'dark' ? '#1a2a4a' : '#dfe9f9' }]}>
+            <Text variant="body" style={styles.metricTitle}>Distance</Text>
+            <Text variant="heading" style={styles.metricValue}>{formatMiles(distanceMeters)}</Text>
+          </View>
+          <View style={[styles.metricCard, { backgroundColor: themeMode === 'dark' ? '#1a2a4a' : '#dfe9f9' }]}>
+            <Text variant="body" style={styles.metricTitle}>Steps</Text>
+            <Text variant="heading" style={styles.metricValue}>{steps.toLocaleString()}</Text>
+          </View>
+        </View>
+
+        <View style={styles.actionRow}>
+          <Button
+            title={paused ? 'Resume' : 'Pause'}
+            onPress={togglePause}
+            variant="secondary"
+            style={styles.actionBtn}
+            testID="walking-pause-resume"
+          />
+          <Button
+            title="End"
+            onPress={() => setShowEndModal(true)}
+            variant="danger"
+            style={styles.actionBtn}
+            testID="walking-end"
+          />
+        </View>
+      </View>
+
+      <Modal visible={showEndModal} onClose={() => setShowEndModal(false)} title="End this walk?">
+        <Text variant="body" style={styles.modalText}>Your walk progress will be saved to today stats.</Text>
+        <View style={styles.modalRow}>
+          <Button
+            title="Keep Walking"
+            onPress={() => setShowEndModal(false)}
+            variant="outline"
+            style={styles.modalBtn}
+            testID="walking-end-cancel"
+          />
+          <Button title="Yes, End" onPress={() => { void confirmEnd(); }} style={styles.modalBtn} testID="walking-end-confirm" />
+        </View>
+      </Modal>
+
+      {showCompletion && (
+        <Animated.View style={[styles.completionOverlay, { backgroundColor: completionOverlayBg, opacity: completionPopAnim }]} pointerEvents="none">
           <Animated.View
             style={[
-              styles.milestoneOverlay,
+              styles.completionBurst,
               {
-                opacity: milestoneAnim,
-                transform: [
-                  {
-                    scale: milestoneAnim.interpolate({
-                      inputRange: [0, 1],
-                      outputRange: [0.9, 1],
-                    }),
-                  },
-                ],
+                borderColor: theme.colors.accentPrimary,
+                opacity: completionBurstAnim.interpolate({ inputRange: [0, 1], outputRange: [0.55, 0] }),
+                transform: [{ scale: completionBurstAnim.interpolate({ inputRange: [0, 1], outputRange: [0.45, 2.1] }) }],
               },
             ]}
-            pointerEvents="none"
+          />
+          <Animated.View
+            style={[
+              styles.completionCard,
+              {
+                backgroundColor: completionCardBg,
+                borderColor: sheetBorder,
+                opacity: completionPopAnim,
+                transform: [{ scale: completionPopAnim.interpolate({ inputRange: [0, 1], outputRange: [0.85, 1] }) }],
+              },
+            ]}
           >
-            <Card style={styles.milestoneCard}>
-              <Text style={styles.milestoneEmoji}>🎯</Text>
-              <Text variant="title" style={styles.milestoneText}>
-                {milestoneReached} Minute{milestoneReached > 1 ? 's' : ''}!
-              </Text>
-              <Text variant="bodySmall" color={theme.colors.textMuted}>
-                Great progress!
-              </Text>
-            </Card>
+            <View style={[styles.completionBadge, { backgroundColor: theme.colors.accentPrimary }]}>
+              <Text variant="title" style={styles.completionBadgeText}>✓</Text>
+            </View>
+            <Text variant="title" style={styles.completionTitle}>Walk complete</Text>
+            <Text variant="bodySmall" color={palette.textMuted} style={styles.completionSubtitle}>
+              {Math.max(1, Math.floor(activeSeconds / 60))} min - {steps} steps - {formatMiles(distanceMeters)}
+            </Text>
           </Animated.View>
-        )}
-
-        <View style={styles.statRow}>
-          {tracking ? (
-            <>
-              <Card elevated style={styles.miniCard}>
-                <Text variant="bodySmall" color={theme.colors.textMuted}>Distance</Text>
-                <Text variant="title" style={styles.miniValue}>
-                  {distance < 1000 ? `${Math.round(distance)} m` : `${(distance / 1000).toFixed(2)} km`}
-                </Text>
-              </Card>
-              <Card elevated style={styles.miniCard}>
-                <Text variant="bodySmall" color={theme.colors.textMuted}>Calories</Text>
-                <Text variant="title" style={styles.miniValue}>{Math.round(calories)}</Text>
-              </Card>
-            </>
-          ) : (
-            <Card elevated style={styles.miniCard}>
-              <Text variant="bodySmall" color={theme.colors.textMuted}>Active time</Text>
-              <Text variant="title" style={styles.miniValue}>{fmt(activeS)}</Text>
-            </Card>
-          )}
-        </View>
-
-        {lowTime && (
-          <Card style={styles.warn}>
-            <Text variant="bodySmall" color={theme.colors.warning}>
-              Your gap is almost over. Consider heading back.
-            </Text>
-          </Card>
-        )}
-      </View>
-
-      <View style={styles.footer}>
-        <View style={styles.btnRow}>
-          <Button title="End Walk" onPress={() => setShowEnd(true)} variant="outline" style={styles.btn} />
-          <Button title={paused ? 'Resume' : 'Pause'} onPress={togglePause} style={styles.btn} />
-        </View>
-      </View>
-
-      <Modal visible={showLocPrompt} onClose={() => setShowLocPrompt(false)} title="Enable Location?">
-        <Text variant="body" style={styles.mTxt}>
-          Allow location to track your route and estimate distance. You can still track time without this.
-        </Text>
-        <View style={styles.mRow}>
-          <Button title="Not now" onPress={() => setShowLocPrompt(false)} variant="outline" style={styles.btn} />
-          <Button title="Allow" onPress={allowLoc} style={styles.btn} />
-        </View>
-      </Modal>
-
-      <Modal visible={showEnd} onClose={() => setShowEnd(false)} title="End Walk?">
-        <Text variant="body" style={styles.mTxt}>Are you sure you want to end this walk session?</Text>
-        <View style={styles.mRow}>
-          <Button title="Cancel" onPress={() => setShowEnd(false)} variant="outline" style={styles.btn} />
-          <Button title="Yes, end" onPress={confirmEnd} style={styles.btn} />
-        </View>
-      </Modal>
-
-      {/* Completion Celebration */}
-      {showCompletion && (
-        <Animated.View
-          style={[
-            styles.completionOverlay,
-            {
-              opacity: completionAnim,
-              transform: [
-                {
-                  scale: completionAnim.interpolate({
-                    inputRange: [0, 1],
-                    outputRange: [0.8, 1],
-                  }),
-                },
-              ],
-            },
-          ]}
-          pointerEvents="none"
-        >
-          <View style={styles.completionContent}>
-            <Text style={styles.completionEmoji}>🎉</Text>
-            <Text variant="title" style={styles.completionText}>Walk Complete!</Text>
-            <Text variant="bodySmall" color={theme.colors.textMuted} style={styles.completionSubtext}>
-              {Math.floor(activeS / 60)} minutes • {Math.round(calories)} calories
-              {distance > 0 && ` • ${distance < 1000 ? `${Math.round(distance)}m` : `${(distance / 1000).toFixed(2)}km`}`}
-            </Text>
-          </View>
         </Animated.View>
       )}
-    </Container>
+    </SafeAreaView>
   );
 };
 
 const styles = StyleSheet.create({
-  body: {
+  safe: {
     flex: 1,
-    paddingHorizontal: theme.layout.contentHorizontal,
-    paddingTop: 20,
-    alignSelf: 'center',
-    width: '100%',
-    maxWidth: theme.layout.contentMaxWidth,
   },
-  title: { textAlign: 'center', marginBottom: 4 },
-  titleHint: { textAlign: 'center', marginBottom: 24 },
-  timerCard: {
+  topBar: {
+    height: 68,
+    borderBottomWidth: 1,
     alignItems: 'center',
-    paddingVertical: 28,
+    justifyContent: 'center',
+  },
+  topTitle: {
+    fontSize: 38,
+    fontWeight: theme.fontWeight.semibold,
+  },
+  mapArea: {
+    flex: 1,
+    position: 'relative',
+  },
+  mapFallback: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  mapShade: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(2, 8, 16, 0.18)',
+  },
+  zoomStack: {
+    position: 'absolute',
+    right: 16,
+    top: 16,
+    gap: 8,
+  },
+  zoomBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    borderWidth: 1,
+    backgroundColor: 'rgba(12, 20, 36, 0.78)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  zoomText: {
+    color: '#eaf0ff',
+    fontWeight: theme.fontWeight.bold,
+  },
+  statusPill: {
+    position: 'absolute',
+    left: 16,
+    top: 16,
+    borderWidth: 1,
+    borderRadius: 999,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  statusDot: {
+    width: 9,
+    height: 9,
+    borderRadius: 5,
+  },
+  permissionCard: {
+    position: 'absolute',
+    left: 16,
+    right: 16,
+    top: 68,
+    borderRadius: 14,
+    borderWidth: 1,
+    padding: 14,
+  },
+  permissionTitle: {
     marginBottom: 12,
   },
-  timerLabel: { marginBottom: 8, textTransform: 'uppercase', letterSpacing: 1, fontSize: theme.fontSize.xs },
-  bigTime: { fontSize: 48, fontWeight: theme.fontWeight.bold, color: theme.colors.accentPrimary, letterSpacing: 2 },
-  timerHint: { marginTop: 8, textAlign: 'center' },
-  milestoneOverlay: {
-    position: 'absolute',
-    top: '30%',
-    left: 0,
-    right: 0,
-    alignItems: 'center',
-    zIndex: 100,
+  permissionActions: {
+    flexDirection: 'row',
+    gap: 10,
   },
-  milestoneCard: {
-    backgroundColor: theme.colors.bgSurfaceElevated,
-    paddingVertical: 20,
-    paddingHorizontal: 32,
-    borderRadius: theme.borderRadius.lg,
-    borderWidth: 2,
-    borderColor: theme.colors.accentPrimary,
-    alignItems: 'center',
-    shadowColor: theme.colors.accentPrimary,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 8,
+  permissionBtn: {
+    flex: 1,
   },
-  milestoneEmoji: {
-    fontSize: 40,
-    marginBottom: 8,
+  sheet: {
+    borderTopLeftRadius: 22,
+    borderTopRightRadius: 22,
+    borderTopWidth: 1,
+    paddingHorizontal: 22,
+    paddingTop: 14,
   },
-  milestoneText: {
-    fontWeight: theme.fontWeight.bold,
-    marginBottom: 4,
+  progressTrack: {
+    height: 4,
+    borderRadius: 4,
+    overflow: 'hidden',
+    marginBottom: 18,
   },
-  statRow: { flexDirection: 'row', gap: 12, marginBottom: 12 },
-  miniCard: { flex: 1, alignItems: 'center', paddingVertical: 16 },
-  miniValue: { marginTop: 4, fontWeight: theme.fontWeight.bold },
-  warn: { borderWidth: 1, borderColor: theme.colors.warning, marginBottom: 12 },
-  footer: {
-    paddingHorizontal: theme.layout.contentHorizontal,
-    paddingVertical: 20,
-    alignSelf: 'center',
-    width: '100%',
-    maxWidth: theme.layout.contentMaxWidth,
+  progressFill: {
+    height: '100%',
+    borderRadius: 4,
+    backgroundColor: '#2cb7ff',
   },
-  btnRow: { flexDirection: 'row', gap: 12 },
-  btn: { flex: 1 },
-  mTxt: { textAlign: 'center', marginBottom: 16 },
-  mRow: { flexDirection: 'row', gap: 12 },
-  completionOverlay: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: 'rgba(0,0,0,0.8)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    zIndex: 1000,
+  timerLabel: {
+    textAlign: 'center',
+    marginBottom: 6,
+    fontSize: 18,
+    fontWeight: theme.fontWeight.semibold,
   },
-  completionContent: {
-    alignItems: 'center',
-    backgroundColor: theme.colors.bgSurfaceElevated,
-    borderRadius: theme.borderRadius.lg,
-    padding: 32,
-    borderWidth: 2,
-    borderColor: theme.colors.accentPrimary,
-  },
-  completionEmoji: {
-    fontSize: 64,
+  timerValue: {
+    textAlign: 'center',
+    fontSize: 42,
+    letterSpacing: 0.3,
     marginBottom: 16,
   },
-  completionText: {
-    fontWeight: theme.fontWeight.bold,
-    marginBottom: 8,
-    textAlign: 'center',
+  metricRow: {
+    flexDirection: 'row',
+    gap: 12,
+    marginBottom: 18,
   },
-  completionSubtext: {
+  metricCard: {
+    flex: 1,
+    borderRadius: 16,
+    paddingVertical: 14,
+    paddingHorizontal: 14,
+  },
+  metricTitle: {
+    fontWeight: theme.fontWeight.semibold,
+    marginBottom: 8,
+  },
+  metricValue: {
+    fontSize: 30,
+    lineHeight: 36,
+  },
+  actionRow: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  actionBtn: {
+    flex: 1,
+    minWidth: 0,
+  },
+  modalText: {
+    textAlign: 'center',
+    marginBottom: 14,
+  },
+  modalRow: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  modalBtn: {
+    flex: 1,
+    minWidth: 0,
+  },
+  completionOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 99,
+  },
+  completionBurst: {
+    position: 'absolute',
+    width: 180,
+    height: 180,
+    borderRadius: 90,
+    borderWidth: 6,
+  },
+  completionCard: {
+    minWidth: 250,
+    maxWidth: 320,
+    borderRadius: 18,
+    borderWidth: 1,
+    paddingVertical: 24,
+    paddingHorizontal: 20,
+    alignItems: 'center',
+  },
+  completionBadge: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 12,
+  },
+  completionBadgeText: {
+    color: '#062a1d',
+    fontWeight: theme.fontWeight.bold,
+  },
+  completionTitle: {
+    fontWeight: theme.fontWeight.bold,
+    marginBottom: 6,
+  },
+  completionSubtitle: {
     textAlign: 'center',
   },
 });

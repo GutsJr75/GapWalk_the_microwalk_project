@@ -4,6 +4,8 @@ import {
   StyleSheet,
   ScrollView,
   TouchableOpacity,
+  Animated,
+  Easing,
   Alert,
   TextInput,
   StyleProp,
@@ -17,6 +19,7 @@ import { RootStackParamList } from '../../App';
 import { Text } from '../components/Text';
 import { Button } from '../components/Button';
 import { Modal } from '../components/Modal';
+import { ScreenHeader } from '../components/ScreenHeader';
 import { theme } from '../theme';
 import { getThemePalette } from '../theme/palette';
 import { ManualScheduleEntry } from '../lib/types';
@@ -25,8 +28,10 @@ import { eventsRepo } from '../lib/repositories/eventsRepo';
 import { plansRepo } from '../lib/repositories/plansRepo';
 import { scheduleSourceRepo } from '../lib/repositories/scheduleSourceRepo';
 import { syncNudgePlansForCurrentSchedule } from '../lib/scheduleSync';
+import { SAVE_CONFIRM_ACTION, SAVE_CONFIRM_MESSAGE, SAVE_CONFIRM_TITLE } from '../lib/confirmMessages';
+import { analyticsService } from '../lib/analytics';
 import { useAppStore } from '../store';
-import { addDays, setHours, setMinutes, startOfDay } from 'date-fns';
+import { addDays, format, setHours, setMinutes, startOfDay } from 'date-fns';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'ManualSchedule'>;
@@ -60,10 +65,10 @@ const SLOT_INDICES = Array.from({ length: NUM_SLOTS }, (_, i) => i);
 
 type TimeInputMode = 'hour' | 'minute';
 
-const onlyDigits = (value: string): string => value.replace(/[^0-9]/g, '').slice(0, 2);
+const onlyDigits = (value: string, max = 2): string => value.replace(/[^0-9]/g, '').slice(0, max);
 
 const normalizeHourTyping = (nextText: string): string => {
-  const digits = onlyDigits(nextText);
+  const digits = onlyDigits(nextText, 2);
   if (digits.length === 0) return '';
 
   if (digits.length === 1) {
@@ -84,7 +89,7 @@ const normalizeHourTyping = (nextText: string): string => {
 };
 
 const normalizeMinuteTyping = (nextText: string): string => {
-  const digits = onlyDigits(nextText);
+  const digits = onlyDigits(nextText, 2);
   if (digits.length === 0) return '';
 
   if (digits.length === 1) {
@@ -162,6 +167,28 @@ interface TemplateEvent {
   title: string;
   startTime: string; // HH:mm
   endTime: string; // HH:mm
+  isOneTime?: boolean;
+  oneTimeDate?: string;
+}
+
+type ManualRepeatMode = 'weekly' | 'one_time';
+
+interface ManualFormState {
+  title: string;
+  dayOfWeek: number;
+  repeatDays: number[];
+  repeatMode: ManualRepeatMode;
+  oneTimeDate: string;
+  oneTimeMonthRaw: string;
+  oneTimeDayRaw: string;
+  oneTimeYearRaw: string;
+  startHourRaw: string;
+  startMinuteRaw: string;
+  startPeriod: 'AM' | 'PM';
+  endHourRaw: string;
+  endMinuteRaw: string;
+  endPeriod: 'AM' | 'PM';
+  description: string;
 }
 
 const minutesToHHmm = (totalMinutes: number): string => {
@@ -177,6 +204,91 @@ const hhmmToMinutes = (hhmm: string): number => {
   return h * 60 + m;
 };
 
+const parseDateKeyParts = (dateKey: string): { monthRaw: string; dayRaw: string; yearRaw: string } => {
+  const [year = '', month = '', day = ''] = dateKey.split('-');
+  return {
+    monthRaw: month,
+    dayRaw: day,
+    yearRaw: year,
+  };
+};
+
+const normalizeDatePartOnBlur = (value: string, mode: 'month' | 'day' | 'year'): string => {
+  const max = mode === 'year' ? 4 : 2;
+  const digits = onlyDigits(value, max);
+  if (!digits) return '';
+  if (mode === 'year') return digits;
+  return digits.padStart(2, '0');
+};
+
+const resolveDateKeyFromParts = (
+  monthRaw: string,
+  dayRaw: string,
+  yearRaw: string
+): { dateKey: string | null; error: string | null } => {
+  if (!monthRaw || !dayRaw || !yearRaw) {
+    return { dateKey: null, error: 'Enter month, day, and year.' };
+  }
+
+  const month = Number(monthRaw);
+  const day = Number(dayRaw);
+  const year = Number(yearRaw);
+
+  if (!Number.isInteger(month) || month < 1 || month > 12) {
+    return { dateKey: null, error: 'Month must be between 1 and 12.' };
+  }
+
+  if (!Number.isInteger(year) || year < 1900 || year > 2100) {
+    return { dateKey: null, error: 'Year must be between 1900 and 2100.' };
+  }
+
+  const maxDay = new Date(year, month, 0).getDate();
+  if (!Number.isInteger(day) || day < 1 || day > maxDay) {
+    return { dateKey: null, error: 'Day is not valid for this month.' };
+  }
+
+  return {
+    dateKey: `${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`,
+    error: null,
+  };
+};
+
+const toDateKey = (value: Date): string => format(value, 'yyyy-MM-dd');
+
+const getDayOfWeekFromDateKey = (dateKey: string): number => {
+  const dt = new Date(`${dateKey}T00:00:00`);
+  if (Number.isNaN(dt.getTime())) return 0;
+  return dt.getDay();
+};
+
+const getNextDateForDayOfWeek = (dayIndex: number): string => {
+  const base = startOfDay(new Date());
+  const diff = (dayIndex - base.getDay() + 7) % 7;
+  return toDateKey(addDays(base, diff));
+};
+
+const createDefaultFormState = (dayIndex: number): ManualFormState => {
+  const defaultOneTimeDate = getNextDateForDayOfWeek(dayIndex);
+  const defaultParts = parseDateKeyParts(defaultOneTimeDate);
+  return {
+    title: '',
+    dayOfWeek: dayIndex,
+    repeatDays: [dayIndex],
+    repeatMode: 'weekly',
+    oneTimeDate: defaultOneTimeDate,
+    oneTimeMonthRaw: defaultParts.monthRaw,
+    oneTimeDayRaw: defaultParts.dayRaw,
+    oneTimeYearRaw: defaultParts.yearRaw,
+    startHourRaw: '09',
+    startMinuteRaw: '00',
+    startPeriod: 'AM',
+    endHourRaw: '10',
+    endMinuteRaw: '00',
+    endPeriod: 'AM',
+    description: '',
+  };
+};
+
 const createEmptyEntriesByDay = (): Record<number, TemplateEvent[]> => ({
   0: [],
   1: [],
@@ -187,11 +299,42 @@ const createEmptyEntriesByDay = (): Record<number, TemplateEvent[]> => ({
   6: [],
 });
 
+const groupTemplateEntries = (entries: ManualScheduleEntry[]): Record<number, TemplateEvent[]> => {
+  const grouped = createEmptyEntriesByDay();
+  for (const entry of entries) {
+    const dayOfWeek =
+      entry.isOneTime && entry.oneTimeDate
+        ? getDayOfWeekFromDateKey(entry.oneTimeDate)
+        : entry.dayOfWeek;
+    if (dayOfWeek < 0 || dayOfWeek > 6) continue;
+    grouped[dayOfWeek] = [
+      ...grouped[dayOfWeek],
+      {
+        id: entry.id,
+        title: entry.title,
+        startTime: entry.startTime,
+        endTime: entry.endTime,
+        isOneTime: !!entry.isOneTime,
+        oneTimeDate: entry.oneTimeDate,
+      },
+    ];
+  }
+  return grouped;
+};
+
 const buildScheduleSignature = (entriesByDay: Record<number, TemplateEvent[]>): string => {
   const normalized = [0, 1, 2, 3, 4, 5, 6].map((day) => {
     const items = [...(entriesByDay[day] ?? [])]
-      .map((e) => ({ title: e.title.trim(), startTime: e.startTime, endTime: e.endTime }))
+      .map((e) => ({
+        title: e.title.trim(),
+        startTime: e.startTime,
+        endTime: e.endTime,
+        isOneTime: !!e.isOneTime,
+        oneTimeDate: e.oneTimeDate ?? '',
+      }))
       .sort((a, b) => {
+        if (a.isOneTime !== b.isOneTime) return a.isOneTime ? 1 : -1;
+        if (a.oneTimeDate !== b.oneTimeDate) return a.oneTimeDate.localeCompare(b.oneTimeDate);
         if (a.startTime !== b.startTime) return a.startTime.localeCompare(b.startTime);
         if (a.endTime !== b.endTime) return a.endTime.localeCompare(b.endTime);
         return a.title.localeCompare(b.title);
@@ -206,28 +349,27 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
   const todayIndex = Number.isFinite(today.getDay()) ? today.getDay() : 1;
   const manageMode = !!route.params?.manageMode;
   const importedFilename = route.params?.importedFilename?.trim();
+  const importedEventCount = route.params?.importedEventCount;
+  const prefillTemplate = route.params?.prefillTemplate;
+  const startWithEmpty = !!route.params?.startWithEmpty && !manageMode;
+  const requireSaveBeforeContinue = !!route.params?.requireSaveBeforeContinue && !manageMode;
+  const isE2E = process.env.EXPO_PUBLIC_E2E === '1';
   const usingIcsTemplate = !!importedFilename;
   const [entriesByDay, setEntriesByDay] = useState<Record<number, TemplateEvent[]>>(createEmptyEntriesByDay());
   const [initialSignature, setInitialSignature] = useState<string>(buildScheduleSignature(createEmptyEntriesByDay()));
   const [showAdd, setShowAdd] = useState(false);
   const [editingEventId, setEditingEventId] = useState<string | null>(null);
   const [savingDone, setSavingDone] = useState(false);
+  const [hasSavedSchedule, setHasSavedSchedule] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [selectedDay, setSelectedDay] = useState<number>(todayIndex);
-  const [form, setForm] = useState({
-    title: '',
-    dayOfWeek: todayIndex,
-    repeatDays: [todayIndex] as number[],
-    startHourRaw: '09',
-    startMinuteRaw: '00',
-    startPeriod: 'AM' as 'AM' | 'PM',
-    endHourRaw: '10',
-    endMinuteRaw: '00',
-    endPeriod: 'AM' as 'AM' | 'PM',
-    description: '',
-  });
+  const [form, setForm] = useState<ManualFormState>(() => createDefaultFormState(todayIndex));
   const [hoveredSlot, setHoveredSlot] = useState<number | null>(null);
   const gridScrollRef = useRef<ScrollView>(null);
+  const oneTimeMonthRef = useRef<TextInput>(null);
+  const oneTimeDayRef = useRef<TextInput>(null);
+  const oneTimeYearRef = useRef<TextInput>(null);
+  const appearAnim = useRef(new Animated.Value(0)).current;
   const { setScheduleSource, setUpcomingPlans, preferences, themeMode } = useAppStore();
 
   // Hide scrollbar (web) and auto-scroll to 8:00 AM on mount
@@ -260,35 +402,56 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
     return () => clearTimeout(t);
   }, []);
 
+  useEffect(() => {
+    Animated.timing(appearAnim, {
+      toValue: 1,
+      duration: 260,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }).start();
+  }, [appearAnim]);
+
   useFocusEffect(
     useCallback(() => {
       let active = true;
       const loadSavedTemplate = async () => {
-        try {
-          const saved = await manualScheduleRepo.getAll();
-          const grouped = createEmptyEntriesByDay();
-          if (saved.length > 0) {
-            for (const entry of saved) {
-              if (entry.dayOfWeek < 0 || entry.dayOfWeek > 6) continue;
-              grouped[entry.dayOfWeek] = [
-                ...grouped[entry.dayOfWeek],
-                {
-                  id: entry.id,
-                  title: entry.title,
-                  startTime: entry.startTime,
-                  endTime: entry.endTime,
-                },
-              ];
-            }
-          }
+        if (Array.isArray(prefillTemplate)) {
+          const grouped = groupTemplateEntries(prefillTemplate);
           if (!active) return;
           setEntriesByDay(grouped);
           setInitialSignature(buildScheduleSignature(grouped));
+          setHasSavedSchedule(false);
+          return;
+        }
+        if (startWithEmpty) {
+          const empty = createEmptyEntriesByDay();
+          if (!active) return;
+          setEntriesByDay(empty);
+          setInitialSignature(buildScheduleSignature(empty));
+          setHasSavedSchedule(false);
+          return;
+        }
+        try {
+          const saved = await manualScheduleRepo.getAll();
+          const todayKey = toDateKey(new Date());
+          const cleaned = saved.filter(
+            (entry) => !(entry.isOneTime && entry.oneTimeDate && entry.oneTimeDate < todayKey)
+          );
+          if (cleaned.length !== saved.length) {
+            await manualScheduleRepo.deleteAll();
+            await manualScheduleRepo.saveMany(cleaned);
+          }
+          const grouped = groupTemplateEntries(cleaned);
+          if (!active) return;
+          setEntriesByDay(grouped);
+          setInitialSignature(buildScheduleSignature(grouped));
+          setHasSavedSchedule(!requireSaveBeforeContinue);
         } catch (error) {
           if (!active) return;
           const empty = createEmptyEntriesByDay();
           setEntriesByDay(empty);
           setInitialSignature(buildScheduleSignature(empty));
+          setHasSavedSchedule(false);
           console.error('Failed to load saved manual schedule:', error);
         }
       };
@@ -296,11 +459,12 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
       return () => {
         active = false;
       };
-    }, [])
+    }, [prefillTemplate, requireSaveBeforeContinue, startWithEmpty])
   );
 
   const currentSignature = useMemo(() => buildScheduleSignature(entriesByDay), [entriesByDay]);
   const hasUnsavedChanges = currentSignature !== initialSignature;
+  const hasPendingImportedSchedule = usingIcsTemplate && Array.isArray(prefillTemplate) && !hasSavedSchedule;
 
   const showMessage = (title: string, message: string, onAcknowledge?: () => void) => {
     if (Platform.OS === 'web' && typeof (globalThis as any).alert === 'function') {
@@ -316,11 +480,13 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
   };
 
   const confirmDiscardChanges = (onDiscard: () => void) => {
-    if (!hasUnsavedChanges) {
+    if (!hasUnsavedChanges && !hasPendingImportedSchedule) {
       onDiscard();
       return;
     }
-    const message = 'Discard unsaved schedule changes?';
+    const message = hasPendingImportedSchedule
+      ? 'Discard this imported schedule before saving?'
+      : 'Discard unsaved schedule changes?';
     if (Platform.OS === 'web' && typeof (globalThis as any).confirm === 'function') {
       const ok = (globalThis as any).confirm(message);
       if (ok) onDiscard();
@@ -365,12 +531,89 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
   const hasTitle = form.title.trim().length > 0;
   const hasValidTimes = !!startValue24 && !!endValue24;
   const isRangeValid = hasValidTimes && startValue24 < endValue24;
-  const canAdd = hasTitle && isRangeValid;
+  const oneTimeDateResolution = resolveDateKeyFromParts(
+    form.oneTimeMonthRaw,
+    form.oneTimeDayRaw,
+    form.oneTimeYearRaw
+  );
+  const todayDateKey = toDateKey(new Date());
+  const isOneTimeFutureOrToday = !!oneTimeDateResolution.dateKey && oneTimeDateResolution.dateKey >= todayDateKey;
+  const oneTimeDateError = form.repeatMode === 'one_time'
+    ? oneTimeDateResolution.error
+      ? oneTimeDateResolution.error
+      : !isOneTimeFutureOrToday
+        ? 'One-time event date must be today or later.'
+        : null
+    : null;
+  const canAdd = hasTitle && isRangeValid && (form.repeatMode === 'weekly' || !oneTimeDateError);
   const timeError = !hasValidTimes
     ? 'Enter a valid start and end time.'
     : !isRangeValid
       ? 'End time must be after start time.'
       : '';
+
+  const getPreferredOneTimeDateForDay = useCallback((dayIndex: number): string => {
+    return getNextDateForDayOfWeek(dayIndex);
+  }, []);
+
+  const setOneTimeDateInput = useCallback(
+    (field: 'oneTimeMonthRaw' | 'oneTimeDayRaw' | 'oneTimeYearRaw', rawValue: string) => {
+      const max = field === 'oneTimeYearRaw' ? 4 : 2;
+      const nextValue = onlyDigits(rawValue, max);
+      setForm((prev) => {
+        const next = { ...prev, [field]: nextValue };
+        const resolved = resolveDateKeyFromParts(next.oneTimeMonthRaw, next.oneTimeDayRaw, next.oneTimeYearRaw);
+        if (resolved.dateKey) {
+          const dayOfWeek = getDayOfWeekFromDateKey(resolved.dateKey);
+          next.oneTimeDate = resolved.dateKey;
+          next.dayOfWeek = dayOfWeek;
+          next.repeatDays = [dayOfWeek];
+        } else {
+          next.oneTimeDate = '';
+        }
+        return next;
+      });
+    },
+    []
+  );
+
+  const handleOneTimeDateInputChange = useCallback(
+    (field: 'oneTimeMonthRaw' | 'oneTimeDayRaw' | 'oneTimeYearRaw', rawValue: string) => {
+      const max = field === 'oneTimeYearRaw' ? 4 : 2;
+      const nextValue = onlyDigits(rawValue, max);
+      setOneTimeDateInput(field, nextValue);
+
+      if (nextValue.length !== max) return;
+      if (field === 'oneTimeMonthRaw') {
+        oneTimeDayRef.current?.focus();
+        return;
+      }
+      if (field === 'oneTimeDayRaw') {
+        oneTimeYearRef.current?.focus();
+      }
+    },
+    [setOneTimeDateInput]
+  );
+
+  const blurOneTimeDateInput = useCallback(
+    (field: 'oneTimeMonthRaw' | 'oneTimeDayRaw' | 'oneTimeYearRaw', mode: 'month' | 'day' | 'year') => {
+      setForm((prev) => {
+        const normalized = normalizeDatePartOnBlur(prev[field], mode);
+        const next = { ...prev, [field]: normalized };
+        const resolved = resolveDateKeyFromParts(next.oneTimeMonthRaw, next.oneTimeDayRaw, next.oneTimeYearRaw);
+        if (resolved.dateKey) {
+          const dayOfWeek = getDayOfWeekFromDateKey(resolved.dateKey);
+          next.oneTimeDate = resolved.dateKey;
+          next.dayOfWeek = dayOfWeek;
+          next.repeatDays = [dayOfWeek];
+        } else {
+          next.oneTimeDate = '';
+        }
+        return next;
+      });
+    },
+    []
+  );
 
   const handleSlotClick = (dayIndex: number, slotIndex: number) => {
     openModalFromSlot(dayIndex, slotIndex);
@@ -383,18 +626,21 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
     const [eh, em] = [Math.floor(endMin / 60) % 12 || 12, endMin % 60];
     const startPeriod = startMin >= 12 * 60 ? 'PM' : 'AM';
     const endPeriod = endMin >= 12 * 60 ? 'PM' : 'AM';
+    const defaultOneTimeDate = getPreferredOneTimeDateForDay(dayIndex);
+    const defaultParts = parseDateKeyParts(defaultOneTimeDate);
     setEditingEventId(null);
     setForm({
-      title: '',
-      dayOfWeek: dayIndex,
-      repeatDays: [dayIndex],
+      ...createDefaultFormState(dayIndex),
+      oneTimeDate: defaultOneTimeDate,
+      oneTimeMonthRaw: defaultParts.monthRaw,
+      oneTimeDayRaw: defaultParts.dayRaw,
+      oneTimeYearRaw: defaultParts.yearRaw,
       startHourRaw: String(sh).padStart(2, '0'),
       startMinuteRaw: String(sm).padStart(2, '0'),
       startPeriod,
       endHourRaw: String(eh).padStart(2, '0'),
       endMinuteRaw: String(em).padStart(2, '0'),
       endPeriod,
-      description: '',
     });
     setShowAdd(true);
   };
@@ -404,11 +650,20 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
     const endMin = hhmmToMinutes(event.endTime);
     const sh = Math.floor(startMin / 60) % 12 || 12;
     const eh = Math.floor(endMin / 60) % 12 || 12;
+    const repeatMode: ManualRepeatMode = event.isOneTime ? 'one_time' : 'weekly';
+    const oneTimeDate = event.oneTimeDate ?? getPreferredOneTimeDateForDay(dayIndex);
+    const oneTimeParts = parseDateKeyParts(oneTimeDate);
+    const oneTimeDay = getDayOfWeekFromDateKey(oneTimeDate);
     setEditingEventId(event.id);
     setForm({
       title: event.title,
-      dayOfWeek: dayIndex,
-      repeatDays: [dayIndex],
+      dayOfWeek: repeatMode === 'one_time' ? oneTimeDay : dayIndex,
+      repeatDays: repeatMode === 'one_time' ? [oneTimeDay] : [dayIndex],
+      repeatMode,
+      oneTimeDate,
+      oneTimeMonthRaw: oneTimeParts.monthRaw,
+      oneTimeDayRaw: oneTimeParts.dayRaw,
+      oneTimeYearRaw: oneTimeParts.yearRaw,
       startHourRaw: String(sh).padStart(2, '0'),
       startMinuteRaw: String(startMin % 60).padStart(2, '0'),
       startPeriod: startMin >= 12 * 60 ? 'PM' : 'AM',
@@ -430,6 +685,32 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
     });
   };
 
+  const setRepeatMode = (mode: ManualRepeatMode) => {
+    setForm((prev) => {
+      if (mode === prev.repeatMode) return prev;
+      if (mode === 'one_time') {
+        const nextDate = prev.oneTimeDate || getPreferredOneTimeDateForDay(prev.dayOfWeek);
+        const nextParts = parseDateKeyParts(nextDate);
+        const dayOfWeek = getDayOfWeekFromDateKey(nextDate);
+        return {
+          ...prev,
+          repeatMode: 'one_time',
+          oneTimeDate: nextDate,
+          oneTimeMonthRaw: nextParts.monthRaw,
+          oneTimeDayRaw: nextParts.dayRaw,
+          oneTimeYearRaw: nextParts.yearRaw,
+          dayOfWeek,
+          repeatDays: [dayOfWeek],
+        };
+      }
+      return {
+        ...prev,
+        repeatMode: 'weekly',
+        repeatDays: prev.repeatDays.length > 0 ? prev.repeatDays : [prev.dayOfWeek],
+      };
+    });
+  };
+
   const addOrUpdateEntry = () => {
     const title = form.title.trim();
     if (title.length === 0) {
@@ -446,27 +727,70 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
       Alert.alert('Invalid Time', 'End time must be after start time.');
       return;
     }
+    if (form.repeatMode === 'one_time') {
+      if (oneTimeDateResolution.error || !oneTimeDateResolution.dateKey) {
+        Alert.alert('Select date', oneTimeDateResolution.error ?? 'Choose a date for this one-time event.');
+        return;
+      }
+      if (!isOneTimeFutureOrToday) {
+        Alert.alert('Select date', 'One-time event date must be today or later.');
+        return;
+      }
+    }
+    const resolvedOneTimeDate = form.repeatMode === 'one_time' ? oneTimeDateResolution.dateKey : null;
+    if (form.repeatMode === 'one_time' && !resolvedOneTimeDate) {
+      Alert.alert('Select date', 'Choose a date for this one-time event.');
+      return;
+    }
     if (editingEventId) {
       const id = editingEventId;
-      const daysToUpdate = form.repeatDays.length > 0 ? form.repeatDays : [form.dayOfWeek];
       setEntriesByDay((prev) => {
         const next = { ...prev };
         for (const d of [0, 1, 2, 3, 4, 5, 6]) {
           next[d] = (next[d] ?? []).filter((e) => e.id !== id);
         }
+        if (form.repeatMode === 'one_time') {
+          const oneTimeDate = resolvedOneTimeDate || getPreferredOneTimeDateForDay(form.dayOfWeek);
+          const oneTimeDay = getDayOfWeekFromDateKey(oneTimeDate);
+          const event: TemplateEvent = {
+            id,
+            title,
+            startTime: start,
+            endTime: end,
+            isOneTime: true,
+            oneTimeDate,
+          };
+          next[oneTimeDay] = [...(next[oneTimeDay] ?? []), event];
+          return next;
+        }
+        const daysToUpdate = form.repeatDays.length > 0 ? form.repeatDays : [form.dayOfWeek];
         for (let i = 0; i < daysToUpdate.length; i++) {
           const d = daysToUpdate[i];
           const eventId = i === 0 ? id : `${id}-dup-${i}`;
-          const event: TemplateEvent = { id: eventId, title, startTime: start, endTime: end };
+          const event: TemplateEvent = { id: eventId, title, startTime: start, endTime: end, isOneTime: false };
           next[d] = [...(next[d] ?? []), event];
         }
         return next;
       });
     } else {
-      const daysToAdd = form.repeatDays.length > 0 ? form.repeatDays : [form.dayOfWeek];
       setEntriesByDay((prev) => {
         const next = { ...prev };
         const baseId = `m-${Date.now()}`;
+        if (form.repeatMode === 'one_time') {
+          const oneTimeDate = resolvedOneTimeDate || getPreferredOneTimeDateForDay(form.dayOfWeek);
+          const oneTimeDay = getDayOfWeekFromDateKey(oneTimeDate);
+          const event: TemplateEvent = {
+            id: `${baseId}-0`,
+            title,
+            startTime: start,
+            endTime: end,
+            isOneTime: true,
+            oneTimeDate,
+          };
+          next[oneTimeDay] = [...(next[oneTimeDay] ?? []), event];
+          return next;
+        }
+        const daysToAdd = form.repeatDays.length > 0 ? form.repeatDays : [form.dayOfWeek];
         for (let i = 0; i < daysToAdd.length; i++) {
           const d = daysToAdd[i];
           const event: TemplateEvent = {
@@ -474,26 +798,20 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
             title,
             startTime: start,
             endTime: end,
+            isOneTime: false,
           };
           next[d] = [...(next[d] ?? []), event];
         }
         return next;
       });
     }
+    if (form.repeatMode === 'one_time') {
+      const oneTimeDay = getDayOfWeekFromDateKey(resolvedOneTimeDate || getPreferredOneTimeDateForDay(form.dayOfWeek));
+      setSelectedDay(oneTimeDay);
+    }
     setShowAdd(false);
     setEditingEventId(null);
-    setForm({
-      title: '',
-      dayOfWeek: todayIndex,
-      repeatDays: [todayIndex],
-      startHourRaw: '09',
-      startMinuteRaw: '00',
-      startPeriod: 'AM',
-      endHourRaw: '10',
-      endMinuteRaw: '00',
-      endPeriod: 'AM',
-      description: '',
-    });
+    setForm(createDefaultFormState(todayIndex));
   };
 
   const deleteEntryFromModal = (eventId?: string | null) => {
@@ -552,21 +870,37 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
     setSavingDone(true);
 
     const weeklyTemplate: ManualScheduleEntry[] = Object.entries(entriesByDay).flatMap(([day, arr]) =>
-      [...arr].sort((a, b) => a.startTime.localeCompare(b.startTime)).map((e) => ({
-        id: e.id,
-        title: e.title,
-        dayOfWeek: Number(day),
-        startTime: e.startTime,
-        endTime: e.endTime,
-      }))
+      [...arr].sort((a, b) => a.startTime.localeCompare(b.startTime)).map((e) => {
+        const fallbackDay = Number(day);
+        const oneTimeDate = e.oneTimeDate?.trim();
+        const oneTimeDay =
+          e.isOneTime && oneTimeDate ? getDayOfWeekFromDateKey(oneTimeDate) : fallbackDay;
+        return {
+          id: e.id,
+          title: e.title,
+          dayOfWeek: oneTimeDay,
+          startTime: e.startTime,
+          endTime: e.endTime,
+          isOneTime: !!e.isOneTime,
+          oneTimeDate: e.isOneTime ? oneTimeDate : undefined,
+        };
+      })
     );
 
     const eventSource: 'ics' | 'manual' = usingIcsTemplate ? 'ics' : 'manual';
     const base = startOfDay(new Date());
-    const events = Array.from({ length: 14 }, (_, offset) => {
+    const rangeEnd = addDays(base, 14);
+    const recurringByDay = weeklyTemplate
+      .filter((entry) => !entry.isOneTime)
+      .reduce<Record<number, ManualScheduleEntry[]>>((acc, entry) => {
+        const day = entry.dayOfWeek;
+        acc[day] = [...(acc[day] ?? []), entry];
+        return acc;
+      }, {});
+    const recurringEvents = Array.from({ length: 14 }, (_, offset) => {
       const date = addDays(base, offset);
       const dayIndex = date.getDay();
-      const dayEvents = entriesByDay[dayIndex] ?? [];
+      const dayEvents = recurringByDay[dayIndex] ?? [];
       return dayEvents.map((e) => {
         const [sh, sm] = parseTime(e.startTime);
         const [eh, em] = parseTime(e.endTime);
@@ -581,6 +915,29 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
         };
       });
     }).flat();
+    const oneTimeEvents = weeklyTemplate
+      .filter((entry) => entry.isOneTime && entry.oneTimeDate)
+      .flatMap((entry) => {
+        if (!entry.oneTimeDate) return [];
+        const eventDate = new Date(`${entry.oneTimeDate}T00:00:00`);
+        if (Number.isNaN(eventDate.getTime())) return [];
+        const normalizedDate = startOfDay(eventDate);
+        if (normalizedDate < base || normalizedDate >= rangeEnd) return [];
+        const [sh, sm] = parseTime(entry.startTime);
+        const [eh, em] = parseTime(entry.endTime);
+        return [
+          {
+            id: `me-${entry.id}-${entry.oneTimeDate}`,
+            title: entry.title,
+            start: setMinutes(setHours(normalizedDate, sh), sm).toISOString(),
+            end: setMinutes(setHours(normalizedDate, eh), em).toISOString(),
+            source: eventSource,
+            isAllDay: false,
+            createdAt: new Date().toISOString(),
+          },
+        ];
+      });
+    const events = [...recurringEvents, ...oneTimeEvents];
 
     // Attempt save up to 2 times (retry once on failure).
     let lastError: unknown = null;
@@ -600,7 +957,16 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
         const refreshedUpcoming = await plansRepo.getUpcomingPlans(20);
         setUpcomingPlans(refreshedUpcoming);
 
+        analyticsService.track('schedule_saved', {
+          source: usingIcsTemplate ? 'ics' : 'manual',
+          weeklyEntries: weeklyTemplate.filter((entry) => !entry.isOneTime).length,
+          oneTimeEntries: weeklyTemplate.filter((entry) => entry.isOneTime).length,
+          generatedEvents: events.length,
+          manageMode,
+        });
+
         setInitialSignature(currentSignature);
+        setHasSavedSchedule(true);
         setSavingDone(false);
 
         if (manageMode) {
@@ -609,6 +975,10 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
             'Your schedule was updated and walking opportunities were synced.',
             exitManualScreen
           );
+          return;
+        }
+
+        if (requireSaveBeforeContinue) {
           return;
         }
 
@@ -633,16 +1003,16 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
       showMessage('Empty', 'Add at least one event.');
       return;
     }
-    if (manageMode && !hasUnsavedChanges) {
+    if (manageMode && !hasUnsavedChanges && !hasPendingImportedSchedule) {
       showMessage(
         'No changes',
-        'No changes were detected. Your existing imported schedule is already active.',
+        'No changes were detected. Your existing schedule is already active.',
         exitManualScreen
       );
       return;
     }
 
-    const message = 'Save this schedule and refresh walking opportunities?';
+    const message = SAVE_CONFIRM_MESSAGE;
     if (Platform.OS === 'web' && typeof (globalThis as any).confirm === 'function') {
       const ok = (globalThis as any).confirm(message);
       if (ok) {
@@ -652,13 +1022,26 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
     }
 
     Alert.alert(
-      'Save schedule?',
+      SAVE_CONFIRM_TITLE,
       message,
       [
         { text: 'Cancel', style: 'cancel' },
-        { text: 'Save', onPress: () => { void performSave(); } },
+        { text: SAVE_CONFIRM_ACTION, onPress: () => { void performSave(); } },
       ]
     );
+  };
+
+  const handleContinueAfterSave = () => {
+    if (savingDone) return;
+    if (!hasSavedSchedule || hasUnsavedChanges) {
+      if (hasUnsavedChanges) {
+        showMessage('Unsaved changes', 'Save your latest schedule changes before continuing.');
+        return;
+      }
+      showMessage('Save first', 'Please save this schedule before continuing.');
+      return;
+    }
+    navigation.navigate('Preferences', {});
   };
 
   const entriesByDaySorted = useMemo(() => {
@@ -674,11 +1057,26 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
     exitManualScreen();
   };
 
+  const applyE2ESampleSchedule = () => {
+    const newEvent: TemplateEvent = {
+      id: `e2e-${Date.now()}`,
+      title: 'E2E Sample Block',
+      startTime: '09:00',
+      endTime: '10:00',
+    };
+    setEntriesByDay((prev) => ({
+      ...prev,
+      [selectedDay]: [...(prev[selectedDay] ?? []), newEvent],
+    }));
+    analyticsService.track('e2e_sample_manual_schedule_seeded', { dayOfWeek: selectedDay });
+  };
+
   const { width: winWidth, height: winHeight } = useWindowDimensions();
   const gridBodyMaxHeight = Math.max(320, winHeight - 220);
   const selectedDayEvents = entriesByDaySorted[selectedDay] ?? [];
   const palette = getThemePalette(themeMode);
   const isDark = themeMode === 'dark';
+  const mintTextOnTint = isDark ? theme.colors.accentPrimary : '#0f5132';
   const gridLineStrong = isDark ? 'rgba(255,255,255,0.1)' : palette.borderStrong;
   const gridLineSoft = isDark ? 'rgba(255,255,255,0.06)' : palette.borderSoft;
   const gridAltBg = isDark ? 'rgba(255,255,255,0.02)' : 'rgba(15,23,42,0.03)';
@@ -694,25 +1092,42 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
     borderColor: isDark ? 'rgba(255,255,255,0.1)' : palette.borderStrong,
     borderWidth: 1,
   };
+  const appearTranslateY = appearAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [8, 0],
+  });
 
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: palette.bgApp }]}>
+      <Animated.View
+        style={[
+          styles.screen,
+          {
+            opacity: appearAnim,
+            transform: [{ translateY: appearTranslateY }],
+          },
+        ]}
+      >
       <View style={styles.header}>
-        <View style={styles.headerTopRow}>
-          <TouchableOpacity onPress={handleBack} style={styles.backBtn} activeOpacity={0.8}>
-            <Text variant="bodySmall" style={styles.backText}>Back</Text>
-          </TouchableOpacity>
-        </View>
-        <Text variant="title" style={styles.title}>{manageMode ? 'Update your schedule' : 'Set up your schedule'}</Text>
-        <Text variant="muted" style={styles.sub}>
-          {manageMode ? 'Edit and save to refresh walking opportunities.' : 'Build your weekly schedule'}
-        </Text>
+        <ScreenHeader
+          title={manageMode ? 'Update your schedule' : 'Set up your schedule'}
+          subtitle={manageMode ? 'Edit and save to refresh walking opportunities.' : 'Build your weekly schedule'}
+          onBack={handleBack}
+          backTestID="manual-back"
+        />
         {usingIcsTemplate && (
           <View style={styles.icsBadge}>
-            <Text variant="bodySmall" style={styles.icsBadgeText} numberOfLines={1}>
+            <Text variant="bodySmall" style={[styles.icsBadgeText, { color: mintTextOnTint }]} numberOfLines={1}>
               ICS file: {importedFilename}
             </Text>
           </View>
+        )}
+        {requireSaveBeforeContinue && (
+          <Text variant="bodySmall" style={styles.importHint}>
+            {typeof importedEventCount === 'number' && importedEventCount > 0
+              ? `Loaded ${importedEventCount} events from your calendar file. Review the grid, tap Save, then Continue.`
+              : 'Review the imported schedule, make any edits, then tap Save. When ready, tap Continue.'}
+          </Text>
         )}
       </View>
 
@@ -727,7 +1142,16 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
               onPress={() => setSelectedDay(idx)}
               activeOpacity={0.8}
             >
-              <Text variant="bodySmall" style={StyleSheet.flatten([styles.dayTabText, active && styles.dayTabTextActive])}>{d}</Text>
+              <Text
+                variant="bodySmall"
+                style={StyleSheet.flatten([
+                  styles.dayTabText,
+                  active && styles.dayTabTextActive,
+                  active && { color: mintTextOnTint },
+                ])}
+              >
+                {d}
+              </Text>
             </TouchableOpacity>
           );
         })}
@@ -801,6 +1225,17 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
                     const titleFontSize = Math.round(Math.min(16, Math.max(11, finalHeight * 0.20)));
                     const timeFontSize = Math.round(titleFontSize * 0.82);
                     const paddingV = Math.min(10, Math.max(4, Math.floor(finalHeight * 0.08)));
+                    const showMeta = finalHeight >= 46;
+                    const rangeLabel = `${formatTime12(ev.startTime)} - ${formatTime12(ev.endTime)}`;
+                    let subLabel = rangeLabel;
+                    if (ev.isOneTime && ev.oneTimeDate) {
+                      const dt = new Date(`${ev.oneTimeDate}T00:00:00`);
+                      if (!Number.isNaN(dt.getTime())) {
+                        subLabel = `One-time • ${format(dt, 'EEE, MMM d')} • ${rangeLabel}`;
+                      } else {
+                        subLabel = `One-time event • ${rangeLabel}`;
+                      }
+                    }
                     return (
                       <TouchableOpacity
                         key={ev.id}
@@ -808,10 +1243,27 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
                         onPress={() => openModalFromEvent(ev, selectedDay)}
                         activeOpacity={0.9}
                       >
-                        <Text numberOfLines={finalHeight < 80 ? 1 : 2} style={StyleSheet.flatten([styles.gridEventTitle, { fontSize: titleFontSize }])}>{ev.title}</Text>
-                        <Text numberOfLines={1} style={StyleSheet.flatten([styles.gridEventTime, { fontSize: timeFontSize }])}>
-                          {formatTime12(ev.startTime)} - {formatTime12(ev.endTime)}
-                        </Text>
+                        <View style={styles.gridEventTopRow}>
+                          <Text
+                            numberOfLines={1}
+                            style={StyleSheet.flatten([
+                              styles.gridEventTitle,
+                              { fontSize: titleFontSize, marginRight: ev.isOneTime ? 6 : 0 },
+                            ])}
+                          >
+                            {ev.title}
+                          </Text>
+                          {ev.isOneTime ? (
+                            <View style={styles.gridEventBadge}>
+                              <Text variant="bodySmall" style={styles.gridEventBadgeText}>One-time event</Text>
+                            </View>
+                          ) : null}
+                        </View>
+                        {showMeta ? (
+                          <Text numberOfLines={1} style={StyleSheet.flatten([styles.gridEventTime, { fontSize: timeFontSize }])}>
+                            {subLabel}
+                          </Text>
+                        ) : null}
                       </TouchableOpacity>
                     );
                   })}
@@ -824,6 +1276,16 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
 
       <View style={[styles.footer, { paddingHorizontal: GRID_PADDING }]}>
         {!!saveError && <Text variant="muted" style={styles.saveError}>{saveError}</Text>}
+        {isE2E && (
+          <Button
+            title="Add sample event (E2E)"
+            variant="muted"
+            onPress={applyE2ESampleSchedule}
+            testID="manual-e2e-seed"
+            style={styles.e2eBtn}
+            disabled={savingDone}
+          />
+        )}
         {manageMode ? (
           <View style={styles.footerActions}>
             <Button
@@ -832,6 +1294,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
               onPress={handleBack}
               style={styles.footerBtn}
               disabled={savingDone}
+              testID="manual-cancel"
             />
             <Button
               title="Save"
@@ -839,13 +1302,36 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
               style={styles.footerBtn}
               loading={savingDone}
               disabled={savingDone}
+              testID="manual-save"
             />
           </View>
         ) : (
-          <Button title="Done" onPress={handleDone} full loading={savingDone} disabled={savingDone} />
+          requireSaveBeforeContinue ? (
+            <View style={styles.footerActions}>
+              <Button
+                title="Save"
+                onPress={handleDone}
+                style={styles.footerBtn}
+                loading={savingDone}
+                disabled={savingDone}
+                testID="manual-save"
+              />
+              <Button
+                title="Continue"
+                variant="secondary"
+                onPress={handleContinueAfterSave}
+                style={styles.footerBtn}
+                disabled={savingDone || !hasSavedSchedule || hasUnsavedChanges}
+                testID="manual-continue"
+              />
+            </View>
+          ) : (
+            <Button title="Done" onPress={handleDone} full loading={savingDone} disabled={savingDone} testID="manual-done" />
+          )
         )}
-        <Text variant="muted" style={styles.privacy}>Your schedule stays private. Privacy is our utmost importance.</Text>
+        <Text variant="muted" style={styles.privacy}>Your schedule stays private. Privacy is our top priority.</Text>
       </View>
+      </Animated.View>
 
       <Modal
         visible={showAdd}
@@ -862,21 +1348,129 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
             placeholderTextColor={palette.textMuted}
           />
 
-          <Text variant="muted">Days (select one or more)</Text>
-          <View style={styles.repeatDaysRow}>
-            {DAY_TAB_LABELS.map((d, idx) => (
-              <TouchableOpacity
-                key={d}
-                style={[styles.repeatDayChip, themedChip, form.repeatDays.includes(idx) && styles.repeatDayChipActive]}
-                onPress={() => toggleRepeatDay(idx)}
+          <Text variant="muted">Frequency</Text>
+          <View style={styles.freqModeRow}>
+            <TouchableOpacity
+              style={[
+                styles.freqModeChip,
+                themedChip,
+                form.repeatMode === 'weekly' && styles.freqModeChipActive,
+              ]}
+              onPress={() => setRepeatMode('weekly')}
+            >
+              <Text
+                variant="bodySmall"
+                style={StyleSheet.flatten([
+                  styles.freqModeText,
+                  form.repeatMode === 'weekly' && styles.freqModeTextActive,
+                  form.repeatMode === 'weekly' && { color: mintTextOnTint },
+                ])}
               >
-                <Text variant="bodySmall" style={StyleSheet.flatten([styles.repeatDayChipText, form.repeatDays.includes(idx) && styles.repeatDayChipTextActive])}>{d}</Text>
-              </TouchableOpacity>
-            ))}
+                Repeats weekly
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[
+                styles.freqModeChip,
+                themedChip,
+                form.repeatMode === 'one_time' && styles.freqModeChipActive,
+              ]}
+              onPress={() => setRepeatMode('one_time')}
+            >
+              <Text
+                variant="bodySmall"
+                style={StyleSheet.flatten([
+                  styles.freqModeText,
+                  form.repeatMode === 'one_time' && styles.freqModeTextActive,
+                  form.repeatMode === 'one_time' && { color: mintTextOnTint },
+                ])}
+              >
+                One-time event
+              </Text>
+            </TouchableOpacity>
           </View>
-          <Text variant="muted" style={styles.repeatHint}>
-            {editingEventId ? 'Tap days to add or remove this event. At least one day must be selected.' : 'Select all days you want this event. Tap a day to toggle.'}
-          </Text>
+
+          {form.repeatMode === 'weekly' ? (
+            <>
+              <Text variant="muted">Days (select one or more)</Text>
+              <View style={styles.repeatDaysRow}>
+                {DAY_TAB_LABELS.map((d, idx) => (
+                  <TouchableOpacity
+                    key={d}
+                    style={[styles.repeatDayChip, themedChip, form.repeatDays.includes(idx) && styles.repeatDayChipActive]}
+                    onPress={() => toggleRepeatDay(idx)}
+                  >
+                    <Text
+                      variant="bodySmall"
+                      style={StyleSheet.flatten([
+                        styles.repeatDayChipText,
+                        form.repeatDays.includes(idx) && styles.repeatDayChipTextActive,
+                        form.repeatDays.includes(idx) && { color: mintTextOnTint },
+                      ])}
+                    >
+                      {d}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+              <Text variant="muted" style={styles.repeatHint}>
+                {editingEventId
+                  ? 'Tap days to add or remove this event. At least one day must be selected.'
+                  : 'This event repeats every week on the selected days.'}
+              </Text>
+            </>
+          ) : (
+            <>
+              <Text variant="muted">Event date</Text>
+              <View style={styles.dateInputRow}>
+                <TextInput
+                  ref={oneTimeMonthRef}
+                  style={[styles.input, styles.datePartInput, themedInput]}
+                  value={form.oneTimeMonthRaw}
+                  onChangeText={(value) => handleOneTimeDateInputChange('oneTimeMonthRaw', value)}
+                  onBlur={() => blurOneTimeDateInput('oneTimeMonthRaw', 'month')}
+                  keyboardType="number-pad"
+                  maxLength={2}
+                  placeholder="MM"
+                  placeholderTextColor={palette.textMuted}
+                  returnKeyType="next"
+                  selectTextOnFocus
+                />
+                <Text variant="body" style={styles.dateSep}>/</Text>
+                <TextInput
+                  ref={oneTimeDayRef}
+                  style={[styles.input, styles.datePartInput, themedInput]}
+                  value={form.oneTimeDayRaw}
+                  onChangeText={(value) => handleOneTimeDateInputChange('oneTimeDayRaw', value)}
+                  onBlur={() => blurOneTimeDateInput('oneTimeDayRaw', 'day')}
+                  keyboardType="number-pad"
+                  maxLength={2}
+                  placeholder="DD"
+                  placeholderTextColor={palette.textMuted}
+                  returnKeyType="next"
+                  selectTextOnFocus
+                />
+                <Text variant="body" style={styles.dateSep}>/</Text>
+                <TextInput
+                  ref={oneTimeYearRef}
+                  style={[styles.input, styles.dateYearInput, themedInput]}
+                  value={form.oneTimeYearRaw}
+                  onChangeText={(value) => handleOneTimeDateInputChange('oneTimeYearRaw', value)}
+                  onBlur={() => blurOneTimeDateInput('oneTimeYearRaw', 'year')}
+                  keyboardType="number-pad"
+                  maxLength={4}
+                  placeholder="YYYY"
+                  placeholderTextColor={palette.textMuted}
+                  returnKeyType="done"
+                  selectTextOnFocus
+                />
+              </View>
+              {!!oneTimeDateError && <Text variant="muted" style={styles.timeError}>{oneTimeDateError}</Text>}
+              <Text variant="muted" style={styles.repeatHint}>
+                This event is used once on the selected date only.
+              </Text>
+            </>
+          )}
 
           <Text variant="muted">Description (optional)</Text>
           <TextInput
@@ -1000,35 +1594,16 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: theme.colors.bgApp },
+  screen: {
+    flex: 1,
+  },
   header: {
     paddingHorizontal: theme.layout.contentHorizontal,
-    paddingTop: theme.spacing.lg,
-    paddingBottom: theme.spacing.md,
+    paddingTop: theme.spacing.md,
+    paddingBottom: theme.spacing.sm,
     alignSelf: 'center',
     width: '100%',
     maxWidth: theme.layout.contentMaxWidth,
-  },
-  headerTopRow: {
-    width: '100%',
-    marginBottom: theme.spacing.sm,
-    alignItems: 'flex-start',
-  },
-  backBtn: {
-    paddingVertical: 4,
-    paddingHorizontal: 2,
-    marginLeft: -32,
-  },
-  backText: {
-    color: theme.colors.textMuted,
-    fontWeight: theme.fontWeight.semibold,
-  },
-  title: {
-    textAlign: 'center',
-    marginBottom: theme.spacing.xs,
-  },
-  sub: {
-    textAlign: 'center',
-    marginBottom: theme.spacing.md,
   },
   icsBadge: {
     alignSelf: 'center',
@@ -1043,6 +1618,14 @@ const styles = StyleSheet.create({
   icsBadgeText: {
     color: theme.colors.accentPrimary,
     fontWeight: theme.fontWeight.medium,
+  },
+  importHint: {
+    marginTop: theme.spacing.sm,
+    textAlign: 'center',
+    color: theme.colors.textMuted,
+  },
+  e2eBtn: {
+    marginBottom: 8,
   },
   dayTabsWrap: {
     flexDirection: 'row',
@@ -1148,19 +1731,46 @@ const styles = StyleSheet.create({
     right: 3,
     marginTop: 2,
     backgroundColor: theme.colors.accentPrimary,
-    borderRadius: 6,
-    paddingHorizontal: 8,
+    borderRadius: 8,
+    paddingHorizontal: 10,
     justifyContent: 'center',
     borderWidth: 1,
     borderColor: 'rgba(0,0,0,0.08)',
+    shadowColor: 'rgba(2,6,23,0.35)',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.18,
+    shadowRadius: 6,
+    elevation: 2,
+  },
+  gridEventTopRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
   },
   gridEventTitle: {
     color: theme.colors.bgApp,
     fontWeight: theme.fontWeight.bold,
+    letterSpacing: -0.1,
+    flex: 1,
+  },
+  gridEventBadge: {
+    alignSelf: 'flex-start',
+    borderRadius: 999,
+    paddingVertical: 2,
+    paddingHorizontal: 7,
+    backgroundColor: 'rgba(2,6,23,0.2)',
+    marginTop: 1,
+  },
+  gridEventBadgeText: {
+    color: 'rgba(2,6,23,0.82)',
+    fontSize: 9,
+    fontWeight: theme.fontWeight.bold,
+    letterSpacing: 0.2,
   },
   gridEventTime: {
-    color: 'rgba(0,0,0,0.72)',
-    marginTop: 2,
+    color: 'rgba(2,6,23,0.78)',
+    marginTop: 4,
+    fontWeight: theme.fontWeight.medium,
   },
   daySelectorRow: {
     flexDirection: 'row',
@@ -1175,6 +1785,30 @@ const styles = StyleSheet.create({
   },
   daySelectorBtnActive: {
     backgroundColor: theme.colors.accentPrimary,
+  },
+  freqModeRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  freqModeChip: {
+    flex: 1,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderRadius: theme.borderRadius.sm,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  freqModeChipActive: {
+    backgroundColor: 'rgba(46,233,166,0.2)',
+    borderColor: theme.colors.accentPrimary,
+  },
+  freqModeText: {
+    color: theme.colors.textMuted,
+    fontWeight: theme.fontWeight.medium,
+  },
+  freqModeTextActive: {
+    color: theme.colors.accentPrimary,
+    fontWeight: theme.fontWeight.semibold,
   },
   repeatDaysRow: {
     flexDirection: 'row',
@@ -1203,6 +1837,24 @@ const styles = StyleSheet.create({
   repeatHint: {
     fontSize: theme.fontSize.xs,
     marginTop: -4,
+  },
+  dateInputRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  datePartInput: {
+    flex: 0,
+    width: 64,
+    textAlign: 'center',
+  },
+  dateYearInput: {
+    flex: 1,
+    minWidth: 86,
+    textAlign: 'center',
+  },
+  dateSep: {
+    fontWeight: theme.fontWeight.semibold,
   },
   inputMultiline: {
     minHeight: 56,

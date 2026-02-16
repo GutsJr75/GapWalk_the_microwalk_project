@@ -1,0 +1,34 @@
+- extendedWaitUntil:
+    visible:
+      id: intro-get-started
+    timeout: 20000
+- tapOn:
+    id: intro-get-started
+- extendedWaitUntil:
+    visible:
+      id: schedule-option-manual
+    timeout: 20000
+- tapOn:
+    id: schedule-option-manual
+- tapOn:
+    id: schedule-setup-continue
+- extendedWaitUntil:
+    visible:
+      id: manual-e2e-seed
+    timeout: 20000
+- tapOn:
+    id: manual-e2e-seed
+- tapOn:
+    id: manual-done
+- tapOn: Save
+- extendedWaitUntil:
+    visible:
+      id: preferences-continue
+    timeout: 20000
+- tapOn:
+    id: preferences-continue
+- tapOn: Save
+- extendedWaitUntil:
+    visible:
+      id: dashboard-open-menu
+    timeout: 30000

@@ -64,7 +64,10 @@ const esExact: Record<string, string> = {
   'Link Google Calendar': 'Vincular Google Calendar',
   'Upcoming feature': 'Proxima funcion',
   'Import': 'Importar',
+  'Input manually': 'Ingresar manualmente',
   'Input Manually': 'Ingresar manualmente',
+  'Build your weekly schedule and one-time events on a simple calendar.':
+    'Crea tu horario semanal y eventos unicos en un calendario simple.',
   'Build your weekly schedule on a simple calendar.':
     'Crea tu horario semanal en un calendario simple.',
   'Manage Schedule': 'Administrar horario',
@@ -73,17 +76,20 @@ const esExact: Record<string, string> = {
   'Choose an action below. Your schedule updates are applied only after you save.':
     'Elige una accion abajo. Los cambios del horario se aplican solo despues de guardar.',
   'Change Schedule Source': 'Cambiar fuente del horario',
+  'Change schedule source': 'Cambiar fuente del horario',
   'Switch how GapWalk reads your schedule, such as manual entry or calendar import.':
     'Cambia como GapWalk lee tu horario, como entrada manual o importacion de calendario.',
+  'Update and sync opportunities': 'Actualizar y sincronizar oportunidades',
   'Update and Sync Opportunities': 'Actualizar y sincronizar oportunidades',
   "Save your changes to refresh today's walking opportunities automatically.":
     'Guarda tus cambios para actualizar automaticamente las oportunidades de caminata de hoy.',
   'Tip: If you open this screen and make no changes, you can cancel safely.':
     'Consejo: Si abres esta pantalla y no haces cambios, puedes cancelar con seguridad.',
-  'Change schedule source': 'Cambiar fuente del horario',
   'Update current schedule': 'Actualizar horario actual',
   'Update imported schedule': 'Actualizar horario importado',
   'Your schedule stays private. Privacy is our utmost importance.':
+    'Tu horario se mantiene privado. La privacidad es nuestra maxima prioridad.',
+  'Your schedule stays private. Privacy is our top priority.':
     'Tu horario se mantiene privado. La privacidad es nuestra maxima prioridad.',
   'Manual schedule': 'Horario manual',
   'Google Calendar': 'Google Calendar',
@@ -103,6 +109,7 @@ const esExact: Record<string, string> = {
   'Get started': 'Comenzar',
   'Set up your preferences so GapWalk can find the best walking windows in your schedule.':
     'Configura tus preferencias para que GapWalk encuentre las mejores ventanas para caminar en tu horario.',
+  'Set up preferences': 'Configurar preferencias',
   'Set Up Preferences': 'Configurar preferencias',
   'Goal Achieved!': 'Meta alcanzada!',
   'Great job!': 'Buen trabajo!',
@@ -137,7 +144,10 @@ const esExact: Record<string, string> = {
   'Minimum reminder gap': 'Intervalo minimo entre recordatorios',
   'Start Manual Walk': 'Iniciar caminata manual',
   'Visit / Update your schedule': 'Visitar / Actualizar tu horario',
+  'Manage schedule': 'Administrar horario',
+  'Edit your choices': 'Editar tus opciones',
   'Edit your Choices': 'Editar tus opciones',
+  'Log out': 'Cerrar sesion',
   'Back to Home Screen': 'Volver a inicio',
   'No gaps found for today': 'No se encontraron huecos para hoy',
   'No gaps are found for today.': 'No se encontraron huecos para hoy.',
@@ -165,6 +175,7 @@ const esExact: Record<string, string> = {
 
   // Preferences
   'Preferences': 'Preferencias',
+  'Review your choices and save when ready.': 'Revisa tus opciones y guarda cuando estes listo.',
   'You can change this anytime.': 'Puedes cambiar esto cuando quieras.',
   'Walking Goals': 'Objetivos de caminata',
   'Target, buffer & reminders': 'Objetivo, margen y recordatorios',
@@ -193,12 +204,33 @@ const esExact: Record<string, string> = {
   'End': 'Fin',
   'Use Recommended': 'Usar recomendado',
   'Skip': 'Omitir',
+  'If you cancel now, your unsaved changes will be discarded. Do you want to continue?':
+    'Si cancelas ahora, tus cambios no guardados se descartaran. Quieres continuar?',
+  'Do you want to save these preference changes?':
+    'Quieres guardar estos cambios de preferencias?',
 
   // Manual schedule
   'Update your schedule': 'Actualiza tu horario',
   'Edit and save to refresh walking opportunities.':
     'Edita y guarda para actualizar oportunidades de caminata.',
   'Build your weekly schedule': 'Crea tu horario semanal',
+  'Frequency': 'Frecuencia',
+  'Repeats weekly': 'Se repite semanalmente',
+  'One-time event': 'Evento unico',
+  'Event date': 'Fecha del evento',
+  'This event repeats every week on the selected days.':
+    'Este evento se repite cada semana en los dias seleccionados.',
+  'This event is used once on the selected date only.':
+    'Este evento se usa una sola vez en la fecha seleccionada.',
+  'Select date': 'Selecciona una fecha',
+  'Choose a date for this one-time event.':
+    'Elige una fecha para este evento unico.',
+  'Enter month, day, and year.': 'Ingresa mes, dia y ano.',
+  'Month must be between 1 and 12.': 'El mes debe estar entre 1 y 12.',
+  'Year must be between 1900 and 2100.': 'El ano debe estar entre 1900 y 2100.',
+  'Day is not valid for this month.': 'El dia no es valido para este mes.',
+  'One-time event date must be today or later.':
+    'La fecha del evento unico debe ser hoy o posterior.',
   'Title': 'Titulo',
   'Days (select one or more)': 'Dias (selecciona uno o mas)',
   'Description (optional)': 'Descripcion (opcional)',
@@ -208,6 +240,8 @@ const esExact: Record<string, string> = {
   'No changes': 'Sin cambios',
   'No changes were detected. Your existing imported schedule is already active.':
     'No se detectaron cambios. Tu horario importado actual ya esta activo.',
+  'No changes were detected. Your existing schedule is already active.':
+    'No se detectaron cambios. Tu horario actual ya esta activo.',
   'Save schedule?': 'Guardar horario?',
   'Save this schedule and refresh walking opportunities?':
     'Guardar este horario y actualizar oportunidades de caminata?',
@@ -269,6 +303,9 @@ const esExact: Record<string, string> = {
   'Opening Google sign-in...': 'Abriendo inicio de sesion de Google...',
   'Sign-in Failed': 'Error al iniciar sesion',
   'Could not sign in with Google.': 'No se pudo iniciar sesion con Google.',
+  'Link Google Calendar will be available in a future update. Use Import or Input manually for now.':
+    'Vincular Google Calendar estara disponible en una futura actualizacion. Por ahora usa Importar o Ingreso manual.',
+  'Do you want to save these changes?': 'Quieres guardar estos cambios?',
 };
 
 type PatternTranslator = {
@@ -328,6 +365,10 @@ const patterns: PatternTranslator[] = [
   {
     re: /^(\d+)\sminutes • (\d+)\scalories(.*)$/,
     toEs: (m) => `${m[1]} minutos • ${m[2]} calorias${m[3] ?? ''}`,
+  },
+  {
+    re: /^One-time • (.+)$/,
+    toEs: (m) => `Evento unico • ${m[1]}`,
   },
 ];
 

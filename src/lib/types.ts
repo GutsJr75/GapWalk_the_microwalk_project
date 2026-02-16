@@ -44,6 +44,7 @@ export interface WalkSession {
   activeSeconds: number;
   pausedSeconds: number;
   distanceMeters?: number;
+  steps?: number;
   calories?: number;
   usedLocation: boolean;
   createdAt: string;
@@ -75,6 +76,8 @@ export interface ManualScheduleEntry {
   dayOfWeek: number; // 0-6, Sunday=0
   startTime: string; // "HH:mm"
   endTime: string; // "HH:mm"
+  isOneTime?: boolean;
+  oneTimeDate?: string; // "YYYY-MM-DD" (required when isOneTime === true)
 }
 
 // Default preferences

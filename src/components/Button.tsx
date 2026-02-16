@@ -1,5 +1,5 @@
 ﻿import React from 'react';
-import { TouchableOpacity, Text, StyleSheet, ActivityIndicator, ViewStyle, TextStyle, StyleProp } from 'react-native';
+import { Pressable, Text, StyleSheet, ActivityIndicator, ViewStyle, TextStyle, StyleProp } from 'react-native';
 import { theme } from '../theme';
 import { useAppStore } from '../store';
 import { useThemePalette } from '../theme/palette';
@@ -14,6 +14,7 @@ interface ButtonProps {
   style?: StyleProp<ViewStyle>;
   textStyle?: StyleProp<TextStyle>;
   full?: boolean;
+  testID?: string;
 }
 
 export const Button: React.FC<ButtonProps> = ({
@@ -25,18 +26,34 @@ export const Button: React.FC<ButtonProps> = ({
   style,
   textStyle,
   full = false,
+  testID,
 }) => {
   const { themeMode, language } = useAppStore();
   const isDark = themeMode === 'dark';
   const palette = useThemePalette();
   const localizedTitle = React.useMemo(() => translateLiteral(title, language), [title, language]);
+  const isPrimaryLike = variant === 'primary' || variant === 'danger';
+  const labelColor = disabled
+    ? palette.textMuted
+    : variant === 'primary'
+      ? theme.colors.bgApp
+      : variant === 'danger'
+        ? theme.colors.white
+        : variant === 'muted'
+          ? palette.textMuted
+          : palette.textPrimary;
+  const spinnerColor = disabled ? palette.textMuted : labelColor;
 
   return (
-    <TouchableOpacity
-      style={[
+    <Pressable
+      style={({ pressed }) => [
         styles.button,
         variant === 'primary' && styles.primaryButton,
-        variant === 'secondary' && { backgroundColor: palette.bgSurfaceElevated, borderWidth: 1, borderColor: palette.borderSoft },
+        variant === 'secondary' && {
+          backgroundColor: palette.bgSurfaceElevated,
+          borderWidth: 1,
+          borderColor: palette.borderSoft,
+        },
         variant === 'outline' && [
           styles.outlineButton,
           { borderColor: isDark ? '#3d4a66' : palette.borderStrong },
@@ -45,37 +62,32 @@ export const Button: React.FC<ButtonProps> = ({
         variant === 'danger' && styles.dangerButton,
         disabled && styles.disabledButton,
         full && styles.fullWidth,
+        pressed && !disabled && !loading && styles.pressedButton,
         style,
       ]}
       onPress={onPress}
       disabled={disabled || loading}
-      activeOpacity={0.7}
+      accessibilityRole="button"
+      testID={testID}
+      accessibilityLabel={testID}
+      android_ripple={{
+        color: isPrimaryLike ? 'rgba(255,255,255,0.18)' : 'rgba(15,23,42,0.10)',
+      }}
     >
       {loading ? (
-        <ActivityIndicator
-          color={
-            variant === 'primary' || variant === 'danger'
-              ? theme.colors.bgApp
-              : palette.textPrimary
-          }
-        />
+        <ActivityIndicator color={spinnerColor} />
       ) : (
         <Text
           style={[
             styles.buttonText,
-            variant === 'primary' && styles.primaryText,
-            variant === 'secondary' && { color: palette.textPrimary },
-            variant === 'outline' && { color: palette.textPrimary },
-            variant === 'muted' && { color: palette.textMuted },
-            variant === 'danger' && styles.dangerText,
-            disabled && styles.disabledText,
+            { color: labelColor },
             textStyle,
           ]}
         >
           {localizedTitle}
         </Text>
       )}
-    </TouchableOpacity>
+    </Pressable>
   );
 };
 
@@ -105,22 +117,14 @@ const styles = StyleSheet.create({
     backgroundColor: theme.colors.danger,
   },
   disabledButton: {
-    opacity: 0.4,
+    opacity: 0.55,
+  },
+  pressedButton: {
+    transform: [{ scale: 0.985 }],
   },
   buttonText: {
     fontSize: theme.fontSize.md,
     fontWeight: theme.fontWeight.semibold,
     letterSpacing: 0,
   },
-  primaryText: {
-    color: theme.colors.bgApp,
-  },
-  dangerText: {
-    color: theme.colors.white,
-  },
-  disabledText: {
-    color: theme.colors.textMuted,
-  },
 });
-
-
