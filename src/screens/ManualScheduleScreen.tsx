@@ -465,6 +465,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
   const currentSignature = useMemo(() => buildScheduleSignature(entriesByDay), [entriesByDay]);
   const hasUnsavedChanges = currentSignature !== initialSignature;
   const hasPendingImportedSchedule = usingIcsTemplate && Array.isArray(prefillTemplate) && !hasSavedSchedule;
+  const isReadyToContinue = hasSavedSchedule && !hasUnsavedChanges;
 
   const showMessage = (title: string, message: string, onAcknowledge?: () => void) => {
     if (Platform.OS === 'web' && typeof (globalThis as any).alert === 'function') {
@@ -1124,9 +1125,11 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
         )}
         {requireSaveBeforeContinue && (
           <Text variant="bodySmall" style={styles.importHint}>
-            {typeof importedEventCount === 'number' && importedEventCount > 0
-              ? `Loaded ${importedEventCount} events from your calendar file. Review the grid, tap Save, then Continue.`
-              : 'Review the imported schedule, make any edits, then tap Save. When ready, tap Continue.'}
+            {usingIcsTemplate
+              ? typeof importedEventCount === 'number' && importedEventCount > 0
+                ? `Loaded ${importedEventCount} events from your calendar file. Review the grid, tap Save, then Continue.`
+                : 'Review the imported schedule, make any edits, then tap Save. When ready, tap Continue.'
+              : 'Build your weekly schedule, tap Save, then tap Continue.'}
           </Text>
         )}
       </View>
@@ -1311,6 +1314,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
               <Button
                 title="Save"
                 onPress={handleDone}
+                variant={isReadyToContinue ? 'secondary' : 'primary'}
                 style={styles.footerBtn}
                 loading={savingDone}
                 disabled={savingDone}
@@ -1318,7 +1322,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
               />
               <Button
                 title="Continue"
-                variant="secondary"
+                variant={isReadyToContinue ? 'primary' : 'secondary'}
                 onPress={handleContinueAfterSave}
                 style={styles.footerBtn}
                 disabled={savingDone || !hasSavedSchedule || hasUnsavedChanges}

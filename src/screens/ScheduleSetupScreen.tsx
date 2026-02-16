@@ -61,7 +61,10 @@ export const ScheduleSetupScreen: React.FC<Props> = ({ navigation, route }) => {
       navigation.navigate('ManualSchedule', { manageMode: true });
       return;
     }
-    navigation.navigate('ManualSchedule', { startWithEmpty: true });
+    navigation.navigate('ManualSchedule', {
+      startWithEmpty: true,
+      requireSaveBeforeContinue: true,
+    });
   };
 
   const finishAfterSave = async () => {
