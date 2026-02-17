@@ -54,13 +54,13 @@ export const SettingsScreen: React.FC<Props> = ({ navigation }) => {
   const simulateNotificationStart = async () => {
     const first = (await plansRepo.getUpcomingPlans(1))[0];
     if (!first) {
-      Alert.alert('No upcoming plan', 'Create a schedule first so we can simulate a start action.');
+      Alert.alert('No upcoming plan', 'Create a schedule first so we can simulate the start action.');
       return;
     }
 
     const result = await notificationPlanActions.canStartPlan(first.id);
     if (!result.allowed) {
-      Alert.alert('Blocked', 'Start action was blocked (likely daily goal already reached).');
+      Alert.alert('Action blocked', 'The start action was blocked, likely because today\'s goal is already complete.');
       return;
     }
 
@@ -70,11 +70,11 @@ export const SettingsScreen: React.FC<Props> = ({ navigation }) => {
   const simulateNotificationSkip = async () => {
     const first = (await plansRepo.getUpcomingPlans(1))[0];
     if (!first) {
-      Alert.alert('No upcoming plan', 'Create a schedule first so we can simulate skip action.');
+      Alert.alert('No upcoming plan', 'Create a schedule first so we can simulate the skip action.');
       return;
     }
     await notificationPlanActions.skipGap(first.id);
-    Alert.alert('Simulated', 'Skip action simulated for the next upcoming plan.');
+    Alert.alert('Done', 'Skip action simulated for the next upcoming plan.');
   };
 
   const showTelemetrySnapshot = async () => {
@@ -91,7 +91,7 @@ export const SettingsScreen: React.FC<Props> = ({ navigation }) => {
       <View style={styles.content}>
         <ScreenHeader
           title="Settings"
-          subtitle="Tweak how GapWalk looks and speaks."
+          subtitle="Choose how GapWalk looks and which language it uses."
           onBack={handleBack}
           backTestID="settings-back"
         />

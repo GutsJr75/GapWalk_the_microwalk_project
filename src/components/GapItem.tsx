@@ -18,6 +18,8 @@ interface GapItemProps {
   usedMinutes?: number;
   /** Cancel this opportunity and move to the next best one */
   onCancel: () => void;
+  /** Change walk window and duration for this opportunity */
+  onChange: () => void;
 }
 
 export const GapItem: React.FC<GapItemProps> = ({
@@ -27,6 +29,7 @@ export const GapItem: React.FC<GapItemProps> = ({
   duration,
   usedMinutes = 0,
   onCancel,
+  onChange,
 }) => {
   const { themeMode } = useAppStore();
   const isDark = themeMode === 'dark';
@@ -50,6 +53,9 @@ export const GapItem: React.FC<GapItemProps> = ({
 
   const cancelBtnTheme = {
     backgroundColor: isDark ? 'rgba(239,68,68,0.1)' : 'rgba(239,68,68,0.14)',
+  };
+  const changeBtnTheme = {
+    backgroundColor: isDark ? 'rgba(56,189,248,0.14)' : 'rgba(56,189,248,0.18)',
   };
   const badgeTextColor = isDark ? theme.colors.accentPrimary : '#0f5132';
 
@@ -78,6 +84,9 @@ export const GapItem: React.FC<GapItemProps> = ({
       <View style={styles.actions}>
         <TouchableOpacity onPress={onCancel} hitSlop={8} style={[styles.cancelBtn, cancelBtnTheme]}>
           <Text variant="bodySmall" style={styles.cancelText}>Cancel</Text>
+        </TouchableOpacity>
+        <TouchableOpacity onPress={onChange} hitSlop={8} style={[styles.changeBtn, changeBtnTheme]}>
+          <Text variant="bodySmall" style={styles.changeText}>Change</Text>
         </TouchableOpacity>
       </View>
     </View>
@@ -126,7 +135,7 @@ const styles = StyleSheet.create({
   barLabel: {
     fontSize: 11,
   },
-  actions: { alignItems: 'flex-end', marginLeft: 10, paddingTop: 2 },
+  actions: { alignItems: 'flex-end', marginLeft: 10, paddingTop: 2, gap: 8 },
   cancelBtn: {
     paddingVertical: 6,
     paddingHorizontal: 12,
@@ -135,6 +144,16 @@ const styles = StyleSheet.create({
   },
   cancelText: {
     color: theme.colors.error,
+    fontWeight: theme.fontWeight.medium,
+  },
+  changeBtn: {
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: theme.borderRadius.sm,
+    backgroundColor: 'rgba(56,189,248,0.14)',
+  },
+  changeText: {
+    color: '#38bdf8',
     fontWeight: theme.fontWeight.medium,
   },
 });

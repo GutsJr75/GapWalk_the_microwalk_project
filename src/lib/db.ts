@@ -69,6 +69,9 @@ const initializeTables = async () => {
       quiet_hours_start TEXT NOT NULL DEFAULT '23:00',
       quiet_hours_end TEXT NOT NULL DEFAULT '06:00',
       min_walk_minutes INTEGER NOT NULL DEFAULT 6,
+      strictness_mode TEXT NOT NULL DEFAULT 'easygoing',
+      step_goal_enabled INTEGER NOT NULL DEFAULT 0,
+      step_goal INTEGER NOT NULL DEFAULT 1000,
       updated_at TEXT DEFAULT CURRENT_TIMESTAMP
     );
   `);
@@ -228,6 +231,9 @@ const runMigrations = async () => {
   await ensureColumn('preferences', 'when_to_notify', "TEXT DEFAULT 'now'");
   await ensureColumn('preferences', 'notify_delay_minutes', 'INTEGER DEFAULT 5');
   await ensureColumn('preferences', 'notification_min_gap_minutes', 'INTEGER DEFAULT 60');
+  await ensureColumn('preferences', 'strictness_mode', "TEXT NOT NULL DEFAULT 'easygoing'");
+  await ensureColumn('preferences', 'step_goal_enabled', 'INTEGER NOT NULL DEFAULT 0');
+  await ensureColumn('preferences', 'step_goal', 'INTEGER NOT NULL DEFAULT 1000');
 };
 
 export const isDatabaseAvailable = async (): Promise<boolean> => {

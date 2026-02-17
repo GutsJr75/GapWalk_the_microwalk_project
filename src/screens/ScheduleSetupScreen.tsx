@@ -143,7 +143,7 @@ export const ScheduleSetupScreen: React.FC<Props> = ({ navigation, route }) => {
   };
 
   const onGoogleCardPress = () => {
-    Alert.alert('Coming soon', 'Link Google Calendar will be available in a future update. Use Import or Input manually for now.');
+    Alert.alert('Coming soon', 'Google Calendar linking is coming soon. For now, use Import or Enter manually.');
   };
 
   /* ── Google Calendar sync ── */
@@ -159,7 +159,7 @@ export const ScheduleSetupScreen: React.FC<Props> = ({ navigation, route }) => {
           'No Events Found',
           'Your Google Calendar has no events in the next 14 days. You can add events manually instead.',
           [
-            { text: 'Input manually', onPress: () => { setLoading(false); setSyncStatus(null); navigateToManualSchedule(); } },
+            { text: 'Enter manually', onPress: () => { setLoading(false); setSyncStatus(null); navigateToManualSchedule(); } },
             { text: 'OK', style: 'cancel', onPress: () => { setLoading(false); setSyncStatus(null); } },
           ]
         );
@@ -188,7 +188,7 @@ export const ScheduleSetupScreen: React.FC<Props> = ({ navigation, route }) => {
 
       Alert.alert(
         manageMode ? 'Schedule Updated' : 'Calendar Linked',
-        `Successfully imported ${events.length} events from Google Calendar.`,
+        `Imported ${events.length} events from Google Calendar.`,
         [{ text: manageMode ? 'Done' : 'Continue', onPress: completeFlow }]
       );
     } catch (error) {
@@ -196,7 +196,7 @@ export const ScheduleSetupScreen: React.FC<Props> = ({ navigation, route }) => {
       const msg = error instanceof Error ? error.message : String(error);
       setLoading(false);
       setSyncStatus(null);
-      Alert.alert('Sync Failed', `Could not fetch calendar events: ${msg}`);
+      Alert.alert('Sync failed', `Could not fetch calendar events: ${msg}`);
     }
   };
 
@@ -422,7 +422,7 @@ export const ScheduleSetupScreen: React.FC<Props> = ({ navigation, route }) => {
             </View>
           </View>
           <Text variant="bodySmall" color={theme.colors.textMuted} style={styles.cardDesc}>
-            Sign in with Google to automatically detect your busy times and find the best walking gaps.
+            Sign in with Google to detect your busy times and find the best walking windows.
           </Text>
         </Card>
 
@@ -454,7 +454,7 @@ export const ScheduleSetupScreen: React.FC<Props> = ({ navigation, route }) => {
               <Text variant="body" style={styles.cardTitle}>Input manually</Text>
             </View>
             <Text variant="bodySmall" color={theme.colors.textMuted} style={styles.cardDesc}>
-              Build your weekly schedule and one-time events on a simple calendar.
+              Build your weekly schedule and one-time events with a simple calendar.
             </Text>
           </Card>
         </View>

@@ -6,11 +6,14 @@ import { Text } from './Text';
 import { theme } from '../theme';
 import { useAppStore } from '../store';
 
+type StatTone = 'target' | 'notifications' | 'steps';
+
 interface StatCardProps {
   title: string;
   current: number;
   target: number;
   unitLabel?: string;
+  tone?: StatTone;
 }
 
 export const StatCard: React.FC<StatCardProps> = ({
@@ -18,6 +21,7 @@ export const StatCard: React.FC<StatCardProps> = ({
   current,
   target,
   unitLabel = 'minutes',
+  tone,
 }) => {
   const { themeMode } = useAppStore();
   const isDark = themeMode === 'dark';
@@ -68,16 +72,68 @@ export const StatCard: React.FC<StatCardProps> = ({
     };
   }, []);
 
+  const toneColor = (() => {
+    if (tone === 'target') return '#4ade80';
+    if (tone === 'notifications') return '#38bdf8';
+    if (tone === 'steps') return '#f59e0b';
+    return theme.colors.accentPrimary;
+  })();
+
+  const hexToRgb = (hex: string): { r: number; g: number; b: number } | null => {
+    const normalized = hex.replace('#', '');
+    if (!/^[0-9a-fA-F]{6}$/.test(normalized)) return null;
+    return {
+      r: parseInt(normalized.slice(0, 2), 16),
+      g: parseInt(normalized.slice(2, 4), 16),
+      b: parseInt(normalized.slice(4, 6), 16),
+    };
+  };
+
+  const withAlpha = (hex: string, alpha: number, fallback: string): string => {
+    const rgb = hexToRgb(hex);
+    if (!rgb) return fallback;
+    return `rgba(${rgb.r},${rgb.g},${rgb.b},${alpha})`;
+  };
+
   const currentStrokeDashoffset = circumference - animatedPct * circumference;
-  const trackStroke = isDark ? 'rgba(255,255,255,0.1)' : 'rgba(15,23,42,0.12)';
+  const trackStroke = withAlpha(
+    toneColor,
+    isDark ? 0.24 : 0.26,
+    isDark ? 'rgba(255,255,255,0.12)' : 'rgba(15,23,42,0.12)'
+  );
+  const cardTint = withAlpha(
+    toneColor,
+    isDark ? 0.08 : 0.10,
+    isDark ? '#16233a' : '#dde4ee'
+  );
+  const borderTint = withAlpha(
+    toneColor,
+    isDark ? 0.32 : 0.24,
+    isDark ? 'rgba(255,255,255,0.10)' : 'rgba(15,23,42,0.14)'
+  );
   const goalText = '\uD83C\uDF89 Goal achieved!';
+  const progressLabel = `${current}/${target}`;
+  const currentValueStyle = progressLabel.length >= 9
+    ? styles.currentValueCompact
+    : progressLabel.length >= 7
+      ? styles.currentValueMedium
+      : styles.currentValue;
+  const goalValueStyle = progressLabel.length >= 9
+    ? styles.goalValueCompact
+    : progressLabel.length >= 7
+      ? styles.goalValueMedium
+      : styles.goalValue;
 
   return (
-    <Card style={styles.card} elevated>
-      <Text variant="body" style={styles.title}>{title}</Text>
+    <Card style={[styles.card, { backgroundColor: cardTint, borderColor: borderTint }]} elevated>
+      <View style={styles.headerRow}>
+        <View style={[styles.titleDot, { backgroundColor: toneColor }]} />
+        <Text variant="body" style={styles.title}>{title}</Text>
+      </View>
 
       <View style={styles.circleContainer}>
         <Animated.View style={[styles.svgWrapper, { transform: [{ scale: scaleAnim }] }]}>
+          <View style={[styles.circleCore, { backgroundColor: withAlpha(toneColor, isDark ? 0.12 : 0.10, 'transparent') }]} />
           <Svg width={size} height={size}>
             <G rotation="-90" origin={`${size / 2}, ${size / 2}`}>
               <Circle
@@ -89,7 +145,7 @@ export const StatCard: React.FC<StatCardProps> = ({
                 fill="transparent"
               />
               <Circle
-                stroke={animatedPct >= 1 ? '#4ade80' : theme.colors.accentPrimary}
+                stroke={toneColor}
                 strokeWidth={strokeWidth}
                 cx={size / 2}
                 cy={size / 2}
@@ -102,14 +158,18 @@ export const StatCard: React.FC<StatCardProps> = ({
             </G>
           </Svg>
           <View style={styles.circleText}>
-            <Text variant="title" style={styles.centerValue}>
-              {current}<Text variant="bodySmall" color={theme.colors.textMuted}>/{target}</Text>
+            <Text variant="title" style={currentValueStyle}>
+              {current}
+              <Text variant="title" style={goalValueStyle}>/{target}</Text>
             </Text>
           </View>
         </Animated.View>
       </View>
 
-      <Text variant="bodySmall" style={styles.completion}>
+      <Text
+        variant="bodySmall"
+        style={[styles.completion, pct >= 1 && { color: toneColor, fontWeight: theme.fontWeight.semibold }]}
+      >
         {pct >= 1 ? goalText : `Completion: ${current} ${unitLabel}/${target} ${unitLabel}`}
       </Text>
     </Card>
@@ -118,10 +178,38 @@ export const StatCard: React.FC<StatCardProps> = ({
 
 const styles = StyleSheet.create({
   card: { marginBottom: 16, paddingVertical: 16 },
-  title: { fontWeight: theme.fontWeight.semibold, marginBottom: 12 },
+  headerRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 },
+  titleDot: { width: 9, height: 9, borderRadius: 5 },
+  title: { fontWeight: theme.fontWeight.semibold, marginBottom: 0 },
   circleContainer: { alignItems: 'center', marginBottom: 12 },
   svgWrapper: { position: 'relative', justifyContent: 'center', alignItems: 'center' },
+  circleCore: {
+    position: 'absolute',
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+  },
   circleText: { position: 'absolute', justifyContent: 'center', alignItems: 'center' },
-  centerValue: { fontWeight: theme.fontWeight.bold },
+  currentValue: { fontWeight: theme.fontWeight.bold },
+  currentValueMedium: { fontWeight: theme.fontWeight.bold, fontSize: 22, lineHeight: 26 },
+  currentValueCompact: { fontWeight: theme.fontWeight.bold, fontSize: 20, lineHeight: 24 },
+  goalValue: {
+    fontSize: 17,
+    fontWeight: theme.fontWeight.semibold,
+    color: theme.colors.textMuted,
+    lineHeight: 22,
+  },
+  goalValueMedium: {
+    fontSize: 15,
+    fontWeight: theme.fontWeight.semibold,
+    color: theme.colors.textMuted,
+    lineHeight: 20,
+  },
+  goalValueCompact: {
+    fontSize: 13,
+    fontWeight: theme.fontWeight.semibold,
+    color: theme.colors.textMuted,
+    lineHeight: 18,
+  },
   completion: { color: theme.colors.textMuted, textAlign: 'center' },
 });

@@ -4,6 +4,7 @@ const esExact: Record<string, string> = {
   // Global/common
   'Back': 'Atras',
   'Cancel': 'Cancelar',
+  'Change': 'Cambiar',
   'Save': 'Guardar',
   'Done': 'Listo',
   'Continue': 'Continuar',
@@ -12,6 +13,13 @@ const esExact: Record<string, string> = {
   'No': 'No',
   'Today': 'Hoy',
   'Options': 'Opciones',
+  'Weekly Data': 'Datos semanales',
+  'Review your weekly walking totals and trends.':
+    'Revisa tus totales y tendencias semanales de caminata.',
+  'No weekly data yet': 'Aun no hay datos semanales',
+  'Complete a walk to start building weekly history.':
+    'Completa una caminata para comenzar a crear historial semanal.',
+  'Week of': 'Semana del',
   'Settings': 'Configuracion',
   'Appearance': 'Apariencia',
   'Language': 'Idioma',
@@ -53,6 +61,8 @@ const esExact: Record<string, string> = {
 
   // Settings
   'Tweak how GapWalk looks and speaks.': 'Ajusta como se ve y se comunica GapWalk.',
+  'Choose how GapWalk looks and which language it uses.':
+    'Elige como se ve GapWalk y que idioma usa.',
 
   // Schedule setup/overview
   'Manage your schedule': 'Administra tu horario',
@@ -66,8 +76,13 @@ const esExact: Record<string, string> = {
   'Import': 'Importar',
   'Input manually': 'Ingresar manualmente',
   'Input Manually': 'Ingresar manualmente',
+  'Enter manually': 'Ingresar manualmente',
   'Build your weekly schedule and one-time events on a simple calendar.':
     'Crea tu horario semanal y eventos unicos en un calendario simple.',
+  'Build your weekly schedule and one-time events with a simple calendar.':
+    'Crea tu horario semanal y eventos unicos con un calendario simple.',
+  'Sign in with Google to detect your busy times and find the best walking windows.':
+    'Inicia sesion con Google para detectar tus horas ocupadas y encontrar las mejores ventanas para caminar.',
   'Build your weekly schedule on a simple calendar.':
     'Crea tu horario semanal en un calendario simple.',
   'Manage Schedule': 'Administrar horario',
@@ -122,8 +137,10 @@ const esExact: Record<string, string> = {
   'Quick Status': 'Estado rapido',
   'Daily Target': 'Meta diaria',
   'Notification Count': 'Conteo de notificaciones',
+  'Step Goal': 'Meta de pasos',
   'This Week': 'Esta semana',
   'Minutes': 'Minutos',
+  'Total Steps': 'Pasos totales',
   'Walks': 'Caminatas',
   'Active Days': 'Dias activos',
   'Walking Opportunities': 'Oportunidades para caminar',
@@ -152,10 +169,14 @@ const esExact: Record<string, string> = {
   'No gaps found for today': 'No se encontraron huecos para hoy',
   'No gaps are found for today.': 'No se encontraron huecos para hoy.',
   'Could not cancel opportunity': 'No se pudo cancelar la oportunidad',
+  'Could not update walk window': 'No se pudo actualizar la ventana de caminata',
   'Please try again.': 'Por favor, intenta de nuevo.',
   'Cancel this walk opportunity?': 'Cancelar esta oportunidad de caminata?',
+  'Cancel this walk window': 'Cancelar esta ventana de caminata',
   'If you cancel, GapWalk will try to use your next best available gap today.':
     'Si cancelas, GapWalk intentara usar tu siguiente mejor hueco disponible hoy.',
+  'If you cancel, GapWalk will move to the next best walk window today.':
+    'Si cancelas, GapWalk pasara a la siguiente mejor ventana para caminar hoy.',
   'Yes, cancel': 'Si, cancelar',
   'Not Connected': 'No conectado',
   "You haven't linked a Google Calendar yet. Go to Schedule Setup to connect.":
@@ -188,6 +209,20 @@ const esExact: Record<string, string> = {
   'Notifications & quiet hours': 'Notificaciones y horas de silencio',
   'When to notify': 'Cuando notificar',
   'Minimum time between reminders': 'Tiempo minimo entre recordatorios',
+  'Strictness': 'Nivel de exigencia',
+  'Easygoing': 'Flexible',
+  'No Excuses': 'Sin excusas',
+  'No Excuses enforces step-goal checks. Easygoing keeps walk timing flexible.':
+    'Sin excusas aplica controles por meta de pasos. Flexible mantiene el tiempo de caminata mas libre.',
+  'Step goal is required in No Excuses mode.': 'La meta de pasos es obligatoria en modo Sin excusas.',
+  'Easygoing keeps your step goal optional.': 'El modo Flexible mantiene la meta de pasos opcional.',
+  'Recommended: 1000 steps. Range: 500 to 6000.': 'Recomendado: 1000 pasos. Rango: 500 a 6000.',
+  'On': 'Encendido',
+  'Off': 'Apagado',
+  'steps': 'pasos',
+  'Recommended: 1000 steps': 'Recomendado: 1000 pasos',
+  'Step goal is currently off.': 'La meta de pasos esta desactivada.',
+  'Set a step goal between 500 and 6000.': 'Define una meta entre 500 y 6000 pasos.',
   'Quiet Hours': 'Horas de silencio',
   'Tap to edit': 'Tocar para editar',
   'Use Recommended Settings?': 'Usar ajustes recomendados?',
@@ -262,10 +297,17 @@ const esExact: Record<string, string> = {
   'Tap Resume to continue your walk.': 'Toca Reanudar para continuar tu caminata.',
   'Keep going! Every step counts.': 'Sigue! Cada paso cuenta.',
   'Time remaining': 'Tiempo restante',
+  'Remaining Time': 'Tiempo restante',
+  'Session Time': 'Tiempo de sesion',
   'Active time': 'Tiempo activo',
   'Keep moving! 🚶': 'Sigue moviendote! 🚶',
   'Distance': 'Distancia',
+  'Step Counter': 'Contador de pasos',
   'Calories': 'Calorias',
+  'Location off': 'Ubicacion desactivada',
+  'Walking now': 'Caminando ahora',
+  'Not moving yet': 'Sin movimiento aun',
+  'Locating': 'Buscando ubicacion',
   'Your gap is almost over. Consider heading back.':
     'Tu hueco casi termina. Considera regresar.',
   'End Walk': 'Terminar caminata',
@@ -274,15 +316,48 @@ const esExact: Record<string, string> = {
   'Enable Location?': 'Activar ubicacion?',
   'Allow location to track your route and estimate distance. You can still track time without this.':
     'Permite la ubicacion para rastrear tu ruta y estimar distancia. Puedes seguir registrando tiempo sin esto.',
+  'Enable location to show live route and step count.':
+    'Activa la ubicacion para mostrar ruta en vivo y conteo de pasos.',
+  'No walking detected': 'No se detecta caminata',
+  'Not walking detected': 'No se detecta caminata',
+  'You are not walking right now. You can continue this session later.':
+    'No estas caminando ahora. Puedes continuar esta sesion mas tarde.',
+  'You are not walking right now, want to do this session later':
+    'No estas caminando ahora, quieres hacer esta sesion mas tarde',
+  'No, Continue': 'No, continuar',
+  'No, Change': 'No, cambiar',
+  'Yes, later': 'Si, mas tarde',
+  'Change walk window': 'Cambiar ventana de caminata',
+  'Set your preferred start time and walk duration.':
+    'Define tu hora de inicio preferida y la duracion de caminata.',
+  'Start time': 'Hora de inicio',
+  'Walk minutes': 'Minutos de caminata',
+  'Save this change': 'Guardar este cambio',
+  'Are you sure you want to update this walk time and duration':
+    'Seguro que deseas actualizar esta hora y duracion de caminata',
+  'Please enter a valid start time.': 'Ingresa una hora de inicio valida.',
+  'Set duration between 1 and 180 minutes.': 'Define una duracion entre 1 y 180 minutos.',
+  'Choose a future time for this walk.': 'Elige una hora futura para esta caminata.',
   'Not now': 'Ahora no',
   'Allow': 'Permitir',
+  'Enable': 'Activar',
   'End Walk?': 'Terminar caminata?',
+  'End this walk?': 'Terminar esta caminata?',
   'Are you sure you want to end this walk session?':
     'Seguro que quieres terminar esta sesion de caminata?',
+  'Your walk progress will be saved to today stats.':
+    'El progreso de tu caminata se guardara en las estadisticas de hoy.',
+  'Keep Walking': 'Seguir caminando',
   'Yes, end': 'Si, terminar',
+  'Yes, End': 'Si, terminar',
   'Walk Complete!': 'Caminata completada!',
+  'Walk complete': 'Caminata completada',
   'Great progress!': 'Gran progreso!',
   '\uD83C\uDF89 Goal achieved!': '\uD83C\uDF89 Meta alcanzada!',
+  'Map is available on mobile app': 'El mapa esta disponible en la app movil',
+  'Map view is unavailable on web preview.': 'La vista de mapa no esta disponible en la vista web.',
+  'Web preview supports timer flow, but live map and movement tracking run on Android/iOS builds.':
+    'La vista web soporta el temporizador, pero el mapa en vivo y el seguimiento de movimiento funcionan en Android/iOS.',
 
   // Setup/import status
   'Opening file picker...': 'Abriendo selector de archivos...',
@@ -308,6 +383,74 @@ const esExact: Record<string, string> = {
   'Do you want to save these changes?': 'Quieres guardar estos cambios?',
 };
 
+const enFriendly: Record<string, string> = {
+  'Tweak how GapWalk looks and speaks.': 'Choose how GapWalk looks and which language it uses.',
+  'Review your choices and save when ready.': 'Review your settings and save when you are ready.',
+  'You can change this anytime.': 'You can update this anytime.',
+  'Target, buffer & reminders': 'Goal, buffer, and reminders',
+  'Notifications & quiet hours': 'Reminders and quiet hours',
+  'When to notify': 'When to send reminders',
+  'No Excuses enforces step-goal checks. Easygoing keeps walk timing flexible.':
+    'No Excuses checks your step goal. Easygoing gives you more flexibility.',
+  'Easygoing keeps your step goal optional.': 'In Easygoing mode, step goal is optional.',
+  'Step goal is currently off.': 'Step goal is off right now.',
+  'Select the time frame when GapWalk will not send you notifications.':
+    'Choose when GapWalk should stay quiet.',
+  'Set up your preferences so GapWalk can find the best walking windows in your schedule.':
+    'Set your preferences so GapWalk can find the best walk windows in your schedule.',
+  'Ready to walk?': 'Ready for a walk',
+  'See exactly when to walk and when GapWalk will notify you.':
+    'See your next walk windows and reminder times.',
+  'Goal reached for today': "You reached today's goal",
+  'No opportunities yet': 'No walk windows right now',
+  'No suitable gaps were found right now. Pull to refresh, or start a manual walk below.':
+    'No good walk windows were found right now. Pull to refresh or start a manual walk.',
+  'Other preferences': 'Other settings',
+  'Notify me': 'Remind me',
+  'Start Manual Walk': 'Start manual walk',
+  'Edit your choices': 'Edit preferences',
+  'Map is available on mobile app': 'Map is available in the mobile app',
+  'Map view is unavailable on web preview.': 'Map view is not available in web preview.',
+  'Web preview supports timer flow, but live map and movement tracking run on Android/iOS builds.':
+    'Web preview supports the timer only. Live map and movement tracking work on Android and iOS.',
+  'Enable location to show live route and step count.':
+    'Turn on location to show your live route and step count.',
+  'No walking detected': 'No walking detected',
+  'Not walking detected': 'No walking detected',
+  'You are not walking right now. You can continue this session later.':
+    'You are not walking right now. You can continue this session later.',
+  'You are not walking right now, want to do this session later':
+    'You are not walking right now. You can continue this session later.',
+  'No, Continue': 'No, continue',
+  'Yes, later': 'Yes, do it later',
+  'Your walk progress will be saved to today stats.':
+    "Your walk progress will be saved to today's stats.",
+  'Complete a walk to start building weekly history.':
+    'Finish a walk to start your weekly history.',
+  'Change your schedule source or update existing schedule data.':
+    'Change your schedule source or update your current schedule data.',
+  'Choose how GapWalk should read your schedule': 'Choose how GapWalk reads your schedule',
+  'Input manually': 'Enter manually',
+  'Upcoming feature': 'Coming soon',
+  'Link Google Calendar will be available in a future update. Use Import or Input manually for now.':
+    'Google Calendar linking is coming soon. For now, use Import or Enter manually.',
+  'No account needed - 100% free - Your data stays on device.':
+    'No account needed. Free to use. Your data stays on your device.',
+  'Get gentle notifications at the right moments - never during class, meetings, or quiet hours.':
+    'Get gentle reminders at the right moments, never during class, meetings, or quiet hours.',
+  'Use Recommended Settings?': 'Use recommended settings',
+  'If you skip, GapWalk will use these recommended defaults:':
+    'If you skip, GapWalk will use these defaults.',
+  'Do you want to save these preference changes?': 'Save these preference changes',
+  'If you cancel now, your unsaved changes will be discarded. Do you want to continue?':
+    'If you cancel now, your unsaved changes will be lost. Continue',
+  'No gaps are found for today.': 'No walk windows are available today.',
+  'Could not cancel opportunity': 'Could not cancel this walk window',
+  'Cancel this walk opportunity?': 'Cancel this walk window',
+  'If you cancel, GapWalk will try to use your next best available gap today.':
+    'If you cancel, GapWalk will move to the next best walk window today.',
+};
+
 type PatternTranslator = {
   re: RegExp;
   toEs: (match: RegExpMatchArray) => string;
@@ -323,10 +466,15 @@ const patterns: PatternTranslator[] = [
     toEs: (m) => `${m[1]}/${m[2]} min completados`,
   },
   {
-    re: /^Completion:\s(\d+)\s(minutes|times)\/(\d+)\s(minutes|times)$/,
+    re: /^Completion:\s(\d+)\s(minutes|times|steps)\/(\d+)\s(minutes|times|steps)$/,
     toEs: (m) => {
-      const u1 = m[2] === 'minutes' ? 'minutos' : 'veces';
-      const u2 = m[4] === 'minutes' ? 'minutos' : 'veces';
+      const mapUnit = (unit: string): string => {
+        if (unit === 'minutes') return 'minutos';
+        if (unit === 'times') return 'veces';
+        return 'pasos';
+      };
+      const u1 = mapUnit(m[2]);
+      const u2 = mapUnit(m[4]);
       return `Completado: ${m[1]} ${u1}/${m[3]} ${u2}`;
     },
   },
@@ -367,20 +515,36 @@ const patterns: PatternTranslator[] = [
     toEs: (m) => `${m[1]} minutos • ${m[2]} calorias${m[3] ?? ''}`,
   },
   {
+    re: /^(\d+)\smin\s(\d+)\ssec$/,
+    toEs: (m) => `${m[1]} min ${m[2]} s`,
+  },
+  {
+    re: /^(\d+)\smin session saved$/,
+    toEs: (m) => `Sesion de ${m[1]} min guardada`,
+  },
+  {
+    re: /^(\d+)\smin\s-\s(\d+)\ssteps\s-\s([0-9]+(?:\.[0-9]+)?)\smi$/,
+    toEs: (m) => `${m[1]} min - ${m[2]} pasos - ${m[3]} mi`,
+  },
+  {
     re: /^One-time • (.+)$/,
     toEs: (m) => `Evento unico • ${m[1]}`,
   },
 ];
 
 export const translateLiteral = (input: string, language: AppLanguage): string => {
-  if (language === 'en') return input;
-  const exact = esExact[input];
+  const friendly = enFriendly[input] ?? input;
+  if (language === 'en') return friendly;
+
+  const exact = esExact[input] ?? esExact[friendly];
   if (exact) return exact;
 
   for (const pattern of patterns) {
     const match = input.match(pattern.re);
     if (match) return pattern.toEs(match);
+    const friendlyMatch = friendly.match(pattern.re);
+    if (friendlyMatch) return pattern.toEs(friendlyMatch);
   }
 
-  return input;
+  return friendly;
 };

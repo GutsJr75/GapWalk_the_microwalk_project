@@ -22,6 +22,7 @@ export interface BusyEvent {
 }
 
 export type WhenToNotify = 'now' | 'delay' | 'next_gap';
+export type StrictnessMode = 'easygoing' | 'no_excuses';
 
 export interface Preferences {
   dailyTargetMinutes: number;
@@ -34,6 +35,9 @@ export interface Preferences {
   gracePeriodMinutes: number; // delay before walk timer starts after notification
   whenToNotify: WhenToNotify; // notification timing strategy
   notifyDelayMinutes: number; // used when whenToNotify === 'delay'
+  strictnessMode: StrictnessMode;
+  stepGoalEnabled: boolean;
+  stepGoal: number;
 }
 
 export interface WalkSession {
@@ -92,4 +96,7 @@ export const DEFAULT_PREFERENCES: Preferences = {
   gracePeriodMinutes: 2,
   whenToNotify: 'delay',
   notifyDelayMinutes: 5,
+  strictnessMode: 'easygoing',
+  stepGoalEnabled: false,
+  stepGoal: 1000,
 };

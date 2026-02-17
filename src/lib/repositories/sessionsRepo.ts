@@ -103,6 +103,20 @@ export const sessionsRepo = {
     return Math.floor(totalSeconds / 60);
   },
 
+  async getTodaySteps(): Promise<number> {
+    const db = await getDatabase();
+    const today = new Date();
+    const startTime = startOfDay(today).toISOString();
+    const endTime = endOfDay(today).toISOString();
+
+    const row = await db.getFirstAsync<{ total_steps: number | null }>(
+      'SELECT COALESCE(SUM(steps), 0) as total_steps FROM walk_sessions WHERE start >= ? AND start < ?',
+      [startTime, endTime]
+    );
+
+    return row?.total_steps ?? 0;
+  },
+
   async getAll(): Promise<WalkSession[]> {
     const db = await getDatabase();
     const rows = await db.getAllAsync<{

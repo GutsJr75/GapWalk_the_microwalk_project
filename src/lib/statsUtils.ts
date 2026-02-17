@@ -11,9 +11,19 @@ export interface WeeklyStats {
   weekStart: string;
   weekEnd: string;
   totalMinutes: number;
+  totalSteps: number;
   totalSessions: number;
   totalDistance: number;
   totalCalories: number;
+  daysActive: number;
+}
+
+export interface WeeklyHistoryEntry {
+  weekStart: string;
+  weekEnd: string;
+  totalMinutes: number;
+  totalSteps: number;
+  totalSessions: number;
   daysActive: number;
 }
 
@@ -98,6 +108,7 @@ export function calculateWeeklyStats(sessions: WalkSession[], weekStartDate: Dat
 
   const daysWithWalks = new Set<string>();
   let totalMinutes = 0;
+  let totalSteps = 0;
   let totalDistance = 0;
   let totalCalories = 0;
 
@@ -105,6 +116,7 @@ export function calculateWeeklyStats(sessions: WalkSession[], weekStartDate: Dat
     const date = format(parseISO(s.start), 'yyyy-MM-dd');
     daysWithWalks.add(date);
     totalMinutes += Math.floor(s.activeSeconds / 60);
+    totalSteps += s.steps ?? 0;
     if (s.distanceMeters) totalDistance += s.distanceMeters;
     if (s.calories) totalCalories += s.calories;
   });
@@ -113,11 +125,67 @@ export function calculateWeeklyStats(sessions: WalkSession[], weekStartDate: Dat
     weekStart: format(weekStart, 'yyyy-MM-dd'),
     weekEnd: format(weekEnd, 'yyyy-MM-dd'),
     totalMinutes,
+    totalSteps,
     totalSessions: weekSessions.length,
     totalDistance,
     totalCalories,
     daysActive: daysWithWalks.size,
   };
+}
+
+/**
+ * Calculate historical weekly rollups, newest week first.
+ * Data is derived from persisted walk sessions, so prior weeks are retained automatically.
+ */
+export function calculateWeeklyHistory(
+  sessions: WalkSession[],
+  maxWeeks = 52
+): WeeklyHistoryEntry[] {
+  if (sessions.length === 0) return [];
+
+  const grouped = new Map<
+    string,
+    { totalMinutes: number; totalSteps: number; totalSessions: number; days: Set<string> }
+  >();
+
+  sessions.forEach((s) => {
+    const sessionDate = parseISO(s.start);
+    const weekStartDate = startOfWeek(sessionDate, { weekStartsOn: 0 });
+    const weekKey = format(weekStartDate, 'yyyy-MM-dd');
+    const dayKey = format(sessionDate, 'yyyy-MM-dd');
+
+    const existing = grouped.get(weekKey);
+    if (existing) {
+      existing.totalMinutes += Math.floor(s.activeSeconds / 60);
+      existing.totalSteps += s.steps ?? 0;
+      existing.totalSessions += 1;
+      existing.days.add(dayKey);
+      return;
+    }
+
+    grouped.set(weekKey, {
+      totalMinutes: Math.floor(s.activeSeconds / 60),
+      totalSteps: s.steps ?? 0,
+      totalSessions: 1,
+      days: new Set([dayKey]),
+    });
+  });
+
+  return Array.from(grouped.entries())
+    .map(([weekStart, bucket]) => {
+      const weekStartDate = parseISO(weekStart);
+      const weekEndDate = endOfWeek(weekStartDate, { weekStartsOn: 0 });
+      return {
+        weekStart,
+        weekEnd: format(weekEndDate, 'yyyy-MM-dd'),
+        totalMinutes: bucket.totalMinutes,
+        totalSteps: bucket.totalSteps,
+        totalSessions: bucket.totalSessions,
+        daysActive: bucket.days.size,
+      };
+    })
+    .sort((a, b) => b.weekStart.localeCompare(a.weekStart))
+    .slice(0, maxWeeks);
 }
 
 /**

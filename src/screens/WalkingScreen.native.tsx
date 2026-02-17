@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Animated, Easing, Platform, Pressable, StyleSheet, View } from 'react-native';
+import { Animated, Easing, Platform, Pressable, StyleSheet, Vibration, View } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import * as Location from 'expo-location';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -32,6 +32,7 @@ const STRIDE_METERS = 0.78;
 const WALKING_SPEED_THRESHOLD_MPS = 0.65;
 const MIN_SEGMENT_METERS = 0.35;
 const MAX_VALID_JUMP_METERS = 80;
+const INACTIVITY_PAUSE_SECONDS = 30;
 
 let MapViewImpl: any = null;
 let MarkerImpl: any = null;
@@ -79,7 +80,7 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
   const planId = route.params?.planId;
   const insets = useSafeAreaInsets();
   const palette = useThemePalette();
-  const { themeMode, setHasLocationPermission } = useAppStore();
+  const { preferences, themeMode, setHasLocationPermission } = useAppStore();
 
   const [plan, setPlan] = useState<NudgePlan | null>(null);
   const [activeSeconds, setActiveSeconds] = useState(0);
@@ -89,7 +90,9 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
   const [distanceMeters, setDistanceMeters] = useState(0);
   const [steps, setSteps] = useState(0);
   const [showEndModal, setShowEndModal] = useState(false);
+  const [showIdleModal, setShowIdleModal] = useState(false);
   const [showCompletion, setShowCompletion] = useState(false);
+  const [sheetExpanded, setSheetExpanded] = useState(true);
   const [permissionDenied, setPermissionDenied] = useState(false);
   const [isTracking, setIsTracking] = useState(false);
   const [isWalking, setIsWalking] = useState(false);
@@ -103,6 +106,7 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const watchRef = useRef<Location.LocationSubscription | null>(null);
   const lastPointRef = useRef<PathPoint | null>(null);
+  const lastMovementAtRef = useRef<number>(Date.now());
   const mapRef = useRef<any>(null);
 
   const completionPopAnim = useRef(new Animated.Value(0)).current;
@@ -115,6 +119,9 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
   useEffect(() => {
     setSteps(Math.max(0, Math.round(distanceMeters / STRIDE_METERS)));
   }, [distanceMeters]);
+
+  const strictMode = preferences?.strictnessMode === 'no_excuses';
+  const stepGoalEnforced = strictMode || !!preferences?.stepGoalEnabled;
 
   const applyLocationPoint = useCallback((location: Location.LocationObject) => {
     const nextCoord: Coord = {
@@ -147,6 +154,7 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
       setIsWalking(moving);
       if (moving) {
         setHadWalkingSignal(true);
+        lastMovementAtRef.current = Date.now();
       }
 
       if (!pausedRef.current && segmentMeters >= MIN_SEGMENT_METERS && segmentMeters <= MAX_VALID_JUMP_METERS) {
@@ -228,38 +236,77 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
     };
   }, [planId, requestPermissionAndTrack]);
 
-  const togglePause = () => {
-    if (paused) {
-      const pauseStarted = pauseStartedAtRef.current;
-      if (pauseStarted) {
-        setPausedSeconds((prev) => prev + Math.floor((Date.now() - pauseStarted) / 1000));
-      }
-      pauseStartedAtRef.current = null;
-      setPaused(false);
-      return;
+  const resumeSession = useCallback(() => {
+    const pauseStarted = pauseStartedAtRef.current;
+    if (pauseStarted) {
+      setPausedSeconds((prev) => prev + Math.floor((Date.now() - pauseStarted) / 1000));
     }
+    pauseStartedAtRef.current = null;
+    setPaused(false);
+  }, []);
 
+  const pauseSession = useCallback(() => {
     pauseStartedAtRef.current = Date.now();
     setPaused(true);
     setIsWalking(false);
+  }, []);
+
+  const togglePause = () => {
+    if (paused) {
+      resumeSession();
+      return;
+    }
+    pauseSession();
   };
+
+  useEffect(() => {
+    if (!stepGoalEnforced || paused || showEndModal || showCompletion || showIdleModal) return;
+    if (!isTracking || permissionDenied) return;
+
+    if (isWalking) {
+      lastMovementAtRef.current = Date.now();
+      return;
+    }
+
+    const idleSeconds = Math.floor((Date.now() - lastMovementAtRef.current) / 1000);
+    if (idleSeconds < INACTIVITY_PAUSE_SECONDS) return;
+
+    pauseSession();
+    setShowIdleModal(true);
+    Vibration.vibrate(380);
+    analyticsService.track('walk_inactive_auto_pause', {
+      strictnessMode: preferences?.strictnessMode ?? 'easygoing',
+      stepGoalEnabled: preferences?.stepGoalEnabled ?? false,
+      stepGoal: preferences?.stepGoal ?? null,
+      idleSeconds,
+    });
+  }, [
+    isTracking,
+    isWalking,
+    paused,
+    pauseSession,
+    permissionDenied,
+    preferences?.stepGoal,
+    preferences?.stepGoalEnabled,
+    preferences?.strictnessMode,
+    showCompletion,
+    showEndModal,
+    showIdleModal,
+    stepGoalEnforced,
+    ticks,
+  ]);
+
+  useEffect(() => {
+    if (!stepGoalEnforced && showIdleModal) {
+      setShowIdleModal(false);
+    }
+  }, [showIdleModal, stepGoalEnforced]);
 
   const remainingSeconds = useMemo(() => {
     if (!plan) return activeSeconds;
     const endMs = new Date(plan.gapEnd).getTime();
     return Math.max(0, Math.floor((endMs - Date.now()) / 1000));
   }, [activeSeconds, plan, ticks]);
-
-  const targetSeconds = useMemo(() => {
-    if (!plan) return null;
-    const startMs = new Date(startIsoRef.current).getTime();
-    const endMs = new Date(plan.gapEnd).getTime();
-    return Math.max(60, Math.floor((endMs - startMs) / 1000));
-  }, [plan]);
-
-  const progressRatio = targetSeconds
-    ? Math.max(0, Math.min(1, 1 - remainingSeconds / targetSeconds))
-    : Math.max(0, Math.min(1, activeSeconds / 900));
 
   const statusLabel = paused
     ? 'Paused'
@@ -297,7 +344,11 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
     map.animateCamera({ center: currentCoord, zoom: 17 }, { duration: 220 });
   };
 
-  const saveSession = async () => {
+  const saveSession = async (options?: {
+    showCompletion?: boolean;
+    planStatus?: 'completed' | 'cancelled' | 'skipped';
+    endReason?: 'manual' | 'idle_later';
+  }) => {
     const pauseStarted = pauseStartedAtRef.current;
     const finalPausedSeconds = paused && pauseStarted
       ? pausedSeconds + Math.floor((Date.now() - pauseStarted) / 1000)
@@ -318,7 +369,7 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
 
     await sessionsRepo.save(session);
     if (planId) {
-      await plansRepo.updateStatus(planId, 'completed');
+      await plansRepo.updateStatus(planId, options?.planStatus ?? 'completed');
     }
 
     analyticsService.track('walk_completed', {
@@ -329,7 +380,13 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
       steps,
       usedLocation: isTracking && !permissionDenied,
       hadWalkingSignal,
+      endReason: options?.endReason ?? 'manual',
     });
+
+    if (options?.showCompletion === false) {
+      navigation.navigate('Dashboard');
+      return;
+    }
 
     setShowCompletion(true);
     completionPopAnim.setValue(0);
@@ -361,9 +418,25 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
     await saveSession();
   };
 
+  const continueAfterIdlePause = () => {
+    setShowIdleModal(false);
+    lastMovementAtRef.current = Date.now();
+    resumeSession();
+  };
+
+  const saveForLater = async () => {
+    setShowIdleModal(false);
+    await saveSession({ showCompletion: false, planStatus: 'cancelled', endReason: 'idle_later' });
+  };
+
+  const toggleSheet = useCallback(() => {
+    setSheetExpanded((prev) => !prev);
+  }, []);
+
   const sheetBg = themeMode === 'dark' ? 'rgba(6, 18, 43, 0.95)' : 'rgba(247, 251, 255, 0.97)';
   const topBarBg = themeMode === 'dark' ? '#061633' : '#f1f6ff';
   const sheetBorder = themeMode === 'dark' ? 'rgba(255,255,255,0.08)' : 'rgba(15,23,42,0.14)';
+  const handleColor = themeMode === 'dark' ? 'rgba(235,243,255,0.56)' : 'rgba(147, 161, 181, 0.95)';
 
   const completionOverlayBg = themeMode === 'dark' ? 'rgba(2, 8, 20, 0.82)' : 'rgba(236, 245, 255, 0.82)';
   const completionCardBg = themeMode === 'dark' ? '#0f1f3d' : '#f7fbff';
@@ -457,40 +530,51 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
       </View>
 
       <View style={[styles.sheet, { backgroundColor: sheetBg, borderTopColor: sheetBorder, paddingBottom: Math.max(insets.bottom + 8, 18) }]}>
-        <View style={[styles.progressTrack, { backgroundColor: themeMode === 'dark' ? 'rgba(255,255,255,0.24)' : 'rgba(15,23,42,0.24)' }]}>
-          <View style={[styles.progressFill, { width: `${Math.max(progressRatio * 100, 5)}%` }]} />
-        </View>
+        <Pressable
+          onPress={toggleSheet}
+          accessibilityRole="button"
+          accessibilityLabel="walking-sheet-handle"
+          style={styles.sheetHandleTouch}
+        >
+          <View style={[styles.sheetHandle, { backgroundColor: handleColor }]} />
+        </Pressable>
 
         <Text variant="body" style={styles.timerLabel}>{plan ? 'Remaining Time' : 'Session Time'}</Text>
-        <Text variant="heading" style={styles.timerValue}>{formatClock(remainingSeconds)}</Text>
+        <Text variant="heading" style={[styles.timerValue, !sheetExpanded && styles.timerValueCollapsed]}>
+          {formatClock(remainingSeconds)}
+        </Text>
 
-        <View style={styles.metricRow}>
-          <View style={[styles.metricCard, { backgroundColor: themeMode === 'dark' ? '#1a2a4a' : '#dfe9f9' }]}>
-            <Text variant="body" style={styles.metricTitle}>Distance</Text>
-            <Text variant="heading" style={styles.metricValue}>{formatMiles(distanceMeters)}</Text>
-          </View>
-          <View style={[styles.metricCard, { backgroundColor: themeMode === 'dark' ? '#1a2a4a' : '#dfe9f9' }]}>
-            <Text variant="body" style={styles.metricTitle}>Steps</Text>
-            <Text variant="heading" style={styles.metricValue}>{steps.toLocaleString()}</Text>
-          </View>
-        </View>
+        {sheetExpanded && (
+          <>
+            <View style={styles.metricRow}>
+              <View style={[styles.metricCard, { backgroundColor: themeMode === 'dark' ? '#1a2a4a' : '#dfe9f9' }]}>
+                <Text variant="body" style={styles.metricTitle}>Distance</Text>
+                <Text variant="heading" style={styles.metricValue}>{formatMiles(distanceMeters)}</Text>
+              </View>
+              <View style={[styles.metricCard, { backgroundColor: themeMode === 'dark' ? '#1a2a4a' : '#dfe9f9' }]}>
+                <Text variant="body" style={styles.metricTitle}>Step Counter</Text>
+                <Text variant="heading" style={styles.metricValue}>{steps.toLocaleString()}</Text>
+              </View>
+            </View>
 
-        <View style={styles.actionRow}>
-          <Button
-            title={paused ? 'Resume' : 'Pause'}
-            onPress={togglePause}
-            variant="secondary"
-            style={styles.actionBtn}
-            testID="walking-pause-resume"
-          />
-          <Button
-            title="End"
-            onPress={() => setShowEndModal(true)}
-            variant="danger"
-            style={styles.actionBtn}
-            testID="walking-end"
-          />
-        </View>
+            <View style={styles.actionRow}>
+              <Button
+                title={paused ? 'Resume' : 'Pause'}
+                onPress={togglePause}
+                variant="secondary"
+                style={styles.actionBtn}
+                testID="walking-pause-resume"
+              />
+              <Button
+                title="End"
+                onPress={() => setShowEndModal(true)}
+                variant="danger"
+                style={styles.actionBtn}
+                testID="walking-end"
+              />
+            </View>
+          </>
+        )}
       </View>
 
       <Modal visible={showEndModal} onClose={() => setShowEndModal(false)} title="End this walk?">
@@ -504,6 +588,31 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
             testID="walking-end-cancel"
           />
           <Button title="Yes, End" onPress={() => { void confirmEnd(); }} style={styles.modalBtn} testID="walking-end-confirm" />
+        </View>
+      </Modal>
+
+      <Modal
+        visible={showIdleModal}
+        onClose={() => {}}
+        title="No walking detected"
+      >
+        <Text variant="body" style={styles.modalText}>
+          You are not walking right now. You can continue this session later.
+        </Text>
+        <View style={styles.modalRow}>
+          <Button
+            title="No, Continue"
+            onPress={continueAfterIdlePause}
+            variant="outline"
+            style={styles.modalBtn}
+            testID="walking-idle-continue"
+          />
+          <Button
+            title="Yes, later"
+            onPress={() => { void saveForLater(); }}
+            style={styles.modalBtn}
+            testID="walking-idle-later"
+          />
         </View>
       </Modal>
 
@@ -630,54 +739,57 @@ const styles = StyleSheet.create({
     borderTopLeftRadius: 22,
     borderTopRightRadius: 22,
     borderTopWidth: 1,
-    paddingHorizontal: 22,
-    paddingTop: 14,
+    paddingHorizontal: 24,
+    paddingTop: 18,
   },
-  progressTrack: {
+  sheetHandleTouch: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingTop: 2,
+    paddingBottom: 18,
+  },
+  sheetHandle: {
+    width: 56,
     height: 4,
     borderRadius: 4,
-    overflow: 'hidden',
-    marginBottom: 18,
-  },
-  progressFill: {
-    height: '100%',
-    borderRadius: 4,
-    backgroundColor: '#2cb7ff',
   },
   timerLabel: {
     textAlign: 'center',
-    marginBottom: 6,
-    fontSize: 18,
+    marginBottom: 10,
+    fontSize: 16,
     fontWeight: theme.fontWeight.semibold,
   },
   timerValue: {
     textAlign: 'center',
-    fontSize: 42,
-    letterSpacing: 0.3,
-    marginBottom: 16,
+    fontSize: 34,
+    letterSpacing: 0.1,
+    marginBottom: 24,
+  },
+  timerValueCollapsed: {
+    marginBottom: 10,
   },
   metricRow: {
     flexDirection: 'row',
-    gap: 12,
-    marginBottom: 18,
+    gap: 16,
+    marginBottom: 24,
   },
   metricCard: {
     flex: 1,
     borderRadius: 16,
-    paddingVertical: 14,
-    paddingHorizontal: 14,
+    paddingVertical: 16,
+    paddingHorizontal: 16,
   },
   metricTitle: {
     fontWeight: theme.fontWeight.semibold,
-    marginBottom: 8,
+    marginBottom: 10,
   },
   metricValue: {
-    fontSize: 30,
-    lineHeight: 36,
+    fontSize: 24,
+    lineHeight: 30,
   },
   actionRow: {
     flexDirection: 'row',
-    gap: 12,
+    gap: 16,
   },
   actionBtn: {
     flex: 1,

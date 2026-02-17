@@ -260,7 +260,7 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
     }, [storedPreferences])
   );
 
-  const update = (key: keyof Preferences, value: number | string) => {
+  const update = <K extends keyof Preferences>(key: K, value: Preferences[K]) => {
     setPrefs(prev => ({ ...prev, [key]: value }));
     setHasChanges(true);
   };
@@ -324,15 +324,34 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
   if (prefs.notificationMinGapMinutes < 30) reminderGapError = 'Use at least 30 minutes between reminders.';
   else if (prefs.notificationMinGapMinutes > 360) reminderGapError = 'Maximum spacing is 6 hours (360 minutes).';
 
-  const canContinue = !dailyTargetError && !notifError && !bufferError && !reminderGapError && !savingPrefs;
+  const strictStepGoalRequired = prefs.strictnessMode === 'no_excuses';
+  const stepGoalEnabled = strictStepGoalRequired || prefs.stepGoalEnabled;
+  let stepGoalError: string | null = null;
+  if (stepGoalEnabled) {
+    if (prefs.stepGoal < 500 || prefs.stepGoal > 6000) {
+      stepGoalError = 'Set a step goal between 500 and 6000.';
+    }
+  }
+
+  const canContinue =
+    !dailyTargetError &&
+    !notifError &&
+    !bufferError &&
+    !reminderGapError &&
+    !stepGoalError &&
+    !savingPrefs;
 
   /* â”€â”€ save â”€â”€ */
   const savePreferences = async (p: Preferences) => {
     if (savingPrefs) return;
     setSavingPrefs(true);
+    const strictnessMode = p.strictnessMode === 'no_excuses' ? 'no_excuses' : 'easygoing';
     const normalizedPrefs: Preferences = {
       ...p,
       notificationMinGapMinutes: Math.max(30, Math.min(360, Math.floor(p.notificationMinGapMinutes || 60))),
+      strictnessMode,
+      stepGoal: Math.max(500, Math.min(6000, Math.floor(p.stepGoal || DEFAULT_PREFERENCES.stepGoal))),
+      stepGoalEnabled: strictnessMode === 'no_excuses' ? true : !!p.stepGoalEnabled,
     };
     let lastError: unknown = null;
     for (let attempt = 0; attempt < 2; attempt++) {
@@ -350,6 +369,9 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
           notificationCountPerDay: normalizedPrefs.notificationCountPerDay,
           whenToNotify: normalizedPrefs.whenToNotify,
           notifyDelayMinutes: normalizedPrefs.notifyDelayMinutes,
+          strictnessMode: normalizedPrefs.strictnessMode,
+          stepGoalEnabled: normalizedPrefs.stepGoalEnabled,
+          stepGoal: normalizedPrefs.stepGoal,
         });
         setSavingPrefs(false);
         navigation.navigate('Dashboard');
@@ -361,7 +383,7 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
       }
     }
     const msg = lastError instanceof Error ? lastError.message : String(lastError);
-    Alert.alert('Error', `Failed to save preferences: ${msg}`);
+    Alert.alert('Could not save preferences', `Please try again.\n\nDetails: ${msg}`);
     setSavingPrefs(false);
   };
 
@@ -409,7 +431,7 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
       return;
     }
 
-    const discardMessage = 'If you cancel now, your unsaved changes will be discarded. Do you want to continue?';
+    const discardMessage = 'If you cancel now, your unsaved changes will be lost. Continue';
     if (Platform.OS === 'web' && typeof (globalThis as any).confirm === 'function') {
       if ((globalThis as any).confirm(discardMessage)) {
         navigation.navigate('Dashboard');
@@ -430,8 +452,8 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
     if (savingPrefs || !canContinue) return;
     if (!hasChanges) {
       confirmAndSavePreferences(DEFAULT_PREFERENCES, {
-        title: 'Use recommended preferences?',
-        message: 'Do you want to proceed with GapWalk’s recommended choices?',
+        title: 'Use recommended preferences',
+        message: 'Continue with GapWalk recommended settings',
         actionLabel: 'Yes, continue',
       });
       return;
@@ -577,6 +599,102 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
               <Text variant="muted" style={styles.unit}>min</Text>
             </View>
             {reminderGapError && <Text variant="bodySmall" style={styles.errorText}>{reminderGapError}</Text>}
+          </View>
+
+          {/* Strictness */}
+          <View style={styles.field}>
+            <View style={styles.fieldHeader}>
+              <Text variant="bodySmall" style={styles.fieldLabel}>Strictness</Text>
+              <InfoTip text="No Excuses enforces step-goal checks. Easygoing keeps walk timing flexible." />
+            </View>
+            <View style={styles.radioGroup}>
+              <RadioOption
+                selected={prefs.strictnessMode === 'easygoing'}
+                label="Easygoing"
+                onPress={() => updateMany({ strictnessMode: 'easygoing' })}
+              />
+              <RadioOption
+                selected={prefs.strictnessMode === 'no_excuses'}
+                label="No Excuses"
+                onPress={() =>
+                  updateMany({
+                    strictnessMode: 'no_excuses',
+                    stepGoalEnabled: true,
+                    stepGoal: Math.max(500, prefs.stepGoal || DEFAULT_PREFERENCES.stepGoal),
+                  })
+                }
+              />
+            </View>
+            <Text variant="muted" style={styles.note}>
+              {prefs.strictnessMode === 'no_excuses'
+                ? 'Step goal is required in No Excuses mode.'
+                : 'Easygoing keeps your step goal optional.'}
+            </Text>
+          </View>
+
+          {/* Step goal */}
+          <View style={styles.field}>
+            <View style={styles.fieldHeader}>
+              <Text variant="bodySmall" style={styles.fieldLabel}>Step Goal</Text>
+              <InfoTip text="Recommended: 1000 steps. Range: 500 to 6000." />
+            </View>
+            {prefs.strictnessMode === 'easygoing' && (
+              <View style={styles.togglePillRow}>
+                <TouchableOpacity
+                  style={[
+                    styles.togglePill,
+                    themedSurface,
+                    !prefs.stepGoalEnabled && styles.togglePillActive,
+                  ]}
+                  activeOpacity={0.75}
+                  onPress={() => update('stepGoalEnabled', false)}
+                >
+                  <Text
+                    variant="bodySmall"
+                    style={!prefs.stepGoalEnabled ? styles.togglePillTextActive : styles.togglePillText}
+                  >
+                    Off
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[
+                    styles.togglePill,
+                    themedSurface,
+                    prefs.stepGoalEnabled && styles.togglePillActive,
+                  ]}
+                  activeOpacity={0.75}
+                  onPress={() => updateMany({
+                    stepGoalEnabled: true,
+                    stepGoal: Math.max(500, prefs.stepGoal || DEFAULT_PREFERENCES.stepGoal),
+                  })}
+                >
+                  <Text
+                    variant="bodySmall"
+                    style={prefs.stepGoalEnabled ? styles.togglePillTextActive : styles.togglePillText}
+                  >
+                    On
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            )}
+            {stepGoalEnabled ? (
+              <>
+                <View style={styles.inputRow}>
+                  <TextInput
+                    style={[styles.input, themedInput]}
+                    value={String(prefs.stepGoal)}
+                    onChangeText={(t) => update('stepGoal', Math.max(0, parseInt(t, 10) || 0))}
+                    keyboardType="number-pad"
+                    placeholderTextColor={palette.textMuted}
+                  />
+                  <Text variant="muted" style={styles.unit}>steps</Text>
+                </View>
+                <Text variant="muted" style={styles.note}>Recommended: 1000 steps</Text>
+              </>
+            ) : (
+              <Text variant="muted" style={styles.note}>Step goal is currently off.</Text>
+            )}
+            {stepGoalError && <Text variant="bodySmall" style={styles.errorText}>{stepGoalError}</Text>}
           </View>
 
           {/* Quiet Hours */}
@@ -738,6 +856,20 @@ const styles = StyleSheet.create({
   radioDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: theme.colors.accentPrimary },
   radioLabelDefault: { color: theme.colors.textPrimary },
   radioLabelActive: { color: theme.colors.accentPrimary, fontWeight: theme.fontWeight.semibold },
+  togglePillRow: { flexDirection: 'row', gap: 10, marginBottom: 10 },
+  togglePill: {
+    flex: 1,
+    minHeight: 38,
+    borderRadius: theme.borderRadius.sm,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  togglePillActive: {
+    borderColor: theme.colors.accentPrimary,
+    backgroundColor: 'rgba(46,233,166,0.12)',
+  },
+  togglePillText: { color: theme.colors.textPrimary },
+  togglePillTextActive: { color: theme.colors.accentPrimary, fontWeight: theme.fontWeight.semibold },
 
   /* info tooltip (mint accent) */
   infoWrap: { position: 'relative', zIndex: 100 },

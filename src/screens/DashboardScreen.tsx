@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
-import { View, StyleSheet, ScrollView, RefreshControl, Alert, TouchableOpacity, Modal, Animated, Easing, useWindowDimensions, Platform } from 'react-native';
+import { View, StyleSheet, ScrollView, RefreshControl, Alert, TouchableOpacity, Modal, Animated, Easing, useWindowDimensions, Platform, TextInput } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useFocusEffect } from '@react-navigation/native';
 import { RootStackParamList } from '../../App';
@@ -22,7 +22,7 @@ import { isNotificationsSupported, notificationService } from '../lib/notificati
 import { googleCalendarService } from '../lib/googleCalendar';
 import { NudgePlan } from '../lib/types';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { calculateStreak, calculateWeeklyStats, StreakData } from '../lib/statsUtils';
+import { calculateStreak, calculateWeeklyStats, StreakData, WeeklyStats } from '../lib/statsUtils';
 import { addMinutes, format, isAfter, isBefore, parseISO, subMinutes } from 'date-fns';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Dashboard'>;
@@ -45,7 +45,20 @@ interface PlanOpportunity {
   notifyLabel: string;
 }
 
+type TimePeriod = 'AM' | 'PM';
+
 const formatDateTime = (iso: string): string => format(parseISO(iso), 'h:mm a');
+
+const to12HourParts = (iso: string): { hour: string; minute: string; period: TimePeriod } => {
+  const date = parseISO(iso);
+  const period: TimePeriod = date.getHours() >= 12 ? 'PM' : 'AM';
+  const hour12 = date.getHours() % 12 === 0 ? 12 : date.getHours() % 12;
+  return {
+    hour: String(hour12).padStart(2, '0'),
+    minute: String(date.getMinutes()).padStart(2, '0'),
+    period,
+  };
+};
 
 const BurgerIcon = ({
   onPress,
@@ -72,11 +85,31 @@ export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
   } = useAppStore();
   const [refreshing, setRefreshing] = useState(false);
   const [menuVisible, setMenuVisible] = useState(false);
+  const [showChangeModal, setShowChangeModal] = useState(false);
+  const [editingOpportunity, setEditingOpportunity] = useState<PlanOpportunity | null>(null);
+  const [changeHour, setChangeHour] = useState('');
+  const [changeMinute, setChangeMinute] = useState('');
+  const [changePeriod, setChangePeriod] = useState<TimePeriod>('AM');
+  const [changeDuration, setChangeDuration] = useState('');
+  const [changeError, setChangeError] = useState<string | null>(null);
+  const [savingChange, setSavingChange] = useState(false);
   const menuSlide = useRef(new Animated.Value(0)).current;
   const [streak, setStreak] = useState<StreakData>({ currentStreak: 0, longestStreak: 0, lastActiveDate: null });
-  const [weeklyStats, setWeeklyStats] = useState({ totalMinutes: 0, totalSessions: 0, daysActive: 0 });
+  const [weeklyStats, setWeeklyStats] = useState<WeeklyStats>({
+    weekStart: '',
+    weekEnd: '',
+    totalMinutes: 0,
+    totalSteps: 0,
+    totalSessions: 0,
+    totalDistance: 0,
+    totalCalories: 0,
+    daysActive: 0,
+  });
   const [showCelebration, setShowCelebration] = useState(false);
+  const [todaySteps, setTodaySteps] = useState(0);
   const celebrationAnim = useRef(new Animated.Value(0)).current;
+  const previousMinutesRef = useRef<number | null>(null);
+  const lastCelebratedDateRef = useRef<string | null>(null);
   const { width, height } = useWindowDimensions();
   const dashboardScrollRef = useRef<ScrollView>(null);
 
@@ -110,8 +143,9 @@ export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
 
     const hasInvalidDuration = activePlans.some((plan) => plan.suggestedDurationMinutes <= 0);
     const exceedsPlanCount = activePlans.length > prefs.notificationCountPerDay;
+    const hasCustomizedPlan = activePlans.some((plan) => plan.reason === 'customized');
 
-    if (!samePlanShape || hasInvalidDuration || exceedsPlanCount) {
+    if (!hasCustomizedPlan && (!samePlanShape || hasInvalidDuration || exceedsPlanCount)) {
       for (const plan of activePlans) {
         await plansRepo.updateStatus(plan.id, 'cancelled');
       }
@@ -135,6 +169,8 @@ export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
     }
 
     const mins = await sessionsRepo.getTodayMinutes();
+    const stepsToday = await sessionsRepo.getTodaySteps();
+    setTodaySteps(stepsToday);
 
     if (prefsFromDb) {
       await reconcileTodayPlans(prefsFromDb, mins);
@@ -158,10 +194,30 @@ export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
   );
 
   useEffect(() => {
-    if (preferences && todayMinutesWalked >= preferences.dailyTargetMinutes && todayMinutesWalked > 0) {
-      triggerCelebration();
+    const todayKey = format(new Date(), 'yyyy-MM-dd');
+    if (lastCelebratedDateRef.current && lastCelebratedDateRef.current !== todayKey) {
+      lastCelebratedDateRef.current = null;
     }
-  }, [todayMinutesWalked, preferences]);
+
+    const target = preferences?.dailyTargetMinutes ?? 0;
+    if (target <= 0) {
+      previousMinutesRef.current = todayMinutesWalked;
+      return;
+    }
+
+    const previousMinutes = previousMinutesRef.current;
+    const reachedNow = todayMinutesWalked >= target && todayMinutesWalked > 0;
+
+    if (previousMinutes !== null) {
+      const reachedBefore = previousMinutes >= target && previousMinutes > 0;
+      if (reachedNow && !reachedBefore && lastCelebratedDateRef.current !== todayKey) {
+        triggerCelebration();
+        lastCelebratedDateRef.current = todayKey;
+      }
+    }
+
+    previousMinutesRef.current = todayMinutesWalked;
+  }, [todayMinutesWalked, preferences?.dailyTargetMinutes]);
 
   // Hide scrollbar on web for Today screen
   useEffect(() => {
@@ -253,7 +309,7 @@ export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
           .sort((a, b) => a.walkStart.localeCompare(b.walkStart));
 
         if (!preferences || remainingToday.length === 0) {
-          Alert.alert('No gaps found for today', 'No gaps are found for today.');
+          Alert.alert('No walk windows today', 'No walk windows are available today.');
           return;
         }
 
@@ -272,19 +328,19 @@ export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
         const nextEnd = isAfter(nextEndRaw, nextGapEnd) ? nextGapEnd : nextEndRaw;
 
         Alert.alert(
-          'Next gap selected',
+          'Next walk window selected',
           `Walk time: ${format(nextWalkStart, 'h:mm a')} - ${format(nextEnd, 'h:mm a')}\nNotification time: ${format(nextNotify, 'h:mm a')}`
         );
       } catch (error) {
         console.error('Failed to cancel walk opportunity:', error);
-        Alert.alert('Could not cancel opportunity', 'Please try again.');
+        Alert.alert('Could not cancel this walk window', 'Please try again.');
       }
     };
 
     // Alert.alert button callbacks don't fire on web (react-native-web limitation)
     if (Platform.OS === 'web' && typeof (globalThis as any).confirm === 'function') {
       const ok = (globalThis as any).confirm(
-        'Cancel this walk opportunity?\n\nIf you cancel, GapWalk will try to use your next best available gap today.'
+        'Cancel this walk window\n\nIf you cancel, GapWalk will move to the next best walk window today.'
       );
       if (ok) {
         void performCancel();
@@ -293,14 +349,141 @@ export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
     }
 
     Alert.alert(
-      'Cancel this walk opportunity?',
-      'If you cancel, GapWalk will try to use your next best available gap today.',
+      'Cancel this walk window',
+      'If you cancel, GapWalk will move to the next best walk window today.',
       [
         { text: 'No', style: 'cancel' },
         { text: 'Yes, cancel', style: 'destructive', onPress: () => { void performCancel(); } },
       ]
     );
   }, [preferences, setUpcomingPlans]);
+
+  const openChangeOpportunity = (opportunity: PlanOpportunity) => {
+    const parts = to12HourParts(opportunity.plan.walkStart);
+    setEditingOpportunity(opportunity);
+    setChangeHour(parts.hour);
+    setChangeMinute(parts.minute);
+    setChangePeriod(parts.period);
+    setChangeDuration(String(opportunity.plan.suggestedDurationMinutes));
+    setChangeError(null);
+    setShowChangeModal(true);
+  };
+
+  const closeChangeModal = () => {
+    if (savingChange) return;
+    setShowChangeModal(false);
+    setEditingOpportunity(null);
+    setChangeError(null);
+  };
+
+  const applyWalkChange = async () => {
+    if (!editingOpportunity || !preferences || savingChange) return;
+
+    const hour = parseInt(changeHour, 10);
+    const minute = parseInt(changeMinute, 10);
+    const duration = parseInt(changeDuration, 10);
+
+    if (!Number.isInteger(hour) || hour < 1 || hour > 12 || !Number.isInteger(minute) || minute < 0 || minute > 59) {
+      setChangeError('Please enter a valid start time.');
+      return;
+    }
+    if (!Number.isInteger(duration) || duration < 1 || duration > 180) {
+      setChangeError('Set duration between 1 and 180 minutes.');
+      return;
+    }
+
+    const nextStart = parseISO(editingOpportunity.plan.walkStart);
+    let hour24 = hour % 12;
+    if (changePeriod === 'PM') hour24 += 12;
+    nextStart.setHours(hour24, minute, 0, 0);
+
+    if (!isAfter(nextStart, new Date())) {
+      setChangeError('Choose a future time for this walk.');
+      return;
+    }
+
+    const oldGapStart = parseISO(editingOpportunity.plan.gapStart);
+    const oldGapEnd = parseISO(editingOpportunity.plan.gapEnd);
+    const walkEnd = addMinutes(nextStart, duration);
+    const notifyLeadMinutes = preferences.whenToNotify === 'delay'
+      ? Math.max(0, preferences.notifyDelayMinutes ?? 5)
+      : 0;
+    const earliestForNotify = subMinutes(nextStart, notifyLeadMinutes);
+    const nextGapStart = isBefore(earliestForNotify, oldGapStart) ? earliestForNotify : oldGapStart;
+    const nextGapEnd = isAfter(walkEnd, oldGapEnd) ? walkEnd : oldGapEnd;
+
+    try {
+      setSavingChange(true);
+      await plansRepo.updateTiming(editingOpportunity.plan.id, {
+        gapStart: nextGapStart.toISOString(),
+        gapEnd: nextGapEnd.toISOString(),
+        walkStart: nextStart.toISOString(),
+        suggestedDurationMinutes: duration,
+        reason: 'customized',
+        status: 'planned',
+      });
+
+      if (isNotificationsSupported) {
+        await notificationService.cancelAllNotifications();
+        const futurePlans = await plansRepo.getUpcomingPlans(100);
+        await notificationService.scheduleMultipleNudges(futurePlans, preferences);
+      }
+
+      const refreshedUpcoming = await plansRepo.getUpcomingPlans(20);
+      setUpcomingPlans(refreshedUpcoming);
+      setShowChangeModal(false);
+      setEditingOpportunity(null);
+      setChangeError(null);
+    } catch (error) {
+      console.error('Failed to update walk window:', error);
+      Alert.alert('Could not update walk window', 'Please try again.');
+    } finally {
+      setSavingChange(false);
+    }
+  };
+
+  const requestSaveWalkChange = () => {
+    if (savingChange) return;
+    const hour = parseInt(changeHour, 10);
+    const minute = parseInt(changeMinute, 10);
+    const duration = parseInt(changeDuration, 10);
+    if (!Number.isInteger(hour) || hour < 1 || hour > 12 || !Number.isInteger(minute) || minute < 0 || minute > 59) {
+      setChangeError('Please enter a valid start time.');
+      return;
+    }
+    if (!Number.isInteger(duration) || duration < 1 || duration > 180) {
+      setChangeError('Set duration between 1 and 180 minutes.');
+      return;
+    }
+
+    if (editingOpportunity) {
+      const previewStart = parseISO(editingOpportunity.plan.walkStart);
+      let hour24 = hour % 12;
+      if (changePeriod === 'PM') hour24 += 12;
+      previewStart.setHours(hour24, minute, 0, 0);
+      if (!isAfter(previewStart, new Date())) {
+        setChangeError('Choose a future time for this walk.');
+        return;
+      }
+    }
+
+    setChangeError(null);
+    if (Platform.OS === 'web' && typeof (globalThis as any).confirm === 'function') {
+      const ok = (globalThis as any).confirm('Save this change\n\nAre you sure you want to update this walk time and duration');
+      if (ok) {
+        void applyWalkChange();
+      }
+      return;
+    }
+    Alert.alert(
+      'Save this change',
+      'Are you sure you want to update this walk time and duration',
+      [
+        { text: 'No, Change', style: 'cancel' },
+        { text: 'Yes', onPress: () => { void applyWalkChange(); } },
+      ]
+    );
+  };
 
   const closeMenu = () => {
     Animated.timing(menuSlide, {
@@ -319,13 +502,14 @@ export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
   const navigateToScheduleOverview = () => { closeMenu(); navigation.navigate('ScheduleOverview'); };
   const navigateToPreferences = () => { closeMenu(); navigation.push('Preferences', { manageMode: true }); };
   const navigateToSettings = () => { closeMenu(); navigation.navigate('Settings'); };
+  const navigateToWeeklyData = () => { closeMenu(); navigation.navigate('WeeklyData'); };
   const navigateToHome = () => { closeMenu(); navigation.navigate('Intro'); };
   const resyncGoogleCalendar = async () => {
     setMenuVisible(false);
     try {
       const source = await scheduleSourceRepo.get();
       if (!source || source.type !== 'google' || !source.googleAccessToken) {
-        Alert.alert('Not Connected', 'You haven\'t linked a Google Calendar yet. Go to Schedule Setup to connect.', [
+        Alert.alert('Not connected', 'You have not linked Google Calendar yet. Go to Schedule Setup to connect.', [
           { text: 'Go to Setup', onPress: () => navigation.navigate('ScheduleSetup') },
           { text: 'Cancel', style: 'cancel' },
         ]);
@@ -333,7 +517,7 @@ export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
       }
       const valid = await googleCalendarService.validateToken(source.googleAccessToken);
       if (!valid) {
-        Alert.alert('Session Expired', 'Your Google session has expired. Please re-link your calendar.', [
+        Alert.alert('Session expired', 'Your Google session has expired. Please link your calendar again.', [
           { text: 'Re-link', onPress: () => navigation.navigate('ScheduleSetup') },
           { text: 'Cancel', style: 'cancel' },
         ]);
@@ -360,6 +544,8 @@ export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
 
   const todayKey = format(today, 'yyyy-MM-dd');
   const goalReached = !!preferences && todayMinutesWalked >= preferences.dailyTargetMinutes;
+  const showStepGoalCard =
+    !!preferences && (preferences.strictnessMode === 'no_excuses' || preferences.stepGoalEnabled);
   const remainingGoalMinutes = preferences
     ? Math.max(0, preferences.dailyTargetMinutes - todayMinutesWalked)
     : 0;
@@ -553,29 +739,42 @@ export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
 
         <Text variant="body" style={styles.qsTitle}>Quick Status</Text>
 
-        <StatCard title="Daily Target" current={todayMinutesWalked} target={preferences.dailyTargetMinutes} unitLabel="minutes" />
-        <StatCard title="Notification Count" current={todayNotificationCount} target={preferences.notificationCountPerDay} unitLabel="times" />
+        <StatCard
+          title="Daily Target"
+          current={todayMinutesWalked}
+          target={preferences.dailyTargetMinutes}
+          unitLabel="minutes"
+          tone="target"
+        />
+        <StatCard
+          title="Notification Count"
+          current={todayNotificationCount}
+          target={preferences.notificationCountPerDay}
+          unitLabel="times"
+          tone="notifications"
+        />
+        {showStepGoalCard && (
+          <StatCard title="Step Goal" current={todaySteps} target={preferences.stepGoal} unitLabel="steps" tone="steps" />
+        )}
 
         {/* Weekly Stats Preview */}
-        {weeklyStats.totalSessions > 0 && (
-          <Card elevated style={styles.weeklyCard}>
-            <Text variant="body" style={styles.weeklyTitle}>This Week</Text>
-            <View style={styles.weeklyGrid}>
-              <View style={styles.weeklyItem}>
-                <Text variant="title" style={styles.weeklyValue}>{weeklyStats.totalMinutes}</Text>
-                <Text variant="bodySmall" color={theme.colors.textMuted}>Minutes</Text>
-              </View>
-              <View style={styles.weeklyItem}>
-                <Text variant="title" style={styles.weeklyValue}>{weeklyStats.totalSessions}</Text>
-                <Text variant="bodySmall" color={theme.colors.textMuted}>Walks</Text>
-              </View>
-              <View style={styles.weeklyItem}>
-                <Text variant="title" style={styles.weeklyValue}>{weeklyStats.daysActive}</Text>
-                <Text variant="bodySmall" color={theme.colors.textMuted}>Active Days</Text>
-              </View>
+        <Card elevated style={styles.weeklyCard}>
+          <Text variant="body" style={styles.weeklyTitle}>This Week</Text>
+          <View style={styles.weeklyGrid}>
+            <View style={styles.weeklyItem}>
+              <Text variant="title" style={styles.weeklyValue}>{weeklyStats.totalMinutes}</Text>
+              <Text variant="bodySmall" color={theme.colors.textMuted}>Minutes</Text>
             </View>
-          </Card>
-        )}
+            <View style={styles.weeklyItem}>
+              <Text variant="title" style={styles.weeklyValue}>{weeklyStats.totalSteps.toLocaleString()}</Text>
+              <Text variant="bodySmall" color={theme.colors.textMuted}>Total Steps</Text>
+            </View>
+            <View style={styles.weeklyItem}>
+              <Text variant="title" style={styles.weeklyValue}>{weeklyStats.daysActive}</Text>
+              <Text variant="bodySmall" color={theme.colors.textMuted}>Active Days</Text>
+            </View>
+          </View>
+        </Card>
 
         <Text variant="body" style={styles.gapTitle}>Walking Opportunities</Text>
         <Text variant="muted" style={styles.gapSubtitle}>
@@ -607,6 +806,7 @@ export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
               duration={opportunity.plan.suggestedDurationMinutes}
               usedMinutes={0}
               onCancel={() => cancelOpportunity(opportunity)}
+              onChange={() => openChangeOpportunity(opportunity)}
             />
           ))
         )}
@@ -649,6 +849,106 @@ export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
         />
       </ScrollView>
 
+      <Modal
+        visible={showChangeModal}
+        transparent
+        animationType="fade"
+        onRequestClose={closeChangeModal}
+      >
+        <View style={styles.changeOverlay}>
+          <View
+            style={[
+              styles.changeCard,
+              { backgroundColor: palette.bgSurfaceElevated, borderColor: palette.borderSoft },
+            ]}
+          >
+            <Text variant="title" style={styles.changeTitle}>Change walk window</Text>
+            <Text variant="bodySmall" color={palette.textMuted} style={styles.changeSubtitle}>
+              Set your preferred start time and walk duration.
+            </Text>
+
+            <Text variant="bodySmall" style={styles.changeLabel}>Start time</Text>
+            <View style={styles.changeTimeRow}>
+              <TextInput
+                style={[styles.changeTimeInput, { borderColor: palette.borderStrong, color: palette.textPrimary }]}
+                value={changeHour}
+                onChangeText={(t) => setChangeHour(t.replace(/[^0-9]/g, '').slice(0, 2))}
+                placeholder="HH"
+                placeholderTextColor={palette.textMuted}
+                keyboardType="number-pad"
+                maxLength={2}
+              />
+              <Text variant="body" style={styles.changeColon}>:</Text>
+              <TextInput
+                style={[styles.changeTimeInput, { borderColor: palette.borderStrong, color: palette.textPrimary }]}
+                value={changeMinute}
+                onChangeText={(t) => setChangeMinute(t.replace(/[^0-9]/g, '').slice(0, 2))}
+                placeholder="MM"
+                placeholderTextColor={palette.textMuted}
+                keyboardType="number-pad"
+                maxLength={2}
+              />
+              <View style={styles.periodRow}>
+                {(['AM', 'PM'] as const).map((period) => (
+                  <TouchableOpacity
+                    key={period}
+                    style={[
+                      styles.periodBtn,
+                      { borderColor: palette.borderStrong },
+                      changePeriod === period && styles.periodBtnActive,
+                    ]}
+                    onPress={() => setChangePeriod(period)}
+                    activeOpacity={0.8}
+                  >
+                    <Text
+                      variant="bodySmall"
+                      style={changePeriod === period ? styles.periodBtnTextActive : styles.periodBtnText}
+                    >
+                      {period}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </View>
+
+            <Text variant="bodySmall" style={styles.changeLabel}>Walk minutes</Text>
+            <View style={styles.durationRow}>
+              <TextInput
+                style={[styles.durationInput, { borderColor: palette.borderStrong, color: palette.textPrimary }]}
+                value={changeDuration}
+                onChangeText={(t) => setChangeDuration(t.replace(/[^0-9]/g, '').slice(0, 3))}
+                placeholder="10"
+                placeholderTextColor={palette.textMuted}
+                keyboardType="number-pad"
+                maxLength={3}
+              />
+              <Text variant="muted" style={styles.durationUnit}>min</Text>
+            </View>
+
+            {!!changeError && (
+              <Text variant="bodySmall" style={styles.changeError}>{changeError}</Text>
+            )}
+
+            <View style={styles.changeActionRow}>
+              <Button
+                title="Cancel"
+                onPress={closeChangeModal}
+                variant="outline"
+                style={styles.changeActionBtn}
+                disabled={savingChange}
+              />
+              <Button
+                title="Save"
+                onPress={requestSaveWalkChange}
+                style={styles.changeActionBtn}
+                loading={savingChange}
+                disabled={savingChange}
+              />
+            </View>
+          </View>
+        </View>
+      </Modal>
+
       {/* Side Menu Modal */}
       <Modal visible={menuVisible} transparent animationType="fade" onRequestClose={closeMenu}>
         <View style={styles.menuOverlay}>
@@ -689,6 +989,13 @@ export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
               <View style={styles.menuItemRow}>
                 <AppIcon name="settings" size={16} color={palette.textPrimary} />
                 <Text variant="body" style={styles.menuItemLabel}>Settings</Text>
+                <AppIcon name="chevronRight" size={16} color={palette.textMuted} />
+              </View>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.menuItem} onPress={navigateToWeeklyData} testID="dashboard-menu-weekly-data">
+              <View style={styles.menuItemRow}>
+                <AppIcon name="calendar" size={16} color={palette.textPrimary} />
+                <Text variant="body" style={styles.menuItemLabel}>Weekly Data</Text>
                 <AppIcon name="chevronRight" size={16} color={palette.textMuted} />
               </View>
             </TouchableOpacity>
@@ -778,6 +1085,113 @@ const styles = StyleSheet.create({
   prefValue: { fontWeight: theme.fontWeight.medium, marginTop: 2 },
   editPrefs: { color: theme.colors.accentPrimary, fontWeight: theme.fontWeight.medium },
   walkBtn: { marginBottom: 20 },
+
+  changeOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(2,8,20,0.62)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 20,
+  },
+  changeCard: {
+    width: '100%',
+    maxWidth: 380,
+    borderRadius: 18,
+    borderWidth: 1,
+    paddingVertical: 18,
+    paddingHorizontal: 16,
+  },
+  changeTitle: {
+    textAlign: 'center',
+    marginBottom: 6,
+    fontWeight: theme.fontWeight.bold,
+  },
+  changeSubtitle: {
+    textAlign: 'center',
+    marginBottom: 14,
+  },
+  changeLabel: {
+    fontWeight: theme.fontWeight.semibold,
+    marginBottom: 8,
+  },
+  changeTimeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 12,
+  },
+  changeTimeInput: {
+    width: 56,
+    minHeight: 40,
+    borderRadius: theme.borderRadius.sm,
+    borderWidth: 1,
+    textAlign: 'center',
+    fontSize: theme.fontSize.md,
+    fontWeight: theme.fontWeight.medium,
+    paddingHorizontal: 8,
+  },
+  changeColon: {
+    fontSize: theme.fontSize.lg,
+    fontWeight: theme.fontWeight.semibold,
+  },
+  periodRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginLeft: 'auto',
+  },
+  periodBtn: {
+    minWidth: 44,
+    minHeight: 34,
+    borderRadius: theme.borderRadius.sm,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 8,
+  },
+  periodBtnActive: {
+    backgroundColor: theme.colors.accentPrimary,
+    borderColor: theme.colors.accentPrimary,
+  },
+  periodBtnText: {
+    color: theme.colors.textPrimary,
+    fontWeight: theme.fontWeight.medium,
+  },
+  periodBtnTextActive: {
+    color: theme.colors.bgApp,
+    fontWeight: theme.fontWeight.semibold,
+  },
+  durationRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginBottom: 6,
+  },
+  durationInput: {
+    width: 96,
+    minHeight: 40,
+    borderRadius: theme.borderRadius.sm,
+    borderWidth: 1,
+    textAlign: 'center',
+    fontSize: theme.fontSize.md,
+    fontWeight: theme.fontWeight.medium,
+    paddingHorizontal: 8,
+  },
+  durationUnit: {
+    fontWeight: theme.fontWeight.medium,
+  },
+  changeError: {
+    color: theme.colors.error,
+    marginTop: 4,
+    marginBottom: 8,
+  },
+  changeActionRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 8,
+  },
+  changeActionBtn: {
+    flex: 1,
+  },
   
   // Menu
   menuOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', flexDirection: 'row', justifyContent: 'flex-end' },
@@ -819,7 +1233,7 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-    backgroundColor: 'rgba(0,0,0,0.7)',
+    backgroundColor: 'rgba(2,8,20,0.72)',
     justifyContent: 'center',
     alignItems: 'center',
     zIndex: 1000,
@@ -827,14 +1241,17 @@ const styles = StyleSheet.create({
   celebrationContent: {
     alignItems: 'center',
     backgroundColor: theme.colors.bgSurfaceElevated,
-    borderRadius: theme.borderRadius.lg,
-    padding: 32,
-    borderWidth: 2,
-    borderColor: theme.colors.accentPrimary,
+    borderRadius: 20,
+    width: '84%',
+    maxWidth: 330,
+    paddingVertical: 24,
+    paddingHorizontal: 20,
+    borderWidth: 1,
+    borderColor: 'rgba(46,233,166,0.35)',
   },
   celebrationEmoji: {
-    fontSize: 64,
-    marginBottom: 16,
+    fontSize: 52,
+    marginBottom: 10,
   },
   celebrationText: {
     fontWeight: theme.fontWeight.bold,

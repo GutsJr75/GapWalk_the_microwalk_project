@@ -30,6 +30,7 @@ import { DashboardScreen } from './src/screens/DashboardScreen';
 import { WalkingScreen } from './src/screens/WalkingScreen';
 import { ScheduleOverviewScreen } from './src/screens/ScheduleOverviewScreen';
 import { SettingsScreen } from './src/screens/SettingsScreen';
+import { WeeklyDataScreen } from './src/screens/WeeklyDataScreen';
 
 export type RootStackParamList = {
   Intro: undefined;
@@ -58,8 +59,9 @@ export type RootStackParamList = {
     | undefined;
   Dashboard: undefined;
   Walking: { planId?: string };
-   ScheduleOverview: undefined;
-   Settings: undefined;
+  ScheduleOverview: undefined;
+  Settings: undefined;
+  WeeklyData: undefined;
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -227,6 +229,7 @@ export default function App() {
             <Stack.Screen name="Walking" component={WalkingScreen} />
             <Stack.Screen name="ScheduleOverview" component={ScheduleOverviewScreen} />
             <Stack.Screen name="Settings" component={SettingsScreen} />
+            <Stack.Screen name="WeeklyData" component={WeeklyDataScreen} />
           </Stack.Navigator>
         </NavigationContainer>
       </SafeAreaProvider>

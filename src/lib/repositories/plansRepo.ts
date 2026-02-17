@@ -163,6 +163,34 @@ export const plansRepo = {
       [status, id]
     );
   },
+
+  async updateTiming(
+    id: string,
+    timing: {
+      gapStart: string;
+      gapEnd: string;
+      walkStart: string;
+      suggestedDurationMinutes: number;
+      reason?: string;
+      status?: NudgePlanStatus;
+    }
+  ): Promise<void> {
+    const db = await getDatabase();
+    await db.runAsync(
+      `UPDATE nudge_plans
+       SET gap_start = ?, gap_end = ?, walk_start = ?, suggested_duration_minutes = ?, reason = ?, status = ?
+       WHERE id = ?`,
+      [
+        timing.gapStart,
+        timing.gapEnd,
+        timing.walkStart,
+        timing.suggestedDurationMinutes,
+        timing.reason ?? null,
+        timing.status ?? 'planned',
+        id,
+      ]
+    );
+  },
   
   async getTodayNotifiedCount(): Promise<number> {
     const db = await getDatabase();
