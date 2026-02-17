@@ -1,0 +1,55 @@
+import { Processor, WorkerHost } from '@nestjs/bullmq';
+import { Logger } from '@nestjs/common';
+import { Job } from 'bullmq';
+import { PrismaService } from '../prisma/prisma.service';
+import { PushNotificationsService } from '../push-notifications/push-notifications.service';
+import { QUEUE_PUSH_SEND } from './workers.module';
+
+@Processor(QUEUE_PUSH_SEND)
+export class PushSendProcessor extends WorkerHost {
+  private readonly logger = new Logger(PushSendProcessor.name);
+
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly pushService: PushNotificationsService,
+  ) {
+    super();
+  }
+
+  async process(job: Job) {
+    const { name, data } = job;
+
+    if (name === 'send-nudge') {
+      return this.sendNudge(data.nudgePlanId);
+    }
+
+    this.logger.warn(`Unknown job name: ${name}`);
+  }
+
+  private async sendNudge(nudgePlanId: string) {
+    const plan = await this.prisma.nudgePlan.findUnique({
+      where: { id: nudgePlanId },
+    });
+    if (!plan) {
+      this.logger.warn(`NudgePlan ${nudgePlanId} not found`);
+      return;
+    }
+
+    if (plan.status !== 'planned' && plan.status !== 'notified') {
+      this.logger.log(`NudgePlan ${nudgePlanId} is ${plan.status}, skipping`);
+      return;
+    }
+
+    const title = '🚶 Time for a walk!';
+    const body = `Your ${plan.suggestedDurationMinutes}-minute micro-walk is scheduled now.`;
+
+    await this.pushService.sendWalkNudge(
+      plan.userId,
+      nudgePlanId,
+      title,
+      body,
+    );
+
+    this.logger.log(`Push sent for plan ${nudgePlanId}`);
+  }
+}

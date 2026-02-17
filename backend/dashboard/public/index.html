@@ -1,0 +1,294 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>GapWalk — Researcher Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+    <style>
+      :root {
+        --bg: #f8fafc;
+        --card: #ffffff;
+        --primary: #3b82f6;
+        --text: #1e293b;
+        --muted: #64748b;
+        --border: #e2e8f0;
+      }
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      body {
+        font-family:
+          -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        background: var(--bg);
+        color: var(--text);
+      }
+      .container {
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 2rem 1rem;
+      }
+      h1 {
+        font-size: 1.75rem;
+        margin-bottom: 0.25rem;
+      }
+      .subtitle {
+        color: var(--muted);
+        margin-bottom: 2rem;
+      }
+
+      .stats-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        gap: 1rem;
+        margin-bottom: 2rem;
+      }
+      .stat-card {
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 1.25rem;
+      }
+      .stat-card .label {
+        color: var(--muted);
+        font-size: 0.85rem;
+      }
+      .stat-card .value {
+        font-size: 1.75rem;
+        font-weight: 700;
+      }
+
+      .charts-row {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 1.5rem;
+        margin-bottom: 2rem;
+      }
+      .chart-card {
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 1.25rem;
+      }
+      .chart-card h2 {
+        font-size: 1rem;
+        margin-bottom: 1rem;
+      }
+
+      .table-card {
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 1.25rem;
+        overflow-x: auto;
+      }
+      .table-card h2 {
+        font-size: 1rem;
+        margin-bottom: 1rem;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+      }
+      th,
+      td {
+        text-align: left;
+        padding: 0.5rem 0.75rem;
+        border-bottom: 1px solid var(--border);
+        font-size: 0.9rem;
+      }
+      th {
+        color: var(--muted);
+        font-weight: 600;
+      }
+
+      .auth-form {
+        max-width: 400px;
+        margin: 4rem auto;
+        text-align: center;
+      }
+      .auth-form input {
+        width: 100%;
+        padding: 0.75rem;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        margin-bottom: 1rem;
+        font-size: 1rem;
+      }
+      .auth-form button {
+        background: var(--primary);
+        color: white;
+        border: none;
+        padding: 0.75rem 2rem;
+        border-radius: 8px;
+        font-size: 1rem;
+        cursor: pointer;
+      }
+      .hidden {
+        display: none;
+      }
+      @media (max-width: 768px) {
+        .charts-row {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <!-- Simple token input (will use Auth0 in production) -->
+    <div id="auth-section" class="auth-form">
+      <h1>🚶 GapWalk Dashboard</h1>
+      <p class="subtitle">Enter your Bearer token to continue</p>
+      <input id="token-input" type="text" placeholder="Paste your JWT token" />
+      <button onclick="authenticate()">Login</button>
+    </div>
+
+    <div id="dashboard" class="container hidden">
+      <h1>🚶 GapWalk — Researcher Dashboard</h1>
+      <p class="subtitle">
+        Real-time overview of the micro-walk intervention study
+      </p>
+
+      <div class="stats-grid" id="stats-grid"></div>
+
+      <div class="charts-row">
+        <div class="chart-card">
+          <h2>Daily Walk Activity (last 30 days)</h2>
+          <canvas id="activityChart"></canvas>
+        </div>
+        <div class="chart-card">
+          <h2>Nudge Adherence</h2>
+          <canvas id="adherenceChart"></canvas>
+        </div>
+      </div>
+
+      <div class="table-card">
+        <h2>Top Walkers</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Name</th>
+              <th>Minutes</th>
+              <th>Steps</th>
+              <th>Sessions</th>
+            </tr>
+          </thead>
+          <tbody id="leaderboard-body"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <script>
+      let TOKEN = '';
+      const API = '/api/dashboard-api';
+
+      function authenticate() {
+        TOKEN = document.getElementById('token-input').value.trim();
+        if (!TOKEN) return;
+        document.getElementById('auth-section').classList.add('hidden');
+        document.getElementById('dashboard').classList.remove('hidden');
+        loadDashboard();
+      }
+
+      async function apiFetch(path) {
+        const res = await fetch(API + path, {
+          headers: { Authorization: `Bearer ${TOKEN}` },
+        });
+        const json = await res.json();
+        return json.data ?? json;
+      }
+
+      async function loadDashboard() {
+        try {
+          const [overview, daily, adherence, leaders] = await Promise.all([
+            apiFetch('/overview'),
+            apiFetch('/daily-activity?days=30'),
+            apiFetch('/nudge-adherence'),
+            apiFetch('/leaderboard?limit=15'),
+          ]);
+
+          // Stats cards
+          const stats = [
+            { label: 'Total Users', value: overview.totalUsers },
+            { label: 'Walk Sessions', value: overview.totalSessions },
+            {
+              label: 'Total Minutes',
+              value: overview.totalMinutesWalked.toLocaleString(),
+            },
+            {
+              label: 'Total Steps',
+              value: overview.totalSteps.toLocaleString(),
+            },
+            { label: 'Nudge Plans', value: overview.totalPlans },
+            { label: 'Active Studies', value: overview.activeStudies },
+          ];
+          document.getElementById('stats-grid').innerHTML = stats
+            .map(
+              (s) =>
+                `<div class="stat-card"><div class="label">${s.label}</div><div class="value">${s.value}</div></div>`,
+            )
+            .join('');
+
+          // Daily activity chart
+          new Chart(document.getElementById('activityChart'), {
+            type: 'bar',
+            data: {
+              labels: daily.map((d) => d.date),
+              datasets: [
+                {
+                  label: 'Minutes',
+                  data: daily.map((d) => d.minutes),
+                  backgroundColor: '#3b82f6',
+                },
+                {
+                  label: 'Sessions',
+                  data: daily.map((d) => d.sessions),
+                  backgroundColor: '#10b981',
+                },
+              ],
+            },
+            options: { responsive: true, scales: { x: { display: false } } },
+          });
+
+          // Adherence donut
+          const adLabels = Object.keys(adherence);
+          const adColors = {
+            scheduled: '#3b82f6',
+            completed: '#10b981',
+            skipped: '#f59e0b',
+            missed: '#ef4444',
+            cancelled: '#6b7280',
+          };
+          new Chart(document.getElementById('adherenceChart'), {
+            type: 'doughnut',
+            data: {
+              labels: adLabels,
+              datasets: [
+                {
+                  data: adLabels.map((k) => adherence[k]),
+                  backgroundColor: adLabels.map(
+                    (k) => adColors[k] ?? '#94a3b8',
+                  ),
+                },
+              ],
+            },
+            options: { responsive: true },
+          });
+
+          // Leaderboard
+          document.getElementById('leaderboard-body').innerHTML = leaders
+            .map(
+              (l, i) =>
+                `<tr><td>${i + 1}</td><td>${l.displayName || l.email || l.userId}</td><td>${l.totalMinutes}</td><td>${l.totalSteps}</td><td>${l.sessionCount}</td></tr>`,
+            )
+            .join('');
+        } catch (err) {
+          console.error('Dashboard load error:', err);
+        }
+      }
+    </script>
+  </body>
+</html>
