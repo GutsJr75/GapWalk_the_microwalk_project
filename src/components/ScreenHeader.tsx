@@ -83,11 +83,13 @@ export const ScreenHeader: React.FC<ScreenHeaderProps> = ({
 
 const styles = StyleSheet.create({
   root: {
-    marginBottom: theme.spacing.md,
+    paddingTop: theme.spacing.md,
+    paddingBottom: theme.spacing.md,
+    marginBottom: theme.spacing.xl,
   },
   topRow: {
     minHeight: 36,
-    marginBottom: theme.spacing.sm,
+    marginBottom: theme.spacing.md,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
@@ -108,7 +110,7 @@ const styles = StyleSheet.create({
     fontWeight: theme.fontWeight.semibold,
   },
   title: {
-    marginBottom: 4,
+    marginBottom: 8,
     fontSize: theme.fontSize.xl + 2,
   },
   subtitle: {
@@ -121,4 +123,3 @@ const styles = StyleSheet.create({
     textAlign: 'left',
   },
 });
-

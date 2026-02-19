@@ -14,6 +14,7 @@ import { plansRepo } from '../lib/repositories/plansRepo';
 import { sessionsRepo } from '../lib/repositories/sessionsRepo';
 import { analyticsService } from '../lib/analytics';
 import { useAppStore } from '../store';
+import { addMinutes } from 'date-fns';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Walking'>;
 
@@ -304,8 +305,11 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
 
   const remainingSeconds = useMemo(() => {
     if (!plan) return activeSeconds;
-    const endMs = new Date(plan.gapEnd).getTime();
-    return Math.max(0, Math.floor((endMs - Date.now()) / 1000));
+    const walkStart = new Date(plan.walkStart);
+    const gapEnd = new Date(plan.gapEnd);
+    const plannedWalkEnd = addMinutes(walkStart, Math.max(1, plan.suggestedDurationMinutes));
+    const planEndMs = Math.min(plannedWalkEnd.getTime(), gapEnd.getTime());
+    return Math.max(0, Math.floor((planEndMs - Date.now()) / 1000));
   }, [activeSeconds, plan, ticks]);
 
   const statusLabel = paused
@@ -658,13 +662,16 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   topBar: {
-    height: 68,
+    minHeight: 96,
     borderBottomWidth: 1,
     alignItems: 'center',
     justifyContent: 'center',
+    paddingTop: 14,
+    paddingBottom: 14,
+    paddingHorizontal: 16,
   },
   topTitle: {
-    fontSize: 38,
+    fontSize: 30,
     fontWeight: theme.fontWeight.semibold,
   },
   mapArea: {

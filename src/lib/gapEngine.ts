@@ -154,11 +154,16 @@ export const gapEngine = {
   ): TimeInterval[] {
     const timedEvents = events.filter((e) => !e.isAllDay);
 
-    const busyIntervals: TimeInterval[] = timedEvents
+    const eventBusyIntervals: TimeInterval[] = timedEvents
       .map((event) => ({
         start: parseISO(event.start),
         end: parseISO(event.end),
       }))
+      .sort((a, b) => a.start.getTime() - b.start.getTime());
+
+    // Treat quiet hours as blocked time so we never generate plans inside them.
+    const quietIntervals = this.expandTimeRangeForDay(dayStart, prefs.quietHoursStart, prefs.quietHoursEnd);
+    const busyIntervals = [...eventBusyIntervals, ...quietIntervals]
       .sort((a, b) => a.start.getTime() - b.start.getTime());
 
     const merged = this.mergeIntervals(busyIntervals);
@@ -183,7 +188,61 @@ export const gapEngine = {
       }
     }
 
-    return gaps;
+    if (!prefs.preferredWalkingPeriodsEnabled || prefs.preferredWalkingPeriods.length === 0) {
+      return gaps;
+    }
+
+    // When preferred periods are enabled, only keep overlaps with those windows.
+    const preferredIntervals = prefs.preferredWalkingPeriods
+      .flatMap((period) => this.expandTimeRangeForDay(dayStart, period.start, period.end))
+      .sort((a, b) => a.start.getTime() - b.start.getTime());
+    const mergedPreferred = this.mergeIntervals(preferredIntervals);
+    const preferredGaps = this.intersectIntervals(gaps, mergedPreferred);
+    return preferredGaps.filter((gap) => this.isValidGap(gap, prefs));
+  },
+
+  /**
+   * Expand an HH:mm-HH:mm range into concrete intervals for a specific day.
+   * Handles overnight ranges by splitting into two intervals.
+   */
+  expandTimeRangeForDay(dayStart: Date, startTime: string, endTime: string): TimeInterval[] {
+    const start = timeUtils.parseTime(startTime, dayStart);
+    const end = timeUtils.parseTime(endTime, dayStart);
+    const dayEnd = endOfDay(dayStart);
+
+    if (start.getTime() === end.getTime()) return [];
+
+    if (isBefore(start, end)) {
+      return [{ start, end }];
+    }
+
+    const intervals: TimeInterval[] = [];
+    if (isAfter(end, dayStart)) {
+      intervals.push({ start: dayStart, end });
+    }
+    if (isAfter(dayEnd, start)) {
+      intervals.push({ start, end: dayEnd });
+    }
+    return intervals;
+  },
+
+  /**
+   * Intersect base intervals with filter intervals.
+   */
+  intersectIntervals(base: TimeInterval[], filters: TimeInterval[]): TimeInterval[] {
+    if (base.length === 0 || filters.length === 0) return [];
+
+    const out: TimeInterval[] = [];
+    for (const source of base) {
+      for (const filter of filters) {
+        const start = isAfter(source.start, filter.start) ? source.start : filter.start;
+        const end = isBefore(source.end, filter.end) ? source.end : filter.end;
+        if (isBefore(start, end)) {
+          out.push({ start, end });
+        }
+      }
+    }
+    return out;
   },
 
   /**
@@ -225,9 +284,21 @@ export const gapEngine = {
       return false;
     }
 
-    const walkStart = addMinutes(gap.start, prefs.bufferMinutes);
+    const walkStart = addMinutes(gap.start, prefs.bufferMinutes + gracePeriod);
+    const walkEnd = addMinutes(walkStart, prefs.minWalkMinutes);
     if (timeUtils.isInQuietHours(walkStart, prefs.quietHoursStart, prefs.quietHoursEnd)) {
       return false;
+    }
+    if (timeUtils.isInQuietHours(walkEnd, prefs.quietHoursStart, prefs.quietHoursEnd)) {
+      return false;
+    }
+    if (prefs.preferredWalkingPeriodsEnabled && prefs.preferredWalkingPeriods.length > 0) {
+      if (!timeUtils.isInPreferredPeriods(walkStart, prefs.preferredWalkingPeriods)) {
+        return false;
+      }
+      if (!timeUtils.isInPreferredPeriods(walkEnd, prefs.preferredWalkingPeriods)) {
+        return false;
+      }
     }
 
     return true;
@@ -372,7 +443,16 @@ export const gapEngine = {
 
     const slots: GapSlot[] = [];
     for (let i = 0; i < count; i++) {
-      let walkStart = addMinutes(baseWalkStart, i * stepMinutes);
+      let walkStart: Date;
+      if (count === 1) {
+        const spanMinutesToLatest = Math.max(
+          0,
+          Math.floor((latestWalkStart.getTime() - baseWalkStart.getTime()) / 60000)
+        );
+        walkStart = addMinutes(baseWalkStart, Math.floor(spanMinutesToLatest / 2));
+      } else {
+        walkStart = addMinutes(baseWalkStart, i * stepMinutes);
+      }
       if (isAfter(walkStart, latestWalkStart)) {
         walkStart = latestWalkStart;
       }

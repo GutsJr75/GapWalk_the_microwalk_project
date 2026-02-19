@@ -4,8 +4,8 @@
   "main": "index.js",
   "scripts": {
     "start": "expo start",
-    "android": "expo start --android",
-    "ios": "expo start --ios",
+    "android": "expo run:android",
+    "ios": "expo run:ios",
     "web": "expo start --web",
     "start:e2e": "EXPO_PUBLIC_E2E=1 expo start --dev-client --clear",
     "android:e2e": "EXPO_PUBLIC_E2E=1 expo run:android",
@@ -16,7 +16,7 @@
     "e2e:maestro:all": "maestro test e2e/maestro"
   },
   "dependencies": {
-    "@react-native-community/datetimepicker": "^8.4.4",
+    "@react-native-community/datetimepicker": "8.4.4",
     "@react-native-community/slider": "5.0.1",
     "@react-navigation/native": "^6.1.9",
     "@react-navigation/native-stack": "^6.9.17",
@@ -33,22 +33,22 @@
     "expo-notifications": "~0.32.16",
     "expo-splash-screen": "~31.0.13",
     "expo-sqlite": "~16.0.10",
-    "expo-status-bar": "~2.0.0",
+    "expo-status-bar": "~3.0.9",
     "expo-web-browser": "~15.0.10",
     "ical.js": "^2.0.1",
-    "react": "18.3.1",
-    "react-dom": "18.3.1",
-    "react-native": "0.77.3",
-    "react-native-maps": "1.18.0",
+    "react": "19.1.0",
+    "react-dom": "19.1.0",
+    "react-native": "0.81.5",
+    "react-native-maps": "1.20.1",
     "react-native-safe-area-context": "~5.6.0",
     "react-native-screens": "~4.16.0",
-    "react-native-svg": "^15.15.3",
+    "react-native-svg": "15.12.1",
     "react-native-web": "^0.21.0",
     "zustand": "4.4.7"
   },
   "devDependencies": {
     "@babel/core": "^7.25.2",
-    "@types/react": "~18.3.28",
+    "@types/react": "~19.1.10",
     "typescript": "~5.9.2"
   },
   "private": true

@@ -1603,7 +1603,7 @@ const styles = StyleSheet.create({
   },
   header: {
     paddingHorizontal: theme.layout.contentHorizontal,
-    paddingTop: theme.spacing.md,
+    paddingTop: theme.spacing.lg,
     paddingBottom: theme.spacing.sm,
     alignSelf: 'center',
     width: '100%',

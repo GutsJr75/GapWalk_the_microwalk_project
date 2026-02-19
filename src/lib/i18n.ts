@@ -207,6 +207,7 @@ const esExact: Record<string, string> = {
   'Notifications are limited in Expo Go.': 'Las notificaciones estan limitadas en Expo Go.',
   'Other Settings': 'Otros ajustes',
   'Notifications & quiet hours': 'Notificaciones y horas de silencio',
+  'Notifications, quiet hours & preferred periods': 'Notificaciones, horas de silencio y periodos preferidos',
   'When to notify': 'Cuando notificar',
   'Minimum time between reminders': 'Tiempo minimo entre recordatorios',
   'Strictness': 'Nivel de exigencia',
@@ -225,6 +226,26 @@ const esExact: Record<string, string> = {
   'Set a step goal between 500 and 6000.': 'Define una meta entre 500 y 6000 pasos.',
   'Quiet Hours': 'Horas de silencio',
   'Tap to edit': 'Tocar para editar',
+  'Preferred walking periods (optional)': 'Periodos preferidos para caminar (opcional)',
+  'Pick up to 5 preferred time windows for walks. GapWalk will only suggest opportunities inside these windows when this is enabled.':
+    'Elige hasta 5 franjas horarias preferidas para caminar. Cuando esto este activado, GapWalk solo sugerira caminatas dentro de esas franjas.',
+  'Tap to edit periods': 'Toca para editar periodos',
+  'No preferred period selected.': 'No hay periodos preferidos seleccionados.',
+  'Preferred Walking Periods': 'Periodos preferidos para caminar',
+  'Add 1 to 5 preferred time periods. GapWalk will suggest walks only in these windows when enabled.':
+    'Agrega entre 1 y 5 periodos de tiempo preferidos. Cuando esta opcion este activada, GapWalk sugerira caminatas solo dentro de esas ventanas.',
+  'Remove': 'Eliminar',
+  '+ Add period': '+ Agregar periodo',
+  'Save periods': 'Guardar periodos',
+  'Add at least one preferred walking period.': 'Agrega al menos un periodo preferido para caminar.',
+  'You can add up to 5 preferred periods.': 'Puedes agregar hasta 5 periodos preferidos.',
+  'Each preferred period needs a valid start and end time.':
+    'Cada periodo preferido necesita una hora de inicio y fin validas.',
+  'Enter valid start and end times for each period.':
+    'Ingresa horas de inicio y fin validas para cada periodo.',
+  'Start and end times cannot be the same.':
+    'Las horas de inicio y fin no pueden ser iguales.',
+  'Preferred periods': 'Periodos preferidos',
   'Use Recommended Settings?': 'Usar ajustes recomendados?',
   'If you skip, GapWalk will use these recommended defaults:':
     'Si omites, GapWalk usara estos valores recomendados:',
@@ -389,11 +410,32 @@ const enFriendly: Record<string, string> = {
   'You can change this anytime.': 'You can update this anytime.',
   'Target, buffer & reminders': 'Goal, buffer, and reminders',
   'Notifications & quiet hours': 'Reminders and quiet hours',
+  'Notifications, quiet hours & preferred periods': 'Reminders, quiet hours, and preferred periods',
   'When to notify': 'When to send reminders',
   'No Excuses enforces step-goal checks. Easygoing keeps walk timing flexible.':
     'No Excuses checks your step goal. Easygoing gives you more flexibility.',
   'Easygoing keeps your step goal optional.': 'In Easygoing mode, step goal is optional.',
   'Step goal is currently off.': 'Step goal is off right now.',
+  'Preferred walking periods (optional)': 'Preferred walking periods (optional)',
+  'Pick up to 5 preferred time windows for walks. GapWalk will only suggest opportunities inside these windows when this is enabled.':
+    'Pick up to 5 preferred time windows for walks. GapWalk will only suggest opportunities inside these windows when this is enabled.',
+  'Tap to edit periods': 'Tap to edit periods',
+  'No preferred period selected.': 'No preferred period selected.',
+  'Preferred Walking Periods': 'Preferred walking periods',
+  'Add 1 to 5 preferred time periods. GapWalk will suggest walks only in these windows when enabled.':
+    'Add 1 to 5 preferred time periods. GapWalk will suggest walks only in these windows when enabled.',
+  'Remove': 'Remove',
+  '+ Add period': '+ Add period',
+  'Save periods': 'Save periods',
+  'Add at least one preferred walking period.': 'Add at least one preferred walking period.',
+  'You can add up to 5 preferred periods.': 'You can add up to 5 preferred periods.',
+  'Each preferred period needs a valid start and end time.':
+    'Each preferred period needs a valid start and end time.',
+  'Enter valid start and end times for each period.':
+    'Enter valid start and end times for each period.',
+  'Start and end times cannot be the same.':
+    'Start and end times cannot be the same.',
+  'Preferred periods': 'Preferred periods',
   'Select the time frame when GapWalk will not send you notifications.':
     'Choose when GapWalk should stay quiet.',
   'Set up your preferences so GapWalk can find the best walking windows in your schedule.':
@@ -517,6 +559,10 @@ const patterns: PatternTranslator[] = [
   {
     re: /^(\d+)\smin\s(\d+)\ssec$/,
     toEs: (m) => `${m[1]} min ${m[2]} s`,
+  },
+  {
+    re: /^Period\s(\d+)$/,
+    toEs: (m) => `Periodo ${m[1]}`,
   },
   {
     re: /^(\d+)\smin session saved$/,

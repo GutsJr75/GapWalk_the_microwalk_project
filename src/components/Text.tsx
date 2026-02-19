@@ -78,13 +78,16 @@ const localizeNode = (node: React.ReactNode, language: AppLanguage): React.React
   }
 
   if (Array.isArray(node)) {
-    return node.map((child) => localizeNode(child, language));
+    // Preserve stable keys when transforming children arrays.
+    return React.Children.map(node, (child) => localizeNode(child, language));
   }
 
-  if (React.isValidElement(node) && node.props?.children) {
-    return React.cloneElement(node as React.ReactElement<any>, {
-      ...node.props,
-      children: localizeNode(node.props.children, language),
+  if (React.isValidElement(node)) {
+    const element = node as React.ReactElement<{ children?: React.ReactNode }>;
+    if (!element.props?.children) return node;
+    return React.cloneElement(element, {
+      ...element.props,
+      children: localizeNode(element.props.children, language),
     });
   }
 

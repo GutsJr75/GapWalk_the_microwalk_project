@@ -20,10 +20,11 @@ import { eventsRepo } from '../lib/repositories/eventsRepo';
 import { gapEngine } from '../lib/gapEngine';
 import { isNotificationsSupported, notificationService } from '../lib/notifications';
 import { googleCalendarService } from '../lib/googleCalendar';
-import { NudgePlan } from '../lib/types';
+import { NudgePlan, Preferences } from '../lib/types';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { calculateStreak, calculateWeeklyStats, StreakData, WeeklyStats } from '../lib/statsUtils';
 import { addMinutes, format, isAfter, isBefore, parseISO, subMinutes } from 'date-fns';
+import { timeUtils } from '../lib/time';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Dashboard'>;
 
@@ -47,7 +48,24 @@ interface PlanOpportunity {
 
 type TimePeriod = 'AM' | 'PM';
 
-const formatDateTime = (iso: string): string => format(parseISO(iso), 'h:mm a');
+const getPlanWalkEnd = (plan: NudgePlan): Date => {
+  const walkStart = parseISO(plan.walkStart);
+  const rawWalkEnd = addMinutes(walkStart, Math.max(1, plan.suggestedDurationMinutes));
+  const gapEnd = parseISO(plan.gapEnd);
+  return isAfter(rawWalkEnd, gapEnd) ? gapEnd : rawWalkEnd;
+};
+
+const isPlanInsidePreferredPeriods = (plan: NudgePlan, prefs: Preferences): boolean => {
+  if (!prefs.preferredWalkingPeriodsEnabled || prefs.preferredWalkingPeriods.length === 0) {
+    return true;
+  }
+  const walkStart = parseISO(plan.walkStart);
+  const walkEnd = getPlanWalkEnd(plan);
+  return (
+    timeUtils.isInPreferredPeriods(walkStart, prefs.preferredWalkingPeriods) &&
+    timeUtils.isInPreferredPeriods(walkEnd, prefs.preferredWalkingPeriods)
+  );
+};
 
 const to12HourParts = (iso: string): { hour: string; minute: string; period: TimePeriod } => {
   const date = parseISO(iso);
@@ -144,8 +162,12 @@ export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
     const hasInvalidDuration = activePlans.some((plan) => plan.suggestedDurationMinutes <= 0);
     const exceedsPlanCount = activePlans.length > prefs.notificationCountPerDay;
     const hasCustomizedPlan = activePlans.some((plan) => plan.reason === 'customized');
+    const hasOutsidePreferredPeriods = activePlans.some((plan) => !isPlanInsidePreferredPeriods(plan, prefs));
 
-    if (!hasCustomizedPlan && (!samePlanShape || hasInvalidDuration || exceedsPlanCount)) {
+    if (
+      hasOutsidePreferredPeriods ||
+      (!hasCustomizedPlan && (!samePlanShape || hasInvalidDuration || exceedsPlanCount))
+    ) {
       for (const plan of activePlans) {
         await plansRepo.updateStatus(plan.id, 'cancelled');
       }
@@ -405,6 +427,27 @@ export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
     const oldGapStart = parseISO(editingOpportunity.plan.gapStart);
     const oldGapEnd = parseISO(editingOpportunity.plan.gapEnd);
     const walkEnd = addMinutes(nextStart, duration);
+
+    if (
+      timeUtils.isInQuietHours(nextStart, preferences.quietHoursStart, preferences.quietHoursEnd) ||
+      timeUtils.isInQuietHours(walkEnd, preferences.quietHoursStart, preferences.quietHoursEnd)
+    ) {
+      setChangeError('Pick a time outside your quiet hours.');
+      return;
+    }
+
+    if (
+      preferences.preferredWalkingPeriodsEnabled &&
+      preferences.preferredWalkingPeriods.length > 0 &&
+      (
+        !timeUtils.isInPreferredPeriods(nextStart, preferences.preferredWalkingPeriods) ||
+        !timeUtils.isInPreferredPeriods(walkEnd, preferences.preferredWalkingPeriods)
+      )
+    ) {
+      setChangeError('Pick a time inside your preferred walking periods.');
+      return;
+    }
+
     const notifyLeadMinutes = preferences.whenToNotify === 'delay'
       ? Math.max(0, preferences.notifyDelayMinutes ?? 5)
       : 0;
@@ -461,8 +504,30 @@ export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
       let hour24 = hour % 12;
       if (changePeriod === 'PM') hour24 += 12;
       previewStart.setHours(hour24, minute, 0, 0);
+      const previewEnd = addMinutes(previewStart, duration);
       if (!isAfter(previewStart, new Date())) {
         setChangeError('Choose a future time for this walk.');
+        return;
+      }
+      if (
+        preferences &&
+        (
+          timeUtils.isInQuietHours(previewStart, preferences.quietHoursStart, preferences.quietHoursEnd) ||
+          timeUtils.isInQuietHours(previewEnd, preferences.quietHoursStart, preferences.quietHoursEnd)
+        )
+      ) {
+        setChangeError('Pick a time outside your quiet hours.');
+        return;
+      }
+      if (
+        preferences?.preferredWalkingPeriodsEnabled &&
+        preferences.preferredWalkingPeriods.length > 0 &&
+        (
+          !timeUtils.isInPreferredPeriods(previewStart, preferences.preferredWalkingPeriods) ||
+          !timeUtils.isInPreferredPeriods(previewEnd, preferences.preferredWalkingPeriods)
+        )
+      ) {
+        setChangeError('Pick a time inside your preferred walking periods.');
         return;
       }
     }
@@ -546,6 +611,11 @@ export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
   const goalReached = !!preferences && todayMinutesWalked >= preferences.dailyTargetMinutes;
   const showStepGoalCard =
     !!preferences && (preferences.strictnessMode === 'no_excuses' || preferences.stepGoalEnabled);
+  const preferredPeriodsList =
+    preferences?.preferredWalkingPeriodsEnabled && preferences.preferredWalkingPeriods.length > 0
+      ? preferences.preferredWalkingPeriods
+          .map((period) => `${formatTime12(period.start)} - ${formatTime12(period.end)}`)
+      : [];
   const remainingGoalMinutes = preferences
     ? Math.max(0, preferences.dailyTargetMinutes - todayMinutesWalked)
     : 0;
@@ -568,12 +638,13 @@ export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
   const opportunities = useMemo<PlanOpportunity[]>(() => {
     if (!preferences || goalReached) return [];
 
-    return activeTodayPlans.map((plan) => {
+    return activeTodayPlans
+      .filter((plan) => isPlanInsidePreferredPeriods(plan, preferences))
+      .map((plan) => {
       const walkStart = parseISO(plan.walkStart);
-      const walkEndRaw = addMinutes(walkStart, plan.suggestedDurationMinutes);
+      const walkEnd = getPlanWalkEnd(plan);
       const gapStart = parseISO(plan.gapStart);
       const gapEnd = parseISO(plan.gapEnd);
-      const walkEnd = isAfter(walkEndRaw, gapEnd) ? gapEnd : walkEndRaw;
       let notifyAt = walkStart;
       if (preferences.whenToNotify === 'delay') {
         notifyAt = subMinutes(walkStart, preferences.notifyDelayMinutes ?? 5);
@@ -585,11 +656,11 @@ export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
       return {
         key: plan.id,
         plan,
-        timeRange: `${formatDateTime(plan.gapStart)} - ${formatDateTime(plan.gapEnd)}`,
-        walkWindowLabel: `Walk time: ${format(walkStart, 'h:mm a')} - ${format(walkEnd, 'h:mm a')}`,
+        timeRange: `${format(walkStart, 'h:mm a')} - ${format(walkEnd, 'h:mm a')}`,
+        walkWindowLabel: `Available window: ${format(gapStart, 'h:mm a')} - ${format(gapEnd, 'h:mm a')}`,
         notifyLabel: `Notification time: ${format(notifyAt, 'h:mm a')}`,
       };
-    });
+      });
   }, [activeTodayPlans, goalReached, preferences]);
 
   const horizontalPadding = Math.max(width * 0.1, 16);
@@ -839,6 +910,18 @@ export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
               <Text variant="body" style={styles.prefValue}>{preferences.notificationMinGapMinutes} min</Text>
             </View>
           </View>
+          {preferredPeriodsList.length > 0 && (
+            <View style={styles.prefItemFull}>
+              <Text variant="bodySmall" color={theme.colors.textMuted}>Preferred periods</Text>
+              <View style={styles.prefPillsWrap}>
+                {preferredPeriodsList.map((periodLabel, idx) => (
+                  <View key={`${periodLabel}-${idx}`} style={styles.prefPill}>
+                    <Text variant="bodySmall" style={styles.prefPillText}>{periodLabel}</Text>
+                  </View>
+                ))}
+              </View>
+            </View>
+          )}
         </Card>
 
         <Button
@@ -1039,13 +1122,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 16,
-    paddingVertical: 16,
+    paddingTop: 20,
+    paddingBottom: 18,
   },
   headerCenter: { flex: 1, alignItems: 'flex-start' },
   headerRight: { width: 32, alignItems: 'flex-end' },
   heading: { textAlign: 'left', fontSize: theme.fontSize.xl + 2 },
   headingSub: { textAlign: 'left', marginBottom: 20, marginTop: 4 },
-  headingDate: { textAlign: 'left' },
+  headingDate: { textAlign: 'left', marginTop: 2 },
   burgerBtn: {
     padding: 3,
     transform: [{ scale: 0.8 }], // make overall icon ~20% smaller
@@ -1082,7 +1166,25 @@ const styles = StyleSheet.create({
   prefLabel: { fontWeight: theme.fontWeight.semibold, marginBottom: 10 },
   prefsGrid: { flexDirection: 'row', gap: 16, marginBottom: 12 },
   prefItem: { flex: 1 },
+  prefItemFull: { marginTop: 2 },
   prefValue: { fontWeight: theme.fontWeight.medium, marginTop: 2 },
+  prefPillsWrap: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginTop: 8,
+  },
+  prefPill: {
+    borderRadius: 999,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    backgroundColor: 'rgba(56,189,248,0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(56,189,248,0.25)',
+  },
+  prefPillText: {
+    fontWeight: theme.fontWeight.medium,
+  },
   editPrefs: { color: theme.colors.accentPrimary, fontWeight: theme.fontWeight.medium },
   walkBtn: { marginBottom: 20 },
 

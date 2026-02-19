@@ -36,7 +36,9 @@ const discovery = {
   revocationEndpoint: 'https://oauth2.googleapis.com/revoke',
 };
 
-if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
+const isFabric = !!(globalThis as any).nativeFabricUIManager;
+
+if (Platform.OS === 'android' && !isFabric && UIManager.setLayoutAnimationEnabledExperimental) {
   UIManager.setLayoutAnimationEnabledExperimental(true);
 }
 

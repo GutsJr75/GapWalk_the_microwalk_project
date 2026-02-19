@@ -24,7 +24,7 @@ import { ScreenHeader } from '../components/ScreenHeader';
 import { AppIcon, AppIconName } from '../components/AppIcon';
 import { theme } from '../theme';
 import { getThemePalette } from '../theme/palette';
-import { Preferences, DEFAULT_PREFERENCES } from '../lib/types';
+import { Preferences, DEFAULT_PREFERENCES, PreferredWalkingPeriod } from '../lib/types';
 import { preferencesRepo } from '../lib/repositories/preferencesRepo';
 import { notificationService, isNotificationsSupported } from '../lib/notifications';
 import { syncNudgePlansForCurrentSchedule } from '../lib/scheduleSync';
@@ -32,7 +32,9 @@ import { SAVE_CONFIRM_ACTION, SAVE_CONFIRM_MESSAGE, SAVE_CONFIRM_TITLE } from '.
 import { analyticsService } from '../lib/analytics';
 import { useAppStore } from '../store';
 
-if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
+const isFabric = !!(globalThis as any).nativeFabricUIManager;
+
+if (Platform.OS === 'android' && !isFabric && UIManager.setLayoutAnimationEnabledExperimental) {
   UIManager.setLayoutAnimationEnabledExperimental(true);
 }
 
@@ -98,6 +100,36 @@ const formatTime12 = (value: string): string => {
   const period: TimePeriod = hour24 >= 12 ? 'PM' : 'AM';
   const hour12 = hour24 % 12 === 0 ? 12 : hour24 % 12;
   return `${hour12}:${String(minute).padStart(2, '0')} ${period}`;
+};
+
+const MAX_PREFERRED_PERIODS = 5;
+const DEFAULT_PREFERRED_PERIOD: PreferredWalkingPeriod = { start: '09:00', end: '11:00' };
+
+interface PreferredPeriodForm {
+  id: string;
+  startHourRaw: string;
+  startMinuteRaw: string;
+  startPeriod: TimePeriod;
+  endHourRaw: string;
+  endMinuteRaw: string;
+  endPeriod: TimePeriod;
+}
+
+const makePreferredPeriodId = (): string =>
+  `pref-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+
+const toPreferredForm = (period: PreferredWalkingPeriod, id: string = makePreferredPeriodId()): PreferredPeriodForm => {
+  const start = to12HourParts(period.start);
+  const end = to12HourParts(period.end);
+  return {
+    id,
+    startHourRaw: start.hourRaw,
+    startMinuteRaw: start.minuteRaw,
+    startPeriod: start.period,
+    endHourRaw: end.hourRaw,
+    endMinuteRaw: end.minuteRaw,
+    endPeriod: end.period,
+  };
 };
 
 /* â”€â”€â”€â”€â”€ sub-components â”€â”€â”€â”€â”€ */
@@ -223,13 +255,18 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
   const [prefs, setPrefs] = useState<Preferences>(DEFAULT_PREFERENCES);
   const [hasChanges, setHasChanges] = useState(false);
   const [showQuietModal, setShowQuietModal] = useState(false);
+  const [showPreferredModal, setShowPreferredModal] = useState(false);
   const [quietError, setQuietError] = useState<string | null>(null);
+  const [preferredError, setPreferredError] = useState<string | null>(null);
   const [savingPrefs, setSavingPrefs] = useState(false);
   const [quietForm, setQuietForm] = useState(() => {
     const start = to12HourParts(DEFAULT_PREFERENCES.quietHoursStart);
     const end = to12HourParts(DEFAULT_PREFERENCES.quietHoursEnd);
     return { startHourRaw: start.hourRaw, startMinuteRaw: start.minuteRaw, startPeriod: start.period, endHourRaw: end.hourRaw, endMinuteRaw: end.minuteRaw, endPeriod: end.period };
   });
+  const [preferredForm, setPreferredForm] = useState<PreferredPeriodForm[]>([
+    toPreferredForm(DEFAULT_PREFERRED_PERIOD),
+  ]);
   const notificationsSupported = isNotificationsSupported;
   const palette = getThemePalette(themeMode);
   const isDark = themeMode === 'dark';
@@ -251,7 +288,12 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
         try {
           const fromDb = await preferencesRepo.get();
           if (!active) return;
-          setPrefs(fromDb ?? storedPreferences ?? DEFAULT_PREFERENCES);
+          const nextPrefs = fromDb ?? storedPreferences ?? DEFAULT_PREFERENCES;
+          setPrefs(nextPrefs);
+          const periodSeed = nextPrefs.preferredWalkingPeriods.length > 0
+            ? nextPrefs.preferredWalkingPeriods
+            : [DEFAULT_PREFERRED_PERIOD];
+          setPreferredForm(periodSeed.slice(0, MAX_PREFERRED_PERIODS).map((p) => toPreferredForm(p)));
           setHasChanges(false);
         } catch (e) { console.error('Failed to load preferences:', e); }
       };
@@ -298,6 +340,75 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
     setShowQuietModal(false);
   };
 
+  const openPreferredModal = () => {
+    const seed = prefs.preferredWalkingPeriods.length > 0
+      ? prefs.preferredWalkingPeriods
+      : [DEFAULT_PREFERRED_PERIOD];
+    setPreferredForm(seed.slice(0, MAX_PREFERRED_PERIODS).map((period) => toPreferredForm(period)));
+    setPreferredError(null);
+    setShowPreferredModal(true);
+  };
+
+  const updatePreferredFormById = (id: string, patch: Partial<PreferredPeriodForm>) => {
+    setPreferredForm((prev) => prev.map((item) => (item.id === id ? { ...item, ...patch } : item)));
+  };
+
+  const addPreferredPeriodForm = () => {
+    if (preferredForm.length >= MAX_PREFERRED_PERIODS) return;
+    setPreferredForm((prev) => [...prev, toPreferredForm(DEFAULT_PREFERRED_PERIOD)]);
+  };
+
+  const removePreferredPeriodForm = (id: string) => {
+    setPreferredForm((prev) => {
+      if (prev.length <= 1) return prev;
+      return prev.filter((item) => item.id !== id);
+    });
+  };
+
+  const enablePreferredPeriods = () => {
+    const nextPeriods = (prefs.preferredWalkingPeriods.length > 0
+      ? prefs.preferredWalkingPeriods
+      : [DEFAULT_PREFERRED_PERIOD]).slice(0, MAX_PREFERRED_PERIODS);
+    updateMany({
+      preferredWalkingPeriodsEnabled: true,
+      preferredWalkingPeriods: nextPeriods,
+    });
+    setPreferredForm(nextPeriods.map((period) => toPreferredForm(period)));
+    setPreferredError(null);
+  };
+
+  const disablePreferredPeriods = () => {
+    update('preferredWalkingPeriodsEnabled', false);
+    setPreferredError(null);
+  };
+
+  const applyPreferredPeriods = () => {
+    if (preferredForm.length === 0) {
+      setPreferredError('Add at least one preferred walking period.');
+      return;
+    }
+    const nextPeriods: PreferredWalkingPeriod[] = [];
+    for (const item of preferredForm) {
+      const start = to24Hour(item.startHourRaw, item.startMinuteRaw, item.startPeriod);
+      const end = to24Hour(item.endHourRaw, item.endMinuteRaw, item.endPeriod);
+      if (!start || !end) {
+        setPreferredError('Enter valid start and end times for each period.');
+        return;
+      }
+      if (start === end) {
+        setPreferredError('Start and end times cannot be the same.');
+        return;
+      }
+      nextPeriods.push({ start, end });
+    }
+    updateMany({
+      preferredWalkingPeriodsEnabled: true,
+      preferredWalkingPeriods: nextPeriods.slice(0, MAX_PREFERRED_PERIODS),
+    });
+    setPreferredError(null);
+    setShowPreferredModal(false);
+  };
+
   /* â”€â”€ validation â”€â”€ */
   const dailyTarget = prefs.dailyTargetMinutes;
   const notifCount = prefs.notificationCountPerDay;
@@ -333,12 +444,24 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
     }
   }
 
+  let preferredPeriodsError: string | null = null;
+  if (prefs.preferredWalkingPeriodsEnabled) {
+    if (prefs.preferredWalkingPeriods.length === 0) {
+      preferredPeriodsError = 'Add at least one preferred walking period.';
+    } else if (prefs.preferredWalkingPeriods.length > MAX_PREFERRED_PERIODS) {
+      preferredPeriodsError = 'You can add up to 5 preferred periods.';
+    } else if (prefs.preferredWalkingPeriods.some((period) => !period.start || !period.end || period.start === period.end)) {
+      preferredPeriodsError = 'Each preferred period needs a valid start and end time.';
+    }
+  }
+
   const canContinue =
     !dailyTargetError &&
     !notifError &&
     !bufferError &&
     !reminderGapError &&
     !stepGoalError &&
+    !preferredPeriodsError &&
     !savingPrefs;
 
   /* â”€â”€ save â”€â”€ */
@@ -346,12 +469,18 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
     if (savingPrefs) return;
     setSavingPrefs(true);
     const strictnessMode = p.strictnessMode === 'no_excuses' ? 'no_excuses' : 'easygoing';
+    const normalizedPreferredWalkingPeriods = (p.preferredWalkingPeriods || [])
+      .filter((period) => !!period.start && !!period.end && period.start !== period.end)
+      .slice(0, MAX_PREFERRED_PERIODS);
     const normalizedPrefs: Preferences = {
       ...p,
       notificationMinGapMinutes: Math.max(30, Math.min(360, Math.floor(p.notificationMinGapMinutes || 60))),
       strictnessMode,
       stepGoal: Math.max(500, Math.min(6000, Math.floor(p.stepGoal || DEFAULT_PREFERENCES.stepGoal))),
       stepGoalEnabled: strictnessMode === 'no_excuses' ? true : !!p.stepGoalEnabled,
+      preferredWalkingPeriodsEnabled:
+        !!p.preferredWalkingPeriodsEnabled && normalizedPreferredWalkingPeriods.length > 0,
+      preferredWalkingPeriods: normalizedPreferredWalkingPeriods,
     };
     let lastError: unknown = null;
     for (let attempt = 0; attempt < 2; attempt++) {
@@ -372,6 +501,8 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
           strictnessMode: normalizedPrefs.strictnessMode,
           stepGoalEnabled: normalizedPrefs.stepGoalEnabled,
           stepGoal: normalizedPrefs.stepGoal,
+          preferredWalkingPeriodsEnabled: normalizedPrefs.preferredWalkingPeriodsEnabled,
+          preferredWalkingPeriodsCount: normalizedPrefs.preferredWalkingPeriods.length,
         });
         setSavingPrefs(false);
         navigation.navigate('Dashboard');
@@ -483,6 +614,12 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
     else updateMany({ whenToNotify: 'delay', notifyDelayMinutes: 10 });
   };
   const notifyChoice = getNotifyChoice();
+  const preferredPeriodsList = prefs.preferredWalkingPeriods
+    .slice(0, MAX_PREFERRED_PERIODS)
+    .map((period) => `${formatTime12(period.start)} - ${formatTime12(period.end)}`);
+  const preferredPeriodsDisplay = preferredPeriodsList.length > 0
+    ? preferredPeriodsList.map((item) => `• ${item}`).join('\n')
+    : 'No preferred period selected.';
 
   /* â•â•â•â•â•â•â•â•â•â•â• render â•â•â•â•â•â•â•â•â•â•â• */
   return (
@@ -559,7 +696,7 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
         </Section>
 
         {/* â•â•â•â•â•â•â•â•â•â• Other Settings â•â•â•â•â•â•â•â•â•â• */}
-        <Section title="Other Settings" subtitle="Notifications & quiet hours" icon="settings">
+        <Section title="Other Settings" subtitle="Notifications, quiet hours & preferred periods" icon="settings">
           {/* When to Notify (simplified radio) */}
           <View style={styles.field}>
             <Text variant="bodySmall" style={styles.fieldLabel}>When to notify</Text>
@@ -701,9 +838,85 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
           <View style={styles.field}>
             <Text variant="bodySmall" style={styles.fieldLabel}>Quiet Hours</Text>
             <TouchableOpacity onPress={openQuietModal} style={[styles.quietBtn, themedSurface]} activeOpacity={0.7}>
-              <Text variant="body" style={styles.quietValue}>{formatTime12(prefs.quietHoursStart)} - {formatTime12(prefs.quietHoursEnd)}</Text>
-              <Text variant="muted" style={styles.quietEdit}>Tap to edit</Text>
+              <View style={styles.quietRow}>
+                <Text
+                  variant="body"
+                  style={styles.quietValue}
+                  numberOfLines={1}
+                >
+                  {formatTime12(prefs.quietHoursStart)} - {formatTime12(prefs.quietHoursEnd)}
+                </Text>
+                <Text variant="muted" style={styles.quietEdit} numberOfLines={1}>
+                  Tap to edit
+                </Text>
+              </View>
             </TouchableOpacity>
+          </View>
+
+          {/* Preferred walking periods */}
+          <View style={styles.field}>
+            <View style={styles.fieldHeader}>
+              <Text variant="bodySmall" style={styles.fieldLabel}>Preferred walking periods (optional)</Text>
+              <InfoTip text="Pick up to 5 preferred time windows for walks. GapWalk will only suggest opportunities inside these windows when this is enabled." />
+            </View>
+            <View style={styles.togglePillRow}>
+              <TouchableOpacity
+                style={[
+                  styles.togglePill,
+                  themedSurface,
+                  !prefs.preferredWalkingPeriodsEnabled && styles.togglePillActive,
+                ]}
+                activeOpacity={0.75}
+                onPress={disablePreferredPeriods}
+              >
+                <Text
+                  variant="bodySmall"
+                  style={!prefs.preferredWalkingPeriodsEnabled ? styles.togglePillTextActive : styles.togglePillText}
+                >
+                  Off
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[
+                  styles.togglePill,
+                  themedSurface,
+                  prefs.preferredWalkingPeriodsEnabled && styles.togglePillActive,
+                ]}
+                activeOpacity={0.75}
+                onPress={enablePreferredPeriods}
+              >
+                <Text
+                  variant="bodySmall"
+                  style={prefs.preferredWalkingPeriodsEnabled ? styles.togglePillTextActive : styles.togglePillText}
+                >
+                  On
+                </Text>
+              </TouchableOpacity>
+            </View>
+            {prefs.preferredWalkingPeriodsEnabled ? (
+              <TouchableOpacity
+                onPress={openPreferredModal}
+                style={[styles.preferredSummaryBtn, themedSurface]}
+                activeOpacity={0.7}
+              >
+                <View style={styles.preferredSummaryHeader}>
+                  <Text variant="muted" style={styles.preferredSummaryLabel}>Selected periods</Text>
+                  <View style={styles.preferredSummaryAction}>
+                    <Text variant="bodySmall" style={styles.preferredSummaryActionText}>Edit</Text>
+                    <AppIcon name="chevronRight" size={14} color={theme.colors.accentPrimary} />
+                  </View>
+                </View>
+                <Text variant="body" style={styles.preferredSummaryValue} numberOfLines={3}>
+                  {preferredPeriodsDisplay}
+                </Text>
+                <Text variant="muted" style={styles.preferredSummaryHint} numberOfLines={1}>
+                  Tap to edit periods
+                </Text>
+              </TouchableOpacity>
+            ) : (
+              <Text variant="muted" style={styles.note}>No preferred period selected.</Text>
+            )}
+            {preferredPeriodsError && <Text variant="bodySmall" style={styles.errorText}>{preferredPeriodsError}</Text>}
           </View>
         </Section>
       </View>
@@ -783,6 +996,120 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
         </View>
         {!!quietError && <Text variant="muted" style={styles.qError}>{quietError}</Text>}
         <Button title="Done" onPress={applyQuietHours} disabled={!canSaveQuiet} />
+      </Modal>
+
+      <Modal
+        visible={showPreferredModal}
+        onClose={() => setShowPreferredModal(false)}
+        title="Preferred Walking Periods"
+      >
+        <Text variant="bodySmall" color={theme.colors.textMuted} style={styles.qDesc}>
+          Add 1 to 5 preferred time periods. GapWalk will suggest walks only in these windows when enabled.
+        </Text>
+        {preferredForm.map((period, idx) => (
+          <View key={period.id} style={styles.prefPeriodCard}>
+            <View style={styles.prefPeriodHeader}>
+              <Text variant="bodySmall" style={styles.fieldLabel}>Period {idx + 1}</Text>
+              {preferredForm.length > 1 && (
+                <TouchableOpacity onPress={() => removePreferredPeriodForm(period.id)} hitSlop={8}>
+                  <Text variant="bodySmall" style={styles.prefRemoveText}>Remove</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+
+            <View style={styles.qTimeGroup}>
+              <Text variant="muted">Start</Text>
+              <View style={styles.qTimeInputRow}>
+                <View style={styles.clockRow}>
+                  <TwoDigitTimeInput
+                    mode="hour"
+                    style={[styles.input, styles.timeInput, themedInput]}
+                    placeholderTextColor={palette.textMuted}
+                    value={period.startHourRaw}
+                    onChange={(v) => updatePreferredFormById(period.id, { startHourRaw: v })}
+                    onBlurNormalize={() => updatePreferredFormById(period.id, { startHourRaw: normalizeOnBlur('hour', period.startHourRaw) })}
+                    placeholder="HH"
+                  />
+                  <Text variant="body">:</Text>
+                  <TwoDigitTimeInput
+                    mode="minute"
+                    style={[styles.input, styles.timeInput, themedInput]}
+                    placeholderTextColor={palette.textMuted}
+                    value={period.startMinuteRaw}
+                    onChange={(v) => updatePreferredFormById(period.id, { startMinuteRaw: v })}
+                    onBlurNormalize={() => updatePreferredFormById(period.id, { startMinuteRaw: normalizeOnBlur('minute', period.startMinuteRaw) })}
+                    placeholder="MM"
+                  />
+                </View>
+                <View style={styles.periodRow}>
+                  {(['AM', 'PM'] as const).map((per) => (
+                    <TouchableOpacity
+                      key={`${period.id}-start-${per}`}
+                      style={[styles.periodBtn, themedSurface, period.startPeriod === per && styles.periodBtnActive]}
+                      onPress={() => updatePreferredFormById(period.id, { startPeriod: per })}
+                    >
+                      <Text variant="bodySmall" color={period.startPeriod === per ? theme.colors.bgApp : theme.colors.textPrimary}>{per}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </View>
+            </View>
+
+            <View style={styles.qTimeGroup}>
+              <Text variant="muted">End</Text>
+              <View style={styles.qTimeInputRow}>
+                <View style={styles.clockRow}>
+                  <TwoDigitTimeInput
+                    mode="hour"
+                    style={[styles.input, styles.timeInput, themedInput]}
+                    placeholderTextColor={palette.textMuted}
+                    value={period.endHourRaw}
+                    onChange={(v) => updatePreferredFormById(period.id, { endHourRaw: v })}
+                    onBlurNormalize={() => updatePreferredFormById(period.id, { endHourRaw: normalizeOnBlur('hour', period.endHourRaw) })}
+                    placeholder="HH"
+                  />
+                  <Text variant="body">:</Text>
+                  <TwoDigitTimeInput
+                    mode="minute"
+                    style={[styles.input, styles.timeInput, themedInput]}
+                    placeholderTextColor={palette.textMuted}
+                    value={period.endMinuteRaw}
+                    onChange={(v) => updatePreferredFormById(period.id, { endMinuteRaw: v })}
+                    onBlurNormalize={() => updatePreferredFormById(period.id, { endMinuteRaw: normalizeOnBlur('minute', period.endMinuteRaw) })}
+                    placeholder="MM"
+                  />
+                </View>
+                <View style={styles.periodRow}>
+                  {(['AM', 'PM'] as const).map((per) => (
+                    <TouchableOpacity
+                      key={`${period.id}-end-${per}`}
+                      style={[styles.periodBtn, themedSurface, period.endPeriod === per && styles.periodBtnActive]}
+                      onPress={() => updatePreferredFormById(period.id, { endPeriod: per })}
+                    >
+                      <Text variant="bodySmall" color={period.endPeriod === per ? theme.colors.bgApp : theme.colors.textPrimary}>{per}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </View>
+            </View>
+          </View>
+        ))}
+        <TouchableOpacity
+          style={[
+            styles.prefAddBtn,
+            themedSurface,
+            preferredForm.length >= MAX_PREFERRED_PERIODS && styles.prefAddBtnDisabled,
+          ]}
+          onPress={addPreferredPeriodForm}
+          disabled={preferredForm.length >= MAX_PREFERRED_PERIODS}
+          activeOpacity={0.75}
+        >
+          <Text variant="bodySmall" style={styles.prefAddText}>
+            + Add period
+          </Text>
+        </TouchableOpacity>
+        {!!preferredError && <Text variant="muted" style={styles.qError}>{preferredError}</Text>}
+        <Button title="Save periods" onPress={applyPreferredPeriods} />
       </Modal>
     </Container>
   );
@@ -923,15 +1250,63 @@ const styles = StyleSheet.create({
     borderRadius: theme.borderRadius.sm,
     paddingVertical: 12,
     paddingHorizontal: 14,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.06)',
     marginTop: 6,
   },
-  quietValue: { fontWeight: theme.fontWeight.medium },
-  quietEdit: { fontSize: theme.fontSize.xs },
+  quietRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    width: '100%',
+    gap: 8,
+  },
+  quietValue: {
+    fontWeight: theme.fontWeight.medium,
+    flexGrow: 1,
+    flexShrink: 1,
+    minWidth: 0,
+  },
+  quietEdit: {
+    fontSize: theme.fontSize.xs,
+    flexShrink: 0,
+    textAlign: 'right',
+  },
+  preferredSummaryBtn: {
+    backgroundColor: theme.colors.bgApp,
+    borderRadius: theme.borderRadius.sm,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.06)',
+    marginTop: 6,
+  },
+  preferredSummaryHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+    gap: 10,
+  },
+  preferredSummaryLabel: {
+    fontSize: theme.fontSize.xs,
+  },
+  preferredSummaryAction: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  preferredSummaryActionText: {
+    color: theme.colors.accentPrimary,
+    fontWeight: theme.fontWeight.medium,
+  },
+  preferredSummaryValue: {
+    fontWeight: theme.fontWeight.medium,
+    lineHeight: 24,
+  },
+  preferredSummaryHint: {
+    marginTop: 8,
+    fontSize: theme.fontSize.xs,
+  },
 
   /* footer */
   footer: { paddingHorizontal: theme.layout.contentHorizontal, paddingBottom: 20, alignSelf: 'center', width: '100%', maxWidth: theme.layout.contentMaxWidth },
@@ -948,6 +1323,39 @@ const styles = StyleSheet.create({
   periodRow: { flexDirection: 'row', gap: 4 },
   periodBtn: { borderRadius: theme.borderRadius.sm, backgroundColor: theme.colors.bgApp, alignItems: 'center', justifyContent: 'center', paddingVertical: 7, paddingHorizontal: 8, minWidth: 42 },
   periodBtnActive: { backgroundColor: theme.colors.accentPrimary },
+  prefPeriodCard: {
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+    borderRadius: theme.borderRadius.md,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginBottom: 10,
+  },
+  prefPeriodHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 6,
+  },
+  prefRemoveText: {
+    color: theme.colors.error,
+    fontWeight: theme.fontWeight.medium,
+  },
+  prefAddBtn: {
+    borderRadius: theme.borderRadius.sm,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 10,
+    marginBottom: 10,
+  },
+  prefAddBtnDisabled: {
+    opacity: 0.45,
+  },
+  prefAddText: {
+    color: theme.colors.accentPrimary,
+    fontWeight: theme.fontWeight.semibold,
+  },
   qError: { color: theme.colors.warning, textAlign: 'center', marginBottom: 10 },
 
   /* validation */

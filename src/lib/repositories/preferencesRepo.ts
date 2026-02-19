@@ -1,9 +1,35 @@
 import { getDatabase } from '../db';
-import { Preferences, DEFAULT_PREFERENCES, StrictnessMode, WhenToNotify } from '../types';
+import {
+  Preferences,
+  DEFAULT_PREFERENCES,
+  PreferredWalkingPeriod,
+  StrictnessMode,
+  WhenToNotify,
+} from '../types';
 
 const normalizeStepGoal = (raw: number | undefined): number => {
   const base = typeof raw === 'number' ? Math.floor(raw) : DEFAULT_PREFERENCES.stepGoal;
   return Math.max(500, Math.min(6000, base));
+};
+
+const TIME_24H_RE = /^([01]\d|2[0-3]):([0-5]\d)$/;
+
+const isValidTime = (value: unknown): value is string =>
+  typeof value === 'string' && TIME_24H_RE.test(value);
+
+const normalizePreferredWalkingPeriods = (raw: unknown): PreferredWalkingPeriod[] => {
+  if (!Array.isArray(raw)) return [];
+
+  const out: PreferredWalkingPeriod[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue;
+    const start = (item as { start?: unknown }).start;
+    const end = (item as { end?: unknown }).end;
+    if (!isValidTime(start) || !isValidTime(end) || start === end) continue;
+    out.push({ start, end });
+    if (out.length >= 5) break;
+  }
+  return out;
 };
 
 export const preferencesRepo = {
@@ -23,6 +49,8 @@ export const preferencesRepo = {
       strictness_mode?: string;
       step_goal_enabled?: number;
       step_goal?: number;
+      preferred_walking_periods_enabled?: number;
+      preferred_walking_periods_json?: string;
     }>('SELECT * FROM preferences WHERE id = 1');
     
     if (!result) return null;
@@ -34,6 +62,17 @@ export const preferencesRepo = {
       strictnessMode === 'no_excuses'
         ? true
         : (result.step_goal_enabled ?? 0) === 1;
+    let preferredWalkingPeriods = DEFAULT_PREFERENCES.preferredWalkingPeriods;
+    try {
+      const parsed = result.preferred_walking_periods_json
+        ? JSON.parse(result.preferred_walking_periods_json)
+        : [];
+      preferredWalkingPeriods = normalizePreferredWalkingPeriods(parsed);
+    } catch {
+      preferredWalkingPeriods = DEFAULT_PREFERENCES.preferredWalkingPeriods;
+    }
+    const preferredWalkingPeriodsEnabled =
+      (result.preferred_walking_periods_enabled ?? 0) === 1 && preferredWalkingPeriods.length > 0;
     
     return {
       dailyTargetMinutes: result.daily_target_minutes,
@@ -49,6 +88,8 @@ export const preferencesRepo = {
       strictnessMode,
       stepGoalEnabled,
       stepGoal,
+      preferredWalkingPeriodsEnabled,
+      preferredWalkingPeriods,
     };
   },
   
@@ -58,14 +99,18 @@ export const preferencesRepo = {
       prefs.strictnessMode === 'no_excuses' ? 'no_excuses' : 'easygoing';
     const stepGoal = normalizeStepGoal(prefs.stepGoal);
     const stepGoalEnabled = strictnessMode === 'no_excuses' ? 1 : (prefs.stepGoalEnabled ? 1 : 0);
+    const preferredWalkingPeriods = normalizePreferredWalkingPeriods(prefs.preferredWalkingPeriods);
+    const preferredWalkingPeriodsEnabled =
+      prefs.preferredWalkingPeriodsEnabled && preferredWalkingPeriods.length > 0 ? 1 : 0;
 
     await db.runAsync(
       `INSERT OR REPLACE INTO preferences 
        (id, daily_target_minutes, buffer_minutes, notification_count_per_day, 
         notification_min_gap_minutes, quiet_hours_start, quiet_hours_end, min_walk_minutes,
         grace_period_minutes, when_to_notify, notify_delay_minutes,
+        preferred_walking_periods_enabled, preferred_walking_periods_json,
         strictness_mode, step_goal_enabled, step_goal, updated_at)
-       VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+       VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
       [
         prefs.dailyTargetMinutes,
         prefs.bufferMinutes,
@@ -77,6 +122,8 @@ export const preferencesRepo = {
         prefs.gracePeriodMinutes,
         prefs.whenToNotify,
         prefs.notifyDelayMinutes,
+        preferredWalkingPeriodsEnabled,
+        JSON.stringify(preferredWalkingPeriods),
         strictnessMode,
         stepGoalEnabled,
         stepGoal,

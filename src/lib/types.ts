@@ -24,6 +24,11 @@ export interface BusyEvent {
 export type WhenToNotify = 'now' | 'delay' | 'next_gap';
 export type StrictnessMode = 'easygoing' | 'no_excuses';
 
+export interface PreferredWalkingPeriod {
+  start: string; // "HH:mm"
+  end: string; // "HH:mm"
+}
+
 export interface Preferences {
   dailyTargetMinutes: number;
   bufferMinutes: number;
@@ -38,6 +43,8 @@ export interface Preferences {
   strictnessMode: StrictnessMode;
   stepGoalEnabled: boolean;
   stepGoal: number;
+  preferredWalkingPeriodsEnabled: boolean;
+  preferredWalkingPeriods: PreferredWalkingPeriod[];
 }
 
 export interface WalkSession {
@@ -99,4 +106,6 @@ export const DEFAULT_PREFERENCES: Preferences = {
   strictnessMode: 'easygoing',
   stepGoalEnabled: false,
   stepGoal: 1000,
+  preferredWalkingPeriodsEnabled: false,
+  preferredWalkingPeriods: [],
 };

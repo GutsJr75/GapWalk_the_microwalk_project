@@ -3,12 +3,10 @@ import {
   format, 
   addMinutes, 
   differenceInMinutes,
-  isWithinInterval,
   startOfDay,
   endOfDay,
   parseISO,
   isAfter,
-  isBefore,
 } from 'date-fns';
 
 export const timeUtils = {
@@ -22,24 +20,51 @@ export const timeUtils = {
     return format(date, 'HH:mm');
   },
   
+  // Check whether a clock time falls inside a daily HH:mm-HH:mm range.
+  // Supports overnight ranges (e.g. 23:00 -> 06:00).
+  isInTimeRange(
+    checkTime: Date,
+    rangeStart: string,
+    rangeEnd: string
+  ): boolean {
+    const dayStart = startOfDay(checkTime);
+    const start = this.parseTime(rangeStart, dayStart);
+    const end = this.parseTime(rangeEnd, dayStart);
+    const at = checkTime.getTime();
+    const startMs = start.getTime();
+    const endMs = end.getTime();
+
+    if (startMs === endMs) {
+      return false;
+    }
+
+    if (startMs > endMs) {
+      return at >= startMs || at <= endMs;
+    }
+
+    return at >= startMs && at <= endMs;
+  },
+
   // Check if a time is within quiet hours
   isInQuietHours(
     checkTime: Date, 
     quietStart: string, 
     quietEnd: string
   ): boolean {
-    const dayStart = startOfDay(checkTime);
-    const qStart = this.parseTime(quietStart, dayStart);
-    const qEnd = this.parseTime(quietEnd, dayStart);
-    
-    // Handle overnight quiet hours (e.g., 23:00 to 06:00)
-    if (isAfter(qStart, qEnd)) {
-      // Quiet hours span midnight
-      return isAfter(checkTime, qStart) || isBefore(checkTime, qEnd);
-    } else {
-      // Normal case
-      return isWithinInterval(checkTime, { start: qStart, end: qEnd });
+    return this.isInTimeRange(checkTime, quietStart, quietEnd);
+  },
+
+  // Check if a time falls in at least one preferred walking period.
+  isInPreferredPeriods(
+    checkTime: Date,
+    periods: Array<{ start: string; end: string }>
+  ): boolean {
+    if (periods.length === 0) {
+      return true;
     }
+    return periods.some((period) =>
+      this.isInTimeRange(checkTime, period.start, period.end)
+    );
   },
   
   // Get active window for a day (excluding quiet hours)

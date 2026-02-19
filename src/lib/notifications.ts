@@ -3,7 +3,8 @@ import * as Device from 'expo-device';
 import Constants from 'expo-constants';
 import { Platform } from 'react-native';
 import { NudgePlan, Preferences } from './types';
-import { parseISO, subMinutes, isBefore } from 'date-fns';
+import { addMinutes, parseISO, subMinutes, isBefore } from 'date-fns';
+import { timeUtils } from './time';
 
 export const WALK_NUDGE_CATEGORY_ID = 'walk_nudge_actions';
 export const WALK_NUDGE_ACTION_START = 'START_WALK';
@@ -27,7 +28,6 @@ export const isNotificationsSupported =
 if (isNotificationsSupported) {
   Notifications.setNotificationHandler({
     handleNotification: async () => ({
-      shouldShowAlert: true,
       shouldPlaySound: true,
       shouldSetBadge: false,
       shouldShowBanner: true,
@@ -107,7 +107,23 @@ export const notificationService = {
     if (!isNotificationsSupported) return null;
 
     try {
-      let notifyTime = parseISO(plan.walkStart);
+      const walkStart = parseISO(plan.walkStart);
+      const gapEnd = parseISO(plan.gapEnd);
+      const plannedWalkEnd = addMinutes(walkStart, Math.max(1, plan.suggestedDurationMinutes));
+      const walkEnd = plannedWalkEnd.getTime() > gapEnd.getTime() ? gapEnd : plannedWalkEnd;
+
+      if (
+        prefs?.preferredWalkingPeriodsEnabled &&
+        prefs.preferredWalkingPeriods.length > 0 &&
+        (
+          !timeUtils.isInPreferredPeriods(walkStart, prefs.preferredWalkingPeriods) ||
+          !timeUtils.isInPreferredPeriods(walkEnd, prefs.preferredWalkingPeriods)
+        )
+      ) {
+        return null;
+      }
+
+      let notifyTime = walkStart;
 
       // Apply "delay" as "minutes before walk start", never before gap start.
       if (prefs?.whenToNotify === 'delay') {
@@ -118,10 +134,24 @@ export const notificationService = {
         }
       }
 
+      if (prefs) {
+        while (
+          notifyTime.getTime() < walkStart.getTime() &&
+          timeUtils.isInQuietHours(notifyTime, prefs.quietHoursStart, prefs.quietHoursEnd)
+        ) {
+          notifyTime = addMinutes(notifyTime, 1);
+        }
+        if (timeUtils.isInQuietHours(notifyTime, prefs.quietHoursStart, prefs.quietHoursEnd)) {
+          return null;
+        }
+        if (notifyTime.getTime() > walkStart.getTime()) {
+          return null;
+        }
+      }
+
       const now = new Date();
       if (notifyTime <= now) return null;
 
-      const walkStart = parseISO(plan.walkStart);
       const minutesUntilWalk = Math.max(0, Math.round((walkStart.getTime() - notifyTime.getTime()) / 60000));
       const bodyText = minutesUntilWalk > 0
         ? `You've got about ${plan.suggestedDurationMinutes} free min. Best start is in ${minutesUntilWalk} min. Ready for a quick walk?`

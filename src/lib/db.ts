@@ -69,6 +69,8 @@ const initializeTables = async () => {
       quiet_hours_start TEXT NOT NULL DEFAULT '23:00',
       quiet_hours_end TEXT NOT NULL DEFAULT '06:00',
       min_walk_minutes INTEGER NOT NULL DEFAULT 6,
+      preferred_walking_periods_enabled INTEGER NOT NULL DEFAULT 0,
+      preferred_walking_periods_json TEXT DEFAULT '[]',
       strictness_mode TEXT NOT NULL DEFAULT 'easygoing',
       step_goal_enabled INTEGER NOT NULL DEFAULT 0,
       step_goal INTEGER NOT NULL DEFAULT 1000,
@@ -231,6 +233,8 @@ const runMigrations = async () => {
   await ensureColumn('preferences', 'when_to_notify', "TEXT DEFAULT 'now'");
   await ensureColumn('preferences', 'notify_delay_minutes', 'INTEGER DEFAULT 5');
   await ensureColumn('preferences', 'notification_min_gap_minutes', 'INTEGER DEFAULT 60');
+  await ensureColumn('preferences', 'preferred_walking_periods_enabled', 'INTEGER NOT NULL DEFAULT 0');
+  await ensureColumn('preferences', 'preferred_walking_periods_json', "TEXT DEFAULT '[]'");
   await ensureColumn('preferences', 'strictness_mode', "TEXT NOT NULL DEFAULT 'easygoing'");
   await ensureColumn('preferences', 'step_goal_enabled', 'INTEGER NOT NULL DEFAULT 0');
   await ensureColumn('preferences', 'step_goal', 'INTEGER NOT NULL DEFAULT 1000');

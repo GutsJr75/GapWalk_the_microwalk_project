@@ -5,6 +5,10 @@ import { BusyEvent } from './types';
 
 WebBrowser.maybeCompleteAuthSession();
 
+let hasLoggedRedirectUri = false;
+const shouldLogOAuthRedirect =
+  typeof process !== 'undefined' && process.env?.EXPO_PUBLIC_DEBUG_OAUTH === '1';
+
 /*
  * ── Google OAuth Configuration ──
  *
@@ -45,8 +49,9 @@ export function getGoogleRedirectUri(): string {
 export function getGoogleAuthConfig(): AuthSession.AuthRequestConfig {
   const redirectUri = getGoogleRedirectUri();
 
-  if (__DEV__) {
+  if (__DEV__ && shouldLogOAuthRedirect && !hasLoggedRedirectUri) {
     console.log('[GapWalk] Google OAuth redirect URI:', redirectUri);
+    hasLoggedRedirectUri = true;
   }
 
   return {
