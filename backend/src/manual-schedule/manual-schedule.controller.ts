@@ -1,11 +1,4 @@
-import {
-  Controller,
-  Get,
-  Post,
-  Delete,
-  Body,
-  UseGuards,
-} from '@nestjs/common';
+import { Controller, Get, Post, Delete, Body, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -20,9 +13,7 @@ import {
 @UseGuards(JwtAuthGuard)
 @Controller('manual-schedule')
 export class ManualScheduleController {
-  constructor(
-    private readonly manualScheduleService: ManualScheduleService,
-  ) {}
+  constructor(private readonly manualScheduleService: ManualScheduleService) {}
 
   @Get()
   @ApiOperation({ summary: 'Get all manual schedule entries' })

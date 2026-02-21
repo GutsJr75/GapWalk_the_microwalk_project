@@ -68,38 +68,46 @@ export class PushNotificationsService {
       const ticket = tickets[i];
       const token = tokens[i] ?? 'unknown';
 
+      let ticketId: string | null = null;
+      let errorMessage: string | null = null;
+
+      if (ticket.status === 'ok') {
+        ticketId = ticket.id;
+      } else if (ticket.status === 'error') {
+        const errTicket = ticket;
+        errorMessage = `${errTicket.message} (${errTicket.details?.error})`;
+      }
+
       await this.prisma.pushLog.create({
         data: {
           userId,
           nudgePlanId: planId,
           expoPushToken: token,
-          ticketId: ticket.status === 'ok' ? (ticket as any).id : null,
+          ticketId,
           status: ticket.status === 'ok' ? 'sent' : 'failed',
-          errorMessage:
-            ticket.status === 'error'
-              ? `${(ticket as any).message} (${(ticket as any).details?.error})`
-              : null,
+          errorMessage,
           sentAt: new Date(),
         },
       });
 
       // Deactivate device if not registered
-      if (
-        ticket.status === 'error' &&
-        (ticket as any).details?.error === 'DeviceNotRegistered'
-      ) {
-        await this.devicesService.deactivate(userId, token);
-        this.logger.warn(`Deactivated unregistered device token: ${token}`);
+      if (ticket.status === 'error') {
+        const errTicket = ticket;
+        if (errTicket.details?.error === 'DeviceNotRegistered') {
+          await this.devicesService.deactivate(userId, token);
+          this.logger.warn(`Deactivated unregistered device token: ${token}`);
+        }
       }
     }
 
     // Update nudge plan with push info
     if (tickets.length > 0 && tickets[0].status === 'ok') {
       try {
+        const successTicket = tickets[0];
         await this.prisma.nudgePlan.update({
           where: { id: planId },
           data: {
-            pushTicketId: (tickets[0] as any).id,
+            pushTicketId: successTicket.id,
             pushSentAt: new Date(),
           },
         });
@@ -134,7 +142,7 @@ export class PushNotificationsService {
         await this.sendWalkNudge(
           plan.userId,
           plan.id,
-          "Time for a walk! 🚶",
+          'Time for a walk! 🚶',
           `You have a ${durationText} walking opportunity. Let's go!`,
         );
 
@@ -143,9 +151,7 @@ export class PushNotificationsService {
           data: { status: 'notified' },
         });
       } catch (error) {
-        this.logger.error(
-          `Failed to send nudge for plan ${plan.id}: ${error}`,
-        );
+        this.logger.error(`Failed to send nudge for plan ${plan.id}: ${error}`);
       }
     }
 
@@ -167,16 +173,15 @@ export class PushNotificationsService {
 
     if (pendingLogs.length === 0) return { checked: 0 };
 
-    const ticketIds = pendingLogs
-      .map((log) => log.ticketId!)
-      .filter(Boolean);
+    const ticketIds = pendingLogs.map((log) => log.ticketId!).filter(Boolean);
 
     const receiptIdChunks =
       this.expo.chunkPushNotificationReceiptIds(ticketIds);
 
     for (const chunk of receiptIdChunks) {
       try {
-        const receipts = await this.expo.getPushNotificationReceiptsAsync(chunk);
+        const receipts =
+          await this.expo.getPushNotificationReceiptsAsync(chunk);
 
         for (const [receiptId, receipt] of Object.entries(receipts)) {
           const log = pendingLogs.find((l) => l.ticketId === receiptId);

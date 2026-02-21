@@ -23,7 +23,9 @@ export class ResearcherService {
 
   async findAllStudies() {
     return this.prisma.study.findMany({
-      include: { enrollments: { select: { id: true, userId: true, isActive: true } } },
+      include: {
+        enrollments: { select: { id: true, userId: true, isActive: true } },
+      },
       orderBy: { createdAt: 'desc' },
     });
   }
@@ -33,7 +35,11 @@ export class ResearcherService {
       where: { id: studyId },
       include: {
         enrollments: {
-          include: { user: { select: { id: true, email: true, displayName: true, role: true } } },
+          include: {
+            user: {
+              select: { id: true, email: true, displayName: true, role: true },
+            },
+          },
         },
       },
     });
@@ -42,7 +48,7 @@ export class ResearcherService {
   }
 
   async updateStudy(studyId: string, dto: UpdateStudyDto) {
-    const data: any = { ...dto };
+    const data: Prisma.StudyUpdateInput = { ...dto };
     if (dto.startDate) data.startDate = new Date(dto.startDate);
     if (dto.endDate) data.endDate = new Date(dto.endDate);
     return this.prisma.study.update({ where: { id: studyId }, data });
@@ -83,36 +89,47 @@ export class ResearcherService {
 
     const userIds = study.enrollments.map((e) => e.userId);
 
-    const [users, walkSessions, nudgePlans, behaviorLogs, dailyAggs, weeklyAggs] =
-      await Promise.all([
-        this.prisma.user.findMany({
-          where: { id: { in: userIds } },
-          select: { id: true, email: true, displayName: true, createdAt: true },
-        }),
-        this.prisma.walkSession.findMany({
-          where: { userId: { in: userIds } },
-          orderBy: { start: 'desc' },
-        }),
-        this.prisma.nudgePlan.findMany({
-          where: { userId: { in: userIds } },
-          orderBy: { walkStart: 'desc' },
-        }),
-        this.prisma.behaviorLog.findMany({
-          where: { userId: { in: userIds } },
-          orderBy: { createdAt: 'desc' },
-        }),
-        this.prisma.dailyAggregation.findMany({
-          where: { userId: { in: userIds } },
-          orderBy: { date: 'desc' },
-        }),
-        this.prisma.weeklyAggregation.findMany({
-          where: { userId: { in: userIds } },
-          orderBy: { weekStart: 'desc' },
-        }),
-      ]);
+    const [
+      users,
+      walkSessions,
+      nudgePlans,
+      behaviorLogs,
+      dailyAggs,
+      weeklyAggs,
+    ] = await Promise.all([
+      this.prisma.user.findMany({
+        where: { id: { in: userIds } },
+        select: { id: true, email: true, displayName: true, createdAt: true },
+      }),
+      this.prisma.walkSession.findMany({
+        where: { userId: { in: userIds } },
+        orderBy: { start: 'desc' },
+      }),
+      this.prisma.nudgePlan.findMany({
+        where: { userId: { in: userIds } },
+        orderBy: { walkStart: 'desc' },
+      }),
+      this.prisma.behaviorLog.findMany({
+        where: { userId: { in: userIds } },
+        orderBy: { createdAt: 'desc' },
+      }),
+      this.prisma.dailyAggregation.findMany({
+        where: { userId: { in: userIds } },
+        orderBy: { date: 'desc' },
+      }),
+      this.prisma.weeklyAggregation.findMany({
+        where: { userId: { in: userIds } },
+        orderBy: { weekStart: 'desc' },
+      }),
+    ]);
 
     return {
-      study: { id: study.id, name: study.name, startDate: study.startDate, endDate: study.endDate },
+      study: {
+        id: study.id,
+        name: study.name,
+        startDate: study.startDate,
+        endDate: study.endDate,
+      },
       participantCount: userIds.length,
       users,
       walkSessions,
@@ -129,7 +146,9 @@ export class ResearcherService {
   async getParticipantSummaries(studyId: string) {
     const study = await this.prisma.study.findUnique({
       where: { id: studyId },
-      include: { enrollments: { where: { isActive: true }, include: { user: true } } },
+      include: {
+        enrollments: { where: { isActive: true }, include: { user: true } },
+      },
     });
     if (!study) throw new NotFoundException('Study not found');
 
@@ -140,7 +159,12 @@ export class ResearcherService {
         const [sessionAgg, nudgeCounts] = await Promise.all([
           this.prisma.walkSession.aggregate({
             where: { userId: uid },
-            _sum: { activeSeconds: true, steps: true, distanceMeters: true, calories: true },
+            _sum: {
+              activeSeconds: true,
+              steps: true,
+              distanceMeters: true,
+              calories: true,
+            },
             _count: { _all: true },
           }),
           this.prisma.nudgePlan.groupBy({

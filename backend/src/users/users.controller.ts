@@ -1,16 +1,10 @@
-import {
-  Controller,
-  Get,
-  Patch,
-  Body,
-  UseGuards,
-  Query,
-} from '@nestjs/common';
+import { Controller, Get, Patch, Body, UseGuards, Query } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
+import { UserRole } from '@prisma/client';
 import { UsersService } from './users.service';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { PaginationDto } from '../common/dto/pagination.dto';
@@ -38,7 +32,7 @@ export class UsersController {
   }
 
   @Get('participants')
-  @Roles('researcher' as any, 'admin' as any)
+  @Roles(UserRole.researcher, UserRole.admin)
   @ApiOperation({ summary: 'List all participants (researcher/admin)' })
   listParticipants(@Query() pagination: PaginationDto) {
     return this.usersService.listParticipants(

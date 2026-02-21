@@ -24,11 +24,11 @@ export class PreferencesService {
   async update(userId: string, dto: UpdatePreferencesDto): Promise<Preference> {
     return this.prisma.preference.upsert({
       where: { userId },
-      update: dto as any,
+      update: dto,
       create: {
         userId,
         ...dto,
-      } as any,
+      },
     });
   }
 }

@@ -4,6 +4,7 @@ import {
   IsString,
   IsBoolean,
   IsEnum,
+  IsArray,
   Min,
   Max,
   Matches,
@@ -104,4 +105,17 @@ export class UpdatePreferencesDto {
   @Min(100)
   @Max(50000)
   stepGoal?: number;
+
+  @ApiPropertyOptional({
+    description:
+      'Preferred walking time windows, e.g. [{start:"08:00",end:"12:00"},{start:"17:00",end:"19:00"}]',
+    type: 'array',
+    items: {
+      type: 'object',
+      properties: { start: { type: 'string' }, end: { type: 'string' } },
+    },
+  })
+  @IsOptional()
+  @IsArray()
+  preferredWalkingPeriods?: Array<{ start: string; end: string }>;
 }

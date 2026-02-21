@@ -16,10 +16,7 @@ export class SyncController {
   @ApiOperation({
     summary: 'Bidirectional sync — send client changes, receive server state',
   })
-  sync(
-    @CurrentUser('userId') userId: string,
-    @Body() dto: SyncRequestDto,
-  ) {
+  sync(@CurrentUser('userId') userId: string, @Body() dto: SyncRequestDto) {
     return this.syncService.sync(userId, dto);
   }
 }

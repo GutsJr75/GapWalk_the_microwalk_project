@@ -6,6 +6,8 @@
 
 All authenticated endpoints require: `Authorization: Bearer <JWT>`
 
+`today`/`yesterday` semantics use the authenticated user's timezone (`users.timezone`, default `America/New_York`).
+
 All successful responses are wrapped by the global `TransformInterceptor`:
 
 ```json
@@ -305,7 +307,7 @@ Replace all manual schedule entries (full save).
 
 ### `POST /api/manual-schedule/generate-events`
 
-Generate busy events from the weekly template for the next 4 weeks.
+Generate busy events from the weekly template for the next 4 weeks, anchored to the user's timezone.
 
 **Auth:** JWT
 
@@ -329,7 +331,7 @@ Query nudge plans for the current user.
 
 ### `GET /api/nudge-plans/today`
 
-Get all nudge plans for today.
+Get all nudge plans for today in the user's timezone.
 
 **Auth:** JWT
 
@@ -367,7 +369,7 @@ Create a nudge plan (client-generated local fallback upload).
 
 ### `POST /api/nudge-plans/generate`
 
-Server-side nudge plan generation for today + tomorrow. Cancels stale plans then runs the gap engine.
+Server-side nudge plan generation for today + tomorrow in the user's timezone. Cancels stale plans then runs the gap engine.
 
 **Auth:** JWT
 
@@ -410,10 +412,8 @@ Check whether the user can start another walk (based on daily goal completion).
 
 ```json
 {
-  "canStart": true,
-  "todayMinutes": 8,
-  "dailyTarget": 15,
-  "todayNotifiedCount": 1
+  "allowed": true,
+  "planExists": true
 }
 ```
 
@@ -454,13 +454,13 @@ Query walk sessions. Filterable by date range.
 
 ### `GET /api/walk-sessions/today`
 
-Get today's walk sessions.
+Get today's walk sessions in the user's timezone.
 
 **Auth:** JWT
 
 ### `GET /api/walk-sessions/today/stats`
 
-Aggregate today's walking statistics.
+Aggregate today's walking statistics in the user's timezone.
 
 **Auth:** JWT
 
@@ -468,11 +468,11 @@ Aggregate today's walking statistics.
 
 ```json
 {
-  "totalActiveMinutes": 12,
+  "sessionCount": 2,
+  "totalMinutes": 12,
   "totalSteps": 1560,
   "totalDistanceMeters": 1200.5,
-  "totalCalories": 48.3,
-  "sessionCount": 2
+  "totalCalories": 48.3
 }
 ```
 
@@ -518,7 +518,7 @@ Full bidirectional offline-first sync. Client sends all changes since last sync;
   "manualScheduleEntries": [ ... ],
   "nudgePlans": [ ... ],
   "walkSessions": [ ... ],
-  "serverTime": "2026-02-17T12:00:00.000Z"
+  "syncedAt": "2026-02-17T12:00:00.000Z"
 }
 ```
 

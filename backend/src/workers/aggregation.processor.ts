@@ -4,7 +4,13 @@ import { Job } from 'bullmq';
 import { AnalyticsService } from '../analytics/analytics.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { format, subDays, startOfWeek } from 'date-fns';
-import { QUEUE_AGGREGATION } from './workers.module';
+import { TZDate } from '@date-fns/tz';
+import { QUEUE_AGGREGATION } from './workers.constants';
+
+interface AggregationJobData {
+  userId?: string;
+  date?: string;
+}
 
 @Processor(QUEUE_AGGREGATION)
 export class AggregationProcessor extends WorkerHost {
@@ -17,7 +23,7 @@ export class AggregationProcessor extends WorkerHost {
     super();
   }
 
-  async process(job: Job) {
+  async process(job: Job<AggregationJobData>) {
     const { name, data } = job;
 
     if (name === 'compute-daily') {
@@ -39,16 +45,20 @@ export class AggregationProcessor extends WorkerHost {
   }
 
   private async computeDailyAll() {
-    const yesterday = format(subDays(new Date(), 1), 'yyyy-MM-dd');
-    const users = await this.prisma.user.findMany({ select: { id: true } });
+    const users = await this.prisma.user.findMany({
+      select: { id: true, timezone: true },
+    });
 
-    this.logger.log(
-      `Computing daily aggregation for ${users.length} users, date ${yesterday}`,
-    );
+    this.logger.log(`Computing daily aggregation for ${users.length} users`);
 
     let ok = 0;
     for (const u of users) {
       try {
+        const tz = u.timezone ?? 'America/New_York';
+        const yesterday = format(
+          subDays(new TZDate(new Date(), tz), 1),
+          'yyyy-MM-dd',
+        );
         await this.analyticsService.computeDailyAggregation(u.id, yesterday);
         ok++;
       } catch (err) {
@@ -63,19 +73,22 @@ export class AggregationProcessor extends WorkerHost {
   }
 
   private async computeWeeklyAll() {
-    const weekStart = format(
-      startOfWeek(subDays(new Date(), 7), { weekStartsOn: 1 }),
-      'yyyy-MM-dd',
-    );
-    const users = await this.prisma.user.findMany({ select: { id: true } });
+    const users = await this.prisma.user.findMany({
+      select: { id: true, timezone: true },
+    });
 
-    this.logger.log(
-      `Computing weekly aggregation for ${users.length} users, week ${weekStart}`,
-    );
+    this.logger.log(`Computing weekly aggregation for ${users.length} users`);
 
     let ok = 0;
     for (const u of users) {
       try {
+        const tz = u.timezone ?? 'America/New_York';
+        const weekStart = format(
+          startOfWeek(subDays(new TZDate(new Date(), tz), 7), {
+            weekStartsOn: 1,
+          }),
+          'yyyy-MM-dd',
+        );
         await this.analyticsService.computeWeeklyAggregation(u.id, weekStart);
         ok++;
       } catch (err) {

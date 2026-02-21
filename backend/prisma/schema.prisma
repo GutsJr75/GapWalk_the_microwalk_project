@@ -1,5 +1,6 @@
 generator client {
   provider = "prisma-client-js"
+  engineType = "binary"
 }
 
 datasource db {
@@ -148,6 +149,7 @@ model Preference {
   strictnessMode            StrictnessMode @default(easygoing) @map("strictness_mode")
   stepGoalEnabled           Boolean        @default(false) @map("step_goal_enabled")
   stepGoal                  Int            @default(1000) @map("step_goal")
+  preferredWalkingPeriods   Json?          @map("preferred_walking_periods") // [{start:"HH:mm",end:"HH:mm"}]
   createdAt                 DateTime       @default(now()) @map("created_at")
   updatedAt                 DateTime       @updatedAt @map("updated_at")
 

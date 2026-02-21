@@ -18,7 +18,7 @@ REST API server for **GapWalk** — a micro-walk research intervention platform 
 
 ### Prerequisites
 
-- Node.js ≥ 20
+- Node.js 22 LTS (Node.js ≥ 20 supported)
 - Docker & Docker Compose (for PostgreSQL + Redis)
 - Auth0 tenant with an API configured
 - Expo access token (for push notifications)
@@ -69,22 +69,29 @@ The API will be available at `http://localhost:3000`.
 | `/health`    | Health check             |
 | `/dashboard` | Researcher dashboard SPA |
 
+## Runtime Notes
+
+- All `today`/`yesterday`/day-boundary logic is computed in the user's timezone (`users.timezone`, default `America/New_York`).
+- Background workers can be disabled by setting `ENABLE_WORKERS=false` (useful for tests or API-only local runs).
+
 ## Environment Variables
 
-| Variable               | Required | Default                  | Description                         |
-| ---------------------- | -------- | ------------------------ | ----------------------------------- |
-| `DATABASE_URL`         | Yes      | —                        | PostgreSQL connection string        |
-| `REDIS_URL`            | Yes      | `redis://localhost:6379` | Redis connection URL                |
-| `AUTH0_DOMAIN`         | Yes      | —                        | Auth0 tenant domain                 |
-| `AUTH0_AUDIENCE`       | Yes      | —                        | Auth0 API audience                  |
-| `AUTH0_CLIENT_ID`      | Yes      | —                        | Auth0 application client ID         |
-| `AUTH0_CLIENT_SECRET`  | Yes      | —                        | Auth0 application client secret     |
-| `EXPO_ACCESS_TOKEN`    | Yes      | —                        | Expo push notification access token |
-| `PORT`                 | No       | `3000`                   | HTTP port                           |
-| `NODE_ENV`             | No       | `development`            | `development` or `production`       |
-| `CORS_ORIGIN`          | No       | `http://localhost:8081`  | Allowed CORS origin                 |
-| `GOOGLE_CLIENT_ID`     | No       | —                        | Google Calendar OAuth client ID     |
-| `GOOGLE_CLIENT_SECRET` | No       | —                        | Google Calendar OAuth client secret |
+| Variable                 | Required | Default                  | Description                                                 |
+| ------------------------ | -------- | ------------------------ | ----------------------------------------------------------- |
+| `DATABASE_URL`           | Yes      | —                        | PostgreSQL connection string                                |
+| `REDIS_URL`              | Yes      | `redis://localhost:6379` | Redis connection URL                                        |
+| `AUTH0_DOMAIN`           | Yes      | —                        | Auth0 tenant domain                                         |
+| `AUTH0_AUDIENCE`         | Yes      | —                        | Auth0 API audience                                          |
+| `AUTH0_CLIENT_ID`        | Yes      | —                        | Auth0 application client ID                                 |
+| `AUTH0_CLIENT_SECRET`    | Yes      | —                        | Auth0 application client secret                             |
+| `EXPO_ACCESS_TOKEN`      | Yes      | —                        | Expo push notification access token                         |
+| `PORT`                   | No       | `3000`                   | HTTP port                                                   |
+| `NODE_ENV`               | No       | `development`            | `development` or `production`                               |
+| `CORS_ORIGIN`            | No       | `http://localhost:8081`  | Allowed CORS origin                                         |
+| `ENABLE_WORKERS`         | No       | `true`                   | Set `false` to disable BullMQ schedulers/processors         |
+| `PRISMA_CONNECT_IN_TEST` | No       | `false`                  | When `NODE_ENV=test`, set `true` to force Prisma DB connect |
+| `GOOGLE_CLIENT_ID`       | No       | —                        | Google Calendar OAuth client ID                             |
+| `GOOGLE_CLIENT_SECRET`   | No       | —                        | Google Calendar OAuth client secret                         |
 
 ## NPM Scripts
 

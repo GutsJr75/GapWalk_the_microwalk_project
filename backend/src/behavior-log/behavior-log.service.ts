@@ -35,7 +35,7 @@ export class BehaviorLogService {
   }
 
   async query(query: QueryBehaviorLogsDto) {
-    const where: any = {};
+    const where: Prisma.BehaviorLogWhereInput = {};
     if (query.userId) where.userId = query.userId;
     if (query.eventType) where.eventType = query.eventType;
     if (query.nudgePlanId) where.nudgePlanId = query.nudgePlanId;
@@ -53,7 +53,7 @@ export class BehaviorLogService {
   }
 
   async getEventTypeCounts(query: QueryBehaviorLogsDto) {
-    const where: any = {};
+    const where: Prisma.BehaviorLogWhereInput = {};
     if (query.userId) where.userId = query.userId;
     if (query.startDate || query.endDate) {
       where.createdAt = {};
@@ -76,7 +76,7 @@ export class BehaviorLogService {
    * Returns counts: received → opened → started → completed/skipped/dismissed
    */
   async getNudgeFunnel(userId?: string, startDate?: string, endDate?: string) {
-    const where: any = {};
+    const where: Prisma.BehaviorLogWhereInput = {};
     if (userId) where.userId = userId;
     if (startDate || endDate) {
       where.createdAt = {};

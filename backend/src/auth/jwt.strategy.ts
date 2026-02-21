@@ -31,7 +31,9 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     });
   }
 
-  async validate(payload: JwtPayload): Promise<JwtPayload & { userId: string }> {
+  async validate(
+    payload: JwtPayload,
+  ): Promise<JwtPayload & { userId: string }> {
     // Find or create user from Auth0 subject
     let user = await this.prisma.user.findUnique({
       where: { auth0Sub: payload.sub },
@@ -42,7 +44,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       user = await this.prisma.user.create({
         data: {
           auth0Sub: payload.sub,
-          email: payload.email as string | undefined,
+          email: payload.email,
         },
       });
     }

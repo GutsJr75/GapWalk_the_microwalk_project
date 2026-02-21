@@ -7,7 +7,7 @@ import {
   QueryAnalyticsDto,
   QueryAggregationsDto,
 } from './dto/analytics.dto';
-import { format, startOfDay, endOfDay, startOfWeek } from 'date-fns';
+import { startOfDay, endOfDay } from 'date-fns';
 
 @Injectable()
 export class AnalyticsService {
@@ -36,15 +36,13 @@ export class AnalyticsService {
         userId,
         name: e.name,
         payload: e.payload ?? Prisma.JsonNull,
-        clientCreatedAt: e.clientCreatedAt
-          ? new Date(e.clientCreatedAt)
-          : null,
+        clientCreatedAt: e.clientCreatedAt ? new Date(e.clientCreatedAt) : null,
       })),
     });
   }
 
   async queryEvents(query: QueryAnalyticsDto) {
-    const where: any = {};
+    const where: Prisma.AnalyticsEventWhereInput = {};
     if (query.userId) where.userId = query.userId;
     if (query.name) where.name = query.name;
     if (query.startDate || query.endDate) {
@@ -61,7 +59,7 @@ export class AnalyticsService {
   }
 
   async getEventCounts(query: QueryAnalyticsDto) {
-    const where: any = {};
+    const where: Prisma.AnalyticsEventWhereInput = {};
     if (query.userId) where.userId = query.userId;
     if (query.startDate || query.endDate) {
       where.createdAt = {};
@@ -96,7 +94,10 @@ export class AnalyticsService {
     });
   }
 
-  async bulkCreateCrashReports(userId: string, reports: CreateCrashReportDto[]) {
+  async bulkCreateCrashReports(
+    userId: string,
+    reports: CreateCrashReportDto[],
+  ) {
     return this.prisma.crashReport.createMany({
       data: reports.map((r) => ({
         userId,
@@ -104,15 +105,13 @@ export class AnalyticsService {
         stack: r.stack,
         isFatal: r.isFatal ?? false,
         context: r.context ?? Prisma.JsonNull,
-        clientCreatedAt: r.clientCreatedAt
-          ? new Date(r.clientCreatedAt)
-          : null,
+        clientCreatedAt: r.clientCreatedAt ? new Date(r.clientCreatedAt) : null,
       })),
     });
   }
 
   async queryCrashReports(query: QueryAnalyticsDto) {
-    const where: any = {};
+    const where: Prisma.CrashReportWhereInput = {};
     if (query.userId) where.userId = query.userId;
     if (query.startDate || query.endDate) {
       where.createdAt = {};
@@ -130,7 +129,7 @@ export class AnalyticsService {
   // ── Daily Aggregations ──
 
   async getDailyAggregations(query: QueryAggregationsDto) {
-    const where: any = {};
+    const where: Prisma.DailyAggregationWhereInput = {};
     if (query.userId) where.userId = query.userId;
     if (query.date) where.date = query.date;
     if (query.startDate || query.endDate) {
@@ -146,7 +145,7 @@ export class AnalyticsService {
   }
 
   async getWeeklyAggregations(query: QueryAggregationsDto) {
-    const where: any = {};
+    const where: Prisma.WeeklyAggregationWhereInput = {};
     if (query.userId) where.userId = query.userId;
     if (query.weekStart) where.weekStart = query.weekStart;
     if (query.startDate || query.endDate) {

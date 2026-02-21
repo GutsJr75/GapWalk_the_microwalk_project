@@ -3,12 +3,13 @@ import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
+import { UserRole } from '@prisma/client';
 import { DashboardSpaService } from './dashboard-spa.service';
 
 @ApiTags('dashboard')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles('researcher' as any, 'admin' as any)
+@Roles(UserRole.researcher, UserRole.admin)
 @Controller('dashboard-api')
 export class DashboardSpaController {
   constructor(private readonly dashboardService: DashboardSpaService) {}

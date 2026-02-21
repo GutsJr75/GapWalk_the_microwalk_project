@@ -1,14 +1,10 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateManualEntryDto } from './dto/manual-schedule.dto';
-import {
-  addDays,
-  startOfDay,
-  format,
-  parse,
-  isBefore,
-  addWeeks,
-} from 'date-fns';
+import { addDays, startOfDay, parse, isBefore, addWeeks } from 'date-fns';
+import { TZDate } from '@date-fns/tz';
+
+const DEFAULT_TIMEZONE = 'America/New_York';
 
 export interface ManualBusyEvent {
   userId: string;
@@ -22,6 +18,14 @@ export interface ManualBusyEvent {
 @Injectable()
 export class ManualScheduleService {
   constructor(private readonly prisma: PrismaService) {}
+
+  private async getUserTimezone(userId: string): Promise<string> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { timezone: true },
+    });
+    return user?.timezone ?? DEFAULT_TIMEZONE;
+  }
 
   async getAll(userId: string) {
     return this.prisma.manualScheduleEntry.findMany({
@@ -82,15 +86,17 @@ export class ManualScheduleService {
     const entries = await this.getAll(userId);
     if (entries.length === 0) return [];
 
-    const today = startOfDay(new Date());
+    const tz = await this.getUserTimezone(userId);
+    const today = startOfDay(new TZDate(new Date(), tz));
     const rangeEnd = addWeeks(today, weeksAhead);
 
-const busyEvents: ManualBusyEvent[] = [];
+    const busyEvents: ManualBusyEvent[] = [];
 
     for (const entry of entries) {
       if (entry.isOneTime && entry.oneTimeDate) {
         const entryDate = parse(entry.oneTimeDate, 'yyyy-MM-dd', new Date());
-        if (isBefore(entryDate, today) || !isBefore(entryDate, rangeEnd)) continue;
+        if (isBefore(entryDate, today) || !isBefore(entryDate, rangeEnd))
+          continue;
 
         const eventStart = parse(entry.startTime, 'HH:mm', entryDate);
         const eventEnd = parse(entry.endTime, 'HH:mm', entryDate);

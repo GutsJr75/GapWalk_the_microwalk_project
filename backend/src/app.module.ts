@@ -24,6 +24,9 @@ import { ResearcherModule } from './researcher/researcher.module';
 import { DashboardSpaModule } from './dashboard-spa/dashboard-spa.module';
 import { WorkersModule } from './workers/workers.module';
 
+const enableWorkers =
+  process.env.ENABLE_WORKERS !== 'false' && process.env.NODE_ENV !== 'test';
+
 @Module({
   imports: [
     // Infrastructure
@@ -46,7 +49,7 @@ import { WorkersModule } from './workers/workers.module';
     BehaviorLogModule,
     ResearcherModule,
     DashboardSpaModule,
-    WorkersModule,
+    ...(enableWorkers ? [WorkersModule] : []),
   ],
   controllers: [AppController],
   providers: [AppService],

@@ -6,7 +6,7 @@ import {
   QUEUE_PUSH_SEND,
   QUEUE_AGGREGATION,
   QUEUE_RECEIPT_CHECK,
-} from './workers.module';
+} from './workers.constants';
 
 /**
  * Service to enqueue background jobs and set up recurring schedules.
@@ -41,6 +41,14 @@ export class WorkersService implements OnModuleInit {
       { name: 'generate-all-users', data: {} },
     );
     this.logger.log('Scheduled: daily nudge generation at 06:00');
+
+    // Send due push notifications every 2 minutes
+    await this.pushQueue.upsertJobScheduler(
+      'send-due-nudges',
+      { pattern: '*/2 * * * *' },
+      { name: 'send-due-nudges', data: {} },
+    );
+    this.logger.log('Scheduled: push send check every 2 min');
 
     // Check push receipts every 15 minutes
     await this.receiptQueue.upsertJobScheduler(

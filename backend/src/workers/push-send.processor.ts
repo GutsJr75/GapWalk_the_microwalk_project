@@ -3,7 +3,11 @@ import { Logger } from '@nestjs/common';
 import { Job } from 'bullmq';
 import { PrismaService } from '../prisma/prisma.service';
 import { PushNotificationsService } from '../push-notifications/push-notifications.service';
-import { QUEUE_PUSH_SEND } from './workers.module';
+import { QUEUE_PUSH_SEND } from './workers.constants';
+
+interface PushSendJobData {
+  nudgePlanId?: string;
+}
 
 @Processor(QUEUE_PUSH_SEND)
 export class PushSendProcessor extends WorkerHost {
@@ -16,11 +20,15 @@ export class PushSendProcessor extends WorkerHost {
     super();
   }
 
-  async process(job: Job) {
+  async process(job: Job<PushSendJobData>) {
     const { name, data } = job;
 
     if (name === 'send-nudge') {
-      return this.sendNudge(data.nudgePlanId);
+      return this.sendNudge(data.nudgePlanId!);
+    }
+
+    if (name === 'send-due-nudges') {
+      return this.pushService.sendDueNudges();
     }
 
     this.logger.warn(`Unknown job name: ${name}`);
@@ -43,12 +51,7 @@ export class PushSendProcessor extends WorkerHost {
     const title = '🚶 Time for a walk!';
     const body = `Your ${plan.suggestedDurationMinutes}-minute micro-walk is scheduled now.`;
 
-    await this.pushService.sendWalkNudge(
-      plan.userId,
-      nudgePlanId,
-      title,
-      body,
-    );
+    await this.pushService.sendWalkNudge(plan.userId, nudgePlanId, title, body);
 
     this.logger.log(`Push sent for plan ${nudgePlanId}`);
   }

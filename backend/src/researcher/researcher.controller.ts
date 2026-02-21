@@ -12,6 +12,7 @@ import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
+import { UserRole } from '@prisma/client';
 import { ResearcherService } from './researcher.service';
 import {
   CreateStudyDto,
@@ -22,7 +23,7 @@ import {
 @ApiTags('researcher')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles('researcher' as any, 'admin' as any)
+@Roles(UserRole.researcher, UserRole.admin)
 @Controller('researcher/studies')
 export class ResearcherController {
   constructor(private readonly researcherService: ResearcherService) {}
@@ -63,19 +64,13 @@ export class ResearcherController {
 
   @Post(':studyId/enroll')
   @ApiOperation({ summary: 'Enroll a participant in a study' })
-  enroll(
-    @Param('studyId') studyId: string,
-    @Body() dto: EnrollParticipantDto,
-  ) {
+  enroll(@Param('studyId') studyId: string, @Body() dto: EnrollParticipantDto) {
     return this.researcherService.enrollParticipant(studyId, dto.userId);
   }
 
   @Post(':studyId/withdraw/:userId')
   @ApiOperation({ summary: 'Withdraw a participant from a study' })
-  withdraw(
-    @Param('studyId') studyId: string,
-    @Param('userId') userId: string,
-  ) {
+  withdraw(@Param('studyId') studyId: string, @Param('userId') userId: string) {
     return this.researcherService.withdrawParticipant(studyId, userId);
   }
 

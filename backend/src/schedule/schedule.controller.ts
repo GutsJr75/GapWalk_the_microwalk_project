@@ -54,7 +54,9 @@ export class ScheduleController {
   // ── Busy Events ──
 
   @Get('events')
-  @ApiOperation({ summary: 'Get busy events with optional date range and source filter' })
+  @ApiOperation({
+    summary: 'Get busy events with optional date range and source filter',
+  })
   getEvents(
     @CurrentUser('userId') userId: string,
     @Query() query: QueryEventsDto,

@@ -1,3 +1,7 @@
+// Load .env BEFORE any module imports so that module-level code
+// (e.g. ENABLE_WORKERS check in AppModule) can read env vars.
+import 'dotenv/config';
+
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -47,8 +51,16 @@ async function bootstrap() {
   SwaggerModule.setup('docs', app, document);
 
   // Health check endpoint (for Docker healthcheck)
-  const expressApp = app.getHttpAdapter().getInstance();
-  expressApp.get('/health', (_req: any, res: any) => {
+  const expressApp = app.getHttpAdapter().getInstance() as {
+    get: (
+      path: string,
+      handler: (
+        req: Record<string, unknown>,
+        res: { status: (code: number) => { json: (body: unknown) => void } },
+      ) => void,
+    ) => void;
+  };
+  expressApp.get('/health', (_req, res) => {
     res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
   });
 
@@ -57,4 +69,4 @@ async function bootstrap() {
   logger.log(`GapWalk API running on port ${port}`);
   logger.log(`Swagger docs at http://localhost:${port}/docs`);
 }
-bootstrap();
+void bootstrap();

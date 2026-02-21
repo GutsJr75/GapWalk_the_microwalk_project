@@ -1,16 +1,28 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   CreateWalkSessionDto,
   QueryWalkSessionsDto,
 } from './dto/walk-sessions.dto';
-import { format, startOfDay, endOfDay } from 'date-fns';
+import { startOfDay, endOfDay } from 'date-fns';
+import { TZDate } from '@date-fns/tz';
+
+const DEFAULT_TIMEZONE = 'America/New_York';
 
 @Injectable()
 export class WalkSessionsService {
   private readonly logger = new Logger(WalkSessionsService.name);
 
   constructor(private readonly prisma: PrismaService) {}
+
+  private async getUserTimezone(userId: string): Promise<string> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { timezone: true },
+    });
+    return user?.timezone ?? DEFAULT_TIMEZONE;
+  }
 
   async create(userId: string, dto: CreateWalkSessionDto) {
     const session = await this.prisma.walkSession.create({
@@ -37,7 +49,9 @@ export class WalkSessionsService {
           data: { status: 'completed' },
         });
       } catch (e) {
-        this.logger.warn(`Could not update nudge plan ${dto.nudgePlanId}: ${e}`);
+        this.logger.warn(
+          `Could not update nudge plan ${dto.nudgePlanId}: ${e}`,
+        );
       }
     }
 
@@ -45,7 +59,7 @@ export class WalkSessionsService {
   }
 
   async query(userId: string, query: QueryWalkSessionsDto) {
-    const where: any = { userId };
+    const where: Prisma.WalkSessionWhereInput = { userId };
 
     if (query.startDate || query.endDate) {
       where.start = {};
@@ -61,11 +75,12 @@ export class WalkSessionsService {
   }
 
   async getTodaySessions(userId: string) {
-    const now = new Date();
+    const tz = await this.getUserTimezone(userId);
+    const nowInTz = new TZDate(new Date(), tz);
     return this.prisma.walkSession.findMany({
       where: {
         userId,
-        start: { gte: startOfDay(now), lte: endOfDay(now) },
+        start: { gte: startOfDay(nowInTz), lte: endOfDay(nowInTz) },
       },
       orderBy: { start: 'asc' },
     });
@@ -91,10 +106,7 @@ export class WalkSessionsService {
         (sum, s) => sum + (s.distanceMeters ?? 0),
         0,
       ),
-      totalCalories: sessions.reduce(
-        (sum, s) => sum + (s.calories ?? 0),
-        0,
-      ),
+      totalCalories: sessions.reduce((sum, s) => sum + (s.calories ?? 0), 0),
     };
   }
 

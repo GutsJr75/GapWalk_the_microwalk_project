@@ -1,16 +1,10 @@
-import {
-  Controller,
-  Get,
-  Post,
-  Body,
-  Query,
-  UseGuards,
-} from '@nestjs/common';
+import { Controller, Get, Post, Body, Query, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
+import { UserRole } from '@prisma/client';
 import { AnalyticsService } from './analytics.service';
 import {
   CreateAnalyticsEventDto,
@@ -71,21 +65,21 @@ export class AnalyticsController {
   // ── Query (researcher / admin) ──
 
   @Get('events')
-  @Roles('researcher' as any, 'admin' as any)
+  @Roles(UserRole.researcher, UserRole.admin)
   @ApiOperation({ summary: 'Query analytics events (researcher/admin)' })
   queryEvents(@Query() query: QueryAnalyticsDto) {
     return this.analyticsService.queryEvents(query);
   }
 
   @Get('events/counts')
-  @Roles('researcher' as any, 'admin' as any)
+  @Roles(UserRole.researcher, UserRole.admin)
   @ApiOperation({ summary: 'Get event name counts (researcher/admin)' })
   getEventCounts(@Query() query: QueryAnalyticsDto) {
     return this.analyticsService.getEventCounts(query);
   }
 
   @Get('crashes')
-  @Roles('researcher' as any, 'admin' as any)
+  @Roles(UserRole.researcher, UserRole.admin)
   @ApiOperation({ summary: 'Query crash reports (researcher/admin)' })
   queryCrashes(@Query() query: QueryAnalyticsDto) {
     return this.analyticsService.queryCrashReports(query);

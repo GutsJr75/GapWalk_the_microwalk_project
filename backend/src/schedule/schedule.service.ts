@@ -5,7 +5,7 @@ import {
   SetScheduleSourceDto,
   QueryEventsDto,
 } from './dto/schedule.dto';
-import { ScheduleSourceType } from '@prisma/client';
+import { Prisma, ScheduleSourceType } from '@prisma/client';
 
 @Injectable()
 export class ScheduleService {
@@ -49,7 +49,7 @@ export class ScheduleService {
   // ── Busy Events ──
 
   async getEvents(userId: string, query: QueryEventsDto) {
-    const where: any = { userId };
+    const where: Prisma.BusyEventWhereInput = { userId };
 
     if (query.source) {
       where.source = query.source;

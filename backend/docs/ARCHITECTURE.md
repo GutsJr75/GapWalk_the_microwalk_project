@@ -259,33 +259,36 @@ Array of `NudgePlan` records saved to DB with `status: planned`, ready for push 
 ## Background Workers
 
 BullMQ processes background jobs via Redis queues.
+Workers are enabled when `ENABLE_WORKERS` is not set to `false`.
 
 ### Job Schedules
 
-| Job                        | Schedule         | Description                                                           |
-| -------------------------- | ---------------- | --------------------------------------------------------------------- |
-| **Daily nudge generation** | 06:00 every day  | Runs `nudgeEngine.generateAndSavePlans()` for all users               |
-| **Push receipt check**     | Every 15 minutes | Verifies Expo push delivery receipts, deactivates unregistered tokens |
-| **Daily aggregation**      | 02:00 every day  | Computes `DailyAggregation` for all users (yesterday's data)          |
-| **Weekly aggregation**     | Monday 03:00     | Computes `WeeklyAggregation` for all users (last week)                |
+| Job                        | Schedule         | Description                                                                |
+| -------------------------- | ---------------- | -------------------------------------------------------------------------- |
+| **Daily nudge generation** | 06:00 every day  | Runs `nudgeEngine.generateAndSavePlans()` for all users                    |
+| **Send due nudges**        | Every 2 minutes  | Scans due `planned` server plans and sends push notifications              |
+| **Push receipt check**     | Every 15 minutes | Verifies Expo push delivery receipts, deactivates unregistered tokens      |
+| **Daily aggregation**      | 02:00 every day  | Computes `DailyAggregation` for all users (yesterday in each user's TZ)    |
+| **Weekly aggregation**     | Monday 03:00     | Computes `WeeklyAggregation` for all users (last week in each user's local week) |
 
 ### Processor Details
 
 **NudgeGenerationProcessor:**
 
 - Iterates all users, calls `generateAndSavePlans()` per user
-- Cancels existing `planned`/`notified` plans for today + tomorrow first
+- Uses each user's timezone when computing today/tomorrow date keys and day boundaries
+- Cancels existing `planned`/`notified` plans for the target day(s) first
 - Reports success/failure counts
 
 **PushSendProcessor:**
 
-- Receives `nudgePlanId`, looks up the plan
-- Only sends if status is `planned` or `notified`
-- Calls `pushService.sendWalkNudge()` with structured notification
+- Handles both ad-hoc `send-nudge` jobs and scheduled `send-due-nudges` scans
+- Sends only eligible plans (`planned`/`notified` for ad-hoc, due `planned` for scheduled)
+- Calls `pushService.sendWalkNudge()` and records push ticket/log metadata
 
 **AggregationProcessor:**
 
-- Queries walk sessions and nudge plans for the target date
+- Computes daily/weekly windows in each user's timezone
 - Computes: total minutes, steps, distance, calories, session count
 - Computes: nudges planned/delivered/opened/skipped, goal reached
 - Upserts into `DailyAggregation` / `WeeklyAggregation` tables

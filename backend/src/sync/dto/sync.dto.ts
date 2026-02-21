@@ -9,7 +9,7 @@ import {
   IsBoolean,
   IsEnum,
 } from 'class-validator';
-import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import { NudgePlanStatus, ScheduleSourceType } from '@prisma/client';
 
@@ -72,6 +72,7 @@ class SyncPreferencesDto {
   @IsOptional() @IsString() strictnessMode?: string;
   @IsOptional() @IsBoolean() stepGoalEnabled?: boolean;
   @IsOptional() @IsInt() stepGoal?: number;
+  @IsOptional() preferredWalkingPeriods?: Array<{ start: string; end: string }>;
 }
 
 class SyncScheduleSourceDto {

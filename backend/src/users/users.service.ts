@@ -46,7 +46,9 @@ export class UsersService {
         orderBy: { createdAt: 'desc' },
         include: { preferences: true },
       }),
-      this.prisma.user.count({ where: { role: 'participant', isActive: true } }),
+      this.prisma.user.count({
+        where: { role: 'participant', isActive: true },
+      }),
     ]);
     return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
   }

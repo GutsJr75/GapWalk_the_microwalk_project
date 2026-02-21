@@ -9,28 +9,25 @@ export class DashboardSpaService {
    * Top-level overview statistics for the researcher dashboard.
    */
   async getOverview() {
-    const [
-      totalUsers,
-      totalSessions,
-      totalPlans,
-      activeStudies,
-      sessionAgg,
-    ] = await Promise.all([
-      this.prisma.user.count(),
-      this.prisma.walkSession.count(),
-      this.prisma.nudgePlan.count(),
-      this.prisma.study.count({ where: { isActive: true } }),
-      this.prisma.walkSession.aggregate({
-        _sum: { activeSeconds: true, steps: true },
-      }),
-    ]);
+    const [totalUsers, totalSessions, totalPlans, activeStudies, sessionAgg] =
+      await Promise.all([
+        this.prisma.user.count(),
+        this.prisma.walkSession.count(),
+        this.prisma.nudgePlan.count(),
+        this.prisma.study.count({ where: { isActive: true } }),
+        this.prisma.walkSession.aggregate({
+          _sum: { activeSeconds: true, steps: true },
+        }),
+      ]);
 
     return {
       totalUsers,
       totalSessions,
       totalPlans,
       activeStudies,
-      totalMinutesWalked: Math.round((sessionAgg._sum?.activeSeconds ?? 0) / 60),
+      totalMinutesWalked: Math.round(
+        (sessionAgg._sum?.activeSeconds ?? 0) / 60,
+      ),
       totalSteps: sessionAgg._sum?.steps ?? 0,
     };
   }

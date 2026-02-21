@@ -10,7 +10,10 @@ import {
   isWithinInterval,
   startOfDay,
 } from 'date-fns';
+import { TZDate } from '@date-fns/tz';
 import { v4 as uuid } from 'uuid';
+
+const DEFAULT_TIMEZONE = 'America/New_York';
 
 // ── Internal types (mirroring frontend gapEngine.ts) ──
 
@@ -53,8 +56,15 @@ export interface GeneratedPlan {
 const clamp = (value: number, min: number, max: number): number =>
   Math.min(max, Math.max(min, value));
 
-const sameDateKey = (a: Date, b: Date): boolean =>
-  format(a, 'yyyy-MM-dd') === format(b, 'yyyy-MM-dd');
+const sameDateKey = (a: Date, b: Date, timezone?: string): boolean => {
+  if (timezone) {
+    return (
+      format(new TZDate(a, timezone), 'yyyy-MM-dd') ===
+      format(new TZDate(b, timezone), 'yyyy-MM-dd')
+    );
+  }
+  return format(a, 'yyyy-MM-dd') === format(b, 'yyyy-MM-dd');
+};
 
 /**
  * Parse "HH:mm" to a Date on the given base day.
@@ -85,11 +95,53 @@ function isInQuietHours(
   return isWithinInterval(checkTime, { start: qStart, end: qEnd });
 }
 
+/**
+ * Check whether the quiet-hours boundary falls inside a walk interval.
+ * Catches the case where walkStart and walkEnd are both outside quiet hours
+ * but the walk spans the entire quiet period (start→end crossing).
+ */
+function quietHoursOverlapInterval(
+  walkStart: Date,
+  walkEnd: Date,
+  quietStartStr: string,
+  quietEndStr: string,
+): boolean {
+  const dayBase = startOfDay(walkStart);
+  const qStart = parseTime(quietStartStr, dayBase);
+  const qEnd = parseTime(quietEndStr, dayBase);
+
+  if (isAfter(qStart, qEnd)) {
+    // Overnight quiet hours: check if qStart falls within walk interval
+    // (qEnd would be next-morning, already handled by isInQuietHours for walkEnd)
+    return isAfter(qStart, walkStart) && isBefore(qStart, walkEnd);
+  }
+
+  // Daytime quiet hours: check if either boundary falls within walk interval
+  const qStartInWalk = isAfter(qStart, walkStart) && isBefore(qStart, walkEnd);
+  const qEndInWalk = isAfter(qEnd, walkStart) && isBefore(qEnd, walkEnd);
+  return qStartInWalk || qEndInWalk;
+}
+
 @Injectable()
 export class NudgeEngineService {
   private readonly logger = new Logger(NudgeEngineService.name);
 
   constructor(private readonly prisma: PrismaService) {}
+
+  /** Get the user's configured timezone, falling back to default */
+  private async getUserTimezone(userId: string): Promise<string> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { timezone: true },
+    });
+    return user?.timezone ?? DEFAULT_TIMEZONE;
+  }
+
+  /** Get date key (YYYY-MM-DD) for a Date in the user's timezone */
+  private getDateKeyInTz(date: Date, timezone: string): string {
+    const dateInTz = new TZDate(date, timezone);
+    return format(dateInTz, 'yyyy-MM-dd');
+  }
 
   /**
    * Generate nudge plans for a specific user on a specific date.
@@ -99,15 +151,18 @@ export class NudgeEngineService {
     userId: string,
     date: Date,
     prefs: Preference,
+    timezone?: string,
   ): Promise<GeneratedPlan[]> {
     if (prefs.dailyTargetMinutes <= 0 || prefs.notificationCountPerDay <= 0) {
       return [];
     }
 
-    const dayStart = startOfDay(date);
-    const dayEnd = endOfDay(date);
+    // When timezone is provided, anchor day boundaries in the user's timezone
+    const anchoredDate = timezone ? new TZDate(date, timezone) : date;
+    const dayStart = startOfDay(anchoredDate);
+    const dayEnd = endOfDay(anchoredDate);
     const now = new Date();
-    const isToday = sameDateKey(date, now);
+    const isToday = sameDateKey(date, now, timezone);
 
     // Fetch busy events for this day
     const dayEvents = await this.prisma.busyEvent.findMany({
@@ -123,13 +178,33 @@ export class NudgeEngineService {
 
     const rawGaps = this.findGaps(dayStart, dayEnd, dayEvents, prefs);
 
-    const candidateGaps = rawGaps
+    let candidateGaps = rawGaps
       .map((gap) => {
         if (!isToday) return gap;
         const start = isAfter(now, gap.start) ? now : gap.start;
         return isBefore(start, gap.end) ? { start, end: gap.end } : null;
       })
       .filter((gap): gap is TimeInterval => !!gap);
+
+    // Hard filter: restrict to preferred walking periods when set
+    const periods = prefs.preferredWalkingPeriods as
+      | Array<{ start: string; end: string }>
+      | null
+      | undefined;
+    if (periods && periods.length > 0) {
+      const filtered = candidateGaps.filter((gap) => {
+        const dayBase = startOfDay(gap.start);
+        return periods.some((period) => {
+          const pStart = parseTime(period.start, dayBase);
+          const pEnd = parseTime(period.end, dayBase);
+          return isBefore(gap.start, pEnd) && isAfter(gap.end, pStart);
+        });
+      });
+      // Graceful fallback: use all gaps if none match preferred periods
+      if (filtered.length > 0) {
+        candidateGaps = filtered;
+      }
+    }
 
     const minReminderGapMinutes = clamp(
       prefs.notificationMinGapMinutes ?? 60,
@@ -180,7 +255,9 @@ export class NudgeEngineService {
       prefs.minWalkMinutes,
     );
 
-    const dateKey = format(date, 'yyyy-MM-dd');
+    const dateKey = timezone
+      ? this.getDateKeyInTz(date, timezone)
+      : format(date, 'yyyy-MM-dd');
     const plans: GeneratedPlan[] = slots.map((slot, idx) => ({
       id: uuid(),
       userId,
@@ -212,15 +289,19 @@ export class NudgeEngineService {
       where: { userId },
     });
     if (!prefs) {
-      this.logger.warn(`No preferences for user ${userId}, skipping plan generation`);
+      this.logger.warn(
+        `No preferences for user ${userId}, skipping plan generation`,
+      );
       return [];
     }
 
+    const tz = await this.getUserTimezone(userId);
     const allPlans: GeneratedPlan[] = [];
 
     for (let i = 0; i < 2; i++) {
-      const date = addMinutes(startOfDay(new Date()), i * 24 * 60);
-      const dateKey = format(date, 'yyyy-MM-dd');
+      const nowInTz = new TZDate(new Date(), tz);
+      const date = addMinutes(startOfDay(nowInTz), i * 24 * 60);
+      const dateKey = this.getDateKeyInTz(date, tz);
 
       // Cancel existing active plans for this date
       await this.prisma.nudgePlan.updateMany({
@@ -232,7 +313,7 @@ export class NudgeEngineService {
         data: { status: 'cancelled' },
       });
 
-      const plans = await this.generatePlansForDate(userId, date, prefs);
+      const plans = await this.generatePlansForDate(userId, date, prefs, tz);
 
       // Persist new plans
       if (plans.length > 0) {
@@ -335,8 +416,25 @@ export class NudgeEngineService {
     if (durationMinutes < requiredMinutes) return false;
 
     const walkStart = addMinutes(gap.start, prefs.bufferMinutes);
+    const walkEnd = addMinutes(walkStart, prefs.minWalkMinutes);
+
+    // Validate that neither the start nor the end of the walk falls in quiet hours
+    if (isInQuietHours(walkStart, prefs.quietHoursStart, prefs.quietHoursEnd)) {
+      return false;
+    }
+    if (isInQuietHours(walkEnd, prefs.quietHoursStart, prefs.quietHoursEnd)) {
+      return false;
+    }
+
+    // Also check that quiet-hours boundary doesn't fall within the walk interval
+    // (handles case where walk spans the entire quiet period)
     if (
-      isInQuietHours(walkStart, prefs.quietHoursStart, prefs.quietHoursEnd)
+      quietHoursOverlapInterval(
+        walkStart,
+        walkEnd,
+        prefs.quietHoursStart,
+        prefs.quietHoursEnd,
+      )
     ) {
       return false;
     }
@@ -379,6 +477,24 @@ export class NudgeEngineService {
     const hourOfDay = gap.start.getHours();
     if (hourOfDay >= 8 && hourOfDay <= 17) score += 20;
     if (hourOfDay >= 11 && hourOfDay <= 14) score += 10;
+
+    // Boost score if gap overlaps a preferred walking period
+    const scorePeriods = prefs.preferredWalkingPeriods as
+      | Array<{ start: string; end: string }>
+      | null
+      | undefined;
+    if (scorePeriods && scorePeriods.length > 0) {
+      const dayBase = startOfDay(gap.start);
+      for (const period of scorePeriods) {
+        const pStart = parseTime(period.start, dayBase);
+        const pEnd = parseTime(period.end, dayBase);
+        // Check overlap between [gap.start, gap.end] and [pStart, pEnd]
+        if (isBefore(gap.start, pEnd) && isAfter(gap.end, pStart)) {
+          score += 30; // significant boost for preferred periods
+          break;
+        }
+      }
+    }
 
     return {
       id: `${gap.start.toISOString()}__${gap.end.toISOString()}`,
@@ -481,10 +597,7 @@ export class NudgeEngineService {
     );
     const stepMinutes =
       count > 1
-        ? Math.max(
-            minReminderGapMinutes,
-            Math.floor(spanMinutes / (count - 1)),
-          )
+        ? Math.max(minReminderGapMinutes, Math.floor(spanMinutes / (count - 1)))
         : 0;
 
     const baseCapacity = Math.floor(opportunity.availableWalkMinutes / count);
@@ -525,16 +638,15 @@ export class NudgeEngineService {
 
     const safeCaps = capacities.map((c) => Math.max(0, Math.floor(c)));
     const maxTotal = safeCaps.reduce((sum, cap) => sum + cap, 0);
-    if (maxTotal <= 0) return new Array(count).fill(0);
+    if (maxTotal <= 0) return new Array<number>(count).fill(0);
 
     const target = Math.max(
       1,
       Math.min(Math.floor(dailyTargetMinutes), maxTotal),
     );
-    const out = new Array(count).fill(0);
+    const out: number[] = new Array<number>(count).fill(0);
 
-    const minPerSlot =
-      target >= minWalkMinutes * count ? minWalkMinutes : 1;
+    const minPerSlot = target >= minWalkMinutes * count ? minWalkMinutes : 1;
     let remaining = target;
 
     for (let i = 0; i < count; i++) {

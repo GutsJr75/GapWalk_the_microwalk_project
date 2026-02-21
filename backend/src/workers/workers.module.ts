@@ -10,11 +10,12 @@ import { PushNotificationsModule } from '../push-notifications/push-notification
 import { AnalyticsModule } from '../analytics/analytics.module';
 import { PrismaModule } from '../prisma/prisma.module';
 import { WorkersService } from './workers.service';
-
-export const QUEUE_NUDGE_GENERATION = 'nudge-generation';
-export const QUEUE_PUSH_SEND = 'push-send';
-export const QUEUE_AGGREGATION = 'aggregation';
-export const QUEUE_RECEIPT_CHECK = 'receipt-check';
+import {
+  QUEUE_NUDGE_GENERATION,
+  QUEUE_PUSH_SEND,
+  QUEUE_AGGREGATION,
+  QUEUE_RECEIPT_CHECK,
+} from './workers.constants';
 
 @Module({
   imports: [

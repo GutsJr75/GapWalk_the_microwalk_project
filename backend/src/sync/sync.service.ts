@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { SyncRequestDto } from './dto/sync.dto';
 
@@ -38,10 +39,23 @@ export class SyncService {
 
     // Preferences
     if (dto.preferences) {
+      const { preferredWalkingPeriods, ...restPrefs } = dto.preferences;
+      const prefsData = {
+        ...restPrefs,
+        ...(preferredWalkingPeriods !== undefined
+          ? {
+              preferredWalkingPeriods:
+                preferredWalkingPeriods as unknown as Prisma.InputJsonValue,
+            }
+          : {}),
+      };
       await this.prisma.preference.upsert({
         where: { userId },
-        update: dto.preferences as any,
-        create: { userId, ...dto.preferences } as any,
+        update: prefsData as Prisma.PreferenceUncheckedUpdateInput,
+        create: {
+          userId,
+          ...prefsData,
+        } as Prisma.PreferenceUncheckedCreateInput,
       });
     }
 
@@ -156,7 +170,7 @@ export class SyncService {
         data: dto.analyticsEvents.map((e) => ({
           userId,
           name: e.name,
-          payload: e.payload ?? null,
+          payload: (e.payload ?? null) as Prisma.InputJsonValue,
           clientCreatedAt: e.clientCreatedAt
             ? new Date(e.clientCreatedAt)
             : null,
@@ -172,7 +186,7 @@ export class SyncService {
           message: r.message,
           stack: r.stack,
           isFatal: r.isFatal ?? false,
-          context: r.context ?? null,
+          context: (r.context ?? null) as Prisma.InputJsonValue,
           clientCreatedAt: r.clientCreatedAt
             ? new Date(r.clientCreatedAt)
             : null,

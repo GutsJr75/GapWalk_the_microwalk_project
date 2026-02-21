@@ -5,8 +5,9 @@ import {
   UpdateNudgePlanStatusDto,
   QueryNudgePlansDto,
 } from './dto/nudge-plans.dto';
-import { NudgePlanStatus } from '@prisma/client';
-import { format } from 'date-fns';
+import { NudgePlanStatus, Prisma } from '@prisma/client';
+import { format, startOfDay, endOfDay } from 'date-fns';
+import { TZDate } from '@date-fns/tz';
 
 const TERMINAL_STATUSES: NudgePlanStatus[] = [
   'cancelled',
@@ -14,11 +15,37 @@ const TERMINAL_STATUSES: NudgePlanStatus[] = [
   'skipped',
 ];
 
+const DEFAULT_TIMEZONE = 'America/New_York';
+
 @Injectable()
 export class NudgePlansService {
   private readonly logger = new Logger(NudgePlansService.name);
 
   constructor(private readonly prisma: PrismaService) {}
+
+  /** Get the user's configured timezone, falling back to default */
+  private async getUserTimezone(userId: string): Promise<string> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { timezone: true },
+    });
+    return user?.timezone ?? DEFAULT_TIMEZONE;
+  }
+
+  /** Get "today" date string (YYYY-MM-DD) in the user's timezone */
+  private getTodayKeyInTz(timezone: string): string {
+    const nowInTz = new TZDate(new Date(), timezone);
+    return format(nowInTz, 'yyyy-MM-dd');
+  }
+
+  /** Get UTC-based day boundaries for "today" in the user's timezone */
+  private getDayBoundariesInTz(timezone: string): {
+    dayStart: Date;
+    dayEnd: Date;
+  } {
+    const nowInTz = new TZDate(new Date(), timezone);
+    return { dayStart: startOfDay(nowInTz), dayEnd: endOfDay(nowInTz) };
+  }
 
   async findById(userId: string, id: string) {
     const plan = await this.prisma.nudgePlan.findFirst({
@@ -29,7 +56,7 @@ export class NudgePlansService {
   }
 
   async query(userId: string, query: QueryNudgePlansDto) {
-    const where: any = { userId };
+    const where: Prisma.NudgePlanWhereInput = { userId };
     if (query.date) where.date = query.date;
     if (query.status) where.status = query.status;
 
@@ -40,7 +67,8 @@ export class NudgePlansService {
   }
 
   async getTodayPlans(userId: string) {
-    const today = format(new Date(), 'yyyy-MM-dd');
+    const tz = await this.getUserTimezone(userId);
+    const today = this.getTodayKeyInTz(tz);
     return this.prisma.nudgePlan.findMany({
       where: { userId, date: today },
       orderBy: { walkStart: 'asc' },
@@ -75,7 +103,11 @@ export class NudgePlansService {
     });
   }
 
-  async updateStatus(userId: string, id: string, dto: UpdateNudgePlanStatusDto) {
+  async updateStatus(
+    userId: string,
+    id: string,
+    dto: UpdateNudgePlanStatusDto,
+  ) {
     const plan = await this.findById(userId, id);
 
     if (TERMINAL_STATUSES.includes(plan.status)) {
@@ -170,13 +202,15 @@ export class NudgePlansService {
     });
 
     if (prefs) {
-      const today = format(new Date(), 'yyyy-MM-dd');
+      // Use the user's timezone for day boundaries
+      const tz = await this.getUserTimezone(userId);
+      const { dayStart, dayEnd } = this.getDayBoundariesInTz(tz);
       const todaySessions = await this.prisma.walkSession.findMany({
         where: {
           userId,
           start: {
-            gte: new Date(`${today}T00:00:00Z`),
-            lte: new Date(`${today}T23:59:59Z`),
+            gte: dayStart,
+            lte: dayEnd,
           },
         },
       });
@@ -202,9 +236,10 @@ export class NudgePlansService {
     return { allowed: true, planExists: true };
   }
 
-  /** Get notifications count for today */
+  /** Get notifications count for today (in user's timezone) */
   async getTodayNotifiedCount(userId: string) {
-    const today = format(new Date(), 'yyyy-MM-dd');
+    const tz = await this.getUserTimezone(userId);
+    const today = this.getTodayKeyInTz(tz);
     return this.prisma.nudgePlan.count({
       where: {
         userId,
