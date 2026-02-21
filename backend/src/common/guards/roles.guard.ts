@@ -1,44 +1,30 @@
 import { Injectable, CanActivate, ExecutionContext } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { UserRole } from '@prisma/client';
+import { Request } from 'express';
 import { ROLES_KEY } from '../decorators/roles.decorator';
+
+interface AuthenticatedRequest extends Request {
+  user?: { role?: UserRole; [key: string]: unknown };
+}
 
 @Injectable()
 export class RolesGuard implements CanActivate {
   constructor(private reflector: Reflector) {}
 
   canActivate(context: ExecutionContext): boolean {
-    const requiredRoles = this.getRequiredRoles(context);
+    const requiredRoles = this.reflector.getAllAndOverride<UserRole[]>(
+      ROLES_KEY,
+      [context.getHandler(), context.getClass()],
+    );
 
-    if (!this.hasRoleRestriction(requiredRoles)) {
+    if (!requiredRoles || requiredRoles.length === 0) {
       return true;
     }
 
-    const user = this.extractUser(context);
-    return this.hasRequiredRole(user, requiredRoles);
-  }
+    const { user } = context.switchToHttp().getRequest<AuthenticatedRequest>();
+    if (!user?.role) return false;
 
-  private getRequiredRoles(context: ExecutionContext): UserRole[] {
-    return (
-      this.reflector.getAllAndOverride<UserRole[]>(ROLES_KEY, [
-        context.getHandler(),
-        context.getClass(),
-      ]) || []
-    );
-  }
-
-  private hasRoleRestriction(requiredRoles: UserRole[]): boolean {
-    return requiredRoles.length > 0;
-  }
-
-  private extractUser(context: ExecutionContext): any {
-    return context.switchToHttp().getRequest().user;
-  }
-
-  private hasRequiredRole(user: any, requiredRoles: UserRole[]): boolean {
-    if (!user?.role) {
-      return false;
-    }
     return requiredRoles.includes(user.role);
   }
 }
