@@ -1125,7 +1125,12 @@ export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
             </View>
             <View style={styles.weeklyItem}>
               <Ionicons name="calendar-outline" size={16} color={palette.accentPrimary} style={{ marginBottom: 4 }} />
-              <Text variant="title" style={[styles.weeklyValue, { color: palette.accentPrimary }]}>{weeklyStats.daysActive}/7</Text>
+              <Text variant="title" style={[styles.weeklyValue, { color: palette.accentPrimary }]}>
+                {weeklyStats.daysActive}
+                <Text variant="title" style={[styles.weeklyValueDenominator, { color: palette.accentPrimary }]}>
+                  /7
+                </Text>
+              </Text>
               <Text variant="bodySmall" color={palette.textMuted}>Active Days</Text>
             </View>
           </View>
@@ -1930,5 +1935,9 @@ const styles = StyleSheet.create({
   weeklyValue: {
     fontWeight: theme.fontWeight.bold,
     marginBottom: 4,
+  },
+  weeklyValueDenominator: {
+    fontSize: theme.fontSize.lg,
+    fontWeight: theme.fontWeight.semibold,
   },
 });
