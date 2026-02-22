@@ -31,8 +31,8 @@ const darkPalette: ThemePalette = {
 const lightPalette: ThemePalette = {
   // Softer than pure white to reduce glare in light mode.
   bgApp: '#e6ebf2',
-  bgSurface: '#f1f4f8',
-  bgSurfaceElevated: '#dde4ee',
+  bgSurface: '#ffffff',
+  bgSurfaceElevated: '#edf1f7',
   textPrimary: '#111827',
   // Darker muted text to meet AA contrast across light surfaces.
   textMuted: '#475569',

@@ -58,6 +58,7 @@ export const GapItem: React.FC<GapItemProps> = ({
     backgroundColor: isDark ? 'rgba(56,189,248,0.14)' : 'rgba(56,189,248,0.18)',
   };
   const badgeTextColor = isDark ? theme.colors.accentPrimary : '#0f5132';
+  const changeTextColor = isDark ? '#38bdf8' : '#0369a1';
 
   return (
     <View style={[styles.container, containerTheme]}>
@@ -86,7 +87,7 @@ export const GapItem: React.FC<GapItemProps> = ({
           <Text variant="bodySmall" style={styles.cancelText}>Cancel</Text>
         </TouchableOpacity>
         <TouchableOpacity onPress={onChange} hitSlop={8} style={[styles.changeBtn, changeBtnTheme]}>
-          <Text variant="bodySmall" style={styles.changeText}>Change</Text>
+          <Text variant="bodySmall" style={[styles.changeText, { color: changeTextColor }]}>Change</Text>
         </TouchableOpacity>
       </View>
     </View>
@@ -97,13 +98,11 @@ const styles = StyleSheet.create({
   container: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    backgroundColor: theme.colors.bgSurfaceElevated,
     borderRadius: theme.borderRadius.md,
     paddingVertical: 14,
     paddingHorizontal: 16,
     marginBottom: 10,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.04)',
   },
   left: { flex: 1 },
   time: { fontWeight: theme.fontWeight.semibold, marginBottom: 2 },
@@ -111,7 +110,6 @@ const styles = StyleSheet.create({
   notifyLabel: { fontSize: theme.fontSize.xs, marginBottom: 6 },
   meta: { flexDirection: 'row', alignItems: 'center', marginBottom: 8 },
   badge: {
-    backgroundColor: 'rgba(46,233,166,0.12)',
     borderRadius: 6,
     paddingVertical: 2,
     paddingHorizontal: 8,
@@ -122,7 +120,6 @@ const styles = StyleSheet.create({
   },
   barTrack: {
     height: 6,
-    backgroundColor: 'rgba(255,255,255,0.08)',
     borderRadius: 3,
     overflow: 'hidden',
     marginBottom: 4,
@@ -140,7 +137,6 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     paddingHorizontal: 12,
     borderRadius: theme.borderRadius.sm,
-    backgroundColor: 'rgba(239,68,68,0.1)',
   },
   cancelText: {
     color: theme.colors.error,
@@ -150,10 +146,8 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     paddingHorizontal: 12,
     borderRadius: theme.borderRadius.sm,
-    backgroundColor: 'rgba(56,189,248,0.14)',
   },
   changeText: {
-    color: '#38bdf8',
     fontWeight: theme.fontWeight.medium,
   },
 });

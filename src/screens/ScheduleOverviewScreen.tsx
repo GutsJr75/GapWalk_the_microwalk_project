@@ -10,6 +10,7 @@ import { Card } from '../components/Card';
 import { ScreenHeader } from '../components/ScreenHeader';
 import { AppIcon } from '../components/AppIcon';
 import { theme } from '../theme';
+import { useThemePalette } from '../theme/palette';
 import { useAppStore } from '../store';
 import { scheduleSourceRepo } from '../lib/repositories/scheduleSourceRepo';
 
@@ -17,7 +18,9 @@ type Props = NativeStackScreenProps<RootStackParamList, 'ScheduleOverview'>;
 
 export const ScheduleOverviewScreen: React.FC<Props> = ({ navigation }) => {
   const { scheduleSource, setScheduleSource, themeMode } = useAppStore();
-  const mintTextOnTint = themeMode === 'dark' ? theme.colors.accentPrimary : '#0f5132';
+  const palette = useThemePalette();
+  const isDark = themeMode === 'dark';
+  const mintTextOnTint = isDark ? theme.colors.accentPrimary : '#0f5132';
 
   useFocusEffect(
     React.useCallback(() => {
@@ -41,6 +44,14 @@ export const ScheduleOverviewScreen: React.FC<Props> = ({ navigation }) => {
     : scheduleSource.type === 'google'
     ? 'Google Calendar'
     : 'Calendar file (.ics)';
+
+  const guideItemStyle = {
+    backgroundColor: isDark ? 'rgba(46,233,166,0.08)' : 'rgba(46,233,166,0.10)',
+    borderColor: isDark ? 'rgba(46,233,166,0.22)' : 'rgba(46,233,166,0.28)',
+  };
+  const guideIndexStyle = {
+    backgroundColor: isDark ? 'rgba(46,233,166,0.16)' : 'rgba(46,233,166,0.20)',
+  };
 
   const handleBack = () => {
     if (navigation.canGoBack()) {
@@ -81,12 +92,12 @@ export const ScheduleOverviewScreen: React.FC<Props> = ({ navigation }) => {
         <Card elevated style={styles.card}>
           <View style={styles.labelRow}>
             <AppIcon name="calendar" size={14} color={theme.colors.accentPrimary} />
-            <Text variant="bodySmall" style={styles.label}>Current source</Text>
+            <Text variant="bodySmall" style={[styles.label, { color: palette.textMuted }]}>Current source</Text>
           </View>
           {scheduleSource?.type === 'ics' && !!scheduleSource.filename ? (
             <Text variant="body" style={styles.current}>
               File:{' '}
-              <Text variant="body" style={styles.fileName}>
+              <Text variant="body" style={[styles.fileName, { color: theme.colors.accentPrimary }]}>
                 {scheduleSource.filename}
               </Text>
             </Text>
@@ -100,37 +111,37 @@ export const ScheduleOverviewScreen: React.FC<Props> = ({ navigation }) => {
             <AppIcon name="adjust" size={14} color={theme.colors.accentPrimary} />
             <Text variant="body" style={styles.guideHeading}>How it works</Text>
           </View>
-          <Text variant="bodySmall" style={styles.guideSub}>
+          <Text variant="bodySmall" style={[styles.guideSub, { color: palette.textMuted }]}>
             Choose an action below. Your schedule updates are applied only after you save.
           </Text>
 
           <View style={styles.guideList}>
-            <View style={styles.guideItem}>
-              <View style={styles.guideIndex}>
+            <View style={[styles.guideItem, guideItemStyle]}>
+              <View style={[styles.guideIndex, guideIndexStyle]}>
                 <AppIcon name="calendar" size={14} color={mintTextOnTint} />
               </View>
               <View style={styles.guideItemTextWrap}>
                 <Text variant="bodySmall" style={styles.guideItemTitle}>Change schedule source</Text>
-                <Text variant="bodySmall" style={styles.guideItemDesc}>
+                <Text variant="bodySmall" style={[styles.guideItemDesc, { color: palette.textMuted }]}>
                   Switch how GapWalk reads your schedule, such as manual entry or calendar import.
                 </Text>
               </View>
             </View>
 
-            <View style={styles.guideItem}>
-              <View style={styles.guideIndex}>
+            <View style={[styles.guideItem, guideItemStyle]}>
+              <View style={[styles.guideIndex, guideIndexStyle]}>
                 <AppIcon name="sync" size={14} color={mintTextOnTint} />
               </View>
               <View style={styles.guideItemTextWrap}>
                 <Text variant="bodySmall" style={styles.guideItemTitle}>Update and sync opportunities</Text>
-                <Text variant="bodySmall" style={styles.guideItemDesc}>
+                <Text variant="bodySmall" style={[styles.guideItemDesc, { color: palette.textMuted }]}>
                   Save your changes to refresh today's walking opportunities automatically.
                 </Text>
               </View>
             </View>
           </View>
 
-          <Text variant="bodySmall" style={styles.guideNote}>
+          <Text variant="bodySmall" style={[styles.guideNote, { color: palette.textMuted }]}>
             Tip: If you open this screen and make no changes, you can cancel safely.
           </Text>
         </Card>
@@ -173,12 +184,12 @@ const styles = StyleSheet.create({
   },
   card: { marginBottom: 16 },
   labelRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 4 },
-  label: { color: theme.colors.textMuted },
+  label: {},
   current: { fontWeight: theme.fontWeight.semibold },
-  fileName: { color: theme.colors.accentPrimary, fontWeight: theme.fontWeight.semibold },
+  fileName: { fontWeight: theme.fontWeight.semibold },
   guideCard: { paddingVertical: 16 },
   guideHeading: { fontWeight: theme.fontWeight.semibold, marginBottom: 6 },
-  guideSub: { color: theme.colors.textMuted, marginBottom: 12, lineHeight: 18 },
+  guideSub: { marginBottom: 12, lineHeight: 18 },
   guideList: { gap: 10 },
   guideItem: {
     flexDirection: 'row',
@@ -187,9 +198,7 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     paddingHorizontal: 10,
     borderRadius: theme.borderRadius.sm,
-    backgroundColor: 'rgba(46,233,166,0.08)',
     borderWidth: 1,
-    borderColor: 'rgba(46,233,166,0.18)',
   },
   guideIndex: {
     width: 22,
@@ -197,13 +206,12 @@ const styles = StyleSheet.create({
     borderRadius: 11,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(46,233,166,0.16)',
     marginTop: 1,
   },
   guideItemTextWrap: { flex: 1 },
   guideItemTitle: { fontWeight: theme.fontWeight.semibold, marginBottom: 2 },
-  guideItemDesc: { color: theme.colors.textMuted, lineHeight: 18 },
-  guideNote: { marginTop: 12, color: theme.colors.textMuted, fontStyle: 'italic' },
+  guideItemDesc: { lineHeight: 18 },
+  guideNote: { marginTop: 12, fontStyle: 'italic' },
   actions: { marginTop: 12, gap: 10 },
   actionBtn: { },
 });

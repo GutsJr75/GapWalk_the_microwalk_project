@@ -8,6 +8,7 @@ import { Container } from '../components/Container';
 import { ScreenHeader } from '../components/ScreenHeader';
 import { Card } from '../components/Card';
 import { Text } from '../components/Text';
+import { Button } from '../components/Button';
 import { theme } from '../theme';
 import { useAppStore } from '../store';
 import { sessionsRepo } from '../lib/repositories/sessionsRepo';
@@ -18,10 +19,21 @@ type Props = NativeStackScreenProps<RootStackParamList, 'WeeklyData'>;
 export const WeeklyDataScreen: React.FC<Props> = ({ navigation }) => {
   const { language } = useAppStore();
   const [weeklyHistory, setWeeklyHistory] = useState<WeeklyHistoryEntry[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    const sessions = await sessionsRepo.getAll();
-    setWeeklyHistory(calculateWeeklyHistory(sessions));
+    setLoadError(null);
+    setLoading(true);
+    try {
+      const sessions = await sessionsRepo.getAll();
+      setWeeklyHistory(calculateWeeklyHistory(sessions));
+    } catch (e) {
+      setLoadError(e instanceof Error ? e.message : 'Failed to load weekly data');
+      setWeeklyHistory([]);
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
   useFocusEffect(
@@ -50,7 +62,17 @@ export const WeeklyDataScreen: React.FC<Props> = ({ navigation }) => {
           backTestID="weekly-data-back"
         />
 
-        {weeklyHistory.length === 0 ? (
+        {loading ? (
+          <Card elevated style={styles.emptyCard}>
+            <Text variant="body" style={styles.emptyBody}>Loading…</Text>
+          </Card>
+        ) : loadError ? (
+          <Card elevated style={styles.emptyCard}>
+            <Text variant="body" style={styles.emptyTitle}>Could not load data</Text>
+            <Text variant="bodySmall" style={styles.emptyBody}>{loadError}</Text>
+            <Button title="Try again" onPress={() => void load()} variant="outline" style={styles.retryBtn} />
+          </Card>
+        ) : weeklyHistory.length === 0 ? (
           <Card elevated style={styles.emptyCard}>
             <Text variant="body" style={styles.emptyTitle}>No weekly data yet</Text>
             <Text variant="bodySmall" style={styles.emptyBody}>
@@ -120,6 +142,9 @@ const styles = StyleSheet.create({
   emptyBody: {
     textAlign: 'center',
     color: theme.colors.textMuted,
+  },
+  retryBtn: {
+    marginTop: 16,
   },
   weekCard: {
     marginBottom: 14,

@@ -4,6 +4,7 @@ import Svg, { Circle, G } from 'react-native-svg';
 import { Card } from './Card';
 import { Text } from './Text';
 import { theme } from '../theme';
+import { useThemePalette } from '../theme/palette';
 import { useAppStore } from '../store';
 
 type StatTone = 'target' | 'notifications' | 'steps';
@@ -25,6 +26,7 @@ export const StatCard: React.FC<StatCardProps> = ({
 }) => {
   const { themeMode } = useAppStore();
   const isDark = themeMode === 'dark';
+  const palette = useThemePalette();
 
   const pct = target > 0 ? Math.min((current / target), 1) : 0;
   const animatedValue = useRef(new Animated.Value(0)).current;
@@ -108,10 +110,10 @@ export const StatCard: React.FC<StatCardProps> = ({
   );
   const borderTint = withAlpha(
     toneColor,
-    isDark ? 0.32 : 0.24,
-    isDark ? 'rgba(255,255,255,0.10)' : 'rgba(15,23,42,0.14)'
+    isDark ? 0.32 : 0.18,
+    isDark ? 'rgba(255,255,255,0.10)' : 'rgba(15,23,42,0.08)'
   );
-  const goalText = '\uD83C\uDF89 Goal achieved!';
+  const goalText = 'Daily goal achieved';
   const progressLabel = `${current}/${target}`;
   const currentValueStyle = progressLabel.length >= 9
     ? styles.currentValueCompact
@@ -158,9 +160,9 @@ export const StatCard: React.FC<StatCardProps> = ({
             </G>
           </Svg>
           <View style={styles.circleText}>
-            <Text variant="title" style={currentValueStyle}>
+            <Text variant="title" style={[currentValueStyle, { color: palette.textPrimary }]}>
               {current}
-              <Text variant="title" style={goalValueStyle}>/{target}</Text>
+              <Text variant="title" style={[goalValueStyle, { color: palette.textMuted }]}>/{target}</Text>
             </Text>
           </View>
         </Animated.View>
@@ -168,9 +170,9 @@ export const StatCard: React.FC<StatCardProps> = ({
 
       <Text
         variant="bodySmall"
-        style={[styles.completion, pct >= 1 && { color: toneColor, fontWeight: theme.fontWeight.semibold }]}
+        style={[styles.completion, { color: palette.textMuted }, pct >= 1 && { color: toneColor, fontWeight: theme.fontWeight.semibold }]}
       >
-        {pct >= 1 ? goalText : `Completion: ${current} ${unitLabel}/${target} ${unitLabel}`}
+        {pct >= 1 ? goalText : `Progress: ${current} of ${target} ${unitLabel}`}
       </Text>
     </Card>
   );
@@ -190,7 +192,7 @@ const styles = StyleSheet.create({
     borderRadius: 36,
   },
   circleText: { position: 'absolute', justifyContent: 'center', alignItems: 'center' },
-  currentValue: { fontWeight: theme.fontWeight.bold },
+  currentValue: { fontWeight: theme.fontWeight.bold, lineHeight: 30 },
   currentValueMedium: { fontWeight: theme.fontWeight.bold, fontSize: 22, lineHeight: 26 },
   currentValueCompact: { fontWeight: theme.fontWeight.bold, fontSize: 20, lineHeight: 24 },
   goalValue: {
@@ -211,5 +213,5 @@ const styles = StyleSheet.create({
     color: theme.colors.textMuted,
     lineHeight: 18,
   },
-  completion: { color: theme.colors.textMuted, textAlign: 'center' },
+  completion: { color: theme.colors.textMuted, textAlign: 'center', lineHeight: 20 },
 });

@@ -39,6 +39,7 @@ let MapViewImpl: any = null;
 let MarkerImpl: any = null;
 let PolylineImpl: any = null;
 let PROVIDER_GOOGLE_IMPL: any = null;
+const hasGoogleMapsApiKey = !!(process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY || '').trim();
 
 if (Platform.OS !== 'web') {
   const maps = require('react-native-maps');
@@ -109,6 +110,7 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
   const lastPointRef = useRef<PathPoint | null>(null);
   const lastMovementAtRef = useRef<number>(Date.now());
   const mapRef = useRef<any>(null);
+  const isMountedRef = useRef(true);
 
   const completionPopAnim = useRef(new Animated.Value(0)).current;
   const completionBurstAnim = useRef(new Animated.Value(0)).current;
@@ -176,6 +178,7 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
         status = requested.status;
       }
 
+      if (!isMountedRef.current) return;
       if (status !== 'granted') {
         setPermissionDenied(true);
         setHasLocationPermission(false);
@@ -186,7 +189,21 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
       setPermissionDenied(false);
       setHasLocationPermission(true);
 
-      const initial = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+      let initial: Location.LocationObject;
+      try {
+        initial = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+      } catch {
+        // Emulator or device without GPS — try last known location
+        const last = await Location.getLastKnownPositionAsync();
+        if (last) {
+          initial = last;
+        } else {
+          if (!isMountedRef.current) return;
+          setIsTracking(false);
+          return;
+        }
+      }
+      if (!isMountedRef.current) return;
       applyLocationPoint(initial);
       setRouteCoords([
         {
@@ -196,27 +213,35 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
       ]);
 
       setIsTracking(true);
-      watchRef.current = await Location.watchPositionAsync(
+      const subscription = await Location.watchPositionAsync(
         {
-          accuracy: Location.Accuracy.BestForNavigation,
-          timeInterval: 1500,
-          distanceInterval: 2,
+          accuracy: Location.Accuracy.Balanced,
+          timeInterval: 2000,
+          distanceInterval: 3,
           mayShowUserSettingsDialog: true,
         },
         applyLocationPoint
       );
+      if (isMountedRef.current) {
+        watchRef.current = subscription;
+      } else {
+        subscription.remove();
+      }
     } catch (error) {
-      console.error('Failed to initialize location tracking:', error);
-      setPermissionDenied(true);
-      setIsTracking(false);
+      if (__DEV__) console.warn('Location tracking unavailable:', error);
+      if (isMountedRef.current) {
+        setPermissionDenied(false);
+        setIsTracking(false);
+      }
     }
   }, [applyLocationPoint, setHasLocationPermission]);
 
   useEffect(() => {
+    isMountedRef.current = true;
     void (async () => {
       if (planId) {
         const found = await plansRepo.getById(planId);
-        if (found) {
+        if (found && isMountedRef.current) {
           setPlan(found);
           await plansRepo.updateStatus(planId, 'started');
         }
@@ -232,8 +257,11 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
     }, 1000);
 
     return () => {
+      isMountedRef.current = false;
       if (timerRef.current) clearInterval(timerRef.current);
-      watchRef.current?.remove();
+      const sub = watchRef.current;
+      watchRef.current = null;
+      sub?.remove();
     };
   }, [planId, requestPermissionAndTrack]);
 
@@ -318,7 +346,7 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
       ? 'Location off'
       : isTracking
         ? (isWalking ? 'Walking now' : 'Not moving yet')
-        : 'Locating';
+        : 'Timer only';
 
   const statusColor = paused
     ? '#f59e0b'
@@ -444,6 +472,9 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
 
   const completionOverlayBg = themeMode === 'dark' ? 'rgba(2, 8, 20, 0.82)' : 'rgba(236, 245, 255, 0.82)';
   const completionCardBg = themeMode === 'dark' ? '#0f1f3d' : '#f7fbff';
+  const mapShadeColor = themeMode === 'dark' ? 'rgba(2, 8, 16, 0.18)' : 'rgba(141, 162, 186, 0.14)';
+  const zoomBtnBg = themeMode === 'dark' ? 'rgba(12, 20, 36, 0.78)' : 'rgba(248, 252, 255, 0.95)';
+  const zoomTextColor = themeMode === 'dark' ? '#eaf0ff' : '#10233e';
 
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: palette.bgApp }]} edges={['top', 'left', 'right']}>
@@ -452,7 +483,7 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
       </View>
 
       <View style={styles.mapArea}>
-        {MapViewImpl ? (
+        {MapViewImpl && (Platform.OS !== 'android' || hasGoogleMapsApiKey) ? (
           <MapViewImpl
             ref={mapRef}
             style={StyleSheet.absoluteFill}
@@ -486,21 +517,29 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
           </MapViewImpl>
         ) : (
           <View style={styles.mapFallback}>
-            <Text variant="bodySmall" color={palette.textMuted}>Map view is unavailable on web preview.</Text>
+            <View style={styles.mapFallbackIcon}>
+              <Text variant="title" style={styles.mapFallbackEmoji}>🗺️</Text>
+            </View>
+            <Text variant="body" style={styles.mapFallbackTitle}>
+              Map Unavailable
+            </Text>
+            <Text variant="bodySmall" color={palette.textMuted} style={styles.mapFallbackSub}>
+              Your walk is still being tracked.{'\n'}Distance and steps update in real time below.
+            </Text>
           </View>
         )}
 
-        <View style={styles.mapShade} pointerEvents="none" />
+        <View style={[styles.mapShade, { backgroundColor: mapShadeColor }]} pointerEvents="none" />
 
         <View style={styles.zoomStack}>
-          <Pressable style={[styles.zoomBtn, { borderColor: sheetBorder }]} onPress={() => { void zoomBy(1); }}>
-            <Text variant="title" style={styles.zoomText}>+</Text>
+          <Pressable style={[styles.zoomBtn, { borderColor: sheetBorder, backgroundColor: zoomBtnBg }]} onPress={() => { void zoomBy(1); }}>
+            <Text variant="title" style={[styles.zoomText, { color: zoomTextColor }]}>+</Text>
           </Pressable>
-          <Pressable style={[styles.zoomBtn, { borderColor: sheetBorder }]} onPress={() => { void zoomBy(-1); }}>
-            <Text variant="title" style={styles.zoomText}>-</Text>
+          <Pressable style={[styles.zoomBtn, { borderColor: sheetBorder, backgroundColor: zoomBtnBg }]} onPress={() => { void zoomBy(-1); }}>
+            <Text variant="title" style={[styles.zoomText, { color: zoomTextColor }]}>-</Text>
           </Pressable>
-          <Pressable style={[styles.zoomBtn, { borderColor: sheetBorder }]} onPress={recenterMap}>
-            <Text variant="bodySmall" style={styles.zoomText}>◎</Text>
+          <Pressable style={[styles.zoomBtn, { borderColor: sheetBorder, backgroundColor: zoomBtnBg }]} onPress={recenterMap}>
+            <Text variant="bodySmall" style={[styles.zoomText, { color: zoomTextColor }]}>◎</Text>
           </Pressable>
         </View>
 
@@ -646,9 +685,9 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
             <View style={[styles.completionBadge, { backgroundColor: theme.colors.accentPrimary }]}>
               <Text variant="title" style={styles.completionBadgeText}>✓</Text>
             </View>
-            <Text variant="title" style={styles.completionTitle}>Walk complete</Text>
+            <Text variant="title" style={styles.completionTitle}>Walk completed</Text>
             <Text variant="bodySmall" color={palette.textMuted} style={styles.completionSubtitle}>
-              {Math.max(1, Math.floor(activeSeconds / 60))} min - {steps} steps - {formatMiles(distanceMeters)}
+              Session summary: {Math.max(1, Math.floor(activeSeconds / 60))} min • {steps} steps • {formatMiles(distanceMeters)}
             </Text>
           </Animated.View>
         </Animated.View>
@@ -682,10 +721,26 @@ const styles = StyleSheet.create({
     ...StyleSheet.absoluteFillObject,
     alignItems: 'center',
     justifyContent: 'center',
+    paddingHorizontal: 32,
+  },
+  mapFallbackIcon: {
+    marginBottom: 12,
+  },
+  mapFallbackEmoji: {
+    fontSize: 40,
+  },
+  mapFallbackTitle: {
+    fontWeight: theme.fontWeight.semibold,
+    fontSize: 18,
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  mapFallbackSub: {
+    textAlign: 'center',
+    lineHeight: 20,
   },
   mapShade: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(2, 8, 16, 0.18)',
   },
   zoomStack: {
     position: 'absolute',
@@ -698,12 +753,10 @@ const styles = StyleSheet.create({
     height: 36,
     borderRadius: 10,
     borderWidth: 1,
-    backgroundColor: 'rgba(12, 20, 36, 0.78)',
     alignItems: 'center',
     justifyContent: 'center',
   },
   zoomText: {
-    color: '#eaf0ff',
     fontWeight: theme.fontWeight.bold,
   },
   statusPill: {

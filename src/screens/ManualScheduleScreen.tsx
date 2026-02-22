@@ -1181,7 +1181,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
                     ]}
                   >
                     {idx % 2 === 0 ? (
-                      <Text variant="bodySmall" color={theme.colors.textMuted} style={styles.gridTimeLabel}>
+                      <Text variant="bodySmall" color={palette.textMuted} style={styles.gridTimeLabel}>
                         {FULL_HOUR_LABELS[idx / 2]}
                       </Text>
                     ) : (
@@ -1895,9 +1895,12 @@ const styles = StyleSheet.create({
   input: {
     backgroundColor: theme.colors.bgApp,
     borderRadius: theme.borderRadius.sm,
-    padding: 10,
+    paddingVertical: Platform.OS === 'android' ? 8 : 10,
+    paddingHorizontal: 10,
     color: theme.colors.textPrimary,
     fontSize: theme.fontSize.md,
+    lineHeight: 22,
+    textAlignVertical: 'center',
   },
   lockedDay: {
     backgroundColor: theme.colors.bgApp,

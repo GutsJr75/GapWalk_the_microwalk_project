@@ -183,10 +183,17 @@ export const notificationService = {
   },
   
   /**
-   * Schedule multiple nudges respecting preferences
+   * Schedule multiple nudges respecting preferences.
+   * Ensures notification permission is granted before scheduling.
    */
   async scheduleMultipleNudges(plans: NudgePlan[], prefs?: Preferences): Promise<void> {
     if (!isNotificationsSupported) return;
+
+    const { status } = await Notifications.getPermissionsAsync();
+    if (status !== 'granted') {
+      const granted = await this.requestPermissions();
+      if (!granted) return;
+    }
 
     for (const plan of plans) {
       await this.scheduleNudge(plan, prefs);

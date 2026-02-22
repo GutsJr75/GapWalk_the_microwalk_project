@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
-import { View, StyleSheet, ScrollView, RefreshControl, Alert, TouchableOpacity, Modal, Animated, Easing, useWindowDimensions, Platform, TextInput } from 'react-native';
+import { View, StyleSheet, ScrollView, RefreshControl, Alert, TouchableOpacity, Modal, Animated, Easing, useWindowDimensions, Platform, TextInput, KeyboardAvoidingView } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useFocusEffect } from '@react-navigation/native';
 import { RootStackParamList } from '../../App';
@@ -620,7 +620,7 @@ export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
     ? Math.max(0, preferences.dailyTargetMinutes - todayMinutesWalked)
     : 0;
   const readyPrompt = goalReached
-    ? 'Goal reached. Bonus walk?'
+    ? 'Daily goal reached. Additional walks are optional.'
     : remainingGoalMinutes <= 0
       ? 'Ready to walk?'
       : remainingGoalMinutes <= 5
@@ -698,10 +698,10 @@ export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
           }
         >
           <Text variant="title" style={styles.heading}>Today</Text>
-          <Text variant="body" color={theme.colors.textMuted} style={styles.headingSub}>{dayName}, {monthDay}</Text>
+          <Text variant="body" color={palette.textMuted} style={styles.headingSub}>{dayName}, {monthDay}</Text>
           <Card elevated style={styles.promptCard}>
             <Text variant="body" style={styles.promptTitle}>Get started</Text>
-            <Text variant="bodySmall" color={theme.colors.textMuted} style={styles.promptText}>Set up your preferences so GapWalk can find the best walking windows in your schedule.</Text>
+            <Text variant="bodySmall" color={palette.textMuted} style={styles.promptText}>Set up your preferences so GapWalk can find the best walking windows in your schedule.</Text>
             <Button title="Set up preferences" onPress={() => navigation.navigate('Preferences', {})} />
           </Card>
         </ScrollView>
@@ -728,7 +728,7 @@ export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
         <View style={styles.header}>
           <View style={styles.headerCenter}>
             <Text variant="title" style={styles.heading}>Today</Text>
-            <Text variant="bodySmall" color={theme.colors.textMuted} style={styles.headingDate}>{dayName}, {monthDay}</Text>
+            <Text variant="bodySmall" color={palette.textMuted} style={styles.headingDate}>{dayName}, {monthDay}</Text>
           </View>
           <View style={styles.headerRight}>
             <BurgerIcon onPress={openMenu} color={palette.textPrimary} testID="dashboard-open-menu" />
@@ -761,6 +761,7 @@ export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
             style={[
               styles.celebrationOverlay,
               {
+                backgroundColor: palette.overlay,
                 opacity: celebrationAnim,
                 transform: [
                   {
@@ -774,11 +775,21 @@ export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
             ]}
             pointerEvents="none"
           >
-            <View style={styles.celebrationContent}>
+            <View
+              style={[
+                styles.celebrationContent,
+                {
+                  backgroundColor: palette.bgSurfaceElevated,
+                  borderColor: themeMode === 'dark' ? 'rgba(46,233,166,0.35)' : 'rgba(46,233,166,0.42)',
+                },
+              ]}
+            >
               <Text style={styles.celebrationEmoji}>{'\uD83C\uDF89'}</Text>
-              <Text variant="title" style={styles.celebrationText}>Goal Achieved!</Text>
-              <Text variant="bodySmall" color={theme.colors.textMuted} style={styles.celebrationSubtext}>
-                {streak.currentStreak > 0 ? `${streak.currentStreak}-day streak!` : 'Great job!'}
+              <Text variant="title" style={styles.celebrationText}>Daily goal achieved</Text>
+              <Text variant="bodySmall" color={palette.textMuted} style={styles.celebrationSubtext}>
+                {streak.currentStreak > 0
+                  ? `Current streak: ${streak.currentStreak} day${streak.currentStreak > 1 ? 's' : ''}.`
+                  : 'Excellent work today.'}
               </Text>
             </View>
           </Animated.View>
@@ -788,7 +799,15 @@ export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
         <Text variant="body" style={styles.readyText}>{readyPrompt}</Text>
 
         {/* Achievements & Streak Card */}
-        <Card elevated style={styles.streakCard}>
+        <Card
+          elevated
+          style={[
+            styles.streakCard,
+            {
+              borderColor: themeMode === 'dark' ? 'rgba(46,233,166,0.2)' : 'rgba(46,233,166,0.12)',
+            },
+          ]}
+        >
           <View style={styles.streakContent}>
             <Text style={styles.streakEmoji}>{'\uD83D\uDD25'}</Text>
             <View style={styles.streakText}>
@@ -797,11 +816,11 @@ export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
                   ? `${streak.currentStreak} Day${streak.currentStreak > 1 ? 's' : ''} Streak`
                   : 'No streak yet'}
               </Text>
-              <Text variant="bodySmall" color={theme.colors.textMuted}>
+              <Text variant="bodySmall" color={palette.textMuted}>
                 {streak.currentStreak > 0
                   ? streak.longestStreak > streak.currentStreak
                     ? `Longest: ${streak.longestStreak} days`
-                    : 'Keep it going!'
+                    : 'You are building great consistency.'
                   : 'Start a walk today to begin your streak.'}
               </Text>
             </View>
@@ -834,15 +853,15 @@ export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
           <View style={styles.weeklyGrid}>
             <View style={styles.weeklyItem}>
               <Text variant="title" style={styles.weeklyValue}>{weeklyStats.totalMinutes}</Text>
-              <Text variant="bodySmall" color={theme.colors.textMuted}>Minutes</Text>
+              <Text variant="bodySmall" color={palette.textMuted}>Minutes</Text>
             </View>
             <View style={styles.weeklyItem}>
               <Text variant="title" style={styles.weeklyValue}>{weeklyStats.totalSteps.toLocaleString()}</Text>
-              <Text variant="bodySmall" color={theme.colors.textMuted}>Total Steps</Text>
+              <Text variant="bodySmall" color={palette.textMuted}>Total Steps</Text>
             </View>
             <View style={styles.weeklyItem}>
               <Text variant="title" style={styles.weeklyValue}>{weeklyStats.daysActive}</Text>
-              <Text variant="bodySmall" color={theme.colors.textMuted}>Active Days</Text>
+              <Text variant="bodySmall" color={palette.textMuted}>Active Days</Text>
             </View>
           </View>
         </Card>
@@ -855,7 +874,7 @@ export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
         {goalReached ? (
           <Card elevated style={styles.emptyCard}>
             <Text variant="body" style={styles.emptyText}>Goal reached for today</Text>
-            <Text variant="bodySmall" color={theme.colors.textMuted} style={styles.emptyHint}>
+            <Text variant="bodySmall" color={palette.textMuted} style={styles.emptyHint}>
               Nice work. Extra walks are still tracked, but reminders pause until tomorrow.
             </Text>
           </Card>
@@ -863,7 +882,7 @@ export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
           <Card elevated style={styles.emptyCard}>
             <Text variant="body" style={styles.emptyIcon}>{'\uD83D\uDEB6'}</Text>
             <Text variant="body" style={styles.emptyText}>No opportunities yet</Text>
-            <Text variant="bodySmall" color={theme.colors.textMuted} style={styles.emptyHint}>
+            <Text variant="bodySmall" color={palette.textMuted} style={styles.emptyHint}>
               No suitable gaps were found right now. Pull to refresh, or start a manual walk below.
             </Text>
           </Card>
@@ -886,17 +905,17 @@ export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
           <Text variant="body" style={styles.prefLabel}>Other preferences</Text>
           <View style={styles.prefsGrid}>
             <View style={styles.prefItem}>
-              <Text variant="bodySmall" color={theme.colors.textMuted}>Buffer time</Text>
+              <Text variant="bodySmall" color={palette.textMuted}>Buffer time</Text>
               <Text variant="body" style={styles.prefValue}>{preferences.bufferMinutes} min</Text>
             </View>
             <View style={styles.prefItem}>
-              <Text variant="bodySmall" color={theme.colors.textMuted}>Quiet hours</Text>
+              <Text variant="bodySmall" color={palette.textMuted}>Quiet hours</Text>
               <Text variant="body" style={styles.prefValue}>{formatTime12(preferences.quietHoursStart)} - {formatTime12(preferences.quietHoursEnd)}</Text>
             </View>
           </View>
           <View style={styles.prefsGrid}>
             <View style={styles.prefItem}>
-              <Text variant="bodySmall" color={theme.colors.textMuted}>Notify me</Text>
+              <Text variant="bodySmall" color={palette.textMuted}>Notify me</Text>
               <Text variant="body" style={styles.prefValue}>
                 {preferences.whenToNotify === 'now'
                   ? 'Immediately'
@@ -906,13 +925,13 @@ export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
               </Text>
             </View>
             <View style={styles.prefItem}>
-              <Text variant="bodySmall" color={theme.colors.textMuted}>Minimum reminder gap</Text>
+              <Text variant="bodySmall" color={palette.textMuted}>Minimum reminder gap</Text>
               <Text variant="body" style={styles.prefValue}>{preferences.notificationMinGapMinutes} min</Text>
             </View>
           </View>
           {preferredPeriodsList.length > 0 && (
             <View style={styles.prefItemFull}>
-              <Text variant="bodySmall" color={theme.colors.textMuted}>Preferred periods</Text>
+              <Text variant="bodySmall" color={palette.textMuted}>Preferred periods</Text>
               <View style={styles.prefPillsWrap}>
                 {preferredPeriodsList.map((periodLabel, idx) => (
                   <View key={`${periodLabel}-${idx}`} style={styles.prefPill}>
@@ -938,103 +957,116 @@ export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
         animationType="fade"
         onRequestClose={closeChangeModal}
       >
-        <View style={styles.changeOverlay}>
-          <View
-            style={[
-              styles.changeCard,
-              { backgroundColor: palette.bgSurfaceElevated, borderColor: palette.borderSoft },
-            ]}
+        <KeyboardAvoidingView
+          style={[styles.changeOverlay, { backgroundColor: palette.overlay }]}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        >
+          <ScrollView
+            contentContainerStyle={styles.changeScrollContent}
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+            showsVerticalScrollIndicator={false}
           >
-            <Text variant="title" style={styles.changeTitle}>Change walk window</Text>
-            <Text variant="bodySmall" color={palette.textMuted} style={styles.changeSubtitle}>
-              Set your preferred start time and walk duration.
-            </Text>
+            <View
+              style={[
+                styles.changeCard,
+                { backgroundColor: palette.bgSurfaceElevated, borderColor: palette.borderSoft },
+              ]}
+            >
+              <Text variant="title" style={styles.changeTitle}>Change walk window</Text>
+              <Text variant="bodySmall" color={palette.textMuted} style={styles.changeSubtitle}>
+                Set your preferred start time and walk duration.
+              </Text>
 
-            <Text variant="bodySmall" style={styles.changeLabel}>Start time</Text>
-            <View style={styles.changeTimeRow}>
-              <TextInput
-                style={[styles.changeTimeInput, { borderColor: palette.borderStrong, color: palette.textPrimary }]}
-                value={changeHour}
-                onChangeText={(t) => setChangeHour(t.replace(/[^0-9]/g, '').slice(0, 2))}
-                placeholder="HH"
-                placeholderTextColor={palette.textMuted}
-                keyboardType="number-pad"
-                maxLength={2}
-              />
-              <Text variant="body" style={styles.changeColon}>:</Text>
-              <TextInput
-                style={[styles.changeTimeInput, { borderColor: palette.borderStrong, color: palette.textPrimary }]}
-                value={changeMinute}
-                onChangeText={(t) => setChangeMinute(t.replace(/[^0-9]/g, '').slice(0, 2))}
-                placeholder="MM"
-                placeholderTextColor={palette.textMuted}
-                keyboardType="number-pad"
-                maxLength={2}
-              />
-              <View style={styles.periodRow}>
-                {(['AM', 'PM'] as const).map((period) => (
-                  <TouchableOpacity
-                    key={period}
-                    style={[
-                      styles.periodBtn,
-                      { borderColor: palette.borderStrong },
-                      changePeriod === period && styles.periodBtnActive,
-                    ]}
-                    onPress={() => setChangePeriod(period)}
-                    activeOpacity={0.8}
-                  >
-                    <Text
-                      variant="bodySmall"
-                      style={changePeriod === period ? styles.periodBtnTextActive : styles.periodBtnText}
+              <Text variant="bodySmall" style={styles.changeLabel}>Start time</Text>
+              <View style={styles.changeTimeRow}>
+                <TextInput
+                  style={[styles.changeTimeInput, { borderColor: palette.borderStrong, color: palette.textPrimary }]}
+                  value={changeHour}
+                  onChangeText={(t) => setChangeHour(t.replace(/[^0-9]/g, '').slice(0, 2))}
+                  placeholder="HH"
+                  placeholderTextColor={palette.textMuted}
+                  keyboardType="number-pad"
+                  maxLength={2}
+                />
+                <Text variant="body" style={styles.changeColon}>:</Text>
+                <TextInput
+                  style={[styles.changeTimeInput, { borderColor: palette.borderStrong, color: palette.textPrimary }]}
+                  value={changeMinute}
+                  onChangeText={(t) => setChangeMinute(t.replace(/[^0-9]/g, '').slice(0, 2))}
+                  placeholder="MM"
+                  placeholderTextColor={palette.textMuted}
+                  keyboardType="number-pad"
+                  maxLength={2}
+                />
+                <View style={styles.periodRow}>
+                  {(['AM', 'PM'] as const).map((period) => (
+                    <TouchableOpacity
+                      key={period}
+                      style={[
+                        styles.periodBtn,
+                        { borderColor: palette.borderStrong },
+                        changePeriod === period && styles.periodBtnActive,
+                      ]}
+                      onPress={() => setChangePeriod(period)}
+                      activeOpacity={0.8}
                     >
-                      {period}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
+                      <Text
+                        variant="bodySmall"
+                        style={[
+                          changePeriod === period ? styles.periodBtnTextActive : styles.periodBtnText,
+                          { color: changePeriod === period ? '#06261d' : palette.textPrimary },
+                        ]}
+                      >
+                        {period}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </View>
+
+              <Text variant="bodySmall" style={styles.changeLabel}>Walk minutes</Text>
+              <View style={styles.durationRow}>
+                <TextInput
+                  style={[styles.durationInput, { borderColor: palette.borderStrong, color: palette.textPrimary }]}
+                  value={changeDuration}
+                  onChangeText={(t) => setChangeDuration(t.replace(/[^0-9]/g, '').slice(0, 3))}
+                  placeholder="10"
+                  placeholderTextColor={palette.textMuted}
+                  keyboardType="number-pad"
+                  maxLength={3}
+                />
+                <Text variant="muted" style={styles.durationUnit}>min</Text>
+              </View>
+
+              {!!changeError && (
+                <Text variant="bodySmall" style={styles.changeError}>{changeError}</Text>
+              )}
+
+              <View style={styles.changeActionRow}>
+                <Button
+                  title="Cancel"
+                  onPress={closeChangeModal}
+                  variant="outline"
+                  style={styles.changeActionBtn}
+                  disabled={savingChange}
+                />
+                <Button
+                  title="Save"
+                  onPress={requestSaveWalkChange}
+                  style={styles.changeActionBtn}
+                  loading={savingChange}
+                  disabled={savingChange}
+                />
               </View>
             </View>
-
-            <Text variant="bodySmall" style={styles.changeLabel}>Walk minutes</Text>
-            <View style={styles.durationRow}>
-              <TextInput
-                style={[styles.durationInput, { borderColor: palette.borderStrong, color: palette.textPrimary }]}
-                value={changeDuration}
-                onChangeText={(t) => setChangeDuration(t.replace(/[^0-9]/g, '').slice(0, 3))}
-                placeholder="10"
-                placeholderTextColor={palette.textMuted}
-                keyboardType="number-pad"
-                maxLength={3}
-              />
-              <Text variant="muted" style={styles.durationUnit}>min</Text>
-            </View>
-
-            {!!changeError && (
-              <Text variant="bodySmall" style={styles.changeError}>{changeError}</Text>
-            )}
-
-            <View style={styles.changeActionRow}>
-              <Button
-                title="Cancel"
-                onPress={closeChangeModal}
-                variant="outline"
-                style={styles.changeActionBtn}
-                disabled={savingChange}
-              />
-              <Button
-                title="Save"
-                onPress={requestSaveWalkChange}
-                style={styles.changeActionBtn}
-                loading={savingChange}
-                disabled={savingChange}
-              />
-            </View>
-          </View>
-        </View>
+          </ScrollView>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* Side Menu Modal */}
       <Modal visible={menuVisible} transparent animationType="fade" onRequestClose={closeMenu}>
-        <View style={styles.menuOverlay}>
+        <View style={[styles.menuOverlay, { backgroundColor: palette.overlay }]}>
           <TouchableOpacity style={styles.menuBackdrop} onPress={closeMenu} activeOpacity={1} />
           <Animated.View
             style={[
@@ -1054,28 +1086,28 @@ export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
             ]}
           >
             <Text variant="title" style={styles.menuTitle}>Options</Text>
-            <TouchableOpacity style={styles.menuItem} onPress={navigateToScheduleOverview} testID="dashboard-menu-schedule">
+            <TouchableOpacity style={[styles.menuItem, { borderBottomColor: palette.borderSoft }]} onPress={navigateToScheduleOverview} testID="dashboard-menu-schedule">
               <View style={styles.menuItemRow}>
                 <AppIcon name="calendar" size={16} color={palette.textPrimary} />
                 <Text variant="body" style={styles.menuItemLabel}>Manage schedule</Text>
                 <AppIcon name="chevronRight" size={16} color={palette.textMuted} />
               </View>
             </TouchableOpacity>
-            <TouchableOpacity style={styles.menuItem} onPress={navigateToPreferences} testID="dashboard-menu-preferences">
+            <TouchableOpacity style={[styles.menuItem, { borderBottomColor: palette.borderSoft }]} onPress={navigateToPreferences} testID="dashboard-menu-preferences">
               <View style={styles.menuItemRow}>
                 <AppIcon name="adjust" size={16} color={palette.textPrimary} />
                 <Text variant="body" style={styles.menuItemLabel}>Edit your choices</Text>
                 <AppIcon name="chevronRight" size={16} color={palette.textMuted} />
               </View>
             </TouchableOpacity>
-            <TouchableOpacity style={styles.menuItem} onPress={navigateToSettings} testID="dashboard-menu-settings">
+            <TouchableOpacity style={[styles.menuItem, { borderBottomColor: palette.borderSoft }]} onPress={navigateToSettings} testID="dashboard-menu-settings">
               <View style={styles.menuItemRow}>
                 <AppIcon name="settings" size={16} color={palette.textPrimary} />
                 <Text variant="body" style={styles.menuItemLabel}>Settings</Text>
                 <AppIcon name="chevronRight" size={16} color={palette.textMuted} />
               </View>
             </TouchableOpacity>
-            <TouchableOpacity style={styles.menuItem} onPress={navigateToWeeklyData} testID="dashboard-menu-weekly-data">
+            <TouchableOpacity style={[styles.menuItem, { borderBottomColor: palette.borderSoft }]} onPress={navigateToWeeklyData} testID="dashboard-menu-weekly-data">
               <View style={styles.menuItemRow}>
                 <AppIcon name="calendar" size={16} color={palette.textPrimary} />
                 <Text variant="body" style={styles.menuItemLabel}>Weekly Data</Text>
@@ -1156,7 +1188,7 @@ const styles = StyleSheet.create({
   gapTitle: { fontWeight: theme.fontWeight.semibold, fontSize: theme.fontSize.md + 2, marginTop: 24, marginBottom: 4 },
   gapSubtitle: { fontSize: theme.fontSize.sm, marginBottom: 12, lineHeight: 20 },
   emptyCard: { alignItems: 'center', paddingVertical: 28, paddingHorizontal: 20, marginBottom: 12 },
-  emptyIcon: { fontSize: 28, marginBottom: 8 },
+  emptyIcon: { fontSize: 28, lineHeight: 34, marginBottom: 8 },
   emptyText: { fontWeight: theme.fontWeight.semibold, marginBottom: 4 },
   emptyHint: { textAlign: 'center', lineHeight: 18 },
   promptCard: { marginBottom: 16, gap: 10 },
@@ -1191,9 +1223,13 @@ const styles = StyleSheet.create({
   changeOverlay: {
     flex: 1,
     backgroundColor: 'rgba(2,8,20,0.62)',
+    paddingHorizontal: 20,
+  },
+  changeScrollContent: {
+    flexGrow: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 20,
+    paddingVertical: 16,
   },
   changeCard: {
     width: '100%',
@@ -1231,6 +1267,9 @@ const styles = StyleSheet.create({
     fontSize: theme.fontSize.md,
     fontWeight: theme.fontWeight.medium,
     paddingHorizontal: 8,
+    paddingVertical: Platform.OS === 'android' ? 8 : 6,
+    lineHeight: 22,
+    textAlignVertical: 'center',
   },
   changeColon: {
     fontSize: theme.fontSize.lg,
@@ -1277,6 +1316,9 @@ const styles = StyleSheet.create({
     fontSize: theme.fontSize.md,
     fontWeight: theme.fontWeight.medium,
     paddingHorizontal: 8,
+    paddingVertical: Platform.OS === 'android' ? 8 : 6,
+    lineHeight: 22,
+    textAlignVertical: 'center',
   },
   durationUnit: {
     fontWeight: theme.fontWeight.medium,
@@ -1342,17 +1384,16 @@ const styles = StyleSheet.create({
   },
   celebrationContent: {
     alignItems: 'center',
-    backgroundColor: theme.colors.bgSurfaceElevated,
     borderRadius: 20,
     width: '84%',
     maxWidth: 330,
     paddingVertical: 24,
     paddingHorizontal: 20,
     borderWidth: 1,
-    borderColor: 'rgba(46,233,166,0.35)',
   },
   celebrationEmoji: {
     fontSize: 52,
+    lineHeight: 60,
     marginBottom: 10,
   },
   celebrationText: {
@@ -1369,7 +1410,6 @@ const styles = StyleSheet.create({
     marginBottom: 16,
     backgroundColor: 'rgba(46,233,166,0.1)',
     borderWidth: 1,
-    borderColor: 'rgba(46,233,166,0.2)',
   },
   streakContent: {
     flexDirection: 'row',
@@ -1377,6 +1417,7 @@ const styles = StyleSheet.create({
   },
   streakEmoji: {
     fontSize: 32,
+    lineHeight: 40,
     marginRight: 12,
   },
   streakText: {

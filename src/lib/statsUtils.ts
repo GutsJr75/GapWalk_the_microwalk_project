@@ -1,5 +1,5 @@
 import { WalkSession } from './types';
-import { startOfDay, endOfDay, startOfWeek, endOfWeek, startOfMonth, endOfMonth, subDays, format, parseISO, isSameDay } from 'date-fns';
+import { startOfDay, endOfDay, startOfWeek, endOfWeek, startOfMonth, endOfMonth, subDays, format, parseISO, isSameDay, isValid } from 'date-fns';
 
 export interface StreakData {
   currentStreak: number;
@@ -150,6 +150,7 @@ export function calculateWeeklyHistory(
 
   sessions.forEach((s) => {
     const sessionDate = parseISO(s.start);
+    if (!isValid(sessionDate)) return;
     const weekStartDate = startOfWeek(sessionDate, { weekStartsOn: 0 });
     const weekKey = format(weekStartDate, 'yyyy-MM-dd');
     const dayKey = format(sessionDate, 'yyyy-MM-dd');

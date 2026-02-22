@@ -11,6 +11,7 @@ import { Card } from '../components/Card';
 import { AppIcon } from '../components/AppIcon';
 import { ScreenHeader } from '../components/ScreenHeader';
 import { theme } from '../theme';
+import { useThemePalette } from '../theme/palette';
 import { buildWeeklyTemplateFromIcsEvents, parseICSFile } from '../lib/ics';
 import { ManualScheduleEntry } from '../lib/types';
 import { eventsRepo } from '../lib/repositories/eventsRepo';
@@ -47,6 +48,7 @@ export const ScheduleSetupScreen: React.FC<Props> = ({ navigation, route }) => {
   const [loading, setLoading] = useState(false);
   const [syncStatus, setSyncStatus] = useState<string | null>(null);
   const { setScheduleSource, scheduleSource, preferences, setUpcomingPlans } = useAppStore();
+  const palette = useThemePalette();
   const manageMode = !!route.params?.manageMode;
   const isE2E = process.env.EXPO_PUBLIC_E2E === '1';
 
@@ -206,17 +208,8 @@ export const ScheduleSetupScreen: React.FC<Props> = ({ navigation, route }) => {
     if (!isGoogleConfigured()) {
       const redirectUri = getGoogleRedirectUri();
       Alert.alert(
-        'One-time setup',
-        'To connect Google Calendar:\n\n' +
-          '1. Go to console.cloud.google.com → your project → APIs & Services → Credentials\n' +
-          '2. Create OAuth 2.0 Client ID (Web application)\n' +
-          '3. Add this URL under Authorized redirect URIs:\n\n' +
-          redirectUri +
-          '\n\n' +
-          '4. Enable "Google Calendar API" under APIs & Services → Library\n' +
-          '5. Create a .env file in the project root with:\n' +
-          'EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID=your_client_id_here\n\n' +
-          '6. Restart the app (npm run web or expo start)',
+        'Google Calendar',
+        'Google Calendar integration is coming soon. Please use Import or Enter manually for now.',
         [{ text: 'OK' }]
       );
       return;
@@ -372,6 +365,26 @@ export const ScheduleSetupScreen: React.FC<Props> = ({ navigation, route }) => {
       return;
     }
 
+    const currentSourceType = scheduleSource?.type;
+    const selectionMatchesCurrent =
+      (selectedOption === 'manual' && currentSourceType === 'manual') ||
+      (selectedOption === 'import' && currentSourceType === 'ics') ||
+      (selectedOption === 'google' && currentSourceType === 'google');
+
+    if (selectionMatchesCurrent) {
+      const sourceLabel =
+        currentSourceType === 'manual'
+          ? 'manual entry'
+          : currentSourceType === 'ics'
+            ? 'calendar import'
+            : 'Google Calendar';
+      showMessage(
+        'No changes to save',
+        `Your schedule is already using ${sourceLabel}. Choose a different option if you want to switch, or tap Cancel to go back.`
+      );
+      return;
+    }
+
     const message = SAVE_CONFIRM_MESSAGE;
 
     if (Platform.OS === 'web' && typeof (globalThis as any).confirm === 'function') {
@@ -411,19 +424,19 @@ export const ScheduleSetupScreen: React.FC<Props> = ({ navigation, route }) => {
         <Card
           selected={false}
           onPress={onGoogleCardPress}
-          style={[styles.googleCard, styles.upcomingCard]}
+          style={[styles.googleCard, styles.upcomingCard, { borderColor: palette.textMuted }]}
           testID="schedule-option-google"
         >
           <View style={styles.cardHeader}>
             <View style={styles.cardTitleRow}>
-              <AppIcon name="calendar" size={15} color={theme.colors.textMuted} />
-              <Text variant="body" style={[styles.cardTitle, styles.upcomingCardTitle]}>Link Google Calendar</Text>
+              <AppIcon name="calendar" size={15} color={palette.textMuted} />
+              <Text variant="body" style={[styles.cardTitle, { color: palette.textMuted }]}>Link Google Calendar</Text>
             </View>
-            <View style={styles.upcomingBadge}>
-              <Text variant="bodySmall" style={styles.upcomingBadgeText}>Upcoming feature</Text>
+            <View style={[styles.upcomingBadge, { backgroundColor: palette.borderSoft }]}>
+              <Text variant="bodySmall" style={[styles.upcomingBadgeText, { color: palette.textMuted }]}>Coming soon</Text>
             </View>
           </View>
-          <Text variant="bodySmall" color={theme.colors.textMuted} style={styles.cardDesc}>
+          <Text variant="bodySmall" color={palette.textMuted} style={styles.cardDesc}>
             Sign in with Google to detect your busy times and find the best walking windows.
           </Text>
         </Card>
@@ -440,7 +453,7 @@ export const ScheduleSetupScreen: React.FC<Props> = ({ navigation, route }) => {
               <AppIcon name="calendar" size={15} color={theme.colors.accentPrimary} />
               <Text variant="body" style={styles.cardTitle}>Import</Text>
             </View>
-            <Text variant="bodySmall" color={theme.colors.textMuted} style={styles.cardDesc}>
+            <Text variant="bodySmall" color={palette.textMuted} style={styles.cardDesc}>
               Upload a .ics file so GapWalk can see when you're busy.
             </Text>
           </Card>
@@ -455,7 +468,7 @@ export const ScheduleSetupScreen: React.FC<Props> = ({ navigation, route }) => {
               <AppIcon name="adjust" size={15} color={theme.colors.accentPrimary} />
               <Text variant="body" style={styles.cardTitle}>Input manually</Text>
             </View>
-            <Text variant="bodySmall" color={theme.colors.textMuted} style={styles.cardDesc}>
+            <Text variant="bodySmall" color={palette.textMuted} style={styles.cardDesc}>
               Build your weekly schedule and one-time events with a simple calendar.
             </Text>
           </Card>
@@ -557,20 +570,16 @@ const styles = StyleSheet.create({
     fontSize: theme.fontSize.xs,
   },
   upcomingCard: {
-    opacity: 0.85,
-    borderColor: theme.colors.textMuted,
+    opacity: 0.7,
   },
   upcomingCardTitle: {
-    color: theme.colors.textMuted,
   },
   upcomingBadge: {
-    backgroundColor: 'rgba(128,128,128,0.2)',
     borderRadius: 6,
     paddingVertical: 3,
     paddingHorizontal: 10,
   },
   upcomingBadgeText: {
-    color: theme.colors.textMuted,
     fontWeight: theme.fontWeight.medium,
     fontSize: theme.fontSize.xs,
   },

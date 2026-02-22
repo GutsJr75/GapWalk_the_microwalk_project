@@ -2,29 +2,28 @@
 
 This folder contains app assets like icons and splash screens.
 
-## Required Assets
+## App icon
 
-For a production build, you'll need:
+- **icon.png** (1024×1024) – Main app icon (included). Used for both iOS and Android; Android uses it as the adaptive icon foreground with brand background `#6366F1`.
 
-1. **icon.png** (1024x1024) - App icon
-2. **splash.png** (2048x2048 with transparent background) - Splash screen
-3. **adaptive-icon.png** (1024x1024) - Android adaptive icon
-4. **favicon.png** (48x48) - Web favicon
-5. **notification-icon.png** (96x96) - Android notification icon
+After changing the icon, regenerate native projects so the launcher icon updates:
 
-## Temporary Placeholders
+```bash
+npx expo prebuild --clean
+```
 
-For development, Expo will use default placeholder assets if these files are missing.
+Then build as usual (e.g. `cd android && ./gradlew assembleRelease` or EAS Build).
 
-To generate proper assets:
-1. Create your icon design
-2. Use Expo's asset generator or a tool like https://www.appicon.co/
-3. Place the generated files in this folder
+## Optional assets
 
-## Design Guidelines
+- **splash.png** (2048×2048, transparent background) – Splash screen
+- **adaptive-icon.png** (1024×1024) – Optional; if omitted, `icon.png` is used as the Android adaptive foreground
+- **favicon.png** (48×48) – Web favicon
+- **notification-icon.png** (96×96) – Android notification icon (optional)
 
-- Use the GapWalk brand color (#6366F1 - Indigo)
-- Icon should be simple and recognizable
-- Follow platform-specific guidelines:
-  - iOS: No transparency, rounded corners applied by system
-  - Android: Can have transparency, adaptive icons recommended
+## Design guidelines
+
+- Use the GapWalk brand color (#6366F1 – Indigo)
+- Keep the icon simple and recognizable
+- iOS: no transparency; system applies rounded corners
+- Android: adaptive icon uses `icon.png` on `#6366F1` background

@@ -86,8 +86,8 @@ export const IntroScreen: React.FC<Props> = ({ navigation }) => {
         <View style={styles.topContent}>
           <View style={[styles.headerFrame, { paddingVertical: heroVerticalPadding }]}>
             <View style={styles.headingRow}>
-              <Text variant="heading" style={styles.headingGap}>Gap</Text>
-              <Text variant="heading" style={styles.headingWalk}>Walk</Text>
+              <Text variant="heading" style={[styles.headingGap, { color: palette.textPrimary }]}>Gap</Text>
+              <Text variant="heading" style={[styles.headingWalk, { color: palette.textMuted }]}>Walk</Text>
             </View>
             <Text variant="body" style={styles.subtitle}>
               Busy schedule? No time to exercise? Turn your daily schedule gaps into short, realistic walks.
@@ -255,13 +255,11 @@ const styles = StyleSheet.create({
     alignItems: 'baseline',
   },
   headingGap: {
-    color: theme.colors.textPrimary,
     letterSpacing: theme.letterSpacing?.heading ?? 0,
     fontSize: theme.fontSize.heading + 2,
     lineHeight: theme.fontSize.heading + 8,
   },
   headingWalk: {
-    color: theme.colors.textMuted,
     letterSpacing: theme.letterSpacing?.heading ?? 0,
     fontSize: theme.fontSize.heading + 2,
     lineHeight: theme.fontSize.heading + 8,
@@ -296,7 +294,6 @@ const styles = StyleSheet.create({
     width: 44,
     height: 44,
     borderRadius: 22,
-    backgroundColor: theme.colors.bgSurfaceElevated,
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: 14,
@@ -318,7 +315,6 @@ const styles = StyleSheet.create({
   },
   howCard: {
     minHeight: 52,
-    backgroundColor: theme.colors.bgSurfaceElevated,
     borderWidth: 1,
     borderRadius: theme.borderRadius.lg,
     paddingVertical: 14,
@@ -337,12 +333,10 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   howDetails: {
-    backgroundColor: theme.colors.bgSurface,
     borderRadius: theme.borderRadius.lg,
     padding: 16,
     gap: 12,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.05)',
   },
   step: {
     flexDirection: 'row',
@@ -370,12 +364,9 @@ const styles = StyleSheet.create({
     width: 30,
     height: 30,
     borderRadius: 15,
-    backgroundColor: theme.colors.bgSurface,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
-    shadowColor: '#000',
     shadowOpacity: 0.12,
     shadowRadius: 4,
     shadowOffset: { width: 0, height: 2 },

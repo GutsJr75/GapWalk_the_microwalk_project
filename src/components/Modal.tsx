@@ -1,9 +1,13 @@
-﻿import React from 'react';
+import React from 'react';
 import {
   Modal as RNModal,
   View,
   StyleSheet,
   TouchableWithoutFeedback,
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
+  Keyboard,
 } from 'react-native';
 import { theme } from '../theme';
 import { Text } from './Text';
@@ -31,34 +35,50 @@ export const Modal: React.FC<ModalProps> = ({
       animationType="fade"
       onRequestClose={onClose}
     >
-      <TouchableWithoutFeedback onPress={onClose}>
-        <View style={[styles.overlay, { backgroundColor: palette.overlay }]}>
-          <TouchableWithoutFeedback>
-            <View
-              style={[
-                styles.modal,
-                {
-                  backgroundColor: palette.bgSurfaceElevated,
-                  borderColor: palette.borderSoft,
-                },
-              ]}
-            >
-              {title && (
-                <Text variant="body" style={styles.title}>
-                  {title}
-                </Text>
-              )}
-              {children}
-            </View>
-          </TouchableWithoutFeedback>
-        </View>
-      </TouchableWithoutFeedback>
+      <KeyboardAvoidingView
+        style={styles.kavRoot}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 10 : 0}
+      >
+        <TouchableWithoutFeedback onPress={() => { Keyboard.dismiss(); onClose(); }}>
+          <View style={[styles.backdrop, { backgroundColor: palette.overlay }]}>
+            <TouchableWithoutFeedback onPress={(e) => e.stopPropagation()}>
+              <View
+                style={[
+                  styles.modal,
+                  {
+                    backgroundColor: palette.bgSurfaceElevated,
+                    borderColor: palette.borderSoft,
+                  },
+                ]}
+              >
+                {title && (
+                  <Text variant="body" style={styles.title}>
+                    {title}
+                  </Text>
+                )}
+                <ScrollView
+                  keyboardShouldPersistTaps="handled"
+                  showsVerticalScrollIndicator={false}
+                  contentContainerStyle={styles.bodyContent}
+                  bounces={false}
+                >
+                  {children}
+                </ScrollView>
+              </View>
+            </TouchableWithoutFeedback>
+          </View>
+        </TouchableWithoutFeedback>
+      </KeyboardAvoidingView>
     </RNModal>
   );
 };
 
 const styles = StyleSheet.create({
-  overlay: {
+  kavRoot: {
+    flex: 1,
+  },
+  backdrop: {
     flex: 1,
     backgroundColor: 'rgba(0, 0, 0, 0.7)',
     justifyContent: 'center',
@@ -71,8 +91,12 @@ const styles = StyleSheet.create({
     padding: 22,
     width: '100%',
     maxWidth: 360,
+    maxHeight: '90%',
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.06)',
+  },
+  bodyContent: {
+    paddingBottom: 2,
   },
   title: {
     textAlign: 'center',
@@ -81,4 +105,3 @@ const styles = StyleSheet.create({
     marginBottom: theme.spacing.md,
   },
 });
-

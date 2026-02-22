@@ -1,7 +1,8 @@
 import React from 'react';
 import { Pressable, StyleProp, StyleSheet, View, ViewStyle } from 'react-native';
 import { theme } from '../theme';
-import { useThemePalette } from '../theme/palette';
+import { getThemePalette } from '../theme/palette';
+import { useAppStore } from '../store';
 import { Text } from './Text';
 import { AppIcon } from './AppIcon';
 
@@ -14,6 +15,7 @@ interface ScreenHeaderProps {
   align?: 'center' | 'left';
   style?: StyleProp<ViewStyle>;
   rightAccessory?: React.ReactNode;
+  themeMode?: 'dark' | 'light';
 }
 
 export const ScreenHeader: React.FC<ScreenHeaderProps> = ({
@@ -25,8 +27,15 @@ export const ScreenHeader: React.FC<ScreenHeaderProps> = ({
   align = 'center',
   style,
   rightAccessory,
+  themeMode: controlledThemeMode,
 }) => {
-  const palette = useThemePalette();
+  const { themeMode: storeThemeMode } = useAppStore();
+  const themeMode = controlledThemeMode ?? storeThemeMode;
+  const palette = getThemePalette(themeMode);
+  const backChipBg = palette.bgSurface;
+  const backChipBorder = palette.borderStrong;
+  const backChipText = palette.textPrimary;
+  const backChipRipple = themeMode === 'dark' ? 'rgba(255,255,255,0.14)' : 'rgba(15,23,42,0.10)';
 
   return (
     <View style={[styles.root, style]}>
@@ -37,18 +46,18 @@ export const ScreenHeader: React.FC<ScreenHeaderProps> = ({
               onPress={onBack}
               testID={backTestID}
               accessibilityLabel={backTestID}
-              android_ripple={{ color: 'rgba(15,23,42,0.10)' }}
+              android_ripple={{ color: backChipRipple }}
               style={({ pressed }) => [
                 styles.backChip,
                 {
-                  backgroundColor: palette.bgSurfaceElevated,
-                  borderColor: palette.borderStrong,
+                  backgroundColor: backChipBg,
+                  borderColor: backChipBorder,
                 },
                 pressed && styles.backChipPressed,
               ]}
             >
-              <AppIcon name="back" size={16} color={palette.textMuted} />
-              <Text variant="bodySmall" style={styles.backLabel}>{backLabel}</Text>
+              <AppIcon name="back" size={16} color={backChipText} />
+              <Text variant="bodySmall" style={[styles.backLabel, { color: backChipText }]}>{backLabel}</Text>
             </Pressable>
           ) : (
             <View />

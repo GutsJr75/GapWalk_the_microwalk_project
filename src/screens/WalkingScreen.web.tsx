@@ -252,9 +252,10 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
       </View>
 
       <View style={styles.webPlaceholder}>
-        <Text variant="title" style={styles.placeholderTitle}>Map is available on mobile app</Text>
+        <Text variant="title" style={styles.placeholderEmoji}>🗺️</Text>
+        <Text variant="title" style={styles.placeholderTitle}>Map Unavailable</Text>
         <Text variant="bodySmall" color={palette.textMuted} style={styles.placeholderBody}>
-          Web preview supports timer flow, but live map and movement tracking run on Android/iOS builds.
+          Live map and route tracking are available on mobile.{'\n'}Timer and session data are tracked here.
         </Text>
       </View>
 
@@ -378,9 +379,9 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
             <View style={styles.completionBadge}>
               <Text variant="title" style={styles.completionBadgeText}>✓</Text>
             </View>
-            <Text variant="title" style={styles.completionTitle}>Walk complete</Text>
+            <Text variant="title" style={styles.completionTitle}>Walk completed</Text>
             <Text variant="bodySmall" color={palette.textMuted} style={styles.completionSubtitle}>
-              {Math.max(1, Math.floor(activeSeconds / 60))} min session saved
+              Session recorded: {Math.max(1, Math.floor(activeSeconds / 60))} min
             </Text>
           </Animated.View>
         </Animated.View>
@@ -415,10 +416,17 @@ const styles = StyleSheet.create({
   placeholderTitle: {
     textAlign: 'center',
     marginBottom: 8,
+    fontSize: 18,
+    fontWeight: theme.fontWeight.semibold,
+  },
+  placeholderEmoji: {
+    fontSize: 40,
+    marginBottom: 12,
   },
   placeholderBody: {
     textAlign: 'center',
     maxWidth: 360,
+    lineHeight: 20,
   },
   sheet: {
     borderTopLeftRadius: 22,

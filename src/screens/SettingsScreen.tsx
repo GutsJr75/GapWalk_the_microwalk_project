@@ -1,6 +1,7 @@
-﻿import React from 'react';
-import { View, StyleSheet, Alert, Platform } from 'react-native';
+import React, { useCallback, useState } from 'react';
+import { View, StyleSheet, Alert, Platform, Pressable } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
+import { useFocusEffect } from '@react-navigation/native';
 import { RootStackParamList } from '../../App';
 import { Container } from '../components/Container';
 import { Text } from '../components/Text';
@@ -9,6 +10,7 @@ import { Button } from '../components/Button';
 import { ScreenHeader } from '../components/ScreenHeader';
 import { AppIcon } from '../components/AppIcon';
 import { theme } from '../theme';
+import { getThemePalette } from '../theme/palette';
 import { useAppStore } from '../store';
 import { translateLiteral } from '../lib/i18n';
 import { plansRepo } from '../lib/repositories/plansRepo';
@@ -19,7 +21,28 @@ type Props = NativeStackScreenProps<RootStackParamList, 'Settings'>;
 
 export const SettingsScreen: React.FC<Props> = ({ navigation }) => {
   const { themeMode, setThemeMode, language, setLanguage } = useAppStore();
+  const palette = getThemePalette(themeMode);
+
+  // Remount content when screen gains focus so theme/language always match the store (fixes stale back chip & pills)
+  const [focusKey, setFocusKey] = useState(0);
+  useFocusEffect(
+    useCallback(() => {
+      setFocusKey((k) => k + 1);
+      return () => {};
+    }, [])
+  );
   const isE2E = process.env.EXPO_PUBLIC_E2E === '1';
+  const selectedPillTextColor = '#06261d';
+  const unselectedPillBg = palette.bgSurface;
+  const unselectedPillBorder = palette.borderStrong;
+  const pillRipple = themeMode === 'dark' ? 'rgba(255,255,255,0.14)' : 'rgba(15,23,42,0.08)';
+  const pillRippleSelected = themeMode === 'dark' ? 'rgba(0,0,0,0.12)' : 'rgba(15,23,42,0.16)';
+
+  const t = (key: string) => translateLiteral(key, language);
+  const darkLabel = t('Dark');
+  const lightLabel = t('Light');
+  const englishLabel = t('English');
+  const espanolLabel = t('Espa\u00F1ol');
 
   const handleBack = () => {
     if (navigation.canGoBack()) {
@@ -86,55 +109,97 @@ export const SettingsScreen: React.FC<Props> = ({ navigation }) => {
     );
   };
 
+  const renderSegmentPill = ({
+    selected,
+    title,
+    onPress,
+    testID,
+  }: {
+    selected: boolean;
+    title: string;
+    onPress: () => void;
+    testID: string;
+  }) => (
+    <Pressable
+      onPress={onPress}
+      testID={testID}
+      accessibilityLabel={testID}
+      accessibilityRole="button"
+      android_ripple={{ color: selected ? pillRippleSelected : pillRipple }}
+      style={({ pressed }) => [
+        styles.pill,
+        {
+          backgroundColor: selected ? theme.colors.accentPrimary : unselectedPillBg,
+          borderColor: selected ? 'transparent' : unselectedPillBorder,
+        },
+        pressed && styles.pillPressed,
+      ]}
+    >
+      <Text
+        variant="body"
+        style={[
+          styles.pillLabel,
+          { color: selected ? selectedPillTextColor : palette.textPrimary },
+        ]}
+      >
+        {selected ? `\u2713  ${title}` : title}
+      </Text>
+    </Pressable>
+  );
+
+  // Force remount when theme/language changes or when screen gains focus so back chip and pills never show stale styles
+  const contentKey = `settings-${themeMode}-${language}-${focusKey}`;
+
   return (
-    <Container scrollable>
+    <Container scrollable key={contentKey}>
       <View style={styles.content}>
         <ScreenHeader
           title="Settings"
           subtitle="Choose how GapWalk looks and which language it uses."
           onBack={handleBack}
           backTestID="settings-back"
+          themeMode={themeMode}
         />
 
         <Card elevated style={styles.card}>
           <View style={styles.cardLabelRow}>
             <AppIcon name="settings" size={14} color={theme.colors.accentPrimary} />
-            <Text variant="bodySmall" style={styles.label}>Appearance</Text>
+            <Text variant="bodySmall" style={[styles.label, { color: palette.textMuted }]}>Appearance</Text>
           </View>
           <View style={styles.row}>
-            <Button
-              title="Dark"
-              onPress={() => setThemeMode('dark')}
-              variant={themeMode === 'dark' ? 'primary' : 'secondary'}
-              style={styles.pill}
-            />
-            <Button
-              title="Light"
-              onPress={() => setThemeMode('light')}
-              variant={themeMode === 'light' ? 'primary' : 'secondary'}
-              style={styles.pill}
-            />
+            {renderSegmentPill({
+              selected: themeMode === 'dark',
+              title: darkLabel,
+              onPress: () => setThemeMode('dark'),
+              testID: 'settings-theme-dark',
+            })}
+            {renderSegmentPill({
+              selected: themeMode === 'light',
+              title: lightLabel,
+              onPress: () => setThemeMode('light'),
+              testID: 'settings-theme-light',
+            })}
           </View>
         </Card>
 
         <Card elevated style={styles.card}>
           <View style={styles.cardLabelRow}>
             <AppIcon name="adjust" size={14} color={theme.colors.accentPrimary} />
-            <Text variant="bodySmall" style={styles.label}>Language</Text>
+            <Text variant="bodySmall" style={[styles.label, { color: palette.textMuted }]}>Language</Text>
           </View>
           <View style={styles.row}>
-            <Button
-              title="English"
-              onPress={() => confirmLanguageChange('en')}
-              variant={language === 'en' ? 'primary' : 'secondary'}
-              style={styles.pill}
-            />
-            <Button
-              title={"Espa\u00F1ol"}
-              onPress={() => confirmLanguageChange('es')}
-              variant={language === 'es' ? 'primary' : 'secondary'}
-              style={styles.pill}
-            />
+            {renderSegmentPill({
+              selected: language === 'en',
+              title: englishLabel,
+              onPress: () => confirmLanguageChange('en'),
+              testID: 'settings-lang-en',
+            })}
+            {renderSegmentPill({
+              selected: language === 'es',
+              title: espanolLabel,
+              onPress: () => confirmLanguageChange('es'),
+              testID: 'settings-lang-es',
+            })}
           </View>
         </Card>
 
@@ -182,10 +247,24 @@ const styles = StyleSheet.create({
     width: '100%',
     maxWidth: theme.layout.contentMaxWidth,
   },
-  card: { marginBottom: 16 },
-  label: { color: theme.colors.textMuted, marginBottom: 8 },
+  card: { marginBottom: 20 },
+  label: { marginBottom: 10 },
   cardLabelRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   row: { flexDirection: 'row', gap: 10 },
-  pill: { flex: 1 },
+  pill: {
+    flex: 1,
+    minHeight: theme.layout.buttonHeight,
+    borderRadius: theme.borderRadius.md,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 18,
+  },
+  pillPressed: {
+    transform: [{ scale: 0.985 }],
+  },
+  pillLabel: {
+    fontWeight: theme.fontWeight.semibold,
+  },
   stack: { gap: 10 },
 });

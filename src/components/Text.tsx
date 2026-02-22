@@ -30,6 +30,14 @@ export const Text: React.FC<TextProps> = ({
 }) => {
   const { themeMode, language } = useAppStore();
   const palette = getThemePalette(themeMode);
+  const variantStyle = React.useMemo(() => {
+    if (variant === 'heading') return styles.heading;
+    if (variant === 'title') return styles.title;
+    if (variant === 'body') return styles.body;
+    if (variant === 'bodySmall') return styles.bodySmall;
+    if (variant === 'muted') return styles.muted;
+    return styles.nav;
+  }, [variant]);
 
   const resolvedColor =
     mapThemeTokenColor(color, themeMode) ??
@@ -47,6 +55,20 @@ export const Text: React.FC<TextProps> = ({
     return [style, { color: mappedInlineColor }];
   }, [style, themeMode]);
 
+  const clippingFixStyle = React.useMemo(() => {
+    const flattened = StyleSheet.flatten([styles.base, variantStyle, resolvedStyle]) as TextStyle | undefined;
+    const fontSize = typeof flattened?.fontSize === 'number' ? flattened.fontSize : null;
+    const lineHeight = typeof flattened?.lineHeight === 'number' ? flattened.lineHeight : null;
+
+    if (!fontSize || !lineHeight) return undefined;
+
+    const minLineHeight = Math.ceil(fontSize * (Platform.OS === 'android' ? 1.24 : 1.2));
+    if (lineHeight >= minLineHeight) return undefined;
+
+    // Guard against clipped glyphs when a larger fontSize inherits a smaller lineHeight.
+    return { lineHeight: minLineHeight };
+  }, [resolvedStyle, variantStyle]);
+
   const localizedChildren = React.useMemo(
     () => localizeNode(children, language),
     [children, language]
@@ -56,14 +78,10 @@ export const Text: React.FC<TextProps> = ({
     <RNText
       style={[
         styles.base,
-        variant === 'heading' && styles.heading,
-        variant === 'title' && styles.title,
-        variant === 'body' && styles.body,
-        variant === 'bodySmall' && styles.bodySmall,
-        variant === 'muted' && styles.muted,
-        variant === 'nav' && styles.nav,
+        variantStyle,
         { color: resolvedColor },
         resolvedStyle,
+        clippingFixStyle,
       ]}
       numberOfLines={numberOfLines}
     >
@@ -97,11 +115,6 @@ const localizeNode = (node: React.ReactNode, language: AppLanguage): React.React
 const styles = StyleSheet.create({
   base: {
     color: theme.colors.textPrimary,
-    fontFamily: Platform.select({
-      ios: 'System',
-      android: 'sans-serif',
-      default: 'System',
-    }),
   },
   heading: {
     fontSize: theme.fontSize.heading,

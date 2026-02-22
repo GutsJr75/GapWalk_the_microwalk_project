@@ -1,7 +1,8 @@
-﻿import React from 'react';
+import React from 'react';
 import { View, StyleSheet, ViewStyle, Pressable, StyleProp } from 'react-native';
 import { theme } from '../theme';
 import { useThemePalette } from '../theme/palette';
+import { useAppStore } from '../store';
 
 interface CardProps {
   children: React.ReactNode;
@@ -23,6 +24,8 @@ export const Card: React.FC<CardProps> = ({
   testID,
 }) => {
   const palette = useThemePalette();
+  const { themeMode } = useAppStore();
+  const isDark = themeMode === 'dark';
   const cardBaseStyle = [
     styles.card,
     {
@@ -34,16 +37,27 @@ export const Card: React.FC<CardProps> = ({
     style,
   ];
 
+  const rippleColor = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(15,23,42,0.08)';
+  const elevatedStyle = elevated && isDark
+    ? { shadowColor: palette.shadow, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.12, shadowRadius: 12, elevation: 4 }
+    : elevated
+      ? { shadowColor: 'transparent', shadowOpacity: 0, shadowRadius: 0, elevation: 0 }
+      : undefined;
+  const cardBaseStyleWithShadow = [
+    ...cardBaseStyle,
+    elevatedStyle,
+  ];
+
   if (onPress) {
     return (
       <Pressable
         style={({ pressed }) => [
-          cardBaseStyle,
+          cardBaseStyleWithShadow,
           pressed && !disabled && styles.pressedCard,
         ]}
         onPress={onPress}
         disabled={disabled}
-        android_ripple={{ color: 'rgba(15,23,42,0.08)' }}
+        android_ripple={{ color: rippleColor }}
         testID={testID}
         accessibilityLabel={testID}
       >
@@ -53,7 +67,7 @@ export const Card: React.FC<CardProps> = ({
   }
 
   return (
-    <View style={cardBaseStyle} testID={testID} accessibilityLabel={testID}>
+    <View style={cardBaseStyleWithShadow} testID={testID} accessibilityLabel={testID}>
       {children}
     </View>
   );

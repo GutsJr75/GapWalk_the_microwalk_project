@@ -1,5 +1,15 @@
-﻿import React, { useEffect, useRef } from 'react';
-import { View, StyleSheet, ViewStyle, ScrollView, StyleProp, Animated, Easing } from 'react-native';
+import React, { useEffect, useRef } from 'react';
+import {
+  View,
+  StyleSheet,
+  ViewStyle,
+  ScrollView,
+  StyleProp,
+  Animated,
+  Easing,
+  KeyboardAvoidingView,
+  Platform,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { theme } from '../theme';
 import { useThemePalette } from '../theme/palette';
@@ -10,6 +20,7 @@ interface ContainerProps {
   style?: StyleProp<ViewStyle>;
   scrollable?: boolean;
   safeArea?: boolean;
+  keyboardAware?: boolean;
 }
 
 export const Container: React.FC<ContainerProps> = ({
@@ -17,12 +28,13 @@ export const Container: React.FC<ContainerProps> = ({
   style,
   scrollable = false,
   safeArea = true,
+  keyboardAware = true,
 }) => {
   const Wrapper = safeArea ? SafeAreaView : View;
-  const Content = scrollable ? ScrollView : View;
   const palette = useThemePalette();
   const { themeMode } = useAppStore();
   const appearAnim = useRef(new Animated.Value(0)).current;
+  const keyboardAvoidEnabled = keyboardAware && scrollable;
 
   useEffect(() => {
     Animated.timing(appearAnim, {
@@ -56,13 +68,25 @@ export const Container: React.FC<ContainerProps> = ({
           },
         ]}
       >
-        <Content
-          style={scrollable ? styles.scrollView : styles.view}
-          contentContainerStyle={scrollable ? styles.scrollContent : undefined}
-          showsVerticalScrollIndicator={false}
+        <KeyboardAvoidingView
+          style={styles.keyboardWrap}
+          behavior={keyboardAvoidEnabled && Platform.OS === 'ios' ? 'padding' : undefined}
+          enabled={keyboardAvoidEnabled}
         >
-          {children}
-        </Content>
+          {scrollable ? (
+            <ScrollView
+              style={styles.scrollView}
+              contentContainerStyle={styles.scrollContent}
+              showsVerticalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
+              keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+            >
+              {children}
+            </ScrollView>
+          ) : (
+            <View style={styles.view}>{children}</View>
+          )}
+        </KeyboardAvoidingView>
       </Animated.View>
     </Wrapper>
   );
@@ -92,6 +116,9 @@ const styles = StyleSheet.create({
     left: -70,
   },
   contentWrap: {
+    flex: 1,
+  },
+  keyboardWrap: {
     flex: 1,
   },
   view: {

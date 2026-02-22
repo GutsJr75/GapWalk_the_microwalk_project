@@ -355,7 +355,28 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
 
   const addPreferredPeriodForm = () => {
     if (preferredForm.length >= MAX_PREFERRED_PERIODS) return;
-    setPreferredForm((prev) => [...prev, toPreferredForm(DEFAULT_PREFERRED_PERIOD)]);
+    // Check if default period already exists to prevent duplicates
+    const isDuplicate = preferredForm.some(
+      (item) => {
+        const existingStart = to24Hour(item.startHourRaw, item.startMinuteRaw, item.startPeriod);
+        const existingEnd = to24Hour(item.endHourRaw, item.endMinuteRaw, item.endPeriod);
+        return existingStart === DEFAULT_PREFERRED_PERIOD.start && existingEnd === DEFAULT_PREFERRED_PERIOD.end;
+      }
+    );
+    // Use a different default if duplicate would be created
+    const newPeriod = isDuplicate
+      ? { start: '14:00', end: '16:00' }
+      : DEFAULT_PREFERRED_PERIOD;
+    // Also check if this alternative already exists
+    const altDuplicate = isDuplicate && preferredForm.some(
+      (item) => {
+        const existingStart = to24Hour(item.startHourRaw, item.startMinuteRaw, item.startPeriod);
+        const existingEnd = to24Hour(item.endHourRaw, item.endMinuteRaw, item.endPeriod);
+        return existingStart === newPeriod.start && existingEnd === newPeriod.end;
+      }
+    );
+    const finalPeriod = altDuplicate ? { start: '17:00', end: '19:00' } : newPeriod;
+    setPreferredForm((prev) => [...prev, toPreferredForm(finalPeriod)]);
   };
 
   const removePreferredPeriodForm = (id: string) => {
@@ -388,6 +409,7 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
       return;
     }
     const nextPeriods: PreferredWalkingPeriod[] = [];
+    const seen = new Set<string>();
     for (const item of preferredForm) {
       const start = to24Hour(item.startHourRaw, item.startMinuteRaw, item.startPeriod);
       const end = to24Hour(item.endHourRaw, item.endMinuteRaw, item.endPeriod);
@@ -399,6 +421,12 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
         setPreferredError('Start and end times cannot be the same.');
         return;
       }
+      const key = `${start}-${end}`;
+      if (seen.has(key)) {
+        setPreferredError('Duplicate periods are not allowed. Each period must be unique.');
+        return;
+      }
+      seen.add(key);
       nextPeriods.push({ start, end });
     }
     updateMany({
@@ -618,7 +646,7 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
     .slice(0, MAX_PREFERRED_PERIODS)
     .map((period) => `${formatTime12(period.start)} - ${formatTime12(period.end)}`);
   const preferredPeriodsDisplay = preferredPeriodsList.length > 0
-    ? preferredPeriodsList.map((item) => `• ${item}`).join('\n')
+    ? preferredPeriodsList.join('\n')
     : 'No preferred period selected.';
 
   /* â•â•â•â•â•â•â•â•â•â•â• render â•â•â•â•â•â•â•â•â•â•â• */
@@ -959,7 +987,7 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
 
       {/* quiet hours modal */}
       <Modal visible={showQuietModal} onClose={() => setShowQuietModal(false)} title="Quiet Hours">
-        <Text variant="bodySmall" color={theme.colors.textMuted} style={styles.qDesc}>Select the time frame when GapWalk will not send you notifications.</Text>
+        <Text variant="bodySmall" color={palette.textMuted} style={styles.qDesc}>Select the time frame when GapWalk will not send you notifications.</Text>
         <View style={styles.qTimeGroup}>
           <Text variant="muted">Start</Text>
           <View style={styles.qTimeInputRow}>
@@ -1003,7 +1031,7 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
         onClose={() => setShowPreferredModal(false)}
         title="Preferred Walking Periods"
       >
-        <Text variant="bodySmall" color={theme.colors.textMuted} style={styles.qDesc}>
+        <Text variant="bodySmall" color={palette.textMuted} style={styles.qDesc}>
           Add 1 to 5 preferred time periods. GapWalk will suggest walks only in these windows when enabled.
         </Text>
         {preferredForm.map((period, idx) => (
@@ -1157,10 +1185,12 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: theme.colors.bgApp,
     borderRadius: theme.borderRadius.sm,
-    paddingVertical: 10,
+    paddingVertical: Platform.OS === 'android' ? 8 : 10,
     paddingHorizontal: 12,
     color: theme.colors.textPrimary,
     fontSize: theme.fontSize.md,
+    lineHeight: 22,
+    textAlignVertical: 'center',
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.06)',
   },

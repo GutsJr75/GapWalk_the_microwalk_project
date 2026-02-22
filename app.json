@@ -6,21 +6,23 @@
     "orientation": "portrait",
     "userInterfaceStyle": "dark",
     "scheme": "gapwalk",
-    "assetBundlePatterns": [
-      "**/*"
-    ],
+    "assetBundlePatterns": ["**/*"],
+    "icon": "./assets/icon.png",
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.gapwalk.app",
       "infoPlist": {
         "NSLocationWhenInUseUsageDescription": "GapWalk needs your location to track distance and show your walking route.",
-        "UIBackgroundModes": [
-          "location"
-        ]
+        "UIBackgroundModes": ["location"]
       }
     },
     "android": {
       "package": "com.gapwalk.app",
+      "softwareKeyboardLayoutMode": "pan",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/icon.png",
+        "backgroundColor": "#6366F1"
+      },
       "permissions": [
         "ACCESS_FINE_LOCATION",
         "ACCESS_COARSE_LOCATION",

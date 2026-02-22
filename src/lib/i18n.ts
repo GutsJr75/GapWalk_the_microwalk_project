@@ -25,14 +25,14 @@ const esExact: Record<string, string> = {
   'Language': 'Idioma',
   'Dark': 'Oscuro',
   'Light': 'Claro',
-  'English': 'Ingles',
-  'Espa\u00F1ol': 'Espanol',
+  'English': 'Ingl\u00E9s',
+  'Espa\u00F1ol': 'Espa\u00F1ol',
   'Change language?': 'Cambiar idioma?',
   'Yes, change': 'Si, cambiar',
   'Are you sure you want to switch the app language to Spanish?':
-    'Seguro que deseas cambiar el idioma de la aplicacion a Espanol?',
+    'Seguro que deseas cambiar el idioma de la aplicaci\u00F3n a Espa\u00F1ol?',
   'Are you sure you want to switch the app language to English?':
-    'Seguro que deseas cambiar el idioma de la aplicacion a Ingles?',
+    'Seguro que deseas cambiar el idioma de la aplicaci\u00F3n a Ingl\u00E9s?',
 
   // Intro
   'Why it works': 'Por que funciona',
@@ -127,12 +127,17 @@ const esExact: Record<string, string> = {
   'Set up preferences': 'Configurar preferencias',
   'Set Up Preferences': 'Configurar preferencias',
   'Goal Achieved!': 'Meta alcanzada!',
+  'Daily goal achieved': 'Meta diaria alcanzada',
   'Great job!': 'Buen trabajo!',
+  'Excellent work today.': 'Excelente trabajo hoy.',
   'Ready to walk?': 'Listo para caminar?',
+  'Daily goal reached. Additional walks are optional.':
+    'Meta diaria alcanzada. Las caminatas adicionales son opcionales.',
   'Ready to start? Your first walk is just a tap away!':
     'Listo para comenzar? Tu primera caminata esta a un toque.',
   'No streak yet': 'Aun no hay racha',
   'Keep it going!': 'Sigue asi!',
+  'You are building great consistency.': 'Estas construyendo una gran constancia.',
   'Start a walk today to begin your streak.': 'Comienza una caminata hoy para iniciar tu racha.',
   'Quick Status': 'Estado rapido',
   'Daily Target': 'Meta diaria',
@@ -373,6 +378,7 @@ const esExact: Record<string, string> = {
   'Yes, End': 'Si, terminar',
   'Walk Complete!': 'Caminata completada!',
   'Walk complete': 'Caminata completada',
+  'Walk completed': 'Caminata completada',
   'Great progress!': 'Gran progreso!',
   '\uD83C\uDF89 Goal achieved!': '\uD83C\uDF89 Meta alcanzada!',
   'Map is available on mobile app': 'El mapa esta disponible en la app movil',
@@ -521,6 +527,18 @@ const patterns: PatternTranslator[] = [
     },
   },
   {
+    re: /^Progress:\s(\d+)\sof\s(\d+)\s(minutes|times|steps)$/,
+    toEs: (m) => {
+      const mapUnit = (unit: string): string => {
+        if (unit === 'minutes') return 'minutos';
+        if (unit === 'times') return 'veces';
+        return 'pasos';
+      };
+      const unit = mapUnit(m[3]);
+      return `Progreso: ${m[1]} de ${m[2]} ${unit}`;
+    },
+  },
+  {
     re: /^File:\s(.+)$/,
     toEs: (m) => `Archivo: ${m[1]}`,
   },
@@ -553,6 +571,10 @@ const patterns: PatternTranslator[] = [
     toEs: (m) => `Racha de ${m[1]} dias!`,
   },
   {
+    re: /^Current streak:\s(\d+)\sday(?:s)?\.$/,
+    toEs: (m) => `Racha actual: ${m[1]} dia${m[1] === '1' ? '' : 's'}.`,
+  },
+  {
     re: /^(\d+)\sminutes • (\d+)\scalories(.*)$/,
     toEs: (m) => `${m[1]} minutos • ${m[2]} calorias${m[3] ?? ''}`,
   },
@@ -567,6 +589,14 @@ const patterns: PatternTranslator[] = [
   {
     re: /^(\d+)\smin session saved$/,
     toEs: (m) => `Sesion de ${m[1]} min guardada`,
+  },
+  {
+    re: /^Session recorded:\s(\d+)\smin$/,
+    toEs: (m) => `Sesion registrada: ${m[1]} min`,
+  },
+  {
+    re: /^Session summary:\s(\d+)\smin\s•\s(\d+)\ssteps\s•\s([0-9]+(?:\.[0-9]+)?)\smi$/,
+    toEs: (m) => `Resumen de sesion: ${m[1]} min • ${m[2]} pasos • ${m[3]} mi`,
   },
   {
     re: /^(\d+)\smin\s-\s(\d+)\ssteps\s-\s([0-9]+(?:\.[0-9]+)?)\smi$/,

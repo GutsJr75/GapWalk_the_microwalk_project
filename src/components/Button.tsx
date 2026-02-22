@@ -1,9 +1,9 @@
-﻿import React from 'react';
-import { Pressable, Text, StyleSheet, ActivityIndicator, ViewStyle, TextStyle, StyleProp } from 'react-native';
+import React from 'react';
+import { Pressable, StyleSheet, ActivityIndicator, ViewStyle, TextStyle, StyleProp } from 'react-native';
 import { theme } from '../theme';
 import { useAppStore } from '../store';
 import { useThemePalette } from '../theme/palette';
-import { translateLiteral } from '../lib/i18n';
+import { Text } from './Text';
 
 interface ButtonProps {
   title: string;
@@ -28,15 +28,14 @@ export const Button: React.FC<ButtonProps> = ({
   full = false,
   testID,
 }) => {
-  const { themeMode, language } = useAppStore();
+  const { themeMode } = useAppStore();
   const isDark = themeMode === 'dark';
   const palette = useThemePalette();
-  const localizedTitle = React.useMemo(() => translateLiteral(title, language), [title, language]);
   const isPrimaryLike = variant === 'primary' || variant === 'danger';
   const labelColor = disabled
     ? palette.textMuted
     : variant === 'primary'
-      ? theme.colors.bgApp
+      ? '#111827'
       : variant === 'danger'
         ? theme.colors.white
         : variant === 'muted'
@@ -50,13 +49,13 @@ export const Button: React.FC<ButtonProps> = ({
         styles.button,
         variant === 'primary' && styles.primaryButton,
         variant === 'secondary' && {
-          backgroundColor: palette.bgSurfaceElevated,
+          backgroundColor: palette.bgSurface,
           borderWidth: 1,
-          borderColor: palette.borderSoft,
+          borderColor: palette.borderStrong,
         },
         variant === 'outline' && [
           styles.outlineButton,
-          { borderColor: isDark ? '#3d4a66' : palette.borderStrong },
+          { borderColor: palette.borderStrong },
         ],
         variant === 'muted' && styles.mutedButton,
         variant === 'danger' && styles.dangerButton,
@@ -71,20 +70,21 @@ export const Button: React.FC<ButtonProps> = ({
       testID={testID}
       accessibilityLabel={testID}
       android_ripple={{
-        color: isPrimaryLike ? 'rgba(255,255,255,0.18)' : 'rgba(15,23,42,0.10)',
+        color: isPrimaryLike ? 'rgba(255,255,255,0.18)' : isDark ? 'rgba(255,255,255,0.10)' : 'rgba(15,23,42,0.10)',
       }}
     >
       {loading ? (
         <ActivityIndicator color={spinnerColor} />
       ) : (
         <Text
+          variant="body"
           style={[
             styles.buttonText,
             { color: labelColor },
             textStyle,
           ]}
         >
-          {localizedTitle}
+          {title}
         </Text>
       )}
     </Pressable>
