@@ -2,11 +2,13 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Animated, Easing, Platform, Pressable, StyleSheet, Vibration, View } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import * as Location from 'expo-location';
+import { Pedometer } from 'expo-sensors';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { RootStackParamList } from '../../App';
 import { Text } from '../components/Text';
 import { Button } from '../components/Button';
 import { Modal } from '../components/Modal';
+import { Ionicons } from '@expo/vector-icons';
 import { theme } from '../theme';
 import { useThemePalette } from '../theme/palette';
 import { NudgePlan, WalkSession } from '../lib/types';
@@ -39,7 +41,6 @@ let MapViewImpl: any = null;
 let MarkerImpl: any = null;
 let PolylineImpl: any = null;
 let PROVIDER_GOOGLE_IMPL: any = null;
-const hasGoogleMapsApiKey = !!(process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY || '').trim();
 
 if (Platform.OS !== 'web') {
   const maps = require('react-native-maps');
@@ -114,14 +115,24 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
 
   const completionPopAnim = useRef(new Animated.Value(0)).current;
   const completionBurstAnim = useRef(new Animated.Value(0)).current;
+  const completionConfettiAnim = useRef(new Animated.Value(0)).current;
+
+  // Pedometer state
+  const [usePedometer, setUsePedometer] = useState(false);
+  const pedometerSubscriptionRef = useRef<{ remove: () => void } | null>(null);
+  const pedometerBaseStepsRef = useRef<number>(0);
+  const sessionStartTimeRef = useRef<Date>(new Date());
 
   useEffect(() => {
     pausedRef.current = paused;
   }, [paused]);
 
+  // Only use GPS-based step estimation when pedometer is unavailable
   useEffect(() => {
-    setSteps(Math.max(0, Math.round(distanceMeters / STRIDE_METERS)));
-  }, [distanceMeters]);
+    if (!usePedometer) {
+      setSteps(Math.max(0, Math.round(distanceMeters / STRIDE_METERS)));
+    }
+  }, [distanceMeters, usePedometer]);
 
   const strictMode = preferences?.strictnessMode === 'no_excuses';
   const stepGoalEnforced = strictMode || !!preferences?.stepGoalEnabled;
@@ -238,6 +249,7 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
 
   useEffect(() => {
     isMountedRef.current = true;
+    sessionStartTimeRef.current = new Date();
     void (async () => {
       if (planId) {
         const found = await plansRepo.getById(planId);
@@ -247,6 +259,37 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
         }
       }
       await requestPermissionAndTrack();
+
+      // Initialize pedometer for real step counting
+      try {
+        const pedometerAvailable = await Pedometer.isAvailableAsync();
+        if (pedometerAvailable && isMountedRef.current) {
+          const { status } = await Pedometer.getPermissionsAsync();
+          let permGranted = status === 'granted';
+          if (!permGranted) {
+            const { status: newStatus } = await Pedometer.requestPermissionsAsync();
+            permGranted = newStatus === 'granted';
+          }
+
+          if (permGranted && isMountedRef.current) {
+            setUsePedometer(true);
+            // Use watchStepCount for real-time step counting
+            const subscription = Pedometer.watchStepCount((result) => {
+              if (isMountedRef.current && !pausedRef.current) {
+                setSteps(result.steps);
+                // If steps are being counted, user is walking
+                lastMovementAtRef.current = Date.now();
+                setIsWalking(true);
+                setHadWalkingSignal(true);
+              }
+            });
+            pedometerSubscriptionRef.current = subscription;
+          }
+        }
+      } catch (e) {
+        console.warn('Pedometer initialization failed, using GPS estimation:', e);
+        setUsePedometer(false);
+      }
     })();
 
     timerRef.current = setInterval(() => {
@@ -262,6 +305,11 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
       const sub = watchRef.current;
       watchRef.current = null;
       sub?.remove();
+      // Clean up pedometer subscription
+      if (pedometerSubscriptionRef.current) {
+        pedometerSubscriptionRef.current.remove();
+        pedometerSubscriptionRef.current = null;
+      }
     };
   }, [planId, requestPermissionAndTrack]);
 
@@ -423,18 +471,27 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
     setShowCompletion(true);
     completionPopAnim.setValue(0);
     completionBurstAnim.setValue(0);
+    completionConfettiAnim.setValue(0);
+
+    Vibration.vibrate([0, 120, 80, 120, 80, 200]);
 
     Animated.parallel([
-      Animated.timing(completionPopAnim, {
+      Animated.spring(completionPopAnim, {
         toValue: 1,
-        duration: 360,
-        easing: Easing.out(Easing.cubic),
+        tension: 65,
+        friction: 7,
         useNativeDriver: true,
       }),
       Animated.timing(completionBurstAnim, {
         toValue: 1,
-        duration: 900,
+        duration: 1200,
         easing: Easing.out(Easing.quad),
+        useNativeDriver: true,
+      }),
+      Animated.timing(completionConfettiAnim, {
+        toValue: 1,
+        duration: 2000,
+        easing: Easing.out(Easing.cubic),
         useNativeDriver: true,
       }),
     ]).start();
@@ -442,7 +499,7 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
     setTimeout(() => {
       setShowCompletion(false);
       navigation.navigate('Dashboard');
-    }, 2200);
+    }, 3500);
   };
 
   const confirmEnd = async () => {
@@ -470,8 +527,11 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
   const sheetBorder = themeMode === 'dark' ? 'rgba(255,255,255,0.08)' : 'rgba(15,23,42,0.14)';
   const handleColor = themeMode === 'dark' ? 'rgba(235,243,255,0.56)' : 'rgba(147, 161, 181, 0.95)';
 
-  const completionOverlayBg = themeMode === 'dark' ? 'rgba(2, 8, 20, 0.82)' : 'rgba(236, 245, 255, 0.82)';
-  const completionCardBg = themeMode === 'dark' ? '#0f1f3d' : '#f7fbff';
+  const completionOverlayBg = themeMode === 'dark' ? 'rgba(2, 8, 20, 0.88)' : 'rgba(236, 245, 255, 0.88)';
+  const completionCardBg = themeMode === 'dark' ? '#0d1a35' : '#f7fbff';
+  const completionCardBorder = themeMode === 'dark' ? 'rgba(46, 233, 166, 0.25)' : 'rgba(46, 233, 166, 0.3)';
+  const statPillBg = themeMode === 'dark' ? 'rgba(46, 233, 166, 0.12)' : 'rgba(46, 233, 166, 0.1)';
+  const statPillColor = themeMode === 'dark' ? '#2ee9a6' : '#0d7a50';
   const mapShadeColor = themeMode === 'dark' ? 'rgba(2, 8, 16, 0.18)' : 'rgba(141, 162, 186, 0.14)';
   const zoomBtnBg = themeMode === 'dark' ? 'rgba(12, 20, 36, 0.78)' : 'rgba(248, 252, 255, 0.95)';
   const zoomTextColor = themeMode === 'dark' ? '#eaf0ff' : '#10233e';
@@ -483,7 +543,7 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
       </View>
 
       <View style={styles.mapArea}>
-        {MapViewImpl && (Platform.OS !== 'android' || hasGoogleMapsApiKey) ? (
+        {MapViewImpl ? (
           <MapViewImpl
             ref={mapRef}
             style={StyleSheet.absoluteFill}
@@ -659,39 +719,137 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
         </View>
       </Modal>
 
-      {showCompletion && (
-        <Animated.View style={[styles.completionOverlay, { backgroundColor: completionOverlayBg, opacity: completionPopAnim }]} pointerEvents="none">
-          <Animated.View
-            style={[
-              styles.completionBurst,
-              {
-                borderColor: theme.colors.accentPrimary,
-                opacity: completionBurstAnim.interpolate({ inputRange: [0, 1], outputRange: [0.55, 0] }),
-                transform: [{ scale: completionBurstAnim.interpolate({ inputRange: [0, 1], outputRange: [0.45, 2.1] }) }],
-              },
-            ]}
-          />
-          <Animated.View
-            style={[
-              styles.completionCard,
-              {
-                backgroundColor: completionCardBg,
-                borderColor: sheetBorder,
-                opacity: completionPopAnim,
-                transform: [{ scale: completionPopAnim.interpolate({ inputRange: [0, 1], outputRange: [0.85, 1] }) }],
-              },
-            ]}
-          >
-            <View style={[styles.completionBadge, { backgroundColor: theme.colors.accentPrimary }]}>
-              <Text variant="title" style={styles.completionBadgeText}>✓</Text>
-            </View>
-            <Text variant="title" style={styles.completionTitle}>Walk completed</Text>
-            <Text variant="bodySmall" color={palette.textMuted} style={styles.completionSubtitle}>
-              Session summary: {Math.max(1, Math.floor(activeSeconds / 60))} min • {steps} steps • {formatMiles(distanceMeters)}
-            </Text>
+      {showCompletion && (() => {
+        const minutes = Math.max(1, Math.floor(activeSeconds / 60));
+        const completionMessages = [
+          'Every step added up. Well done.',
+          'You made time for yourself today.',
+          'Consistent effort builds lasting change.',
+          'Another walk in the books.',
+          'Progress, one walk at a time.',
+          'Your future self will thank you.',
+        ];
+        const completionMessage = completionMessages[Math.floor(Date.now() / 60000) % completionMessages.length];
+
+        const confettiIcons: Array<{ name: React.ComponentProps<typeof Ionicons>['name']; color: string }> = [
+          { name: 'star', color: '#fbbf24' },
+          { name: 'heart', color: '#f472b6' },
+          { name: 'trophy', color: '#fbbf24' },
+          { name: 'ribbon', color: '#2ee9a6' },
+          { name: 'sparkles', color: '#a78bfa' },
+          { name: 'medal', color: '#fb923c' },
+        ];
+
+        return (
+          <Animated.View style={[styles.completionOverlay, { backgroundColor: completionOverlayBg, opacity: completionPopAnim }]} pointerEvents="none">
+            {/* Confetti particles */}
+            {confettiIcons.map((icon, i) => (
+              <Animated.View
+                key={i}
+                style={[
+                  styles.confettiParticle,
+                  {
+                    left: `${15 + i * 14}%` as any,
+                    opacity: completionConfettiAnim.interpolate({
+                      inputRange: [0, 0.3, 0.7, 1],
+                      outputRange: [0, 1, 1, 0],
+                    }),
+                    transform: [
+                      {
+                        translateY: completionConfettiAnim.interpolate({
+                          inputRange: [0, 1],
+                          outputRange: [-40, 250 + (i % 3) * 60],
+                        }),
+                      },
+                      {
+                        rotate: completionConfettiAnim.interpolate({
+                          inputRange: [0, 1],
+                          outputRange: ['0deg', `${(i % 2 === 0 ? 1 : -1) * (180 + i * 30)}deg`],
+                        }),
+                      },
+                      {
+                        scale: completionConfettiAnim.interpolate({
+                          inputRange: [0, 0.5, 1],
+                          outputRange: [0.3, 1.2, 0.8],
+                        }),
+                      },
+                    ],
+                  },
+                ]}
+              >
+                <Ionicons name={icon.name} size={22} color={icon.color} />
+              </Animated.View>
+            ))}
+
+            {/* Glow rings */}
+            <Animated.View
+              style={[
+                styles.completionGlowRing,
+                {
+                  borderColor: '#2ee9a6',
+                  opacity: completionBurstAnim.interpolate({ inputRange: [0, 1], outputRange: [0.5, 0] }),
+                  transform: [{ scale: completionBurstAnim.interpolate({ inputRange: [0, 1], outputRange: [0.3, 2.5] }) }],
+                },
+              ]}
+            />
+            <Animated.View
+              style={[
+                styles.completionGlowRing,
+                {
+                  borderColor: '#6366f1',
+                  opacity: completionBurstAnim.interpolate({ inputRange: [0, 0.5, 1], outputRange: [0, 0.4, 0] }),
+                  transform: [{ scale: completionBurstAnim.interpolate({ inputRange: [0, 1], outputRange: [0.5, 3.0] }) }],
+                },
+              ]}
+            />
+
+            {/* Main completion card */}
+            <Animated.View
+              style={[
+                styles.completionCard,
+                {
+                  backgroundColor: completionCardBg,
+                  borderColor: completionCardBorder,
+                  opacity: completionPopAnim,
+                  transform: [{ scale: completionPopAnim.interpolate({ inputRange: [0, 1], outputRange: [0.7, 1] }) }],
+                },
+              ]}
+            >
+              {/* Glowing badge */}
+              <View style={styles.completionBadgeOuter}>
+                <View style={[styles.completionBadgeGlow, { shadowColor: '#2ee9a6' }]} />
+                <View style={styles.completionBadge}>
+                  <Ionicons name="checkmark-circle" size={38} color="#2ee9a6" />
+                </View>
+              </View>
+
+              <Text variant="title" style={styles.completionTitle}>Walk complete</Text>
+              <Text variant="bodySmall" color={palette.textMuted} style={styles.completionMotivational}>
+                {completionMessage}
+              </Text>
+
+              {/* Stats pills */}
+              <View style={styles.completionStatsRow}>
+                <View style={[styles.completionStatPill, { backgroundColor: statPillBg }]}>
+                  <Ionicons name="time-outline" size={18} color={statPillColor} style={styles.completionStatIcon} />
+                  <Text style={[styles.completionStatValue, { color: statPillColor }]}>{minutes}</Text>
+                  <Text variant="bodySmall" color={palette.textMuted} style={styles.completionStatLabel}>min</Text>
+                </View>
+                <View style={[styles.completionStatPill, { backgroundColor: statPillBg }]}>
+                  <Ionicons name="footsteps-outline" size={18} color={statPillColor} style={styles.completionStatIcon} />
+                  <Text style={[styles.completionStatValue, { color: statPillColor }]}>{steps.toLocaleString()}</Text>
+                  <Text variant="bodySmall" color={palette.textMuted} style={styles.completionStatLabel}>steps</Text>
+                </View>
+                <View style={[styles.completionStatPill, { backgroundColor: statPillBg }]}>
+                  <Ionicons name="navigate-outline" size={18} color={statPillColor} style={styles.completionStatIcon} />
+                  <Text style={[styles.completionStatValue, { color: statPillColor }]}>{formatMiles(distanceMeters)}</Text>
+                  <Text variant="bodySmall" color={palette.textMuted} style={styles.completionStatLabel}>dist</Text>
+                </View>
+              </View>
+            </Animated.View>
           </Animated.View>
-        </Animated.View>
-      )}
+        );
+      })()}
     </SafeAreaView>
   );
 };
@@ -873,39 +1031,94 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     zIndex: 99,
   },
-  completionBurst: {
+  confettiParticle: {
     position: 'absolute',
-    width: 180,
-    height: 180,
-    borderRadius: 90,
-    borderWidth: 6,
+    top: '10%',
+    zIndex: 100,
+  },
+  completionGlowRing: {
+    position: 'absolute',
+    width: 200,
+    height: 200,
+    borderRadius: 100,
+    borderWidth: 4,
   },
   completionCard: {
-    minWidth: 250,
-    maxWidth: 320,
-    borderRadius: 18,
-    borderWidth: 1,
-    paddingVertical: 24,
-    paddingHorizontal: 20,
+    minWidth: 280,
+    maxWidth: 340,
+    borderRadius: 24,
+    borderWidth: 1.5,
+    paddingVertical: 32,
+    paddingHorizontal: 28,
     alignItems: 'center',
+    shadowColor: '#2ee9a6',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 20,
+    elevation: 12,
   },
-  completionBadge: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
+  completionBadgeOuter: {
+    marginBottom: 16,
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 12,
   },
-  completionBadgeText: {
-    color: '#062a1d',
-    fontWeight: theme.fontWeight.bold,
+  completionBadgeGlow: {
+    position: 'absolute',
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.6,
+    shadowRadius: 24,
+    elevation: 15,
+  },
+  completionBadge: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(46, 233, 166, 0.15)',
+  },
+  completionBadgeEmoji: {
+    // Legacy – icon now rendered via Ionicons
   },
   completionTitle: {
     fontWeight: theme.fontWeight.bold,
-    marginBottom: 6,
+    fontSize: 26,
+    marginBottom: 8,
+    letterSpacing: -0.3,
   },
-  completionSubtitle: {
+  completionMotivational: {
     textAlign: 'center',
+    marginBottom: 24,
+    lineHeight: 20,
+    paddingHorizontal: 8,
+    fontStyle: 'italic',
+  },
+  completionStatsRow: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  completionStatPill: {
+    flex: 1,
+    alignItems: 'center',
+    paddingVertical: 14,
+    paddingHorizontal: 8,
+    borderRadius: 16,
+    gap: 4,
+  },
+  completionStatIcon: {
+    marginBottom: 2,
+  },
+  completionStatValue: {
+    fontSize: 18,
+    fontWeight: theme.fontWeight.bold,
+    letterSpacing: -0.2,
+  },
+  completionStatLabel: {
+    fontSize: 11,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
   },
 });

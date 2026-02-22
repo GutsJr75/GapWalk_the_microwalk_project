@@ -38,11 +38,15 @@ export const Card: React.FC<CardProps> = ({
   ];
 
   const rippleColor = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(15,23,42,0.08)';
-  const elevatedStyle = elevated && isDark
-    ? { shadowColor: palette.shadow, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.12, shadowRadius: 12, elevation: 4 }
-    : elevated
-      ? { shadowColor: 'transparent', shadowOpacity: 0, shadowRadius: 0, elevation: 0 }
-      : undefined;
+  const elevatedStyle = elevated
+    ? {
+        shadowColor: isDark ? palette.shadow : 'rgba(15,23,42,0.18)',
+        shadowOffset: { width: 0, height: isDark ? 4 : 2 },
+        shadowOpacity: isDark ? 0.12 : 0.10,
+        shadowRadius: isDark ? 12 : 8,
+        elevation: isDark ? 4 : 3,
+      }
+    : undefined;
   const cardBaseStyleWithShadow = [
     ...cardBaseStyle,
     elevatedStyle,

@@ -20,6 +20,7 @@ import {
 import { notificationPlanActions } from './src/lib/notificationPlanActions';
 import { crashReporting } from './src/lib/crashReporting';
 import { analyticsService } from './src/lib/analytics';
+import { requestAllPermissions } from './src/lib/permissions';
 
 // Screens
 import { IntroScreen } from './src/screens/IntroScreen';
@@ -74,7 +75,13 @@ export default function App() {
     setPreferences,
     setScheduleSource,
     setTodayStats,
+    setTodaySteps,
     setUpcomingPlans,
+    setHasLocationPermission,
+    setHasNotificationPermission,
+    setHasActivityPermission,
+    setHasRequestedPermissions,
+    hasRequestedPermissions,
     themeMode,
   } = useAppStore();
   const pendingWalkPlanIdRef = useRef<string | null>(null);
@@ -89,9 +96,10 @@ export default function App() {
     const mins = await sessionsRepo.getTodayMinutes();
     const notifiedCount = await plansRepo.getTodayNotifiedCount();
     const upcoming = await plansRepo.getUpcomingPlans(20);
-    setTodayStats(mins, notifiedCount);
+    const stepsToday = await sessionsRepo.getTodaySteps();
+    setTodayStats(mins, notifiedCount, stepsToday);
     setUpcomingPlans(upcoming);
-  }, [setTodayStats, setUpcomingPlans]);
+  }, [setTodayStats, setTodaySteps, setUpcomingPlans]);
 
   const handleWalkNudgeResponse = useCallback(async (response: Notifications.NotificationResponse) => {
     const data = response.notification.request.content.data as { type?: string; planId?: string };
@@ -187,6 +195,19 @@ export default function App() {
         setPreferences(prefs);
         setScheduleSource(source);
         await refreshDashboardSnapshot();
+
+        // Request all permissions on first launch after onboarding
+        if (!hasRequestedPermissions) {
+          try {
+            const permResults = await requestAllPermissions();
+            setHasLocationPermission(permResults.location);
+            setHasNotificationPermission(permResults.notifications);
+            setHasActivityPermission(permResults.activityRecognition);
+            setHasRequestedPermissions(true);
+          } catch (e) {
+            console.warn('Permission request during init failed:', e);
+          }
+        }
       }
     } catch (error) {
       console.error('Failed to initialize app:', error);

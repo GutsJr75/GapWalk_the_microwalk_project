@@ -1,8 +1,9 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import { View, StyleSheet } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { parseISO } from 'date-fns';
+import { Ionicons } from '@expo/vector-icons';
 import { RootStackParamList } from '../../App';
 import { Container } from '../components/Container';
 import { ScreenHeader } from '../components/ScreenHeader';
@@ -10,14 +11,22 @@ import { Card } from '../components/Card';
 import { Text } from '../components/Text';
 import { Button } from '../components/Button';
 import { theme } from '../theme';
+import { useThemePalette } from '../theme/palette';
 import { useAppStore } from '../store';
 import { sessionsRepo } from '../lib/repositories/sessionsRepo';
-import { calculateWeeklyHistory, WeeklyHistoryEntry } from '../lib/statsUtils';
+import {
+  calculateWeeklyHistory,
+  WeeklyHistoryEntry,
+} from '../lib/statsUtils';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'WeeklyData'>;
 
+/* ------------------------------------------------------------------ */
+/*  Screen                                                            */
+/* ------------------------------------------------------------------ */
 export const WeeklyDataScreen: React.FC<Props> = ({ navigation }) => {
   const { language } = useAppStore();
+  const palette = useThemePalette();
   const [weeklyHistory, setWeeklyHistory] = useState<WeeklyHistoryEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -29,7 +38,9 @@ export const WeeklyDataScreen: React.FC<Props> = ({ navigation }) => {
       const sessions = await sessionsRepo.getAll();
       setWeeklyHistory(calculateWeeklyHistory(sessions));
     } catch (e) {
-      setLoadError(e instanceof Error ? e.message : 'Failed to load weekly data');
+      setLoadError(
+        e instanceof Error ? e.message : 'Failed to load weekly data',
+      );
       setWeeklyHistory([]);
     } finally {
       setLoading(false);
@@ -39,7 +50,7 @@ export const WeeklyDataScreen: React.FC<Props> = ({ navigation }) => {
   useFocusEffect(
     useCallback(() => {
       void load();
-    }, [load])
+    }, [load]),
   );
 
   const handleBack = () => {
@@ -51,6 +62,18 @@ export const WeeklyDataScreen: React.FC<Props> = ({ navigation }) => {
   };
 
   const locale = language === 'es' ? 'es-ES' : 'en-US';
+  const accentPrimary = palette.accentPrimary;
+  const textMuted = palette.textMuted;
+
+  /* ---- Compute a trend comparison for the top-most (most recent) week ---- */
+  const trendInfo = useMemo(() => {
+    if (weeklyHistory.length < 2) return null;
+    const current = weeklyHistory[0].totalMinutes;
+    const previous = weeklyHistory[1].totalMinutes;
+    if (previous === 0) return null;
+    const pct = Math.round(((current - previous) / previous) * 100);
+    return { pct, direction: pct >= 0 ? ('up' as const) : ('down' as const) };
+  }, [weeklyHistory]);
 
   return (
     <Container scrollable>
@@ -64,51 +87,148 @@ export const WeeklyDataScreen: React.FC<Props> = ({ navigation }) => {
 
         {loading ? (
           <Card elevated style={styles.emptyCard}>
-            <Text variant="body" style={styles.emptyBody}>Loading…</Text>
+            <Text variant="body" style={styles.emptyBody}>
+              Loading\u2026
+            </Text>
           </Card>
         ) : loadError ? (
           <Card elevated style={styles.emptyCard}>
-            <Text variant="body" style={styles.emptyTitle}>Could not load data</Text>
-            <Text variant="bodySmall" style={styles.emptyBody}>{loadError}</Text>
-            <Button title="Try again" onPress={() => void load()} variant="outline" style={styles.retryBtn} />
+            <Text variant="body" style={styles.emptyTitle}>
+              Could not load data
+            </Text>
+            <Text variant="bodySmall" style={styles.emptyBody}>
+              {loadError}
+            </Text>
+            <Button
+              title="Try again"
+              onPress={() => void load()}
+              variant="outline"
+              style={styles.retryBtn}
+            />
           </Card>
         ) : weeklyHistory.length === 0 ? (
           <Card elevated style={styles.emptyCard}>
-            <Text variant="body" style={styles.emptyTitle}>No weekly data yet</Text>
+            <Ionicons
+              name="walk-outline"
+              size={36}
+              color={textMuted}
+              style={{ marginBottom: 10 }}
+            />
+            <Text variant="body" style={styles.emptyTitle}>
+              No weekly data yet
+            </Text>
             <Text variant="bodySmall" style={styles.emptyBody}>
               Complete a walk to start building weekly history.
             </Text>
           </Card>
         ) : (
-          weeklyHistory.map((week) => {
+          weeklyHistory.map((week, idx) => {
             const start = parseISO(week.weekStart).toLocaleDateString(locale, {
               month: 'short',
               day: 'numeric',
-              year: 'numeric',
             });
             const end = parseISO(week.weekEnd).toLocaleDateString(locale, {
               month: 'short',
               day: 'numeric',
-              year: 'numeric',
             });
+            const isLatest = idx === 0;
 
             return (
-              <Card key={week.weekStart} elevated style={styles.weekCard}>
-                <Text variant="bodySmall" style={styles.weekMeta}>Week of</Text>
-                <Text variant="body" style={styles.weekRange}>{start} - {end}</Text>
+              <Card
+                key={week.weekStart}
+                elevated
+                style={[styles.weekCard, isLatest && styles.latestWeekCard]}
+              >
+                {/* Header row */}
+                <View style={styles.weekHeader}>
+                  <View style={{ flex: 1 }}>
+                    <Text variant="bodySmall" style={styles.weekMeta}>
+                      {isLatest ? 'This Week' : 'Week of'}
+                    </Text>
+                    <Text variant="body" style={styles.weekRange}>
+                      {start} – {end}
+                    </Text>
+                  </View>
 
+                  {isLatest && trendInfo && (
+                    <View
+                      style={[
+                        styles.trendBadge,
+                        {
+                          backgroundColor:
+                            trendInfo.direction === 'up'
+                              ? 'rgba(46,233,166,0.12)'
+                              : 'rgba(251,146,60,0.12)',
+                        },
+                      ]}
+                    >
+                      <Ionicons
+                        name={
+                          trendInfo.direction === 'up'
+                            ? 'trending-up'
+                            : 'trending-down'
+                        }
+                        size={14}
+                        color={
+                          trendInfo.direction === 'up'
+                            ? accentPrimary
+                            : '#fb923c'
+                        }
+                      />
+                      <Text
+                        variant="bodySmall"
+                        style={{
+                          marginLeft: 4,
+                          fontWeight: '600',
+                          color:
+                            trendInfo.direction === 'up'
+                              ? accentPrimary
+                              : '#fb923c',
+                        }}
+                      >
+                        {Math.abs(trendInfo.pct)}%
+                      </Text>
+                    </View>
+                  )}
+                </View>
+
+                {/* Stats grid */}
                 <View style={styles.grid}>
                   <View style={styles.gridItem}>
-                    <Text variant="title" style={styles.value}>{week.totalMinutes}</Text>
-                    <Text variant="bodySmall" style={styles.label}>Minutes</Text>
+                    <Text variant="title" style={[styles.value, { color: accentPrimary }]}>
+                      {week.totalMinutes}
+                    </Text>
+                    <Text variant="bodySmall" style={styles.label}>
+                      Minutes
+                    </Text>
                   </View>
+
+                  <View style={[styles.divider, { backgroundColor: textMuted }]} />
+
                   <View style={styles.gridItem}>
-                    <Text variant="title" style={styles.value}>{week.totalSteps.toLocaleString(locale)}</Text>
-                    <Text variant="bodySmall" style={styles.label}>Total Steps</Text>
+                    <Text variant="title" style={[styles.value, { color: accentPrimary }]}>
+                      {week.totalSteps.toLocaleString(locale)}
+                    </Text>
+                    <Text variant="bodySmall" style={styles.label}>
+                      Steps
+                    </Text>
                   </View>
+
+                  <View style={[styles.divider, { backgroundColor: textMuted }]} />
+
                   <View style={styles.gridItem}>
-                    <Text variant="title" style={styles.value}>{week.daysActive}</Text>
-                    <Text variant="bodySmall" style={styles.label}>Active Days</Text>
+                    <Text variant="title" style={[styles.value, { color: accentPrimary }]}>
+                      {week.daysActive}
+                      <Text
+                        variant="bodySmall"
+                        style={{ color: textMuted }}
+                      >
+                        /7
+                      </Text>
+                    </Text>
+                    <Text variant="bodySmall" style={styles.label}>
+                      Active Days
+                    </Text>
                   </View>
                 </View>
               </Card>
@@ -120,6 +240,9 @@ export const WeeklyDataScreen: React.FC<Props> = ({ navigation }) => {
   );
 };
 
+/* ------------------------------------------------------------------ */
+/*  Styles                                                            */
+/* ------------------------------------------------------------------ */
 const styles = StyleSheet.create({
   content: {
     flex: 1,
@@ -141,26 +264,41 @@ const styles = StyleSheet.create({
   },
   emptyBody: {
     textAlign: 'center',
-    color: theme.colors.textMuted,
   },
   retryBtn: {
     marginTop: 16,
   },
+  /* --- Week card --- */
   weekCard: {
-    marginBottom: 14,
+    marginBottom: 16,
+  },
+  latestWeekCard: {
+    borderWidth: 1,
+    borderColor: 'rgba(46,233,166,0.25)',
+  },
+  weekHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 6,
   },
   weekMeta: {
-    color: theme.colors.textMuted,
-    marginBottom: 4,
+    marginBottom: 2,
   },
   weekRange: {
     fontWeight: theme.fontWeight.semibold,
-    marginBottom: 14,
   },
+  trendBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  /* --- Stats grid --- */
   grid: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    gap: 10,
+    alignItems: 'center',
   },
   gridItem: {
     flex: 1,
@@ -168,11 +306,14 @@ const styles = StyleSheet.create({
   },
   value: {
     fontWeight: theme.fontWeight.bold,
-    marginBottom: 4,
-    color: theme.colors.accentPrimary,
   },
   label: {
-    color: theme.colors.textMuted,
     textAlign: 'center',
+    marginTop: 2,
+  },
+  divider: {
+    width: 1,
+    height: 32,
+    opacity: 0.18,
   },
 });

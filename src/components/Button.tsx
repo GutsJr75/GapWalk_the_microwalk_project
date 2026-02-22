@@ -1,5 +1,6 @@
 import React from 'react';
-import { Pressable, StyleSheet, ActivityIndicator, ViewStyle, TextStyle, StyleProp } from 'react-native';
+import { Pressable, StyleSheet, ActivityIndicator, ViewStyle, TextStyle, StyleProp, Platform } from 'react-native';
+import * as Haptics from 'expo-haptics';
 import { theme } from '../theme';
 import { useAppStore } from '../store';
 import { useThemePalette } from '../theme/palette';
@@ -64,7 +65,12 @@ export const Button: React.FC<ButtonProps> = ({
         pressed && !disabled && !loading && styles.pressedButton,
         style,
       ]}
-      onPress={onPress}
+      onPress={() => {
+        if (Platform.OS !== 'web') {
+          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+        }
+        onPress();
+      }}
       disabled={disabled || loading}
       accessibilityRole="button"
       testID={testID}

@@ -83,11 +83,11 @@ export const GapItem: React.FC<GapItemProps> = ({
       </View>
 
       <View style={styles.actions}>
-        <TouchableOpacity onPress={onCancel} hitSlop={8} style={[styles.cancelBtn, cancelBtnTheme]}>
-          <Text variant="bodySmall" style={styles.cancelText}>Cancel</Text>
-        </TouchableOpacity>
-        <TouchableOpacity onPress={onChange} hitSlop={8} style={[styles.changeBtn, changeBtnTheme]}>
+        <TouchableOpacity onPress={onChange} hitSlop={8} style={[styles.actionBtn, changeBtnTheme]}>
           <Text variant="bodySmall" style={[styles.changeText, { color: changeTextColor }]}>Change</Text>
+        </TouchableOpacity>
+        <TouchableOpacity onPress={onCancel} hitSlop={8} style={[styles.actionBtn, cancelBtnTheme]}>
+          <Text variant="bodySmall" style={styles.cancelText}>Cancel</Text>
         </TouchableOpacity>
       </View>
     </View>
@@ -132,20 +132,15 @@ const styles = StyleSheet.create({
   barLabel: {
     fontSize: 11,
   },
-  actions: { alignItems: 'flex-end', marginLeft: 10, paddingTop: 2, gap: 8 },
-  cancelBtn: {
+  actions: { alignItems: 'stretch' as const, marginLeft: 10, paddingTop: 2, gap: 8, width: 80 },
+  actionBtn: {
     paddingVertical: 6,
-    paddingHorizontal: 12,
     borderRadius: theme.borderRadius.sm,
+    alignItems: 'center' as const,
   },
   cancelText: {
     color: theme.colors.error,
     fontWeight: theme.fontWeight.medium,
-  },
-  changeBtn: {
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-    borderRadius: theme.borderRadius.sm,
   },
   changeText: {
     fontWeight: theme.fontWeight.medium,

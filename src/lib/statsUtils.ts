@@ -27,6 +27,53 @@ export interface WeeklyHistoryEntry {
   daysActive: number;
 }
 
+/** Per-day breakdown within a week (Sun=0 … Sat=6). */
+export interface DailyBreakdown {
+  /** 0-based day of week (0=Sun, 6=Sat) */
+  dayOfWeek: number;
+  /** 'yyyy-MM-dd' */
+  date: string;
+  minutes: number;
+  steps: number;
+  sessions: number;
+}
+
+/**
+ * Given all sessions, return an array of 7 DailyBreakdown entries
+ * for the week that starts on `weekStartISO` (a Sunday).
+ */
+export function calculateDailyBreakdown(
+  sessions: WalkSession[],
+  weekStartISO: string,
+): DailyBreakdown[] {
+  const weekStart = parseISO(weekStartISO);
+  const days: DailyBreakdown[] = Array.from({ length: 7 }, (_, i) => {
+    const d = new Date(weekStart);
+    d.setDate(d.getDate() + i);
+    return {
+      dayOfWeek: i,
+      date: format(d, 'yyyy-MM-dd'),
+      minutes: 0,
+      steps: 0,
+      sessions: 0,
+    };
+  });
+
+  sessions.forEach((s) => {
+    const sessionDate = parseISO(s.start);
+    if (!isValid(sessionDate)) return;
+    const dayKey = format(sessionDate, 'yyyy-MM-dd');
+    const match = days.find((d) => d.date === dayKey);
+    if (match) {
+      match.minutes += Math.floor(s.activeSeconds / 60);
+      match.steps += s.steps ?? 0;
+      match.sessions += 1;
+    }
+  });
+
+  return days;
+}
+
 export interface MonthlyStats {
   month: string;
   totalMinutes: number;

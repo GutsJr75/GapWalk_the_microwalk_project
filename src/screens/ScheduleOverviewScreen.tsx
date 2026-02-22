@@ -91,13 +91,13 @@ export const ScheduleOverviewScreen: React.FC<Props> = ({ navigation }) => {
 
         <Card elevated style={styles.card}>
           <View style={styles.labelRow}>
-            <AppIcon name="calendar" size={14} color={theme.colors.accentPrimary} />
+            <AppIcon name="calendar" size={14} color={palette.accentPrimary} />
             <Text variant="bodySmall" style={[styles.label, { color: palette.textMuted }]}>Current source</Text>
           </View>
           {scheduleSource?.type === 'ics' && !!scheduleSource.filename ? (
             <Text variant="body" style={styles.current}>
               File:{' '}
-              <Text variant="body" style={[styles.fileName, { color: theme.colors.accentPrimary }]}>
+              <Text variant="body" style={[styles.fileName, { color: palette.accentPrimary }]}>
                 {scheduleSource.filename}
               </Text>
             </Text>
@@ -108,7 +108,7 @@ export const ScheduleOverviewScreen: React.FC<Props> = ({ navigation }) => {
 
         <Card elevated style={[styles.card, styles.guideCard]}>
           <View style={styles.labelRow}>
-            <AppIcon name="adjust" size={14} color={theme.colors.accentPrimary} />
+            <AppIcon name="adjust" size={14} color={palette.accentPrimary} />
             <Text variant="body" style={styles.guideHeading}>How it works</Text>
           </View>
           <Text variant="bodySmall" style={[styles.guideSub, { color: palette.textMuted }]}>

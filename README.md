@@ -1,257 +1,170 @@
-# GapWalk - Micro-Walking Made Easy
+# GapWalk
 
-GapWalk is a mobile app that helps you turn short gaps in your busy schedule into quick, healthy walks. No account needed, 100% free, and privacy-first.
+Turn short gaps in your busy schedule into quick, healthy walks.
 
-## Features
+GapWalk analyzes your calendar, finds free windows, and nudges you to take a walk at the right time. No account needed — everything stays on your device.
 
-- **Smart Schedule Integration**: Import .ics files, manually input your schedule, or link Google Calendar (coming soon)
-- **Intelligent Gap Detection**: Automatically finds free gaps in your schedule
-- **Customizable Preferences**: Set your daily target, buffer time, quiet hours, and notification count
-- **Walk Tracking**: Timer-based tracking with optional location/distance tracking
-- **Privacy-First**: All data stored locally on your device, no account required
+---
 
-## Tech Stack
-
-- **Framework**: Expo & React Native
-- **Language**: TypeScript
-- **Navigation**: React Navigation (Native Stack)
-- **State Management**: Zustand
-- **Database**: Expo SQLite
-- **Notifications**: expo-notifications
-- **Location**: expo-location & react-native-maps
-- **Date Handling**: date-fns
-- **ICS Parsing**: ical.js
-
-## Setup & Installation
+## Getting Started
 
 ### Prerequisites
 
-- Node.js (v18 or newer)
-- npm or yarn
-- Expo CLI (installed automatically with the project)
-- iOS Simulator (for Mac) or Android Emulator
+- Node.js 18+
+- Android Studio (for Android builds) or Xcode (for iOS)
 
-### Installation Steps
+### Install & Run
 
-1. **Clone or navigate to the project directory**:
-   ```bash
-   cd GapWalk
-   ```
+```bash
+npm install
+npm run android   # Android emulator / connected device
+npm run ios       # iOS simulator (Mac only)
+```
 
-2. **Install dependencies**:
-   ```bash
-   npm install
-   ```
+### Build a Release APK
 
-3. **Start the development server**:
-   ```bash
-   npm start
-   ```
-   
-   Or use specific platforms:
-   ```bash
-   npm run ios     # iOS simulator
-   npm run android # Android emulator
-   npm run web     # Web browser (limited functionality)
-   ```
+```bash
+cd android
+./gradlew assembleRelease
+```
 
-4. **Scan the QR code** with Expo Go app (iOS/Android) or press:
-   - `i` for iOS simulator
-   - `a` for Android emulator
-   - `w` for web browser
+The APK will be at `android/app/build/outputs/apk/release/app-release.apk`.
+
+### Environment Variables (Optional)
+
+Copy `.env.example` to `.env` and fill in the values you need:
+
+| Variable | Purpose |
+|---|---|
+| `EXPO_PUBLIC_GOOGLE_MAPS_API_KEY` | Show Google Maps on the walking screen (Android) |
+| `GOOGLE_MAPS_API_KEY` | Same key — used at native build time |
+| `EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID` | Google Calendar OAuth (optional) |
+
+Without a Maps key the walking screen still tracks your walk — it just shows a fallback instead of a live map.
+
+---
+
+## How It Works
+
+### 1. Set Your Schedule
+
+Import an `.ics` file, enter your schedule manually, or connect Google Calendar. GapWalk uses your busy times to find free gaps.
+
+### 2. Configure Preferences
+
+| Setting | What it does |
+|---|---|
+| **Daily Target** | Minutes of walking you want per day |
+| **Notification Count** | Max nudges per day |
+| **Quiet Hours** | No notifications during these hours |
+| **When to Notify** | At gap start, or 5/10 min before |
+| **Buffer Minutes** | Breathing room before a walk starts |
+| **Min Walk Minutes** | Shortest walk worth scheduling |
+| **Preferred Walking Periods** | Only schedule walks during these windows |
+| **Strictness Mode** | *Easygoing* = gentle reminders; *No Excuses* = more direct, motivating nudges |
+| **Step Goal** | Optional step target — suppresses nudges once reached |
+
+Every preference is respected throughout the notification scheduling, plan generation, and walk tracking flow.
+
+### 3. Get Nudged & Walk
+
+GapWalk schedules local notifications for your best walking windows. Tap **Start now** to begin, or **Maybe later** to skip. During a walk you get:
+
+- Live GPS map with your route
+- Real-time step counting (hardware pedometer with GPS fallback)
+- Distance and time tracking
+- Pause / resume controls
+- Idle detection (auto-pauses if you stop moving)
+
+### 4. Track Progress
+
+The dashboard shows:
+
+- **Quick Status** — daily minutes, notification count, step goal (live-updated)
+- **Streak** — consecutive active days
+- **Weekly Stats** — total minutes, steps, active days
+- **Walking Opportunities** — upcoming scheduled gaps with times and actions
+
+---
 
 ## Project Structure
 
 ```
 GapWalk/
-├── App.tsx                 # Main app entry point with navigation
+├── App.tsx                    # Navigation, notification handlers, app init
 ├── src/
-│   ├── components/         # Reusable UI components
-│   │   ├── Button.tsx
-│   │   ├── Card.tsx
-│   │   ├── Container.tsx
-│   │   ├── Text.tsx
-│   │   ├── Modal.tsx
-│   │   ├── ScheduleCard.tsx
-│   │   ├── StatCard.tsx
-│   │   └── GapItem.tsx
-│   ├── screens/            # App screens
-│   │   ├── IntroScreen.tsx
-│   │   ├── ScheduleSetupScreen.tsx
-│   │   ├── ManualScheduleScreen.tsx
-│   │   ├── PreferencesScreen.tsx
-│   │   ├── DashboardScreen.tsx
-│   │   └── WalkingScreen.tsx
-│   ├── lib/                # Core business logic
-│   │   ├── db.ts           # SQLite database initialization
-│   │   ├── types.ts        # TypeScript type definitions
-│   │   ├── gapEngine.ts    # Gap detection algorithm
-│   │   ├── notifications.ts # Notification scheduling
-│   │   ├── time.ts         # Time utility functions
-│   │   ├── ics.ts          # ICS file parsing
-│   │   └── repositories/   # Data access layer
-│   │       ├── preferencesRepo.ts
-│   │       ├── eventsRepo.ts
-│   │       ├── sessionsRepo.ts
-│   │       ├── plansRepo.ts
-│   │       ├── scheduleSourceRepo.ts
-│   │       └── manualScheduleRepo.ts
-│   ├── store/              # Zustand state management
-│   │   └── index.ts
-│   └── theme/              # Design system (colors, spacing, typography)
-│       └── index.ts
-├── assets/                 # Images and icons
-├── package.json
-├── tsconfig.json
-└── app.json               # Expo configuration
+│   ├── components/            # Reusable UI (Button, Card, Modal, StatCard …)
+│   ├── screens/               # All app screens
+│   │   ├── IntroScreen        # Onboarding landing
+│   │   ├── ScheduleSetupScreen
+│   │   ├── ManualScheduleScreen
+│   │   ├── PreferencesScreen
+│   │   ├── DashboardScreen    # Main hub
+│   │   ├── WalkingScreen      # Walk tracker (map, pedometer, timer)
+│   │   ├── SettingsScreen
+│   │   └── WeeklyDataScreen
+│   ├── lib/
+│   │   ├── gapEngine.ts       # Gap detection & plan generation
+│   │   ├── notifications.ts   # Notification scheduling & permissions
+│   │   ├── permissions.ts     # Centralized permission requests
+│   │   ├── scheduleSync.ts    # Rebuilds plans after changes
+│   │   ├── types.ts           # Core types & defaults
+│   │   ├── time.ts            # Time/quiet-hour helpers
+│   │   ├── statsUtils.ts      # Streak & weekly stat calculations
+│   │   └── repositories/      # SQLite data access layer
+│   ├── store/                 # Zustand state (prefs, stats, permissions)
+│   └── theme/                 # Colors, typography, dark/light palettes
+├── assets/
+│   └── icon.png               # App icon (2048×2048)
+├── android/                   # Native Android project
+├── backend/                   # NestJS backend (optional — app works offline)
+└── e2e/                       # Maestro end-to-end tests
 ```
-
-## How It Works
-
-### 1. Onboarding Flow
-
-1. **Intro Screen**: Learn about GapWalk and its benefits
-2. **Schedule Setup**: Choose how to add your schedule (ICS import, manual, or Google Calendar)
-3. **Preferences**: Set daily target, buffer time, notification count, and quiet hours
-4. **Dashboard**: View your stats and upcoming walk opportunities
-
-### 2. Gap Detection Algorithm
-
-The `gapEngine.ts` module:
-- Takes your busy events and preferences as input
-- Filters events for the target day
-- Removes all-day events and applies day boundaries
-- Merges overlapping busy intervals
-- Finds free gaps as the complement of busy times
-- Excludes quiet hours
-- Scores opportunities based on duration (prefers 8-15 min gaps)
-- Selects top N gaps (up to `notificationCountPerDay`)
-- Creates `NudgePlan` objects with walk start times (gap start + buffer)
-
-### 3. Notification Scheduling
-
-- Notifications are scheduled at `walkStart` time for each plan
-- Respects quiet hours (no notifications during sleep time)
-- Limits to max notifications per day
-- Auto-cancels remaining nudges if daily target is met
-- Uses `expo-notifications` for cross-platform support
-
-### 4. Walk Tracking
-
-- **Timer Mode**: Tracks active time and paused time
-- **Location Mode** (optional): Tracks distance using GPS and displays route on map
-- Calculates rough calorie estimate
-- Saves session to database with all metrics
-
-## Customization
-
-### Default Preferences
-
-You can modify defaults in `src/lib/types.ts`:
-
-```typescript
-export const DEFAULT_PREFERENCES: Preferences = {
-  dailyTargetMinutes: 20,
-  bufferMinutes: 2,
-  notificationCountPerDay: 3,
-  quietHoursStart: '23:00',
-  quietHoursEnd: '06:00',
-  minWalkMinutes: 6,
-};
-```
-
-### Theme
-
-Customize colors, spacing, and typography in `src/theme/index.ts`.
-
-## Known Limitations & Future Enhancements
-
-### Current Limitations
-
-1. **Google Calendar**: Integration is stubbed (shows "Coming soon" alert)
-2. **No Cloud Sync**: All data is local only
-3. **No Account System**: Can't sync across devices
-4. **Basic Manual Schedule**: Weekly template only (doesn't handle one-off events)
-
-### Planned Features
-
-- Full Google Calendar OAuth integration
-- Settings screen to edit preferences and schedule source
-- Walk history and statistics
-- Export walk data
-- Widgets for quick access
-- Apple Health & Google Fit integration
-
-## Troubleshooting
-
-### Notifications not appearing
-
-1. Ensure you've granted notification permissions
-2. Check quiet hours settings
-3. Verify you have upcoming plans on Dashboard
-4. Test on a physical device (notifications don't work in some simulators)
-
-### Location not tracking
-
-1. Grant location permissions when prompted
-2. Enable location services on your device
-3. Test outdoors for better GPS signal
-4. Check that react-native-maps is properly configured
-
-### ICS import fails
-
-1. Ensure the file is a valid .ics (iCalendar) format
-2. Try exporting from your calendar app again
-3. Check for special characters in event titles
-4. Look at console logs for specific parsing errors
-
-### Database errors
-
-Reset the database by:
-1. Uninstalling the app
-2. Reinstalling and starting fresh
-
-Or programmatically call `resetDatabase()` from `src/lib/db.ts`.
-
-## Development Notes
-
-### Adding a new screen
-
-1. Create screen component in `src/screens/`
-2. Add route to `RootStackParamList` in `App.tsx`
-3. Add `Stack.Screen` in navigation stack
-
-### Adding a new repository
-
-1. Create new file in `src/lib/repositories/`
-2. Follow pattern of existing repos (CRUD operations)
-3. Export methods for use in screens/logic
-
-### Testing Notifications
-
-Schedule a test notification:
-
-```typescript
-import { notificationService } from './src/lib/notifications';
-
-await notificationService.showImmediateNotification(
-  'Test',
-  'This is a test notification'
-);
-```
-
-## License
-
-This project is open source and available under the MIT License.
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit issues and pull requests.
-
-## Support
-
-For questions or issues, please open an issue on the project repository.
 
 ---
 
-**Made with ❤️ for healthier, more active lifestyles**
+## Permissions
+
+On first launch / after onboarding the app requests:
+
+| Permission | Why |
+|---|---|
+| **Location** | Track walking distance and show route on map |
+| **Notifications** | Send walk reminders at the right time |
+| **Activity Recognition** | Real-time step counting via device pedometer |
+
+All permissions are optional — the app degrades gracefully (timer-only mode, no map, no nudges).
+
+---
+
+## Tech Stack
+
+| Layer | Technology |
+|---|---|
+| Framework | Expo 54 + React Native |
+| Language | TypeScript |
+| Navigation | React Navigation (Native Stack) |
+| State | Zustand |
+| Database | expo-sqlite (local, on-device) |
+| Notifications | expo-notifications |
+| Location | expo-location + react-native-maps |
+| Step Counting | expo-sensors (Pedometer API) |
+| Date Logic | date-fns |
+
+---
+
+## Troubleshooting
+
+**Notifications not appearing** — Make sure notification permission is granted, quiet hours aren't active, and there are upcoming plans on the dashboard. Test on a physical device.
+
+**Map shows fallback** — Set `GOOGLE_MAPS_API_KEY` in `android/gradle.properties` and rebuild. On iOS, Apple Maps works without a key.
+
+**Steps stay at 0** — Grant the Activity Recognition permission. If the device lacks a step sensor, the app falls back to GPS-based estimation (requires walking outdoors).
+
+**Database issues** — Uninstall and reinstall the app for a clean slate.
+
+---
+
+## License
+
+MIT

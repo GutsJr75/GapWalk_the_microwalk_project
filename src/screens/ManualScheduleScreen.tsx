@@ -4,25 +4,31 @@ import {
   StyleSheet,
   ScrollView,
   TouchableOpacity,
+  Pressable,
   Animated,
   Easing,
   Alert,
   TextInput,
   StyleProp,
   TextStyle,
+  ActivityIndicator,
   useWindowDimensions,
   Platform,
 } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useFocusEffect } from '@react-navigation/native';
+import * as DocumentPicker from 'expo-document-picker';
 import { RootStackParamList } from '../../App';
 import { Text } from '../components/Text';
 import { Button } from '../components/Button';
+import { Card } from '../components/Card';
 import { Modal } from '../components/Modal';
 import { ScreenHeader } from '../components/ScreenHeader';
+import { AppIcon } from '../components/AppIcon';
 import { theme } from '../theme';
 import { getThemePalette } from '../theme/palette';
 import { ManualScheduleEntry } from '../lib/types';
+import { buildWeeklyTemplateFromIcsEvents, parseICSFile } from '../lib/ics';
 import { manualScheduleRepo } from '../lib/repositories/manualScheduleRepo';
 import { eventsRepo } from '../lib/repositories/eventsRepo';
 import { plansRepo } from '../lib/repositories/plansRepo';
@@ -365,12 +371,17 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
   const [selectedDay, setSelectedDay] = useState<number>(todayIndex);
   const [form, setForm] = useState<ManualFormState>(() => createDefaultFormState(todayIndex));
   const [hoveredSlot, setHoveredSlot] = useState<number | null>(null);
+  const [importLoading, setImportLoading] = useState(false);
+  const [importStatus, setImportStatus] = useState<string | null>(null);
+  const [currentSourceLabel, setCurrentSourceLabel] = useState<string>('');
+  const [showEditor, setShowEditor] = useState(!manageMode);
+  const [selectedSource, setSelectedSource] = useState<'manual' | 'import'>('manual');
   const gridScrollRef = useRef<ScrollView>(null);
   const oneTimeMonthRef = useRef<TextInput>(null);
   const oneTimeDayRef = useRef<TextInput>(null);
   const oneTimeYearRef = useRef<TextInput>(null);
   const appearAnim = useRef(new Animated.Value(0)).current;
-  const { setScheduleSource, setUpcomingPlans, preferences, themeMode } = useAppStore();
+  const { scheduleSource, setScheduleSource, setUpcomingPlans, preferences, themeMode } = useAppStore();
 
   // Hide scrollbar (web) and auto-scroll to 8:00 AM on mount
   useEffect(() => {
@@ -462,6 +473,89 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
     }, [prefillTemplate, requireSaveBeforeContinue, startWithEmpty])
   );
 
+  // Load current source label in manage mode
+  useEffect(() => {
+    if (!manageMode) return;
+    const loadSource = async () => {
+      const src = scheduleSource ?? (await scheduleSourceRepo.get());
+      if (!src) { setCurrentSourceLabel('Not set yet'); setSelectedSource('manual'); return; }
+      if (src.type === 'manual') { setCurrentSourceLabel('Manual schedule'); setSelectedSource('manual'); }
+      else if (src.type === 'ics') { setCurrentSourceLabel(src.filename ? `Calendar file: ${src.filename}` : 'Calendar file (.ics)'); setSelectedSource('import'); }
+      else if (src.type === 'google') { setCurrentSourceLabel('Google Calendar'); setSelectedSource('manual'); }
+      else { setCurrentSourceLabel('Not set yet'); setSelectedSource('manual'); }
+    };
+    void loadSource();
+  }, [manageMode, scheduleSource]);
+
+  /* ── ICS re-import (inline, no extra screen) ── */
+  const handleReImportIcs = async () => {
+    try {
+      setImportLoading(true);
+      setImportStatus('Opening file picker...');
+      const result = await DocumentPicker.getDocumentAsync({
+        type: ['text/calendar', 'application/octet-stream', '.ics', 'text/plain'],
+        copyToCacheDirectory: true,
+      });
+      if (result.canceled) {
+        setImportLoading(false);
+        setImportStatus(null);
+        return;
+      }
+      const file = result.assets[0];
+      setImportStatus(`Reading ${file.name || 'calendar file'}...`);
+      let content = '';
+      const webFile = (file as any).file;
+      if (Platform.OS === 'web' && webFile && typeof webFile.text === 'function') {
+        content = await webFile.text();
+      } else {
+        const resp = await fetch(file.uri);
+        if (!resp.ok) throw new Error(`Could not read selected file (${resp.status}).`);
+        content = await resp.text();
+      }
+      if (!content.trim()) throw new Error('The selected ICS file is empty.');
+
+      setImportStatus('Parsing calendar...');
+      const parseResult = await parseICSFile(content);
+      if (parseResult.errors.length > 0) {
+        const warningText = parseResult.errors.slice(0, 3).join('\n');
+        showMessage('Import Warning', warningText);
+      }
+      if (parseResult.events.length === 0) {
+        setImportLoading(false);
+        setImportStatus(null);
+        showMessage('No Events', 'No events found in the ICS file.');
+        return;
+      }
+      const weeklyTemplate: ManualScheduleEntry[] = buildWeeklyTemplateFromIcsEvents(parseResult.events);
+      analyticsService.track('ics_import_parsed', {
+        filename: file.name || 'calendar.ics',
+        eventsParsed: parseResult.events.length,
+        weeklyTemplateEntries: weeklyTemplate.length,
+      });
+      const grouped = groupTemplateEntries(weeklyTemplate);
+      setEntriesByDay(grouped);
+      setImportLoading(false);
+      setImportStatus(null);
+      setShowEditor(true);
+      showMessage('Imported', `Loaded ${parseResult.events.length} events from ${file.name || 'calendar.ics'}. Review the grid and save.`);
+    } catch (error) {
+      console.error('ICS re-import failed:', error);
+      setImportLoading(false);
+      setImportStatus(null);
+      const msg = error instanceof Error ? error.message : 'Failed to import ICS file. Please try again.';
+      showMessage('Import Failed', msg);
+    }
+  };
+
+  /* ── Landing: proceed to editor ── */
+  const handleLandingProceed = () => {
+    setShowEditor(true);
+  };
+
+  const handleLandingCancel = () => {
+    navigation.navigate('Dashboard');
+  };
+
   const currentSignature = useMemo(() => buildScheduleSignature(entriesByDay), [entriesByDay]);
   const hasUnsavedChanges = currentSignature !== initialSignature;
   const hasPendingImportedSchedule = usingIcsTemplate && Array.isArray(prefillTemplate) && !hasSavedSchedule;
@@ -506,7 +600,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
   const exitManualScreen = () => {
     const goOut = () => {
       if (manageMode) {
-        navigation.navigate('ScheduleOverview');
+        navigation.navigate('Dashboard');
         return;
       }
       if (navigation.canGoBack()) {
@@ -743,6 +837,24 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
       Alert.alert('Select date', 'Choose a date for this one-time event.');
       return;
     }
+
+    // Duplicate time-frame check: no two events on the same day with identical start & end
+    const targetDays = form.repeatMode === 'one_time'
+      ? [getDayOfWeekFromDateKey(resolvedOneTimeDate || getPreferredOneTimeDateForDay(form.dayOfWeek))]
+      : (form.repeatDays.length > 0 ? form.repeatDays : [form.dayOfWeek]);
+    for (const d of targetDays) {
+      const existing = (entriesByDay[d] ?? []).filter((e) => e.id !== editingEventId);
+      const duplicate = existing.find((e) => e.startTime === start && e.endTime === end);
+      if (duplicate) {
+        const dayName = DAY_FULL_NAMES[d];
+        Alert.alert(
+          'Duplicate time',
+          `${dayName} already has an event ("${duplicate.title}") from ${formatTime12(start)} to ${formatTime12(end)}. Two events cannot share the exact same time frame.`,
+        );
+        return;
+      }
+    }
+
     if (editingEventId) {
       const id = editingEventId;
       setEntriesByDay((prev) => {
@@ -1072,6 +1184,67 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
     analyticsService.track('e2e_sample_manual_schedule_seeded', { dayOfWeek: selectedDay });
   };
 
+  /* ── Clear day ── */
+  const handleClearDay = () => {
+    const dayName = DAY_FULL_NAMES[selectedDay];
+    const count = (entriesByDay[selectedDay] ?? []).length;
+    if (count === 0) return;
+    const title = `Clear ${dayName}?`;
+    const message = `This will remove all ${count} event${count > 1 ? 's' : ''} from ${dayName}.`;
+    if (Platform.OS === 'web' && typeof (globalThis as any).confirm === 'function') {
+      if ((globalThis as any).confirm(`${title}\n\n${message}`)) {
+        setEntriesByDay((prev) => ({ ...prev, [selectedDay]: [] }));
+      }
+      return;
+    }
+    Alert.alert(title, message, [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Clear', style: 'destructive', onPress: () => setEntriesByDay((prev) => ({ ...prev, [selectedDay]: [] })) },
+    ]);
+  };
+
+  /* ── Copy day ── */
+  const [showCopyModal, setShowCopyModal] = useState(false);
+  const [copyTargets, setCopyTargets] = useState<number[]>([]);
+
+  const handleCopyDay = () => {
+    const count = (entriesByDay[selectedDay] ?? []).length;
+    if (count === 0) {
+      showMessage('Nothing to copy', `${DAY_FULL_NAMES[selectedDay]} has no events.`);
+      return;
+    }
+    setCopyTargets([]);
+    setShowCopyModal(true);
+  };
+
+  const confirmCopyDay = () => {
+    if (copyTargets.length === 0) return;
+    const sourceEvents = entriesByDay[selectedDay] ?? [];
+    setEntriesByDay((prev) => {
+      const next = { ...prev };
+      for (const target of copyTargets) {
+        const copied = sourceEvents.map((ev) => ({
+          ...ev,
+          id: `${ev.id}-cp-${target}-${Date.now()}`,
+          isOneTime: false as const,
+          oneTimeDate: undefined,
+        }));
+        next[target] = [...(next[target] ?? []), ...copied];
+      }
+      return next;
+    });
+    setShowCopyModal(false);
+    showMessage('Copied', `Copied ${sourceEvents.length} event${sourceEvents.length > 1 ? 's' : ''} to ${copyTargets.length} day${copyTargets.length > 1 ? 's' : ''}.`);
+  };
+
+  /* ── Current-time indicator ── */
+  const now = new Date();
+  const nowMinutes = now.getHours() * 60 + now.getMinutes();
+  const todayDayIndex = now.getDay();
+  const isSelectedDayToday = selectedDay === todayDayIndex;
+  const nowOffsetMin = nowMinutes >= GRID_START_MIN ? nowMinutes - GRID_START_MIN : nowMinutes + (24 * 60 - GRID_START_MIN);
+  const nowTop = (nowOffsetMin / SLOT_MINUTES) * SLOT_HEIGHT;
+
   const { width: winWidth, height: winHeight } = useWindowDimensions();
   const gridBodyMaxHeight = Math.max(320, winHeight - 220);
   const selectedDayEvents = entriesByDaySorted[selectedDay] ?? [];
@@ -1111,12 +1284,14 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
       >
       <View style={styles.header}>
         <ScreenHeader
-          title={manageMode ? 'Update your schedule' : 'Set up your schedule'}
-          subtitle={manageMode ? 'Edit and save to refresh walking opportunities.' : 'Build your weekly schedule'}
-          onBack={handleBack}
+          title={manageMode ? 'Manage your schedule' : 'Set up your schedule'}
+          subtitle={manageMode
+            ? (showEditor ? 'Edit your schedule and save when ready.' : 'Choose your schedule source, then proceed to edit.')
+            : 'Build your weekly schedule'}
+          onBack={manageMode && showEditor ? () => setShowEditor(false) : handleBack}
           backTestID="manual-back"
         />
-        {usingIcsTemplate && (
+        {showEditor && usingIcsTemplate && (
           <View style={styles.icsBadge}>
             <Text variant="bodySmall" style={[styles.icsBadgeText, { color: mintTextOnTint }]} numberOfLines={1}>
               ICS file: {importedFilename}
@@ -1134,10 +1309,145 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
         )}
       </View>
 
+      {/* ── Landing: source selection (manage-mode only, before editor) ── */}
+      {!showEditor && manageMode && (
+        <ScrollView style={{ flex: 1 }} contentContainerStyle={[styles.landingContent, { flexGrow: 1 }]}>
+          <Card elevated style={styles.landingCard}>
+            <View style={styles.landingLabelRow}>
+              <AppIcon name="calendar" size={14} color={palette.accentPrimary} />
+              <Text variant="bodySmall" style={{ color: palette.textMuted }}>
+                Schedule source
+              </Text>
+            </View>
+            <View style={styles.landingRow}>
+              <Pressable
+                onPress={() => setSelectedSource('manual')}
+                android_ripple={{ color: selectedSource === 'manual' ? 'rgba(0,0,0,0.12)' : 'rgba(255,255,255,0.14)' }}
+                style={({ pressed }) => [
+                  styles.landingPill,
+                  {
+                    backgroundColor: selectedSource === 'manual' ? palette.accentPrimary : palette.bgSurface,
+                    borderColor: selectedSource === 'manual' ? 'transparent' : palette.borderStrong,
+                  },
+                  pressed && styles.landingPillPressed,
+                ]}
+              >
+                <Text
+                  variant="body"
+                  style={[
+                    styles.landingPillLabel,
+                    { color: selectedSource === 'manual' ? '#06261d' : palette.textPrimary },
+                  ]}
+                >
+                  {selectedSource === 'manual' ? '\u2713  Manual' : 'Manual'}
+                </Text>
+              </Pressable>
+              <Pressable
+                onPress={() => setSelectedSource('import')}
+                android_ripple={{ color: selectedSource === 'import' ? 'rgba(0,0,0,0.12)' : 'rgba(255,255,255,0.14)' }}
+                style={({ pressed }) => [
+                  styles.landingPill,
+                  {
+                    backgroundColor: selectedSource === 'import' ? palette.accentPrimary : palette.bgSurface,
+                    borderColor: selectedSource === 'import' ? 'transparent' : palette.borderStrong,
+                  },
+                  pressed && styles.landingPillPressed,
+                ]}
+              >
+                <Text
+                  variant="body"
+                  style={[
+                    styles.landingPillLabel,
+                    { color: selectedSource === 'import' ? '#06261d' : palette.textPrimary },
+                  ]}
+                >
+                  {selectedSource === 'import' ? '\u2713  Import' : 'Import'}
+                </Text>
+              </Pressable>
+            </View>
+          </Card>
+
+          <Card elevated style={styles.landingCard}>
+            <View style={styles.landingLabelRow}>
+              <AppIcon name="adjust" size={14} color={palette.accentPrimary} />
+              <Text variant="bodySmall" style={{ color: palette.textMuted }}>
+                About this option
+              </Text>
+            </View>
+            <Text variant="bodySmall" style={{ color: palette.textMuted, lineHeight: 20, marginTop: 2 }}>
+              {selectedSource === 'manual'
+                ? 'Build your weekly schedule with a calendar grid. Tap time-slots to mark when you are busy.'
+                : 'Upload a .ics calendar file and GapWalk will populate the grid for you automatically.'}
+            </Text>
+          </Card>
+
+          {selectedSource === 'import' && scheduleSource?.type === 'ics' && scheduleSource.filename && (
+            <Card elevated style={styles.landingCard}>
+              <View style={styles.landingLabelRow}>
+                <AppIcon name="calendar" size={14} color={palette.accentPrimary} />
+                <Text variant="bodySmall" style={{ color: palette.textMuted }}>
+                  Previously imported
+                </Text>
+              </View>
+              <View style={styles.landingFileRow}>
+                <Text variant="bodySmall" style={{ color: palette.accentPrimary, lineHeight: 20, flex: 1 }} numberOfLines={1}>
+                  {scheduleSource.filename}
+                </Text>
+                <Pressable
+                  onPress={() => { void handleReImportIcs(); }}
+                  style={({ pressed }) => [
+                    styles.landingChangeBtn,
+                    { borderColor: palette.accentPrimary },
+                    pressed && { opacity: 0.7 },
+                  ]}
+                >
+                  <Text variant="bodySmall" style={{ color: palette.accentPrimary, fontWeight: theme.fontWeight.semibold }}>
+                    Change
+                  </Text>
+                </Pressable>
+              </View>
+            </Card>
+          )}
+
+          {importLoading && importStatus && (
+            <View style={styles.landingStatusRow}>
+              <ActivityIndicator size="small" color={palette.accentPrimary} />
+              <Text variant="bodySmall" style={{ color: palette.accentPrimary, marginLeft: 8 }}>{importStatus}</Text>
+            </View>
+          )}
+
+          <View style={{ flex: 1 }} />
+
+          <View style={styles.landingFooter}>
+            <View style={styles.landingBtnRow}>
+              <Button
+                title="Cancel"
+                variant="danger"
+                onPress={handleLandingCancel}
+                style={styles.footerBtn}
+                disabled={importLoading}
+              />
+              <Button
+                title="Proceed"
+                onPress={handleLandingProceed}
+                style={styles.footerBtn}
+                disabled={importLoading}
+              />
+            </View>
+            <Text variant="muted" style={styles.privacy}>Your schedule stays private. Privacy is our top priority.</Text>
+          </View>
+        </ScrollView>
+      )}
+
+      {/* ── Grid editor (visible after proceeding from landing) ── */}
+      {(showEditor || !manageMode) && (
+      <>
       {/* Day tabs (Google Calendar style: select one day) */}
       <View style={[styles.dayTabsWrap, { borderBottomColor: gridLineSoft }]}>
         {DAY_TAB_LABELS.map((d, idx) => {
           const active = idx === selectedDay;
+          const eventCount = (entriesByDay[idx] ?? []).length;
+          const isToday = idx === todayDayIndex;
           return (
             <TouchableOpacity
               key={d}
@@ -1151,13 +1461,42 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
                   styles.dayTabText,
                   active && styles.dayTabTextActive,
                   active && { color: mintTextOnTint },
+                  isToday && !active && { color: palette.textPrimary },
                 ])}
               >
                 {d}
               </Text>
+              {eventCount > 0 && (
+                <View style={[styles.dayTabBadge, { backgroundColor: active ? palette.accentPrimary : (isDark ? 'rgba(255,255,255,0.15)' : 'rgba(15,23,42,0.12)') }]}>
+                  <Text style={[styles.dayTabBadgeText, { color: active ? '#06261d' : palette.textMuted }]}>{eventCount}</Text>
+                </View>
+              )}
             </TouchableOpacity>
           );
         })}
+      </View>
+
+      {/* Quick actions toolbar */}
+      <View style={[styles.gridToolbar, { borderBottomColor: gridLineSoft }]}>
+        <Text variant="bodySmall" style={{ color: palette.textPrimary, fontWeight: theme.fontWeight.semibold }}>
+          {DAY_FULL_NAMES[selectedDay]}
+        </Text>
+        <View style={styles.gridToolbarActions}>
+          <Pressable
+            onPress={handleCopyDay}
+            style={({ pressed }) => [styles.gridToolbarBtn, { borderColor: palette.borderStrong }, pressed && { opacity: 0.6 }]}
+          >
+            <AppIcon name="sync" size={12} color={palette.textMuted} />
+            <Text variant="bodySmall" style={{ color: palette.textMuted, marginLeft: 4 }}>Copy</Text>
+          </Pressable>
+          <Pressable
+            onPress={handleClearDay}
+            disabled={(entriesByDay[selectedDay] ?? []).length === 0}
+            style={({ pressed }) => [styles.gridToolbarBtn, { borderColor: palette.borderStrong }, pressed && { opacity: 0.6 }, (entriesByDay[selectedDay] ?? []).length === 0 && { opacity: 0.35 }]}
+          >
+            <Text variant="bodySmall" style={{ color: palette.textMuted }}>Clear</Text>
+          </Pressable>
+        </View>
       </View>
 
       {/* Day view: scrollable time grid for selected day only */}
@@ -1189,6 +1528,12 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
                     )}
                   </View>
                 ))}
+                {/* NOW label in time column */}
+                {isSelectedDayToday && (
+                  <View style={[styles.nowTimeLabel, { top: nowTop - 8 }]} pointerEvents="none">
+                    <Text style={styles.nowTimeLabelText}>NOW</Text>
+                  </View>
+                )}
               </View>
               <View style={styles.gridDayColSingle}>
                 {SLOT_INDICES.map((slotIndex) => {
@@ -1216,10 +1561,46 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
                   );
                 })}
                 <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
-                  {selectedDayEvents.map((ev) => {
-                    const startMin = hhmmToMinutes(ev.startTime);
-                    let endMin = hhmmToMinutes(ev.endTime);
-                    if (endMin <= startMin) endMin += 24 * 60;
+                  {(() => {
+                    // Compute overlap columns (Google Calendar algorithm)
+                    type LayoutEvent = { ev: typeof selectedDayEvents[0]; startMin: number; endMin: number; col: number; totalCols: number };
+                    const items: LayoutEvent[] = selectedDayEvents.map((ev) => {
+                      const s = hhmmToMinutes(ev.startTime);
+                      let e = hhmmToMinutes(ev.endTime);
+                      if (e <= s) e += 24 * 60;
+                      return { ev, startMin: s, endMin: e, col: 0, totalCols: 1 };
+                    });
+                    // Sort by start, then by longer duration first
+                    items.sort((a, b) => a.startMin - b.startMin || (b.endMin - b.startMin) - (a.endMin - a.startMin));
+                    // Group overlapping events into clusters
+                    const clusters: LayoutEvent[][] = [];
+                    for (const item of items) {
+                      let placed = false;
+                      for (const cluster of clusters) {
+                        const clusterEnd = Math.max(...cluster.map((c) => c.endMin));
+                        if (item.startMin < clusterEnd) {
+                          // Find first available column
+                          const usedCols = new Set(cluster.map((c) => c.col));
+                          let col = 0;
+                          while (usedCols.has(col)) col++;
+                          item.col = col;
+                          cluster.push(item);
+                          placed = true;
+                          break;
+                        }
+                      }
+                      if (!placed) {
+                        item.col = 0;
+                        clusters.push([item]);
+                      }
+                    }
+                    // Set totalCols for each cluster
+                    for (const cluster of clusters) {
+                      const maxCol = Math.max(...cluster.map((c) => c.col)) + 1;
+                      for (const c of cluster) c.totalCols = maxCol;
+                    }
+
+                    return items.map(({ ev, startMin, endMin, col, totalCols }) => {
                     const top = Math.max(0, (startMin - GRID_START_MIN) / SLOT_MINUTES * SLOT_HEIGHT);
                     const spanMin = Math.min(endMin - startMin, GRID_END_MIN - startMin);
                     const height = Math.max(SLOT_HEIGHT / 2, (spanMin / SLOT_MINUTES) * SLOT_HEIGHT);
@@ -1228,7 +1609,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
                     const titleFontSize = Math.round(Math.min(16, Math.max(11, finalHeight * 0.20)));
                     const timeFontSize = Math.round(titleFontSize * 0.82);
                     const paddingV = Math.min(10, Math.max(4, Math.floor(finalHeight * 0.08)));
-                    const showMeta = finalHeight >= 46;
+                    const showMeta = finalHeight >= 46 && totalCols <= 2;
                     const rangeLabel = `${formatTime12(ev.startTime)} - ${formatTime12(ev.endTime)}`;
                     let subLabel = rangeLabel;
                     if (ev.isOneTime && ev.oneTimeDate) {
@@ -1239,24 +1620,30 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
                         subLabel = `One-time event • ${rangeLabel}`;
                       }
                     }
+                    // Overlap layout: divide width by totalCols, offset by col
+                    const colWidthPct = `${100 / totalCols}%` as const;
+                    const leftPct = `${(col / totalCols) * 100}%` as const;
+                    const overlapStyle = totalCols > 1
+                      ? { left: leftPct, width: colWidthPct, right: undefined as any, paddingHorizontal: 6 }
+                      : {};
                     return (
                       <TouchableOpacity
                         key={ev.id}
-                        style={[styles.gridEventBlock, { top, height: finalHeight, paddingVertical: paddingV, borderColor: eventBorderColor }]}
+                        style={[styles.gridEventBlock, { top, height: finalHeight, paddingVertical: paddingV, borderColor: eventBorderColor }, overlapStyle]}
                         onPress={() => openModalFromEvent(ev, selectedDay)}
                         activeOpacity={0.9}
                       >
                         <View style={styles.gridEventTopRow}>
                           <Text
-                            numberOfLines={1}
+                            numberOfLines={totalCols > 1 ? 2 : 1}
                             style={StyleSheet.flatten([
                               styles.gridEventTitle,
-                              { fontSize: titleFontSize, marginRight: ev.isOneTime ? 6 : 0 },
+                              { fontSize: totalCols > 2 ? Math.max(10, titleFontSize - 2) : titleFontSize, marginRight: ev.isOneTime ? 6 : 0 },
                             ])}
                           >
                             {ev.title}
                           </Text>
-                          {ev.isOneTime ? (
+                          {ev.isOneTime && totalCols <= 2 ? (
                             <View style={styles.gridEventBadge}>
                               <Text variant="bodySmall" style={styles.gridEventBadgeText}>One-time event</Text>
                             </View>
@@ -1269,8 +1656,16 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
                         ) : null}
                       </TouchableOpacity>
                     );
-                  })}
+                  });
+                  })()}
                 </View>
+                {/* Current-time indicator (red line) */}
+                {isSelectedDayToday && (
+                  <View style={[styles.nowLine, { top: nowTop }]} pointerEvents="none">
+                    <View style={styles.nowDot} />
+                    <View style={styles.nowLineBar} />
+                  </View>
+                )}
               </View>
             </View>
           </ScrollView>
@@ -1335,6 +1730,8 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
         )}
         <Text variant="muted" style={styles.privacy}>Your schedule stays private. Privacy is our top priority.</Text>
       </View>
+      </>
+      )}
       </Animated.View>
 
       <Modal
@@ -1592,6 +1989,45 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
           ) : null}
         </View>
       </Modal>
+
+      {/* Copy Day modal */}
+      <Modal
+        visible={showCopyModal}
+        onClose={() => setShowCopyModal(false)}
+        title={`Copy ${DAY_FULL_NAMES[selectedDay]}`}
+      >
+        <View style={styles.mForm}>
+          <Text variant="muted" style={{ marginBottom: 8 }}>
+            Copy {(entriesByDay[selectedDay] ?? []).length} event{(entriesByDay[selectedDay] ?? []).length !== 1 ? 's' : ''} to:
+          </Text>
+          <View style={styles.daySelectorRow}>
+            {DAY_TAB_LABELS.map((label, idx) => {
+              if (idx === selectedDay) return null;
+              const isSelected = copyTargets.includes(idx);
+              return (
+                <TouchableOpacity
+                  key={label}
+                  style={[styles.daySelectorBtn, isSelected && styles.daySelectorBtnActive]}
+                  onPress={() => {
+                    setCopyTargets((prev) =>
+                      prev.includes(idx) ? prev.filter((d) => d !== idx) : [...prev, idx].sort((a, b) => a - b)
+                    );
+                  }}
+                  activeOpacity={0.8}
+                >
+                  <Text variant="bodySmall" style={{ color: isSelected ? '#06261d' : palette.textPrimary, fontWeight: isSelected ? theme.fontWeight.bold : theme.fontWeight.medium }}>
+                    {label}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+          <View style={{ marginTop: 16, gap: 10 }}>
+            <Button title="Paste" onPress={confirmCopyDay} disabled={copyTargets.length === 0} full />
+            <Button title="Cancel" variant="secondary" onPress={() => setShowCopyModal(false)} full />
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 };
@@ -1628,6 +2064,103 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     color: theme.colors.textMuted,
   },
+  sourceCard: {
+    marginBottom: 10,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+  },
+  sourceRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  sourceInfo: { flex: 1 },
+  sourceLabelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 4,
+  },
+  sourceValue: {
+    fontWeight: theme.fontWeight.semibold,
+  },
+  sourceActions: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 10,
+  },
+  sourceActionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: theme.borderRadius.sm,
+    borderWidth: 1,
+  },
+  /* landing phase */
+  landingContent: {
+    paddingHorizontal: theme.layout.contentHorizontal,
+    paddingTop: theme.spacing.md,
+    paddingBottom: 40,
+    alignSelf: 'center',
+    width: '100%',
+    maxWidth: theme.layout.contentMaxWidth,
+  },
+  landingCard: {
+    marginBottom: 20,
+  },
+  landingLabelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 10,
+  },
+  landingRow: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  landingPill: {
+    flex: 1,
+    minHeight: theme.layout.buttonHeight,
+    borderRadius: theme.borderRadius.md,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 18,
+  },
+  landingPillPressed: {
+    transform: [{ scale: 0.985 }],
+  },
+  landingPillLabel: {
+    fontWeight: theme.fontWeight.semibold,
+  },
+  landingStatusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 16,
+  },
+  landingFileRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginTop: 2,
+  },
+  landingChangeBtn: {
+    borderWidth: 1,
+    borderRadius: theme.borderRadius.sm,
+    paddingVertical: 5,
+    paddingHorizontal: 12,
+  },
+  landingFooter: {
+    paddingTop: 20,
+  },
+  landingBtnRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginBottom: 14,
+  },
   e2eBtn: {
     marginBottom: 8,
   },
@@ -1656,6 +2189,70 @@ const styles = StyleSheet.create({
   dayTabTextActive: {
     color: theme.colors.accentPrimary,
     fontWeight: theme.fontWeight.bold,
+  },
+  dayTabBadge: {
+    marginTop: 3,
+    minWidth: 16,
+    height: 16,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 4,
+  },
+  dayTabBadgeText: {
+    fontSize: 9,
+    fontWeight: '700' as any,
+  },
+  gridToolbar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: GRID_PADDING,
+    paddingVertical: 8,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  gridToolbarActions: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  gridToolbarBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 5,
+    paddingHorizontal: 10,
+    borderRadius: theme.borderRadius.sm,
+    borderWidth: 1,
+  },
+  nowLine: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    zIndex: 20,
+  },
+  nowDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#ef4444',
+    marginLeft: -4,
+  },
+  nowLineBar: {
+    flex: 1,
+    height: 2,
+    backgroundColor: '#ef4444',
+  },
+  nowTimeLabel: {
+    position: 'absolute',
+    left: 2,
+    zIndex: 20,
+  },
+  nowTimeLabelText: {
+    fontSize: 8,
+    fontWeight: '800' as any,
+    color: '#ef4444',
+    letterSpacing: 0.5,
   },
   gridContainer: {
     flex: 1,
@@ -1687,6 +2284,8 @@ const styles = StyleSheet.create({
     backgroundColor: theme.colors.bgSurface,
     borderRightWidth: 1,
     borderRightColor: 'rgba(255,255,255,0.1)',
+    position: 'relative',
+    overflow: 'hidden',
   },
   gridTimeSlot: {
     height: SLOT_HEIGHT,

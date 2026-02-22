@@ -6,6 +6,7 @@ import {
   StyleProp,
   TextStyle,
   TouchableOpacity,
+  Pressable,
   Alert,
   Animated,
   LayoutAnimation,
@@ -30,7 +31,9 @@ import { notificationService, isNotificationsSupported } from '../lib/notificati
 import { syncNudgePlansForCurrentSchedule } from '../lib/scheduleSync';
 import { SAVE_CONFIRM_ACTION, SAVE_CONFIRM_MESSAGE, SAVE_CONFIRM_TITLE } from '../lib/confirmMessages';
 import { analyticsService } from '../lib/analytics';
+import { translateLiteral } from '../lib/i18n';
 import { useAppStore } from '../store';
+import { requestAllPermissions } from '../lib/permissions';
 
 const isFabric = !!(globalThis as any).nativeFabricUIManager;
 
@@ -250,7 +253,7 @@ const InfoTip: React.FC<{ text: string }> = ({ text }) => {
 
 /* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• main screen â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
 export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
-  const { preferences: storedPreferences, setPreferences, setHasSetPreferences, setHasNotificationPermission, themeMode } = useAppStore();
+  const { preferences: storedPreferences, setPreferences, setHasSetPreferences, setHasNotificationPermission, setHasLocationPermission, setHasActivityPermission, setHasRequestedPermissions, themeMode, setThemeMode, language, setLanguage } = useAppStore();
   const manageMode = !!route.params?.manageMode;
   const [prefs, setPrefs] = useState<Preferences>(DEFAULT_PREFERENCES);
   const [hasChanges, setHasChanges] = useState(false);
@@ -516,8 +519,18 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
         await preferencesRepo.save(normalizedPrefs);
         setPreferences(normalizedPrefs);
         setHasSetPreferences(true);
-        const perm = notificationsSupported ? await notificationService.requestPermissions() : false;
-        setHasNotificationPermission(perm);
+
+        // Request ALL permissions (location, notifications, activity recognition)
+        try {
+          const permResults = await requestAllPermissions();
+          setHasLocationPermission(permResults.location);
+          setHasNotificationPermission(permResults.notifications);
+          setHasActivityPermission(permResults.activityRecognition);
+          setHasRequestedPermissions(true);
+        } catch (e) {
+          console.warn('Permission request failed during onboarding:', e);
+        }
+
         try {
           await syncNudgePlansForCurrentSchedule(normalizedPrefs);
         } catch (e) { console.error(e); }
@@ -724,7 +737,7 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
         </Section>
 
         {/* â•â•â•â•â•â•â•â•â•â• Other Settings â•â•â•â•â•â•â•â•â•â• */}
-        <Section title="Other Settings" subtitle="Notifications, quiet hours & preferred periods" icon="settings">
+        <Section title="Notifications" subtitle="Timing, spacing & quiet hours" icon="bell">
           {/* When to Notify (simplified radio) */}
           <View style={styles.field}>
             <Text variant="bodySmall" style={styles.fieldLabel}>When to notify</Text>
@@ -766,6 +779,28 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
             {reminderGapError && <Text variant="bodySmall" style={styles.errorText}>{reminderGapError}</Text>}
           </View>
 
+          {/* Quiet Hours (moved here from Advanced) */}
+          <View style={styles.field}>
+            <Text variant="bodySmall" style={styles.fieldLabel}>Quiet Hours</Text>
+            <TouchableOpacity onPress={openQuietModal} style={[styles.quietBtn, themedSurface]} activeOpacity={0.7}>
+              <View style={styles.quietRow}>
+                <Text
+                  variant="body"
+                  style={styles.quietValue}
+                  numberOfLines={1}
+                >
+                  {formatTime12(prefs.quietHoursStart)} - {formatTime12(prefs.quietHoursEnd)}
+                </Text>
+                <Text variant="muted" style={styles.quietEdit} numberOfLines={1}>
+                  Tap to edit
+                </Text>
+              </View>
+            </TouchableOpacity>
+          </View>
+        </Section>
+
+        {/* Advanced settings */}
+        <Section title="Advanced" subtitle="Strictness, step goals & preferred periods" icon="settings">
           {/* Strictness */}
           <View style={styles.field}>
             <View style={styles.fieldHeader}>
@@ -862,25 +897,6 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
             {stepGoalError && <Text variant="bodySmall" style={styles.errorText}>{stepGoalError}</Text>}
           </View>
 
-          {/* Quiet Hours */}
-          <View style={styles.field}>
-            <Text variant="bodySmall" style={styles.fieldLabel}>Quiet Hours</Text>
-            <TouchableOpacity onPress={openQuietModal} style={[styles.quietBtn, themedSurface]} activeOpacity={0.7}>
-              <View style={styles.quietRow}>
-                <Text
-                  variant="body"
-                  style={styles.quietValue}
-                  numberOfLines={1}
-                >
-                  {formatTime12(prefs.quietHoursStart)} - {formatTime12(prefs.quietHoursEnd)}
-                </Text>
-                <Text variant="muted" style={styles.quietEdit} numberOfLines={1}>
-                  Tap to edit
-                </Text>
-              </View>
-            </TouchableOpacity>
-          </View>
-
           {/* Preferred walking periods */}
           <View style={styles.field}>
             <View style={styles.fieldHeader}>
@@ -947,6 +963,101 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
             {preferredPeriodsError && <Text variant="bodySmall" style={styles.errorText}>{preferredPeriodsError}</Text>}
           </View>
         </Section>
+
+        {/* ══════════ Appearance & Language ══════════ */}
+        {manageMode && (
+          <Section title="Appearance & Language" subtitle="Theme & language" icon="settings">
+            <View style={styles.field}>
+              <View style={styles.fieldHeader}>
+                <Text variant="bodySmall" style={styles.fieldLabel}>Appearance</Text>
+              </View>
+              <View style={styles.pillRow}>
+                <Pressable
+                  onPress={() => setThemeMode('dark')}
+                  style={[
+                    styles.pill,
+                    {
+                      backgroundColor: themeMode === 'dark' ? theme.colors.accentPrimary : (isDark ? theme.colors.bgApp : palette.bgSurfaceElevated),
+                      borderColor: themeMode === 'dark' ? 'transparent' : (isDark ? 'rgba(255,255,255,0.08)' : palette.borderStrong),
+                    },
+                  ]}
+                >
+                  <Text variant="body" style={[styles.pillLabel, { color: themeMode === 'dark' ? '#06261d' : palette.textPrimary }]}>
+                    {themeMode === 'dark' ? '\u2713  ' : ''}{translateLiteral('Dark', language)}
+                  </Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => setThemeMode('light')}
+                  style={[
+                    styles.pill,
+                    {
+                      backgroundColor: themeMode === 'light' ? theme.colors.accentPrimary : (isDark ? theme.colors.bgApp : palette.bgSurfaceElevated),
+                      borderColor: themeMode === 'light' ? 'transparent' : (isDark ? 'rgba(255,255,255,0.08)' : palette.borderStrong),
+                    },
+                  ]}
+                >
+                  <Text variant="body" style={[styles.pillLabel, { color: themeMode === 'light' ? '#06261d' : palette.textPrimary }]}>
+                    {themeMode === 'light' ? '\u2713  ' : ''}{translateLiteral('Light', language)}
+                  </Text>
+                </Pressable>
+              </View>
+            </View>
+
+            <View style={styles.field}>
+              <View style={styles.fieldHeader}>
+                <Text variant="bodySmall" style={styles.fieldLabel}>Language</Text>
+              </View>
+              <View style={styles.pillRow}>
+                <Pressable
+                  onPress={() => {
+                    if (language !== 'en') {
+                      const title = translateLiteral('Change language?', language);
+                      const message = translateLiteral('Are you sure you want to switch the app language to English?', language);
+                      Alert.alert(title, message, [
+                        { text: translateLiteral('Cancel', language), style: 'cancel' },
+                        { text: translateLiteral('Yes, change', language), onPress: () => setLanguage('en') },
+                      ]);
+                    }
+                  }}
+                  style={[
+                    styles.pill,
+                    {
+                      backgroundColor: language === 'en' ? theme.colors.accentPrimary : (isDark ? theme.colors.bgApp : palette.bgSurfaceElevated),
+                      borderColor: language === 'en' ? 'transparent' : (isDark ? 'rgba(255,255,255,0.08)' : palette.borderStrong),
+                    },
+                  ]}
+                >
+                  <Text variant="body" style={[styles.pillLabel, { color: language === 'en' ? '#06261d' : palette.textPrimary }]}>
+                    {language === 'en' ? '\u2713  ' : ''}{translateLiteral('English', language)}
+                  </Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => {
+                    if (language !== 'es') {
+                      const title = translateLiteral('Change language?', language);
+                      const message = translateLiteral('Are you sure you want to switch the app language to Spanish?', language);
+                      Alert.alert(title, message, [
+                        { text: translateLiteral('Cancel', language), style: 'cancel' },
+                        { text: translateLiteral('Yes, change', language), onPress: () => setLanguage('es') },
+                      ]);
+                    }
+                  }}
+                  style={[
+                    styles.pill,
+                    {
+                      backgroundColor: language === 'es' ? theme.colors.accentPrimary : (isDark ? theme.colors.bgApp : palette.bgSurfaceElevated),
+                      borderColor: language === 'es' ? 'transparent' : (isDark ? 'rgba(255,255,255,0.08)' : palette.borderStrong),
+                    },
+                  ]}
+                >
+                  <Text variant="body" style={[styles.pillLabel, { color: language === 'es' ? '#06261d' : palette.textPrimary }]}>
+                    {language === 'es' ? '\u2713  ' : ''}{translateLiteral('Espa\u00F1ol', language)}
+                  </Text>
+                </Pressable>
+              </View>
+            </View>
+          </Section>
+        )}
       </View>
 
       {/* footer */}
@@ -1387,6 +1498,21 @@ const styles = StyleSheet.create({
     fontWeight: theme.fontWeight.semibold,
   },
   qError: { color: theme.colors.warning, textAlign: 'center', marginBottom: 10 },
+
+  /* appearance & language pills */
+  pillRow: { flexDirection: 'row', gap: 10 },
+  pill: {
+    flex: 1,
+    minHeight: theme.layout.buttonHeight,
+    borderRadius: theme.borderRadius.md,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 18,
+  },
+  pillLabel: {
+    fontWeight: theme.fontWeight.semibold,
+  },
 
   /* validation */
   errorText: { color: theme.colors.error, marginTop: 6, fontSize: theme.fontSize.sm, lineHeight: 18 },

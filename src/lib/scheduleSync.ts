@@ -36,7 +36,7 @@ export async function syncNudgePlansForCurrentSchedule(
   }
 
   if (isNotificationsSupported) {
-    await notificationService.cancelAllNotifications();
+    await notificationService.cancelWalkNudges();
     if (rebuiltPlans.length > 0) {
       await notificationService.scheduleMultipleNudges(rebuiltPlans, prefs);
     }

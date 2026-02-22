@@ -4,6 +4,7 @@ import { useThemePalette } from '../theme/palette';
 
 export type AppIconName =
   | 'back'
+  | 'bell'
   | 'calendar'
   | 'adjust'
   | 'settings'
@@ -42,6 +43,12 @@ export const AppIcon: React.FC<AppIconProps> = ({
         <>
           <Path d="M15 18L9 12L15 6" {...common} />
           <Path d="M9 12H21" {...common} />
+        </>
+      )}
+      {name === 'bell' && (
+        <>
+          <Path d="M18 8A6 6 0 0 0 6 8C6 15 3 17 3 17H21S18 15 18 8" {...common} />
+          <Path d="M13.73 21A2 2 0 0 1 10.27 21" {...common} />
         </>
       )}
       {name === 'calendar' && (

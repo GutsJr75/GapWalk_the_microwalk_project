@@ -238,6 +238,14 @@ const runMigrations = async () => {
   await ensureColumn('preferences', 'strictness_mode', "TEXT NOT NULL DEFAULT 'easygoing'");
   await ensureColumn('preferences', 'step_goal_enabled', 'INTEGER NOT NULL DEFAULT 0');
   await ensureColumn('preferences', 'step_goal', 'INTEGER NOT NULL DEFAULT 1000');
+
+  // Achievements table
+  await db.execAsync(`
+    CREATE TABLE IF NOT EXISTS achievements (
+      id TEXT PRIMARY KEY,
+      unlocked_at TEXT NOT NULL
+    );
+  `);
 };
 
 export const isDatabaseAvailable = async (): Promise<boolean> => {
@@ -263,6 +271,7 @@ export const resetDatabase = async () => {
     DROP TABLE IF EXISTS manual_schedule_entries;
     DROP TABLE IF EXISTS analytics_events;
     DROP TABLE IF EXISTS crash_reports;
+    DROP TABLE IF EXISTS achievements;
   `);
 
   await initializeTables();

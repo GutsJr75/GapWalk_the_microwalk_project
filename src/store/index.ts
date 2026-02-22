@@ -19,8 +19,10 @@ interface AppState {
   // Dashboard stats
   todayMinutesWalked: number;
   todayNotificationCount: number;
+  todaySteps: number;
   upcomingPlans: NudgePlan[];
-  setTodayStats: (minutes: number, notifCount: number) => void;
+  setTodayStats: (minutes: number, notifCount: number, steps?: number) => void;
+  setTodaySteps: (steps: number) => void;
   setUpcomingPlans: (plans: NudgePlan[]) => void;
   
   // Active walk session
@@ -34,6 +36,14 @@ interface AppState {
   // Notification permission
   hasNotificationPermission: boolean;
   setHasNotificationPermission: (value: boolean) => void;
+
+  // Activity Recognition / Pedometer permission
+  hasActivityPermission: boolean;
+  setHasActivityPermission: (value: boolean) => void;
+
+  // Whether initial permissions have been requested
+  hasRequestedPermissions: boolean;
+  setHasRequestedPermissions: (value: boolean) => void;
   
   // UI settings
   themeMode: 'dark' | 'light';
@@ -60,9 +70,15 @@ export const useAppStore = create<AppState>((set) => ({
   // Dashboard stats
   todayMinutesWalked: 0,
   todayNotificationCount: 0,
+  todaySteps: 0,
   upcomingPlans: [],
-  setTodayStats: (minutes, notifCount) => 
-    set({ todayMinutesWalked: minutes, todayNotificationCount: notifCount }),
+  setTodayStats: (minutes, notifCount, steps) => 
+    set((state) => ({
+      todayMinutesWalked: minutes,
+      todayNotificationCount: notifCount,
+      todaySteps: steps !== undefined ? steps : state.todaySteps,
+    })),
+  setTodaySteps: (steps) => set({ todaySteps: steps }),
   setUpcomingPlans: (plans) => set({ upcomingPlans: plans }),
   
   // Active walk
@@ -74,6 +90,10 @@ export const useAppStore = create<AppState>((set) => ({
   setHasLocationPermission: (value) => set({ hasLocationPermission: value }),
   hasNotificationPermission: false,
   setHasNotificationPermission: (value) => set({ hasNotificationPermission: value }),
+  hasActivityPermission: false,
+  setHasActivityPermission: (value) => set({ hasActivityPermission: value }),
+  hasRequestedPermissions: false,
+  setHasRequestedPermissions: (value) => set({ hasRequestedPermissions: value }),
   
   // UI settings
   themeMode: 'dark',

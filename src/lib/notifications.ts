@@ -5,6 +5,7 @@ import { Platform } from 'react-native';
 import { NudgePlan, Preferences } from './types';
 import { addMinutes, parseISO, subMinutes, isBefore } from 'date-fns';
 import { timeUtils } from './time';
+import { sessionsRepo } from './repositories/sessionsRepo';
 
 export const WALK_NUDGE_CATEGORY_ID = 'walk_nudge_actions';
 export const WALK_NUDGE_ACTION_START = 'START_WALK';
@@ -123,6 +124,19 @@ export const notificationService = {
         return null;
       }
 
+      // Suppress notifications if daily goal or step goal already reached
+      if (prefs) {
+        try {
+          const minsToday = await sessionsRepo.getTodayMinutes();
+          if (minsToday >= prefs.dailyTargetMinutes) return null;
+
+          if (prefs.stepGoalEnabled && prefs.stepGoal > 0) {
+            const stepsToday = await sessionsRepo.getTodaySteps();
+            if (stepsToday >= prefs.stepGoal) return null;
+          }
+        } catch { /* ok — schedule anyway if DB read fails */ }
+      }
+
       let notifyTime = walkStart;
 
       // Apply "delay" as "minutes before walk start", never before gap start.
@@ -152,14 +166,42 @@ export const notificationService = {
       const now = new Date();
       if (notifyTime <= now) return null;
 
+      // Build personalized, varied notification text
       const minutesUntilWalk = Math.max(0, Math.round((walkStart.getTime() - notifyTime.getTime()) / 60000));
-      const bodyText = minutesUntilWalk > 0
-        ? `You've got about ${plan.suggestedDurationMinutes} free min. Best start is in ${minutesUntilWalk} min. Ready for a quick walk?`
-        : `You've got about ${plan.suggestedDurationMinutes} free min right now. Ready for a quick walk?`;
+      const dur = plan.suggestedDurationMinutes;
+      const isStrict = prefs?.strictnessMode === 'no_excuses';
+
+      let progressHint = '';
+      try {
+        const minsWalked = await sessionsRepo.getTodayMinutes();
+        const target = prefs?.dailyTargetMinutes ?? 0;
+        if (target > 0 && minsWalked > 0) {
+          const remaining = Math.max(0, target - minsWalked);
+          progressHint = remaining > 0
+            ? ` You've done ${minsWalked} of ${target} min today — ${remaining} to go!`
+            : '';
+        }
+      } catch { /* ok */ }
+
+      const titles = isStrict
+        ? ['Time to walk — no excuses! \uD83D\uDCAA', 'Your walk is waiting \uD83D\uDEB6', 'Get moving now! \uD83C\uDFC3']
+        : ['A walking window opened \uD83D\uDEB6', 'Perfect time for a walk \u2600\uFE0F', 'Take a quick break & walk \uD83D\uDC63'];
+      const title = titles[Math.floor(Date.now() / 60000) % titles.length];
+
+      let bodyText: string;
+      if (minutesUntilWalk > 0) {
+        bodyText = isStrict
+          ? `${dur} free min — starts in ${minutesUntilWalk} min. Let's go!${progressHint}`
+          : `You've got about ${dur} free min. Best start is in ${minutesUntilWalk} min.${progressHint}`;
+      } else {
+        bodyText = isStrict
+          ? `${dur} free min right now. No better time than this!${progressHint}`
+          : `You've got about ${dur} free min right now. Ready for a quick walk?${progressHint}`;
+      }
 
       const notificationId = await Notifications.scheduleNotificationAsync({
         content: {
-          title: 'You have a walking window \uD83D\uDEB6',
+          title,
           body: bodyText,
           categoryIdentifier: WALK_NUDGE_CATEGORY_ID,
           data: {
@@ -181,7 +223,49 @@ export const notificationService = {
       return null;
     }
   },
-  
+
+  /**
+   * Schedule a notification for a manually-created walk plan.
+   * Bypasses quiet hours, goal suppression, and preferred period checks
+   * because the user explicitly requested this walk.
+   */
+  async scheduleManualNudge(plan: NudgePlan): Promise<string | null> {
+    if (!isNotificationsSupported) return null;
+
+    try {
+      const walkStart = parseISO(plan.walkStart);
+      const now = new Date();
+      if (walkStart <= now) return null;
+
+      const dur = plan.suggestedDurationMinutes;
+      const title = 'Time for your planned walk \uD83D\uDEB6';
+      const body = `You scheduled a ${dur}-min walk. Ready to go?`;
+
+      const notificationId = await Notifications.scheduleNotificationAsync({
+        content: {
+          title,
+          body,
+          categoryIdentifier: WALK_NUDGE_CATEGORY_ID,
+          data: {
+            planId: plan.id,
+            type: 'walk_nudge',
+          },
+          sound: true,
+        },
+        trigger: {
+          type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
+          seconds: Math.max(1, Math.ceil((walkStart.getTime() - Date.now()) / 1000)),
+          repeats: false,
+        },
+      });
+
+      return notificationId;
+    } catch (error) {
+      console.error('Failed to schedule manual nudge:', error);
+      return null;
+    }
+  },
+
   /**
    * Schedule multiple nudges respecting preferences.
    * Ensures notification permission is granted before scheduling.
@@ -206,6 +290,22 @@ export const notificationService = {
   async cancelAllNotifications(): Promise<void> {
     if (!isNotificationsSupported) return;
     await Notifications.cancelAllScheduledNotificationsAsync();
+  },
+
+  /**
+   * Cancel only walk-nudge notifications, preserving daily_summary
+   * and any other non-nudge notifications.
+   */
+  async cancelWalkNudges(): Promise<void> {
+    if (!isNotificationsSupported) return;
+    const scheduled = await Notifications.getAllScheduledNotificationsAsync();
+    for (const n of scheduled) {
+      const data = n.content.data as Record<string, unknown> | undefined;
+      // Only cancel notifications explicitly tagged as walk nudges
+      if (data?.type === 'walk_nudge') {
+        await Notifications.cancelScheduledNotificationAsync(n.identifier);
+      }
+    }
   },
   
   /**
@@ -263,5 +363,82 @@ export const notificationService = {
   ): Notifications.Subscription {
     if (!isNotificationsSupported) return noopSubscription;
     return Notifications.addNotificationReceivedListener(handler);
+  },
+
+  /**
+   * Schedule (or reschedule) a daily summary notification.
+   *
+   * Fires at 20:30 local time with today's walking stats.
+   * Called each time the dashboard loads so the content stays current.
+   * Respects quiet hours — if 20:30 falls inside quiet hours the summary
+   * is skipped for that day.
+   */
+  async scheduleDailySummary(prefs: Preferences): Promise<void> {
+    if (!isNotificationsSupported) return;
+
+    // Cancel any previously scheduled daily summary
+    const scheduled = await Notifications.getAllScheduledNotificationsAsync();
+    for (const n of scheduled) {
+      if ((n.content.data as Record<string, unknown>)?.type === 'daily_summary') {
+        await Notifications.cancelScheduledNotificationAsync(n.identifier);
+      }
+    }
+
+    // Build the target delivery time: today at 20:30
+    const now = new Date();
+    const summaryTime = new Date(now);
+    summaryTime.setHours(20, 30, 0, 0);
+
+    // If it's already past 20:30, skip — we don't backfill.
+    if (summaryTime <= now) return;
+
+    // Respect quiet hours
+    if (timeUtils.isInQuietHours(summaryTime, prefs.quietHoursStart, prefs.quietHoursEnd)) {
+      return;
+    }
+
+    // Gather today's stats for an informative body
+    let minutes = 0;
+    let steps = 0;
+    try {
+      minutes = await sessionsRepo.getTodayMinutes();
+      steps = await sessionsRepo.getTodaySteps();
+    } catch { /* ok — send a generic summary */ }
+
+    const target = prefs.dailyTargetMinutes;
+    const pct = target > 0 ? Math.min(Math.round((minutes / target) * 100), 100) : 0;
+
+    let title: string;
+    let body: string;
+
+    if (minutes === 0) {
+      title = 'You still have time today';
+      body = 'Even a short 5-minute walk can boost your mood. Try one before bed!';
+    } else if (target > 0 && minutes >= target) {
+      title = 'Goal reached! Great job today';
+      body = `You walked ${minutes} min (${steps.toLocaleString()} steps) — that\u2019s ${pct}% of your daily goal. Keep it up!`;
+    } else {
+      const remaining = Math.max(0, target - minutes);
+      title = `${minutes} min walked today`;
+      body = remaining > 0
+        ? `Just ${remaining} more min to reach your ${target}-min goal. You\u2019ve got this!`
+        : `Nice work — ${minutes} min and ${steps.toLocaleString()} steps today.`;
+    }
+
+    const secondsUntil = Math.max(1, Math.ceil((summaryTime.getTime() - Date.now()) / 1000));
+
+    await Notifications.scheduleNotificationAsync({
+      content: {
+        title,
+        body,
+        data: { type: 'daily_summary' },
+        sound: true,
+      },
+      trigger: {
+        type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
+        seconds: secondsUntil,
+        repeats: false,
+      },
+    });
   },
 };

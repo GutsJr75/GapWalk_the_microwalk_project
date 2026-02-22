@@ -10,7 +10,7 @@ const terminalStatuses = new Set(['cancelled', 'completed', 'skipped']);
 const rescheduleFutureNudges = async () => {
   const prefs = await preferencesRepo.get();
   if (!prefs || !isNotificationsSupported) return;
-  await notificationService.cancelAllNotifications();
+  await notificationService.cancelWalkNudges();
   const futurePlans = await plansRepo.getUpcomingPlans(100);
   await notificationService.scheduleMultipleNudges(futurePlans, prefs);
 };
@@ -80,6 +80,20 @@ export const notificationPlanActions = {
           dailyTargetMinutes: prefs.dailyTargetMinutes,
         });
         return { allowed: false, planExists: true };
+      }
+
+      // Also check step goal if enabled
+      if (prefs.stepGoalEnabled && prefs.stepGoal > 0) {
+        const stepsToday = await sessionsRepo.getTodaySteps();
+        if (stepsToday >= prefs.stepGoal) {
+          await plansRepo.updateStatus(plan.id, 'cancelled');
+          analyticsService.track('notification_open_blocked_step_goal_reached', {
+            planId: plan.id,
+            stepsToday,
+            stepGoal: prefs.stepGoal,
+          });
+          return { allowed: false, planExists: true };
+        }
       }
     }
 
