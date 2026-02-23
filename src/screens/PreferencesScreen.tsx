@@ -964,100 +964,7 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
           </View>
         </Section>
 
-        {/* ══════════ Appearance & Language ══════════ */}
-        {manageMode && (
-          <Section title="Appearance & Language" subtitle="Theme & language" icon="settings">
-            <View style={styles.field}>
-              <View style={styles.fieldHeader}>
-                <Text variant="bodySmall" style={styles.fieldLabel}>Appearance</Text>
-              </View>
-              <View style={styles.pillRow}>
-                <Pressable
-                  onPress={() => setThemeMode('dark')}
-                  style={[
-                    styles.pill,
-                    {
-                      backgroundColor: themeMode === 'dark' ? theme.colors.accentPrimary : (isDark ? theme.colors.bgApp : palette.bgSurfaceElevated),
-                      borderColor: themeMode === 'dark' ? 'transparent' : (isDark ? 'rgba(255,255,255,0.08)' : palette.borderStrong),
-                    },
-                  ]}
-                >
-                  <Text variant="body" style={[styles.pillLabel, { color: themeMode === 'dark' ? '#06261d' : palette.textPrimary }]}>
-                    {themeMode === 'dark' ? '\u2713  ' : ''}{translateLiteral('Dark', language)}
-                  </Text>
-                </Pressable>
-                <Pressable
-                  onPress={() => setThemeMode('light')}
-                  style={[
-                    styles.pill,
-                    {
-                      backgroundColor: themeMode === 'light' ? theme.colors.accentPrimary : (isDark ? theme.colors.bgApp : palette.bgSurfaceElevated),
-                      borderColor: themeMode === 'light' ? 'transparent' : (isDark ? 'rgba(255,255,255,0.08)' : palette.borderStrong),
-                    },
-                  ]}
-                >
-                  <Text variant="body" style={[styles.pillLabel, { color: themeMode === 'light' ? '#06261d' : palette.textPrimary }]}>
-                    {themeMode === 'light' ? '\u2713  ' : ''}{translateLiteral('Light', language)}
-                  </Text>
-                </Pressable>
-              </View>
-            </View>
 
-            <View style={styles.field}>
-              <View style={styles.fieldHeader}>
-                <Text variant="bodySmall" style={styles.fieldLabel}>Language</Text>
-              </View>
-              <View style={styles.pillRow}>
-                <Pressable
-                  onPress={() => {
-                    if (language !== 'en') {
-                      const title = translateLiteral('Change language?', language);
-                      const message = translateLiteral('Are you sure you want to switch the app language to English?', language);
-                      Alert.alert(title, message, [
-                        { text: translateLiteral('Cancel', language), style: 'cancel' },
-                        { text: translateLiteral('Yes, change', language), onPress: () => setLanguage('en') },
-                      ]);
-                    }
-                  }}
-                  style={[
-                    styles.pill,
-                    {
-                      backgroundColor: language === 'en' ? theme.colors.accentPrimary : (isDark ? theme.colors.bgApp : palette.bgSurfaceElevated),
-                      borderColor: language === 'en' ? 'transparent' : (isDark ? 'rgba(255,255,255,0.08)' : palette.borderStrong),
-                    },
-                  ]}
-                >
-                  <Text variant="body" style={[styles.pillLabel, { color: language === 'en' ? '#06261d' : palette.textPrimary }]}>
-                    {language === 'en' ? '\u2713  ' : ''}{translateLiteral('English', language)}
-                  </Text>
-                </Pressable>
-                <Pressable
-                  onPress={() => {
-                    if (language !== 'es') {
-                      const title = translateLiteral('Change language?', language);
-                      const message = translateLiteral('Are you sure you want to switch the app language to Spanish?', language);
-                      Alert.alert(title, message, [
-                        { text: translateLiteral('Cancel', language), style: 'cancel' },
-                        { text: translateLiteral('Yes, change', language), onPress: () => setLanguage('es') },
-                      ]);
-                    }
-                  }}
-                  style={[
-                    styles.pill,
-                    {
-                      backgroundColor: language === 'es' ? theme.colors.accentPrimary : (isDark ? theme.colors.bgApp : palette.bgSurfaceElevated),
-                      borderColor: language === 'es' ? 'transparent' : (isDark ? 'rgba(255,255,255,0.08)' : palette.borderStrong),
-                    },
-                  ]}
-                >
-                  <Text variant="body" style={[styles.pillLabel, { color: language === 'es' ? '#06261d' : palette.textPrimary }]}>
-                    {language === 'es' ? '\u2713  ' : ''}{translateLiteral('Espa\u00F1ol', language)}
-                  </Text>
-                </Pressable>
-              </View>
-            </View>
-          </Section>
-        )}
       </View>
 
       {/* footer */}
@@ -1259,7 +1166,7 @@ const styles = StyleSheet.create({
   content: {
     flex: 1,
     paddingHorizontal: theme.layout.contentHorizontal,
-    paddingTop: theme.spacing.lg,
+    paddingTop: theme.spacing.lg + 28,
     alignSelf: 'center',
     width: '100%',
     maxWidth: theme.layout.contentMaxWidth,

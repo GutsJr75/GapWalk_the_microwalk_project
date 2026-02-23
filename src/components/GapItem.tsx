@@ -1,5 +1,6 @@
 import React from 'react';
-import { View, StyleSheet, TouchableOpacity } from 'react-native';
+import { View, StyleSheet, Pressable, Platform } from 'react-native';
+import * as Haptics from 'expo-haptics';
 import { Text } from './Text';
 import { theme } from '../theme';
 import { useAppStore } from '../store';
@@ -83,12 +84,28 @@ export const GapItem: React.FC<GapItemProps> = ({
       </View>
 
       <View style={styles.actions}>
-        <TouchableOpacity onPress={onChange} hitSlop={8} style={[styles.actionBtn, changeBtnTheme]}>
+        <Pressable
+          onPress={() => {
+            if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+            onChange();
+          }}
+          hitSlop={8}
+          style={({ pressed }) => [styles.actionBtn, changeBtnTheme, pressed && styles.actionBtnPressed]}
+          android_ripple={{ color: 'rgba(56,189,248,0.25)', borderless: false }}
+        >
           <Text variant="bodySmall" style={[styles.changeText, { color: changeTextColor }]}>Change</Text>
-        </TouchableOpacity>
-        <TouchableOpacity onPress={onCancel} hitSlop={8} style={[styles.actionBtn, cancelBtnTheme]}>
+        </Pressable>
+        <Pressable
+          onPress={() => {
+            if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+            onCancel();
+          }}
+          hitSlop={8}
+          style={({ pressed }) => [styles.actionBtn, cancelBtnTheme, pressed && styles.actionBtnPressed]}
+          android_ripple={{ color: 'rgba(239,68,68,0.25)', borderless: false }}
+        >
           <Text variant="bodySmall" style={styles.cancelText}>Cancel</Text>
-        </TouchableOpacity>
+        </Pressable>
       </View>
     </View>
   );
@@ -103,6 +120,16 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     marginBottom: 10,
     borderWidth: 1,
+    // native depth
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 6,
+    elevation: 2,
+  },
+  actionBtnPressed: {
+    transform: [{ scale: 0.93 }],
+    opacity: 0.8,
   },
   left: { flex: 1 },
   time: { fontWeight: theme.fontWeight.semibold, marginBottom: 2 },

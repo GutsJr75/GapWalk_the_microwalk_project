@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
 import {
   Modal as RNModal,
   View,
@@ -8,6 +8,8 @@ import {
   Platform,
   ScrollView,
   Keyboard,
+  Animated,
+  Easing,
 } from 'react-native';
 import { theme } from '../theme';
 import { Text } from './Text';
@@ -27,13 +29,37 @@ export const Modal: React.FC<ModalProps> = ({
   children,
 }) => {
   const palette = useThemePalette();
+  const scaleAnim = useRef(new Animated.Value(0.92)).current;
+  const fadeAnim = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    if (visible) {
+      scaleAnim.setValue(0.92);
+      fadeAnim.setValue(0);
+      Animated.parallel([
+        Animated.spring(scaleAnim, {
+          toValue: 1,
+          tension: 80,
+          friction: 10,
+          useNativeDriver: true,
+        }),
+        Animated.timing(fadeAnim, {
+          toValue: 1,
+          duration: 200,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: true,
+        }),
+      ]).start();
+    }
+  }, [visible]);
 
   return (
     <RNModal
       visible={visible}
       transparent
-      animationType="fade"
+      animationType="slide"
       onRequestClose={onClose}
+      statusBarTranslucent
     >
       <KeyboardAvoidingView
         style={styles.kavRoot}
@@ -43,12 +69,14 @@ export const Modal: React.FC<ModalProps> = ({
         <TouchableWithoutFeedback onPress={() => { Keyboard.dismiss(); onClose(); }}>
           <View style={[styles.backdrop, { backgroundColor: palette.overlay }]}>
             <TouchableWithoutFeedback onPress={(e) => e.stopPropagation()}>
-              <View
+              <Animated.View
                 style={[
                   styles.modal,
                   {
                     backgroundColor: palette.bgSurfaceElevated,
                     borderColor: palette.borderSoft,
+                    transform: [{ scale: scaleAnim }],
+                    opacity: fadeAnim,
                   },
                 ]}
               >
@@ -65,7 +93,7 @@ export const Modal: React.FC<ModalProps> = ({
                 >
                   {children}
                 </ScrollView>
-              </View>
+              </Animated.View>
             </TouchableWithoutFeedback>
           </View>
         </TouchableWithoutFeedback>

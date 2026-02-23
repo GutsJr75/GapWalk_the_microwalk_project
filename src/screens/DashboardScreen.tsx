@@ -1,8 +1,9 @@
 import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
-import { View, StyleSheet, ScrollView, RefreshControl, Alert, TouchableOpacity, Modal, Animated, Easing, useWindowDimensions, Platform, TextInput, KeyboardAvoidingView } from 'react-native';
+import { View, StyleSheet, ScrollView, RefreshControl, Alert, Pressable, Modal, Animated, Easing, useWindowDimensions, Platform, TextInput, KeyboardAvoidingView } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
+import * as Haptics from 'expo-haptics';
 import { RootStackParamList } from '../../App';
 import { Text } from '../components/Text';
 import { Button } from '../components/Button';
@@ -90,11 +91,20 @@ const BurgerIcon = ({
   color: string;
   testID?: string;
 }) => (
-  <TouchableOpacity onPress={onPress} style={styles.burgerBtn} hitSlop={10} testID={testID} accessibilityLabel={testID}>
+  <Pressable
+    onPress={() => {
+      if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+      onPress();
+    }}
+    style={({ pressed }) => [styles.burgerBtn, pressed && { opacity: 0.6, transform: [{ scale: 0.9 }] }]}
+    hitSlop={10}
+    testID={testID}
+    accessibilityLabel={testID}
+  >
     <View style={[styles.burgerLine, { backgroundColor: color }]} />
     <View style={[styles.burgerLine, { backgroundColor: color }]} />
     <View style={[styles.burgerLine, { backgroundColor: color }]} />
-  </TouchableOpacity>
+  </Pressable>
 );
 
 export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
@@ -1143,14 +1153,16 @@ export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
               See your next walk windows and reminder times.
             </Text>
           </View>
-          <TouchableOpacity
-            onPress={openAddWalkModal}
+          <Pressable
+            onPress={() => {
+              if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+              openAddWalkModal();
+            }}
             hitSlop={12}
-            style={[styles.addWalkBtn, { borderColor: palette.borderStrong }]}
-            activeOpacity={0.7}
+            style={({ pressed }) => [styles.addWalkBtn, { borderColor: palette.borderStrong }, pressed && { opacity: 0.7, transform: [{ scale: 0.92 }] }]}
           >
             <Ionicons name="add" size={22} color={palette.accentPrimary} />
-          </TouchableOpacity>
+          </Pressable>
         </View>
 
         {goalReached ? (
@@ -1241,15 +1253,18 @@ export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
                 />
                 <View style={styles.periodRow}>
                   {(['AM', 'PM'] as const).map((period) => (
-                    <TouchableOpacity
+                    <Pressable
                       key={period}
-                      style={[
+                      style={({ pressed }) => [
                         styles.periodBtn,
                         { borderColor: palette.borderStrong },
                         changePeriod === period && styles.periodBtnActive,
+                        pressed && { opacity: 0.7, transform: [{ scale: 0.95 }] },
                       ]}
-                      onPress={() => setChangePeriod(period)}
-                      activeOpacity={0.8}
+                      onPress={() => {
+                        if (Platform.OS !== 'web') Haptics.selectionAsync().catch(() => {});
+                        setChangePeriod(period);
+                      }}
                     >
                       <Text
                         variant="bodySmall"
@@ -1260,7 +1275,7 @@ export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
                       >
                         {period}
                       </Text>
-                    </TouchableOpacity>
+                    </Pressable>
                   ))}
                 </View>
               </View>
@@ -1355,15 +1370,18 @@ export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
                 />
                 <View style={styles.periodRow}>
                   {(['AM', 'PM'] as const).map((period) => (
-                    <TouchableOpacity
+                    <Pressable
                       key={period}
-                      style={[
+                      style={({ pressed }) => [
                         styles.periodBtn,
                         { borderColor: palette.borderStrong },
                         addWalkPeriod === period && styles.periodBtnActive,
+                        pressed && { opacity: 0.7, transform: [{ scale: 0.95 }] },
                       ]}
-                      onPress={() => setAddWalkPeriod(period)}
-                      activeOpacity={0.8}
+                      onPress={() => {
+                        if (Platform.OS !== 'web') Haptics.selectionAsync().catch(() => {});
+                        setAddWalkPeriod(period);
+                      }}
                     >
                       <Text
                         variant="bodySmall"
@@ -1374,7 +1392,7 @@ export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
                       >
                         {period}
                       </Text>
-                    </TouchableOpacity>
+                    </Pressable>
                   ))}
                 </View>
               </View>
@@ -1420,7 +1438,7 @@ export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
 
       {/* New Badge Unlocked Modal */}
       <Modal visible={showBadgeModal} transparent animationType="fade" onRequestClose={() => setShowBadgeModal(false)}>
-        <TouchableOpacity style={[styles.badgeModalOverlay, { backgroundColor: palette.overlay }]} activeOpacity={1} onPress={() => setShowBadgeModal(false)}>
+        <Pressable style={[styles.badgeModalOverlay, { backgroundColor: palette.overlay }]} onPress={() => setShowBadgeModal(false)}>
           <Animated.View style={[styles.badgeModalContent, { backgroundColor: palette.bgSurfaceElevated, borderColor: themeMode === 'dark' ? 'rgba(234,179,8,0.35)' : 'rgba(234,179,8,0.42)', transform: [{ scale: badgeAnim.interpolate({ inputRange: [0, 1], outputRange: [0.6, 1] }) }], opacity: badgeAnim }]}>
             <Ionicons name="trophy" size={48} color="#eab308" style={{ marginBottom: 12 }} />
             <Text variant="title" style={styles.badgeModalTitle}>
@@ -1443,13 +1461,13 @@ export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
             })}
             <Text variant="bodySmall" color={palette.textMuted} style={{ marginTop: 12 }}>Tap anywhere to dismiss</Text>
           </Animated.View>
-        </TouchableOpacity>
+        </Pressable>
       </Modal>
 
       {/* Side Menu Modal */}
       <Modal visible={menuVisible} transparent animationType="fade" onRequestClose={closeMenu}>
         <View style={[styles.menuOverlay, { backgroundColor: palette.overlay }]}>
-          <TouchableOpacity style={styles.menuBackdrop} onPress={closeMenu} activeOpacity={1} />
+          <Pressable style={styles.menuBackdrop} onPress={closeMenu} />
           <Animated.View
             style={[
               styles.menuContent,
@@ -1468,34 +1486,66 @@ export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
             ]}
           >
             <Text variant="title" style={styles.menuTitle}>Options</Text>
-            <TouchableOpacity style={[styles.menuItem, { borderBottomColor: palette.borderSoft }]} onPress={navigateToManageSchedule} testID="dashboard-menu-schedule">
+            <Pressable
+              style={({ pressed }) => [styles.menuItem, { borderBottomColor: palette.borderSoft }, pressed && styles.menuItemPressed]}
+              onPress={() => {
+                if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+                navigateToManageSchedule();
+              }}
+              android_ripple={{ color: 'rgba(46,233,166,0.12)' }}
+              testID="dashboard-menu-schedule"
+            >
               <View style={styles.menuItemRow}>
                 <AppIcon name="calendar" size={16} color={palette.textPrimary} />
                 <Text variant="body" style={styles.menuItemLabel}>Manage schedule</Text>
                 <AppIcon name="chevronRight" size={16} color={palette.textMuted} />
               </View>
-            </TouchableOpacity>
-            <TouchableOpacity style={[styles.menuItem, { borderBottomColor: palette.borderSoft }]} onPress={navigateToPreferences} testID="dashboard-menu-preferences">
+            </Pressable>
+            <Pressable
+              style={({ pressed }) => [styles.menuItem, { borderBottomColor: palette.borderSoft }, pressed && styles.menuItemPressed]}
+              onPress={() => {
+                if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+                navigateToPreferences();
+              }}
+              android_ripple={{ color: 'rgba(46,233,166,0.12)' }}
+              testID="dashboard-menu-preferences"
+            >
               <View style={styles.menuItemRow}>
                 <AppIcon name="adjust" size={16} color={palette.textPrimary} />
                 <Text variant="body" style={styles.menuItemLabel}>Edit/View preferences</Text>
                 <AppIcon name="chevronRight" size={16} color={palette.textMuted} />
               </View>
-            </TouchableOpacity>
-            <TouchableOpacity style={[styles.menuItem, { borderBottomColor: palette.borderSoft }]} onPress={navigateToWeeklyData} testID="dashboard-menu-weekly-data">
+            </Pressable>
+            <Pressable
+              style={({ pressed }) => [styles.menuItem, { borderBottomColor: palette.borderSoft }, pressed && styles.menuItemPressed]}
+              onPress={() => {
+                if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+                navigateToWeeklyData();
+              }}
+              android_ripple={{ color: 'rgba(46,233,166,0.12)' }}
+              testID="dashboard-menu-weekly-data"
+            >
               <View style={styles.menuItemRow}>
                 <AppIcon name="calendar" size={16} color={palette.textPrimary} />
                 <Text variant="body" style={styles.menuItemLabel}>Weekly Data</Text>
                 <AppIcon name="chevronRight" size={16} color={palette.textMuted} />
               </View>
-            </TouchableOpacity>
-            <TouchableOpacity style={[styles.menuItem, { borderBottomColor: palette.borderSoft }]} onPress={navigateToSettings} testID="dashboard-menu-settings">
+            </Pressable>
+            <Pressable
+              style={({ pressed }) => [styles.menuItem, { borderBottomColor: palette.borderSoft }, pressed && styles.menuItemPressed]}
+              onPress={() => {
+                if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+                navigateToSettings();
+              }}
+              android_ripple={{ color: 'rgba(46,233,166,0.12)' }}
+              testID="dashboard-menu-settings"
+            >
               <View style={styles.menuItemRow}>
                 <AppIcon name="settings" size={16} color={palette.textPrimary} />
                 <Text variant="body" style={styles.menuItemLabel}>Settings</Text>
                 <AppIcon name="chevronRight" size={16} color={palette.textMuted} />
               </View>
-            </TouchableOpacity>
+            </Pressable>
             <View style={styles.menuFooter}>
               <Button
                 title="Back to Home"
@@ -1748,6 +1798,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 4,
     borderBottomWidth: 1,
     borderBottomColor: 'rgba(255,255,255,0.05)',
+  },
+  menuItemPressed: {
+    opacity: 0.7,
+    backgroundColor: 'rgba(46,233,166,0.06)',
   },
   menuItemRow: {
     flexDirection: 'row',

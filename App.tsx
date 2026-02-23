@@ -1,5 +1,7 @@
-import React, { useCallback, useEffect, useRef } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { Animated, Platform, StyleSheet, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
+import * as SplashScreen from 'expo-splash-screen';
 import { NavigationContainer, createNavigationContainerRef } from '@react-navigation/native';
 import * as Notifications from 'expo-notifications';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
@@ -17,6 +19,7 @@ import {
   WALK_NUDGE_ACTION_SKIP,
   WALK_NUDGE_ACTION_START,
 } from './src/lib/notifications';
+import { recoverOrphanedSession } from './src/lib/walkCheckpoint';
 import { notificationPlanActions } from './src/lib/notificationPlanActions';
 import { crashReporting } from './src/lib/crashReporting';
 import { analyticsService } from './src/lib/analytics';
@@ -86,10 +89,56 @@ export default function App() {
   } = useAppStore();
   const pendingWalkPlanIdRef = useRef<string | null>(null);
   const lastHandledResponseRef = useRef<string | null>(null);
+  const [isBootstrapDone, setIsBootstrapDone] = useState(false);
+  const fadeAnim = useRef(new Animated.Value(0)).current;
+  const pulseAnim = useRef(new Animated.Value(1)).current;
+
+  // Hide native splash immediately so the app starts from our UI (no splash screen).
+  useEffect(() => {
+    if (Platform.OS !== 'web') {
+      SplashScreen.hideAsync().catch(() => {});
+    }
+  }, []);
+
+  // Small pulse on the loading dot while bootstrap runs
+  useEffect(() => {
+    if (isBootstrapDone) return;
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulseAnim, {
+          toValue: 0.35,
+          duration: 500,
+          useNativeDriver: true,
+        }),
+        Animated.timing(pulseAnim, {
+          toValue: 1,
+          duration: 500,
+          useNativeDriver: true,
+        }),
+      ])
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [isBootstrapDone, pulseAnim]);
 
   useEffect(() => {
+    let cancelled = false;
+    const fallbackTimer = setTimeout(() => {
+      if (!cancelled) setIsBootstrapDone(true);
+    }, 4500);
+
     crashReporting.install();
-    initializeApp();
+    initializeApp().finally(() => {
+      if (!cancelled) {
+        setIsBootstrapDone(true);
+      }
+      clearTimeout(fallbackTimer);
+    });
+
+    return () => {
+      cancelled = true;
+      clearTimeout(fallbackTimer);
+    };
   }, []);
 
   const refreshDashboardSnapshot = useCallback(async () => {
@@ -181,6 +230,25 @@ export default function App() {
     try {
       // Initialize database
       await getDatabase();
+
+      // Recover any walk session orphaned by a force-kill, and dismiss the
+      // stale walk-session notification that would still be in the shade.
+      try {
+        const recovered = await recoverOrphanedSession();
+        if (recovered) {
+          analyticsService.track('walk_session_recovered', {
+            activeSeconds: recovered.activeSeconds,
+            distanceMeters: recovered.distanceMeters ?? 0,
+            steps: recovered.steps ?? 0,
+          });
+        }
+        // Always dismiss — in case the app was killed before cleanup ran
+        if (isNotificationsSupported) {
+          void notificationService.dismissWalkSessionNotification();
+        }
+      } catch (e) {
+        if (__DEV__) console.warn('Failed to recover orphaned session:', e);
+      }
       
       // Check if user has completed onboarding
       const prefsExist = await preferencesRepo.exists();
@@ -198,15 +266,17 @@ export default function App() {
 
         // Request all permissions on first launch after onboarding
         if (!hasRequestedPermissions) {
-          try {
-            const permResults = await requestAllPermissions();
-            setHasLocationPermission(permResults.location);
-            setHasNotificationPermission(permResults.notifications);
-            setHasActivityPermission(permResults.activityRecognition);
-            setHasRequestedPermissions(true);
-          } catch (e) {
-            console.warn('Permission request during init failed:', e);
-          }
+          void (async () => {
+            try {
+              const permResults = await requestAllPermissions();
+              setHasLocationPermission(permResults.location);
+              setHasNotificationPermission(permResults.notifications);
+              setHasActivityPermission(permResults.activityRecognition);
+              setHasRequestedPermissions(true);
+            } catch (e) {
+              console.warn('Permission request during init failed:', e);
+            }
+          })();
         }
       }
     } catch (error) {
@@ -218,42 +288,93 @@ export default function App() {
   };
 
   const palette = getThemePalette(themeMode);
+  const isDark = themeMode === 'dark';
+
+  // Fade in main app when bootstrap finishes
+  useEffect(() => {
+    if (!isBootstrapDone) return;
+    Animated.timing(fadeAnim, {
+      toValue: 1,
+      duration: 280,
+      useNativeDriver: true,
+    }).start();
+  }, [isBootstrapDone, fadeAnim]);
+
+  if (!isBootstrapDone) {
+    return (
+      <>
+        <StatusBar style={isDark ? 'light' : 'dark'} />
+        <SafeAreaProvider>
+          <View style={[styles.bootRoot, { backgroundColor: palette.bgApp }]}>
+            <Animated.View
+              style={[
+                styles.bootDot,
+                {
+                  backgroundColor: isDark ? '#2ee9a6' : '#16a34a',
+                  opacity: pulseAnim.interpolate({
+                    inputRange: [0.35, 1],
+                    outputRange: [0.2, 0.7],
+                  }),
+                },
+              ]}
+            />
+          </View>
+        </SafeAreaProvider>
+      </>
+    );
+  }
 
   return (
     <>
       <StatusBar style={themeMode === 'dark' ? 'light' : 'dark'} />
       <SafeAreaProvider>
-        <NavigationContainer
-          ref={navigationRef}
-          onReady={() => {
-            const pendingPlanId = pendingWalkPlanIdRef.current;
-            if (pendingPlanId && navigationRef.isReady()) {
-              navigationRef.navigate('Walking', { planId: pendingPlanId });
-              pendingWalkPlanIdRef.current = null;
-            }
-          }}
-        >
-          <Stack.Navigator
-            initialRouteName={hasCompletedOnboarding ? 'Dashboard' : 'Intro'}
-            screenOptions={{
-              headerShown: false,
-              contentStyle: { backgroundColor: palette.bgApp },
-              animation: 'slide_from_right',
-              gestureEnabled: true,
+        <Animated.View style={[StyleSheet.absoluteFill, { opacity: fadeAnim }]}>
+          <NavigationContainer
+            ref={navigationRef}
+            onReady={() => {
+              const pendingPlanId = pendingWalkPlanIdRef.current;
+              if (pendingPlanId && navigationRef.isReady()) {
+                navigationRef.navigate('Walking', { planId: pendingPlanId });
+                pendingWalkPlanIdRef.current = null;
+              }
             }}
           >
-            <Stack.Screen name="Intro" component={IntroScreen} />
-            <Stack.Screen name="ScheduleSetup" component={ScheduleSetupScreen} />
-            <Stack.Screen name="ManualSchedule" component={ManualScheduleScreen} />
-            <Stack.Screen name="Preferences" component={PreferencesScreen} />
-            <Stack.Screen name="Dashboard" component={DashboardScreen} />
-            <Stack.Screen name="Walking" component={WalkingScreen} />
-            <Stack.Screen name="ScheduleOverview" component={ScheduleOverviewScreen} />
-            <Stack.Screen name="Settings" component={SettingsScreen} />
-            <Stack.Screen name="WeeklyData" component={WeeklyDataScreen} />
-          </Stack.Navigator>
-        </NavigationContainer>
+            <Stack.Navigator
+              key={hasCompletedOnboarding ? 'onboarded' : 'fresh'}
+              initialRouteName={hasCompletedOnboarding ? 'Dashboard' : 'Intro'}
+              screenOptions={{
+                headerShown: false,
+                contentStyle: { backgroundColor: palette.bgApp },
+                animation: 'slide_from_right',
+                gestureEnabled: true,
+              }}
+            >
+              <Stack.Screen name="Intro" component={IntroScreen} />
+              <Stack.Screen name="ScheduleSetup" component={ScheduleSetupScreen} />
+              <Stack.Screen name="ManualSchedule" component={ManualScheduleScreen} />
+              <Stack.Screen name="Preferences" component={PreferencesScreen} />
+              <Stack.Screen name="Dashboard" component={DashboardScreen} />
+              <Stack.Screen name="Walking" component={WalkingScreen} />
+              <Stack.Screen name="ScheduleOverview" component={ScheduleOverviewScreen} />
+              <Stack.Screen name="Settings" component={SettingsScreen} />
+              <Stack.Screen name="WeeklyData" component={WeeklyDataScreen} />
+            </Stack.Navigator>
+          </NavigationContainer>
+        </Animated.View>
       </SafeAreaProvider>
     </>
   );
 }
+
+const styles = StyleSheet.create({
+  bootRoot: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  bootDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+});

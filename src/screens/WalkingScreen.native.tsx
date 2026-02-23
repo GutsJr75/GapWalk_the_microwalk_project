@@ -1,7 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Animated, Easing, Platform, Pressable, StyleSheet, Vibration, View } from 'react-native';
+import { Animated, AppState, AppStateStatus, Easing, Platform, Pressable, StyleSheet, Vibration, View } from 'react-native';
+import * as Haptics from 'expo-haptics';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import * as Location from 'expo-location';
+import * as Notifications from 'expo-notifications';
 import { Pedometer } from 'expo-sensors';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { RootStackParamList } from '../../App';
@@ -15,8 +17,29 @@ import { NudgePlan, WalkSession } from '../lib/types';
 import { plansRepo } from '../lib/repositories/plansRepo';
 import { sessionsRepo } from '../lib/repositories/sessionsRepo';
 import { analyticsService } from '../lib/analytics';
+import { isNotificationsSupported, notificationService, WALK_SESSION_ACTION_PAUSE, WALK_SESSION_ACTION_RESUME, WALK_SESSION_ACTION_END } from '../lib/notifications';
+import { saveWalkCheckpoint, clearWalkCheckpoint } from '../lib/walkCheckpoint';
 import { useAppStore } from '../store';
-import { addMinutes } from 'date-fns';
+
+/**
+ * Error boundary to catch native map crashes (e.g. missing Google Maps API key)
+ * and fall back gracefully instead of killing the app.
+ */
+class MapErrorBoundary extends React.Component<
+  { children: React.ReactNode; fallback: React.ReactNode },
+  { hasError: boolean }
+> {
+  state = { hasError: false };
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+  componentDidCatch(error: Error) {
+    if (__DEV__) console.warn('Map failed to render:', error.message);
+  }
+  render() {
+    return this.state.hasError ? this.props.fallback : this.props.children;
+  }
+}
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Walking'>;
 
@@ -37,18 +60,12 @@ const MIN_SEGMENT_METERS = 0.35;
 const MAX_VALID_JUMP_METERS = 80;
 const INACTIVITY_PAUSE_SECONDS = 30;
 
+// Map is disabled until a Google Maps API key is configured.
+// Tracking (distance, steps, timer) works without the map.
 let MapViewImpl: any = null;
 let MarkerImpl: any = null;
 let PolylineImpl: any = null;
 let PROVIDER_GOOGLE_IMPL: any = null;
-
-if (Platform.OS !== 'web') {
-  const maps = require('react-native-maps');
-  MapViewImpl = maps.default;
-  MarkerImpl = maps.Marker;
-  PolylineImpl = maps.Polyline;
-  PROVIDER_GOOGLE_IMPL = maps.PROVIDER_GOOGLE;
-}
 
 const DARK_MAP_STYLE: Array<Record<string, unknown>> = [
   { elementType: 'geometry', stylers: [{ color: '#1b2230' }] },
@@ -87,7 +104,6 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
 
   const [plan, setPlan] = useState<NudgePlan | null>(null);
   const [activeSeconds, setActiveSeconds] = useState(0);
-  const [pausedSeconds, setPausedSeconds] = useState(0);
   const [ticks, setTicks] = useState(0);
   const [paused, setPaused] = useState(false);
   const [distanceMeters, setDistanceMeters] = useState(0);
@@ -101,9 +117,11 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
   const [isWalking, setIsWalking] = useState(false);
   const [hadWalkingSignal, setHadWalkingSignal] = useState(false);
   const [currentCoord, setCurrentCoord] = useState<Coord | null>(null);
+  const [mapError, setMapError] = useState(false);
   const [routeCoords, setRouteCoords] = useState<Coord[]>([]);
 
   const startIsoRef = useRef(new Date().toISOString());
+  const sessionIdRef = useRef(`s-${Date.now()}`);
   const pauseStartedAtRef = useRef<number | null>(null);
   const pausedRef = useRef(false);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -113,19 +131,83 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
   const mapRef = useRef<any>(null);
   const isMountedRef = useRef(true);
 
+  // Timestamp-based timer tracking (survives background transitions)
+  const sessionStartMsRef = useRef(Date.now());
+  const totalPausedMsRef = useRef(0);
+  const lastLocationUpdateMsRef = useRef(Date.now());
+  const hasInitialLocationRef = useRef(false);
+  const notifActionRef = useRef<(actionId: string) => void>(() => {});
+  // Refs mirroring state so the setInterval checkpoint can read them synchronously
+  const distanceRef = useRef(0);
+  const stepsRef = useRef(0);
+  const isTrackingRef = useRef(false);
+  const permissionDeniedRef = useRef(false);
+  const sessionFinalizedRef = useRef(false);
+  const checkpointWriteChainRef = useRef<Promise<void>>(Promise.resolve());
+
   const completionPopAnim = useRef(new Animated.Value(0)).current;
   const completionBurstAnim = useRef(new Animated.Value(0)).current;
   const completionConfettiAnim = useRef(new Animated.Value(0)).current;
+  const sheetExpandAnim = useRef(new Animated.Value(1)).current; // 1=expanded, 0=collapsed
 
   // Pedometer state
   const [usePedometer, setUsePedometer] = useState(false);
   const pedometerSubscriptionRef = useRef<{ remove: () => void } | null>(null);
   const pedometerBaseStepsRef = useRef<number>(0);
   const sessionStartTimeRef = useRef<Date>(new Date());
+  const pedometerAvailableRef = useRef(false);
+  // Tracks the last raw watchStepCount value so we can detect resubscription resets
+  const lastWatchStepsRef = useRef<number>(0);
+  // Steps accumulated from previous watch subscriptions (before resubscription resets counter)
+  const accumulatedStepsRef = useRef<number>(0);
+  // Steps accumulated before a pause (frozen while paused)
+  const stepsAtPauseRef = useRef<number>(0);
+  // Whether pedometer has delivered at least one step event
+  const pedometerHasDeliveredRef = useRef(false);
+  // Time since pedometer was initialized - used to fall back to GPS if no events
+  const pedometerInitTimeRef = useRef<number>(0);
+
+  /** Compute active walking seconds from timestamps (works across background). */
+  const computeElapsedSeconds = useCallback(() => {
+    const now = Date.now();
+    const currentPauseMs = pauseStartedAtRef.current ? (now - pauseStartedAtRef.current) : 0;
+    return Math.max(0, Math.floor(
+      (now - sessionStartMsRef.current - totalPausedMsRef.current - currentPauseMs) / 1000
+    ));
+  }, []);
+
+  const queueCheckpointSave = useCallback(async () => {
+    if (sessionFinalizedRef.current) return;
+
+    const currentPauseMs = pauseStartedAtRef.current
+      ? (Date.now() - pauseStartedAtRef.current)
+      : 0;
+
+    const nextWrite = checkpointWriteChainRef.current
+      .catch(() => undefined)
+      .then(() => saveWalkCheckpoint({
+        sessionId: sessionIdRef.current,
+        planId: planId ?? undefined,
+        startIso: startIsoRef.current,
+        sessionStartMs: sessionStartMsRef.current,
+        totalPausedMs: totalPausedMsRef.current + currentPauseMs,
+        distanceMeters: distanceRef.current,
+        steps: stepsRef.current,
+        paused: pausedRef.current,
+        usedLocation: isTrackingRef.current && !permissionDeniedRef.current,
+      }));
+
+    checkpointWriteChainRef.current = nextWrite;
+    await nextWrite;
+  }, [planId]);
 
   useEffect(() => {
     pausedRef.current = paused;
   }, [paused]);
+  useEffect(() => { distanceRef.current = distanceMeters; }, [distanceMeters]);
+  useEffect(() => { stepsRef.current = steps; }, [steps]);
+  useEffect(() => { isTrackingRef.current = isTracking; }, [isTracking]);
+  useEffect(() => { permissionDeniedRef.current = permissionDenied; }, [permissionDenied]);
 
   // Only use GPS-based step estimation when pedometer is unavailable
   useEffect(() => {
@@ -200,44 +282,69 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
       setPermissionDenied(false);
       setHasLocationPermission(true);
 
-      let initial: Location.LocationObject;
+      // Try to get initial position: don't abort tracking if it fails
       try {
-        initial = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
-      } catch {
-        // Emulator or device without GPS — try last known location
-        const last = await Location.getLastKnownPositionAsync();
-        if (last) {
-          initial = last;
-        } else {
-          if (!isMountedRef.current) return;
-          setIsTracking(false);
-          return;
+        const current = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.BestForNavigation });
+        if (isMountedRef.current) {
+          applyLocationPoint(current);
+          const initCoord = { latitude: current.coords.latitude, longitude: current.coords.longitude };
+          setRouteCoords([initCoord]);
+          hasInitialLocationRef.current = true;
+          // Center map precisely on user's current location
+          mapRef.current?.animateCamera?.({ center: initCoord, zoom: 17 }, { duration: 300 });
         }
+      } catch {
+        // Fallback: try last known location
+        try {
+          const last = await Location.getLastKnownPositionAsync();
+          if (last && isMountedRef.current) {
+            applyLocationPoint(last);
+            setRouteCoords([{ latitude: last.coords.latitude, longitude: last.coords.longitude }]);
+            hasInitialLocationRef.current = true;
+          }
+        } catch { /* continue without initial position — watch will pick it up */ }
       }
-      if (!isMountedRef.current) return;
-      applyLocationPoint(initial);
-      setRouteCoords([
-        {
-          latitude: initial.coords.latitude,
-          longitude: initial.coords.longitude,
-        },
-      ]);
 
+      if (!isMountedRef.current) return;
+
+      // Start watching regardless of whether initial position was acquired
       setIsTracking(true);
       const subscription = await Location.watchPositionAsync(
         {
-          accuracy: Location.Accuracy.Balanced,
-          timeInterval: 2000,
-          distanceInterval: 3,
+          accuracy: Location.Accuracy.BestForNavigation,
+          timeInterval: 1000,
+          distanceInterval: 1,
           mayShowUserSettingsDialog: true,
         },
-        applyLocationPoint
+        (location) => {
+          lastLocationUpdateMsRef.current = Date.now();
+          applyLocationPoint(location);
+          // Center map on first location update
+          if (!hasInitialLocationRef.current && isMountedRef.current) {
+            hasInitialLocationRef.current = true;
+            const coord = { latitude: location.coords.latitude, longitude: location.coords.longitude };
+            mapRef.current?.animateCamera?.({ center: coord, zoom: 17 }, { duration: 500 });
+          }
+          // Update walk notification from location callback (helps in background)
+          if (isNotificationsSupported && isMountedRef.current) {
+            const elapsed = computeElapsedSeconds();
+            void notificationService.showWalkSessionNotification(formatClock(elapsed), pausedRef.current);
+          }
+        }
       );
       if (isMountedRef.current) {
         watchRef.current = subscription;
       } else {
         subscription.remove();
       }
+
+      // Request background location for tracking while app is in background
+      try {
+        const bgPerm = await Location.getBackgroundPermissionsAsync();
+        if (bgPerm.status !== 'granted') {
+          await Location.requestBackgroundPermissionsAsync();
+        }
+      } catch { /* non-critical */ }
     } catch (error) {
       if (__DEV__) console.warn('Location tracking unavailable:', error);
       if (isMountedRef.current) {
@@ -245,11 +352,16 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
         setIsTracking(false);
       }
     }
-  }, [applyLocationPoint, setHasLocationPermission]);
+  }, [applyLocationPoint, setHasLocationPermission, computeElapsedSeconds]);
 
   useEffect(() => {
     isMountedRef.current = true;
+    sessionFinalizedRef.current = false;
+    checkpointWriteChainRef.current = Promise.resolve();
     sessionStartTimeRef.current = new Date();
+    sessionStartMsRef.current = Date.now();
+    totalPausedMsRef.current = 0;
+    void queueCheckpointSave();
     void (async () => {
       if (planId) {
         const found = await plansRepo.getById(planId);
@@ -272,11 +384,27 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
           }
 
           if (permGranted && isMountedRef.current) {
-            setUsePedometer(true);
-            // Use watchStepCount for real-time step counting
+            pedometerAvailableRef.current = true;
+            pedometerInitTimeRef.current = Date.now();
+            lastWatchStepsRef.current = 0;
+            accumulatedStepsRef.current = 0;
+
+            // Use watchStepCount for real-time step counting.
+            // This is the primary step source — it uses the hardware step counter
+            // sensor directly and works without Google Fit / Health Connect.
             const subscription = Pedometer.watchStepCount((result) => {
-              if (isMountedRef.current && !pausedRef.current) {
-                setSteps(result.steps);
+              if (!isMountedRef.current) return;
+              pedometerHasDeliveredRef.current = true;
+
+              // Only enable pedometer mode after first real delivery
+              if (!usePedometer) setUsePedometer(true);
+
+              if (!pausedRef.current) {
+                // result.steps is cumulative since this subscription started.
+                // Track the total = accumulated from prior subs + current sub's value.
+                const totalSteps = accumulatedStepsRef.current + result.steps;
+                lastWatchStepsRef.current = result.steps;
+                setSteps(totalSteps);
                 // If steps are being counted, user is walking
                 lastMovementAtRef.current = Date.now();
                 setIsWalking(true);
@@ -289,13 +417,68 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
       } catch (e) {
         console.warn('Pedometer initialization failed, using GPS estimation:', e);
         setUsePedometer(false);
+        pedometerAvailableRef.current = false;
+      }
+      // Set up walk session notification
+      if (isNotificationsSupported) {
+        await notificationService.setupWalkSessionCategories();
+        void notificationService.showWalkSessionNotification(formatClock(0), false);
       }
     })();
 
+    // Timestamp-based timer: computes elapsed from session start (works across background)
+    let notifCounter = 0;
     timerRef.current = setInterval(() => {
+      if (sessionFinalizedRef.current) return;
+
       setTicks((prev) => prev + 1);
+      const elapsed = computeElapsedSeconds();
       if (!pausedRef.current) {
-        setActiveSeconds((prev) => prev + 1);
+        setActiveSeconds(elapsed);
+      }
+      // Update walk session notification every 5 seconds
+      notifCounter++;
+      if (notifCounter % 5 === 0 && isNotificationsSupported) {
+        void notificationService.showWalkSessionNotification(formatClock(elapsed), pausedRef.current);
+      }
+      // Detect stale location watcher: if we think we're tracking but haven't
+      // received a location update in 15s, the watcher likely died (GPS toggled off).
+      if (notifCounter % 10 === 0 && watchRef.current) {
+        const staleSec = (Date.now() - lastLocationUpdateMsRef.current) / 1000;
+        if (staleSec > 15) {
+          void (async () => {
+            try {
+              const { status } = await Location.getForegroundPermissionsAsync();
+              if (!isMountedRef.current) return;
+              if (status !== 'granted') {
+                setPermissionDenied(true);
+                setIsTracking(false);
+                setIsWalking(false);
+                const sub = watchRef.current;
+                if (sub) { watchRef.current = null; sub.remove(); }
+              }
+            } catch { /* ignore */ }
+          })();
+        }
+      }
+      // Auto-save walk checkpoint every 30 seconds (crash/kill recovery)
+      if (notifCounter % 30 === 0) {
+        void queueCheckpointSave();
+      }
+      // If pedometer was initialized but hasn't delivered any step events
+      // after 15 seconds, fall back to GPS-based estimation.
+      if (
+        notifCounter === 15 &&
+        pedometerAvailableRef.current &&
+        !pedometerHasDeliveredRef.current
+      ) {
+        if (__DEV__) console.log('Pedometer not delivering events, falling back to GPS step estimation');
+        setUsePedometer(false);
+        pedometerAvailableRef.current = false;
+        if (pedometerSubscriptionRef.current) {
+          pedometerSubscriptionRef.current.remove();
+          pedometerSubscriptionRef.current = null;
+        }
       }
     }, 1000);
 
@@ -310,25 +493,172 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
         pedometerSubscriptionRef.current.remove();
         pedometerSubscriptionRef.current = null;
       }
+      // Dismiss walk session notification
+      if (isNotificationsSupported) {
+        void notificationService.dismissWalkSessionNotification();
+      }
     };
-  }, [planId, requestPermissionAndTrack]);
+  }, [planId, requestPermissionAndTrack, computeElapsedSeconds, queueCheckpointSave]);
+
+  // AppState listener: recalculate timer when returning from background,
+  // reconcile pedometer steps, and re-check location permission.
+  useEffect(() => {
+    const handleAppStateChange = (nextState: AppStateStatus) => {
+      if (nextState === 'active') {
+        // App returned to foreground: immediately recalculate elapsed time
+        const elapsed = computeElapsedSeconds();
+        if (!pausedRef.current) {
+          setActiveSeconds(elapsed);
+        }
+        setTicks((prev) => prev + 1);
+        if (isNotificationsSupported) {
+          void notificationService.showWalkSessionNotification(formatClock(elapsed), pausedRef.current);
+        }
+
+        // Reconcile pedometer steps from background: try getStepCountAsync
+        // (works on iOS, and Android with Health Connect / Google Fit).
+        // If it fails, resubscribe watchStepCount to pick up fresh events.
+        if (pedometerAvailableRef.current) {
+          void (async () => {
+            try {
+              const now = new Date();
+              const result = await Pedometer.getStepCountAsync(sessionStartTimeRef.current, now);
+              if (isMountedRef.current && result.steps > stepsRef.current) {
+                // getStepCountAsync returned a higher count — adopt it
+                setSteps(result.steps);
+                accumulatedStepsRef.current = result.steps;
+                lastWatchStepsRef.current = 0;
+                lastMovementAtRef.current = Date.now();
+                setIsWalking(true);
+                setHadWalkingSignal(true);
+              }
+            } catch {
+              // getStepCountAsync not available (common on Android without Health Connect).
+              // Resubscribe watchStepCount so we pick up steps going forward.
+              // Preserve accumulated steps from the old subscription.
+              accumulatedStepsRef.current += lastWatchStepsRef.current;
+              lastWatchStepsRef.current = 0;
+              if (pedometerSubscriptionRef.current) {
+                pedometerSubscriptionRef.current.remove();
+              }
+              const sub = Pedometer.watchStepCount((result) => {
+                if (!isMountedRef.current) return;
+                if (!pausedRef.current) {
+                  const totalSteps = accumulatedStepsRef.current + result.steps;
+                  lastWatchStepsRef.current = result.steps;
+                  setSteps(totalSteps);
+                  lastMovementAtRef.current = Date.now();
+                  setIsWalking(true);
+                  setHadWalkingSignal(true);
+                }
+              });
+              pedometerSubscriptionRef.current = sub;
+            }
+          })();
+        }
+
+        // Re-check location permission: user may have toggled it in Settings
+        void (async () => {
+          try {
+            const { status } = await Location.getForegroundPermissionsAsync();
+            if (!isMountedRef.current) return;
+            if (status !== 'granted') {
+              // Permission was revoked mid-session
+              setPermissionDenied(true);
+              setIsTracking(false);
+              setIsWalking(false);
+              // Kill the dead watcher
+              const sub = watchRef.current;
+              if (sub) { watchRef.current = null; sub.remove(); }
+            } else if (permissionDenied || !watchRef.current) {
+              // Permission was re-granted, or watcher died: restart tracking
+              setPermissionDenied(false);
+              await requestPermissionAndTrack();
+            }
+          } catch { /* non-critical */ }
+        })();
+      } else if (nextState === 'background') {
+        void queueCheckpointSave();
+        // Going to background: update notification with current time
+        const elapsed = computeElapsedSeconds();
+        if (isNotificationsSupported) {
+          void notificationService.showWalkSessionNotification(formatClock(elapsed), pausedRef.current);
+        }
+      }
+    };
+
+    const subscription = AppState.addEventListener('change', handleAppStateChange);
+    return () => subscription.remove();
+  }, [computeElapsedSeconds, permissionDenied, requestPermissionAndTrack, queueCheckpointSave]);
+
+  // Notification action handler: Pause / Resume / End from notification shade
+  useEffect(() => {
+    if (!isNotificationsSupported) return;
+
+    const sub = Notifications.addNotificationResponseReceivedListener((response) => {
+      const data = response.notification.request.content.data as Record<string, unknown> | undefined;
+      if (data?.type !== 'walk_session') return;
+      notifActionRef.current(response.actionIdentifier);
+    });
+
+    return () => sub.remove();
+  }, []);
 
   const resumeSession = useCallback(() => {
     const pauseStarted = pauseStartedAtRef.current;
     if (pauseStarted) {
-      setPausedSeconds((prev) => prev + Math.floor((Date.now() - pauseStarted) / 1000));
+      totalPausedMsRef.current += (Date.now() - pauseStarted);
     }
     pauseStartedAtRef.current = null;
+
+    // Resubscribe the pedometer so that steps taken during the pause
+    // are not counted. The new subscription starts its counter from 0.
+    if (pedometerAvailableRef.current && pedometerSubscriptionRef.current) {
+      accumulatedStepsRef.current = stepsAtPauseRef.current;
+      lastWatchStepsRef.current = 0;
+      pedometerSubscriptionRef.current.remove();
+      const sub = Pedometer.watchStepCount((result) => {
+        if (!isMountedRef.current) return;
+        if (!pausedRef.current) {
+          const totalSteps = accumulatedStepsRef.current + result.steps;
+          lastWatchStepsRef.current = result.steps;
+          setSteps(totalSteps);
+          lastMovementAtRef.current = Date.now();
+          setIsWalking(true);
+          setHadWalkingSignal(true);
+        }
+      });
+      pedometerSubscriptionRef.current = sub;
+    }
+
     setPaused(false);
-  }, []);
+    void queueCheckpointSave();
+    // Update notification to show Walking state
+    if (isNotificationsSupported) {
+      const elapsed = computeElapsedSeconds();
+      void notificationService.showWalkSessionNotification(formatClock(elapsed), false);
+    }
+  }, [computeElapsedSeconds, queueCheckpointSave]);
 
   const pauseSession = useCallback(() => {
     pauseStartedAtRef.current = Date.now();
     setPaused(true);
     setIsWalking(false);
-  }, []);
+    // Snapshot pedometer state at pause: remember total steps so we can
+    // discard any steps the hardware counts during the paused period.
+    stepsAtPauseRef.current = stepsRef.current;
+    void queueCheckpointSave();
+    // Update notification to show Paused state
+    if (isNotificationsSupported) {
+      const elapsed = computeElapsedSeconds();
+      void notificationService.showWalkSessionNotification(formatClock(elapsed), true);
+    }
+  }, [computeElapsedSeconds, queueCheckpointSave]);
 
   const togglePause = () => {
+    if (Platform.OS !== 'web') {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+    }
     if (paused) {
       resumeSession();
       return;
@@ -381,12 +711,13 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
 
   const remainingSeconds = useMemo(() => {
     if (!plan) return activeSeconds;
-    const walkStart = new Date(plan.walkStart);
-    const gapEnd = new Date(plan.gapEnd);
-    const plannedWalkEnd = addMinutes(walkStart, Math.max(1, plan.suggestedDurationMinutes));
-    const planEndMs = Math.min(plannedWalkEnd.getTime(), gapEnd.getTime());
-    return Math.max(0, Math.floor((planEndMs - Date.now()) / 1000));
-  }, [activeSeconds, plan, ticks]);
+    // Count down from the suggested walk duration based on how long the user
+    // has actually been walking, instead of using the calendar end time.
+    // This ensures the timer works even if the user opens the notification
+    // after the originally-planned window has elapsed.
+    const suggestedSeconds = plan.suggestedDurationMinutes * 60;
+    return Math.max(0, suggestedSeconds - activeSeconds);
+  }, [activeSeconds, plan]);
 
   const statusLabel = paused
     ? 'Paused'
@@ -429,77 +760,97 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
     planStatus?: 'completed' | 'cancelled' | 'skipped';
     endReason?: 'manual' | 'idle_later';
   }) => {
-    const pauseStarted = pauseStartedAtRef.current;
-    const finalPausedSeconds = paused && pauseStarted
-      ? pausedSeconds + Math.floor((Date.now() - pauseStarted) / 1000)
-      : pausedSeconds;
+    if (sessionFinalizedRef.current) return;
+    sessionFinalizedRef.current = true;
 
-    const session: WalkSession = {
-      id: `s-${Date.now()}`,
-      nudgePlanId: planId,
-      start: startIsoRef.current,
-      end: new Date().toISOString(),
-      activeSeconds,
-      pausedSeconds: finalPausedSeconds,
-      distanceMeters,
-      steps,
-      usedLocation: isTracking && !permissionDenied,
-      createdAt: new Date().toISOString(),
-    };
-
-    await sessionsRepo.save(session);
-    if (planId) {
-      await plansRepo.updateStatus(planId, options?.planStatus ?? 'completed');
+    // Dismiss walk session notification
+    if (isNotificationsSupported) {
+      void notificationService.dismissWalkSessionNotification();
     }
+    try {
+      const finalPausedMs = totalPausedMsRef.current +
+        (pauseStartedAtRef.current ? (Date.now() - pauseStartedAtRef.current) : 0);
+      const finalPausedSeconds = Math.floor(finalPausedMs / 1000);
+      const finalActiveSeconds = computeElapsedSeconds();
+      setActiveSeconds(finalActiveSeconds);
 
-    analyticsService.track('walk_completed', {
-      planId: planId || null,
-      activeSeconds,
-      pausedSeconds: finalPausedSeconds,
-      distanceMeters: Math.round(distanceMeters),
-      steps,
-      usedLocation: isTracking && !permissionDenied,
-      hadWalkingSignal,
-      endReason: options?.endReason ?? 'manual',
-    });
+      const session: WalkSession = {
+        id: sessionIdRef.current,
+        nudgePlanId: planId,
+        start: startIsoRef.current,
+        end: new Date().toISOString(),
+        activeSeconds: finalActiveSeconds,
+        pausedSeconds: finalPausedSeconds,
+        distanceMeters,
+        steps,
+        usedLocation: isTracking && !permissionDenied,
+        createdAt: new Date().toISOString(),
+      };
 
-    if (options?.showCompletion === false) {
-      navigation.navigate('Dashboard');
-      return;
+      await sessionsRepo.save(session);
+      // Ensure older queued writes cannot re-create checkpoint after successful save.
+      await checkpointWriteChainRef.current.catch(() => undefined);
+      await clearWalkCheckpoint();
+      if (planId) {
+        await plansRepo.updateStatus(planId, options?.planStatus ?? 'completed');
+      }
+
+      analyticsService.track('walk_completed', {
+        planId: planId || null,
+        activeSeconds: finalActiveSeconds,
+        pausedSeconds: finalPausedSeconds,
+        distanceMeters: Math.round(distanceMeters),
+        steps,
+        usedLocation: isTracking && !permissionDenied,
+        hadWalkingSignal,
+        endReason: options?.endReason ?? 'manual',
+      });
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+        timerRef.current = null;
+      }
+
+      if (options?.showCompletion === false) {
+        navigation.navigate('Dashboard');
+        return;
+      }
+
+      setShowCompletion(true);
+      completionPopAnim.setValue(0);
+      completionBurstAnim.setValue(0);
+      completionConfettiAnim.setValue(0);
+
+      Vibration.vibrate([0, 120, 80, 120, 80, 200]);
+
+      Animated.parallel([
+        Animated.spring(completionPopAnim, {
+          toValue: 1,
+          tension: 65,
+          friction: 7,
+          useNativeDriver: true,
+        }),
+        Animated.timing(completionBurstAnim, {
+          toValue: 1,
+          duration: 1200,
+          easing: Easing.out(Easing.quad),
+          useNativeDriver: true,
+        }),
+        Animated.timing(completionConfettiAnim, {
+          toValue: 1,
+          duration: 2000,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: true,
+        }),
+      ]).start();
+
+      setTimeout(() => {
+        setShowCompletion(false);
+        navigation.navigate('Dashboard');
+      }, 3500);
+    } catch (e) {
+      sessionFinalizedRef.current = false;
+      if (__DEV__) console.warn('Failed to save walk session:', e);
     }
-
-    setShowCompletion(true);
-    completionPopAnim.setValue(0);
-    completionBurstAnim.setValue(0);
-    completionConfettiAnim.setValue(0);
-
-    Vibration.vibrate([0, 120, 80, 120, 80, 200]);
-
-    Animated.parallel([
-      Animated.spring(completionPopAnim, {
-        toValue: 1,
-        tension: 65,
-        friction: 7,
-        useNativeDriver: true,
-      }),
-      Animated.timing(completionBurstAnim, {
-        toValue: 1,
-        duration: 1200,
-        easing: Easing.out(Easing.quad),
-        useNativeDriver: true,
-      }),
-      Animated.timing(completionConfettiAnim, {
-        toValue: 1,
-        duration: 2000,
-        easing: Easing.out(Easing.cubic),
-        useNativeDriver: true,
-      }),
-    ]).start();
-
-    setTimeout(() => {
-      setShowCompletion(false);
-      navigation.navigate('Dashboard');
-    }, 3500);
   };
 
   const confirmEnd = async () => {
@@ -518,9 +869,32 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
     await saveSession({ showCompletion: false, planStatus: 'cancelled', endReason: 'idle_later' });
   };
 
+  // Keep notifActionRef in sync with latest closures so notification actions work correctly
+  notifActionRef.current = (actionId: string) => {
+    if (actionId === WALK_SESSION_ACTION_PAUSE) {
+      pauseSession();
+    } else if (actionId === WALK_SESSION_ACTION_RESUME) {
+      resumeSession();
+    } else if (actionId === WALK_SESSION_ACTION_END) {
+      void saveSession();
+    }
+  };
+
   const toggleSheet = useCallback(() => {
-    setSheetExpanded((prev) => !prev);
-  }, []);
+    if (Platform.OS !== 'web') {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    }
+    setSheetExpanded((prev) => {
+      const next = !prev;
+      Animated.spring(sheetExpandAnim, {
+        toValue: next ? 1 : 0,
+        tension: 100,
+        friction: 14,
+        useNativeDriver: false,
+      }).start();
+      return next;
+    });
+  }, [sheetExpandAnim]);
 
   const sheetBg = themeMode === 'dark' ? 'rgba(6, 18, 43, 0.95)' : 'rgba(247, 251, 255, 0.97)';
   const topBarBg = themeMode === 'dark' ? '#061633' : '#f1f6ff';
@@ -532,7 +906,7 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
   const completionCardBorder = themeMode === 'dark' ? 'rgba(46, 233, 166, 0.25)' : 'rgba(46, 233, 166, 0.3)';
   const statPillBg = themeMode === 'dark' ? 'rgba(46, 233, 166, 0.12)' : 'rgba(46, 233, 166, 0.1)';
   const statPillColor = themeMode === 'dark' ? '#2ee9a6' : '#0d7a50';
-  const mapShadeColor = themeMode === 'dark' ? 'rgba(2, 8, 16, 0.18)' : 'rgba(141, 162, 186, 0.14)';
+  const mapShadeColor = themeMode === 'dark' ? 'rgba(2, 8, 16, 0.04)' : 'rgba(141, 162, 186, 0.04)';
   const zoomBtnBg = themeMode === 'dark' ? 'rgba(12, 20, 36, 0.78)' : 'rgba(248, 252, 255, 0.95)';
   const zoomTextColor = themeMode === 'dark' ? '#eaf0ff' : '#10233e';
 
@@ -543,64 +917,17 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
       </View>
 
       <View style={styles.mapArea}>
-        {MapViewImpl ? (
-          <MapViewImpl
-            ref={mapRef}
-            style={StyleSheet.absoluteFill}
-            provider={Platform.OS === 'android' ? PROVIDER_GOOGLE_IMPL : undefined}
-            initialRegion={{
-              latitude: currentCoord?.latitude ?? DEFAULT_COORD.latitude,
-              longitude: currentCoord?.longitude ?? DEFAULT_COORD.longitude,
-              latitudeDelta: 0.008,
-              longitudeDelta: 0.008,
-            }}
-            customMapStyle={themeMode === 'dark' ? DARK_MAP_STYLE : undefined}
-            showsUserLocation={isTracking && !permissionDenied}
-            showsMyLocationButton={false}
-            scrollEnabled
-            zoomEnabled
-            rotateEnabled
-            pitchEnabled
-          >
-            {PolylineImpl && routeCoords.length > 1 && (
-              <PolylineImpl
-                coordinates={routeCoords}
-                strokeColor={theme.colors.accentPrimary}
-                strokeWidth={5}
-                lineCap="round"
-                lineJoin="round"
-              />
-            )}
-            {MarkerImpl && currentCoord && (
-              <MarkerImpl coordinate={currentCoord} pinColor="#2cb7ff" />
-            )}
-          </MapViewImpl>
-        ) : (
-          <View style={styles.mapFallback}>
-            <View style={styles.mapFallbackIcon}>
-              <Text variant="title" style={styles.mapFallbackEmoji}>🗺️</Text>
-            </View>
-            <Text variant="body" style={styles.mapFallbackTitle}>
-              Map Unavailable
-            </Text>
-            <Text variant="bodySmall" color={palette.textMuted} style={styles.mapFallbackSub}>
-              Your walk is still being tracked.{'\n'}Distance and steps update in real time below.
-            </Text>
+        <View style={styles.mapFallback}>
+          <View style={styles.mapFallbackIcon}>
+            <Text variant="title" style={styles.mapFallbackEmoji}>🗺️</Text>
           </View>
-        )}
-
-        <View style={[styles.mapShade, { backgroundColor: mapShadeColor }]} pointerEvents="none" />
-
-        <View style={styles.zoomStack}>
-          <Pressable style={[styles.zoomBtn, { borderColor: sheetBorder, backgroundColor: zoomBtnBg }]} onPress={() => { void zoomBy(1); }}>
-            <Text variant="title" style={[styles.zoomText, { color: zoomTextColor }]}>+</Text>
-          </Pressable>
-          <Pressable style={[styles.zoomBtn, { borderColor: sheetBorder, backgroundColor: zoomBtnBg }]} onPress={() => { void zoomBy(-1); }}>
-            <Text variant="title" style={[styles.zoomText, { color: zoomTextColor }]}>-</Text>
-          </Pressable>
-          <Pressable style={[styles.zoomBtn, { borderColor: sheetBorder, backgroundColor: zoomBtnBg }]} onPress={recenterMap}>
-            <Text variant="bodySmall" style={[styles.zoomText, { color: zoomTextColor }]}>◎</Text>
-          </Pressable>
+          <Text variant="body" style={styles.mapFallbackTitle}>
+            Maps Coming Soon
+          </Text>
+          <Text variant="bodySmall" color={palette.textMuted} style={styles.mapFallbackSub}>
+            Map view will be available in a future update.{' '}
+            Your walk is still being tracked — distance, steps, and time update in real time below.
+          </Text>
         </View>
 
         <View style={[styles.statusPill, { backgroundColor: sheetBg, borderColor: sheetBorder }]}>
@@ -648,7 +975,11 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
         </Text>
 
         {sheetExpanded && (
-          <>
+          <Animated.View style={{
+            opacity: sheetExpandAnim,
+            maxHeight: sheetExpandAnim.interpolate({ inputRange: [0, 1], outputRange: [0, 300] }),
+            overflow: 'hidden',
+          }}>
             <View style={styles.metricRow}>
               <View style={[styles.metricCard, { backgroundColor: themeMode === 'dark' ? '#1a2a4a' : '#dfe9f9' }]}>
                 <Text variant="body" style={styles.metricTitle}>Distance</Text>
@@ -676,7 +1007,7 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
                 testID="walking-end"
               />
             </View>
-          </>
+          </Animated.View>
         )}
       </View>
 
@@ -914,6 +1245,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  zoomBtnPressed: {
+    transform: [{ scale: 0.9 }],
+    opacity: 0.7,
+  },
   zoomText: {
     fontWeight: theme.fontWeight.bold,
   },
@@ -996,6 +1331,11 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     paddingVertical: 16,
     paddingHorizontal: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 6,
+    elevation: 2,
   },
   metricTitle: {
     fontWeight: theme.fontWeight.semibold,

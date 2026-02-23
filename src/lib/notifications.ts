@@ -11,6 +11,18 @@ export const WALK_NUDGE_CATEGORY_ID = 'walk_nudge_actions';
 export const WALK_NUDGE_ACTION_START = 'START_WALK';
 export const WALK_NUDGE_ACTION_SKIP = 'SKIP_GAP';
 
+// Walk session ongoing notification
+export const WALK_SESSION_NOTIFICATION_ID = 'walk-session-timer';
+export const WALK_SESSION_ACTIVE_CATEGORY = 'walk_session_active';
+export const WALK_SESSION_PAUSED_CATEGORY = 'walk_session_paused';
+export const WALK_SESSION_ACTION_PAUSE = 'PAUSE_WALK_SESSION';
+export const WALK_SESSION_ACTION_RESUME = 'RESUME_WALK_SESSION';
+export const WALK_SESSION_ACTION_END = 'END_WALK_SESSION';
+
+// Android channel IDs
+const ANDROID_CHANNEL_DEFAULT = 'default';
+const ANDROID_CHANNEL_WALK_SESSION = 'walk-session';
+
 const isExpoGo =
   Constants.executionEnvironment === 'storeClient' ||
   Constants.appOwnership === 'expo';
@@ -178,25 +190,25 @@ export const notificationService = {
         if (target > 0 && minsWalked > 0) {
           const remaining = Math.max(0, target - minsWalked);
           progressHint = remaining > 0
-            ? ` You've done ${minsWalked} of ${target} min today — ${remaining} to go!`
+            ? ` You've already walked ${minsWalked} of ${target} min today. Only ${remaining} more to go!`
             : '';
         }
       } catch { /* ok */ }
 
       const titles = isStrict
-        ? ['Time to walk — no excuses! \uD83D\uDCAA', 'Your walk is waiting \uD83D\uDEB6', 'Get moving now! \uD83C\uDFC3']
-        : ['A walking window opened \uD83D\uDEB6', 'Perfect time for a walk \u2600\uFE0F', 'Take a quick break & walk \uD83D\uDC63'];
+        ? ['Time to get moving! \uD83D\uDCAA', 'Your walk is waiting for you \uD83D\uDEB6', 'Let\'s go for a walk! \uD83C\uDFC3']
+        : ['You have a great walking window \uD83D\uDEB6', 'Perfect time for a walk \u2600\uFE0F', 'How about a quick walk? \uD83D\uDC63'];
       const title = titles[Math.floor(Date.now() / 60000) % titles.length];
 
       let bodyText: string;
       if (minutesUntilWalk > 0) {
         bodyText = isStrict
-          ? `${dur} free min — starts in ${minutesUntilWalk} min. Let's go!${progressHint}`
-          : `You've got about ${dur} free min. Best start is in ${minutesUntilWalk} min.${progressHint}`;
+          ? `You have ${dur} free minutes starting in ${minutesUntilWalk} min. Let's make it count!${progressHint}`
+          : `You have about ${dur} free minutes coming up in ${minutesUntilWalk} min. A perfect chance to stretch your legs!${progressHint}`;
       } else {
         bodyText = isStrict
-          ? `${dur} free min right now. No better time than this!${progressHint}`
-          : `You've got about ${dur} free min right now. Ready for a quick walk?${progressHint}`;
+          ? `You have ${dur} free minutes right now. Let's make them count!${progressHint}`
+          : `You have about ${dur} free minutes right now. How about a refreshing walk?${progressHint}`;
       }
 
       const notificationId = await Notifications.scheduleNotificationAsync({
@@ -209,6 +221,7 @@ export const notificationService = {
             type: 'walk_nudge',
           },
           sound: true,
+          ...(Platform.OS === 'android' ? { channelId: ANDROID_CHANNEL_DEFAULT } : {}),
         },
         trigger: { 
           type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
@@ -251,6 +264,7 @@ export const notificationService = {
             type: 'walk_nudge',
           },
           sound: true,
+          ...(Platform.OS === 'android' ? { channelId: ANDROID_CHANNEL_DEFAULT } : {}),
         },
         trigger: {
           type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
@@ -279,8 +293,23 @@ export const notificationService = {
       if (!granted) return;
     }
 
+    // Build a set of planIds that already have scheduled notifications
+    // to avoid duplicate scheduling when dashboard re-loads.
+    const alreadyScheduled = new Set<string>();
+    try {
+      const existing = await Notifications.getAllScheduledNotificationsAsync();
+      for (const n of existing) {
+        const data = n.content.data as Record<string, unknown> | undefined;
+        if (data?.type === 'walk_nudge' && typeof data?.planId === 'string') {
+          alreadyScheduled.add(data.planId);
+        }
+      }
+    } catch { /* ok — schedule all */ }
+
     for (const plan of plans) {
-      await this.scheduleNudge(plan, prefs);
+      if (!alreadyScheduled.has(plan.id)) {
+        await this.scheduleNudge(plan, prefs);
+      }
     }
   },
   
@@ -322,7 +351,12 @@ export const notificationService = {
   async showImmediateNotification(title: string, body: string): Promise<void> {
     if (!isNotificationsSupported) return;
     await Notifications.scheduleNotificationAsync({
-      content: { title, body, sound: true },
+      content: {
+        title,
+        body,
+        sound: true,
+        ...(Platform.OS === 'android' ? { channelId: ANDROID_CHANNEL_DEFAULT } : {}),
+      },
       trigger: null,
     });
   },
@@ -340,6 +374,7 @@ export const notificationService = {
         categoryIdentifier: WALK_NUDGE_CATEGORY_ID,
         data: { planId, type: 'walk_nudge' },
         sound: true,
+        ...(Platform.OS === 'android' ? { channelId: ANDROID_CHANNEL_DEFAULT } : {}),
       },
       trigger: null,
     });
@@ -369,7 +404,9 @@ export const notificationService = {
    * Schedule (or reschedule) a daily summary notification.
    *
    * Fires at 20:30 local time with today's walking stats.
-   * Called each time the dashboard loads so the content stays current.
+   * Uses a DATE trigger so the notification content is generated at
+   * delivery time by the OS. We schedule a lightweight reminder
+   * and re-schedule from the dashboard so stats stay reasonably current.
    * Respects quiet hours — if 20:30 falls inside quiet hours the summary
    * is skipped for that day.
    */
@@ -416,13 +453,13 @@ export const notificationService = {
       body = 'Even a short 5-minute walk can boost your mood. Try one before bed!';
     } else if (target > 0 && minutes >= target) {
       title = 'Goal reached! Great job today';
-      body = `You walked ${minutes} min (${steps.toLocaleString()} steps) — that\u2019s ${pct}% of your daily goal. Keep it up!`;
+      body = `You walked ${minutes} min (${steps.toLocaleString()} steps), that's ${pct}% of your daily goal. Keep it up!`;
     } else {
       const remaining = Math.max(0, target - minutes);
       title = `${minutes} min walked today`;
       body = remaining > 0
-        ? `Just ${remaining} more min to reach your ${target}-min goal. You\u2019ve got this!`
-        : `Nice work — ${minutes} min and ${steps.toLocaleString()} steps today.`;
+        ? `Just ${remaining} more minutes to reach your ${target}-min goal. You've got this!`
+        : `Nice work! ${minutes} min and ${steps.toLocaleString()} steps today.`;
     }
 
     const secondsUntil = Math.max(1, Math.ceil((summaryTime.getTime() - Date.now()) / 1000));
@@ -433,6 +470,7 @@ export const notificationService = {
         body,
         data: { type: 'daily_summary' },
         sound: true,
+        ...(Platform.OS === 'android' ? { channelId: ANDROID_CHANNEL_DEFAULT } : {}),
       },
       trigger: {
         type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
@@ -440,5 +478,94 @@ export const notificationService = {
         repeats: false,
       },
     });
+  },
+
+  /**
+   * Set up notification categories for walk session actions.
+   * Creates two categories: one for active (with Pause) and one for paused (with Resume).
+   */
+  async setupWalkSessionCategories(): Promise<void> {
+    if (!isNotificationsSupported) return;
+
+    if (Platform.OS === 'android') {
+      await Notifications.setNotificationChannelAsync(ANDROID_CHANNEL_WALK_SESSION, {
+        name: 'Walk Session',
+        importance: Notifications.AndroidImportance.LOW,
+        vibrationPattern: [0],
+        enableVibrate: false,
+      });
+    }
+
+    // Pause/Resume must use opensAppToForeground: true because
+    // expo-notifications only delivers response events when the app
+    // is in the foreground. With `false`, the button press would be
+    // silently swallowed and the user would see no effect.
+    await Notifications.setNotificationCategoryAsync(WALK_SESSION_ACTIVE_CATEGORY, [
+      {
+        identifier: WALK_SESSION_ACTION_PAUSE,
+        buttonTitle: 'Pause',
+        options: { opensAppToForeground: true },
+      },
+      {
+        identifier: WALK_SESSION_ACTION_END,
+        buttonTitle: 'End Walk',
+        options: { opensAppToForeground: true, isDestructive: true },
+      },
+    ]);
+
+    await Notifications.setNotificationCategoryAsync(WALK_SESSION_PAUSED_CATEGORY, [
+      {
+        identifier: WALK_SESSION_ACTION_RESUME,
+        buttonTitle: 'Resume',
+        options: { opensAppToForeground: true },
+      },
+      {
+        identifier: WALK_SESSION_ACTION_END,
+        buttonTitle: 'End Walk',
+        options: { opensAppToForeground: true, isDestructive: true },
+      },
+    ]);
+  },
+
+  /**
+   * Show or update the ongoing walk session notification.
+   * Uses a fixed identifier so repeated calls replace the previous notification.
+   */
+  async showWalkSessionNotification(timeText: string, isPaused: boolean): Promise<void> {
+    if (!isNotificationsSupported) return;
+
+    try {
+      const categoryId = isPaused ? WALK_SESSION_PAUSED_CATEGORY : WALK_SESSION_ACTIVE_CATEGORY;
+      const statusEmoji = isPaused ? '\u23F8\uFE0F' : '\uD83D\uDEB6';
+      const statusText = isPaused ? 'Paused' : 'Walking';
+
+      await Notifications.scheduleNotificationAsync({
+        identifier: WALK_SESSION_NOTIFICATION_ID,
+        content: {
+          title: `${statusEmoji} GapWalk: ${statusText}`,
+          body: timeText,
+          data: { type: 'walk_session' },
+          categoryIdentifier: categoryId,
+          sound: false,
+          sticky: true,
+          ...(Platform.OS === 'android' ? { channelId: ANDROID_CHANNEL_WALK_SESSION } : {}),
+        },
+        trigger: null,
+      });
+    } catch (e) {
+      if (__DEV__) console.warn('Walk session notification failed:', e);
+    }
+  },
+
+  /**
+   * Dismiss the walk session notification.
+   */
+  async dismissWalkSessionNotification(): Promise<void> {
+    if (!isNotificationsSupported) return;
+    try {
+      await Notifications.dismissNotificationAsync(WALK_SESSION_NOTIFICATION_ID);
+    } catch {
+      // ignore — notification may already be dismissed
+    }
   },
 };

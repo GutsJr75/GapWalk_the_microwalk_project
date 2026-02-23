@@ -1,5 +1,6 @@
 import React from 'react';
-import { Pressable, StyleProp, StyleSheet, View, ViewStyle } from 'react-native';
+import { Platform, Pressable, StyleProp, StyleSheet, View, ViewStyle } from 'react-native';
+import * as Haptics from 'expo-haptics';
 import { theme } from '../theme';
 import { getThemePalette } from '../theme/palette';
 import { useAppStore } from '../store';
@@ -43,7 +44,12 @@ export const ScreenHeader: React.FC<ScreenHeaderProps> = ({
         <View style={styles.topRow}>
           {onBack ? (
             <Pressable
-              onPress={onBack}
+              onPress={() => {
+                if (Platform.OS !== 'web') {
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+                }
+                onBack();
+              }}
               testID={backTestID}
               accessibilityLabel={backTestID}
               android_ripple={{ color: backChipRipple }}

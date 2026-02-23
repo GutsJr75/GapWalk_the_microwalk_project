@@ -146,6 +146,24 @@ const initializeTables = async () => {
     );
   `);
 
+  // Walk checkpoint table — stores in-progress session so it can be recovered
+  // if the app is force-killed mid-walk.
+  await db.execAsync(`
+    CREATE TABLE IF NOT EXISTS walk_checkpoint (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      session_id TEXT NOT NULL,
+      plan_id TEXT,
+      start_iso TEXT NOT NULL,
+      session_start_ms INTEGER NOT NULL,
+      total_paused_ms INTEGER NOT NULL DEFAULT 0,
+      distance_meters REAL NOT NULL DEFAULT 0,
+      steps INTEGER NOT NULL DEFAULT 0,
+      paused INTEGER NOT NULL DEFAULT 0,
+      used_location INTEGER NOT NULL DEFAULT 0,
+      updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+
   // Create indexes
   await db.execAsync(`
     CREATE INDEX IF NOT EXISTS idx_busy_events_start ON busy_events(start);
@@ -272,6 +290,7 @@ export const resetDatabase = async () => {
     DROP TABLE IF EXISTS analytics_events;
     DROP TABLE IF EXISTS crash_reports;
     DROP TABLE IF EXISTS achievements;
+    DROP TABLE IF EXISTS walk_checkpoint;
   `);
 
   await initializeTables();

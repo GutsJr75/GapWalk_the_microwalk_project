@@ -127,7 +127,7 @@ export const StatCard: React.FC<StatCardProps> = ({
       : styles.goalValue;
 
   return (
-    <Card style={[styles.card, { backgroundColor: cardTint, borderColor: borderTint }]} elevated>
+    <Card style={[styles.card, { backgroundColor: cardTint, borderColor: borderTint }]}>
       <View style={styles.headerRow}>
         <View style={[styles.titleDot, { backgroundColor: toneColor }]} />
         <Text variant="body" style={styles.title}>{title}</Text>

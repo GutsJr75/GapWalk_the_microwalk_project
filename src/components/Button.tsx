@@ -126,7 +126,8 @@ const styles = StyleSheet.create({
     opacity: 0.55,
   },
   pressedButton: {
-    transform: [{ scale: 0.985 }],
+    transform: [{ scale: 0.97 }],
+    opacity: 0.85,
   },
   buttonText: {
     fontSize: theme.fontSize.md,

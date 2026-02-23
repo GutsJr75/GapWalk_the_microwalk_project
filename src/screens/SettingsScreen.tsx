@@ -1,5 +1,6 @@
 import React, { useCallback, useState } from 'react';
 import { View, StyleSheet, Alert, Platform, Pressable } from 'react-native';
+import * as Haptics from 'expo-haptics';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useFocusEffect } from '@react-navigation/native';
 import { RootStackParamList } from '../../App';
@@ -121,7 +122,10 @@ export const SettingsScreen: React.FC<Props> = ({ navigation }) => {
     testID: string;
   }) => (
     <Pressable
-      onPress={onPress}
+      onPress={() => {
+        if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+        onPress();
+      }}
       testID={testID}
       accessibilityLabel={testID}
       accessibilityRole="button"
@@ -261,7 +265,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 18,
   },
   pillPressed: {
-    transform: [{ scale: 0.985 }],
+    transform: [{ scale: 0.97 }],
+    opacity: 0.85,
   },
   pillLabel: {
     fontWeight: theme.fontWeight.semibold,

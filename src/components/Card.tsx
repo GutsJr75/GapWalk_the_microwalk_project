@@ -1,5 +1,6 @@
 import React from 'react';
-import { View, StyleSheet, ViewStyle, Pressable, StyleProp } from 'react-native';
+import { View, StyleSheet, ViewStyle, Pressable, StyleProp, Platform } from 'react-native';
+import * as Haptics from 'expo-haptics';
 import { theme } from '../theme';
 import { useThemePalette } from '../theme/palette';
 import { useAppStore } from '../store';
@@ -38,18 +39,24 @@ export const Card: React.FC<CardProps> = ({
   ];
 
   const rippleColor = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(15,23,42,0.08)';
-  const elevatedStyle = elevated
+  const shadowStyle = elevated
     ? {
-        shadowColor: isDark ? palette.shadow : 'rgba(15,23,42,0.18)',
-        shadowOffset: { width: 0, height: isDark ? 4 : 2 },
-        shadowOpacity: isDark ? 0.12 : 0.10,
-        shadowRadius: isDark ? 12 : 8,
-        elevation: isDark ? 4 : 3,
+        shadowColor: isDark ? palette.shadow : 'rgba(15,23,42,0.22)',
+        shadowOffset: { width: 0, height: isDark ? 6 : 3 },
+        shadowOpacity: isDark ? 0.20 : 0.14,
+        shadowRadius: isDark ? 16 : 10,
+        elevation: isDark ? 6 : 4,
       }
-    : undefined;
+    : {
+        shadowColor: isDark ? palette.shadow : 'rgba(15,23,42,0.12)',
+        shadowOffset: { width: 0, height: 1 },
+        shadowOpacity: isDark ? 0.08 : 0.06,
+        shadowRadius: isDark ? 4 : 3,
+        elevation: isDark ? 2 : 1,
+      };
   const cardBaseStyleWithShadow = [
     ...cardBaseStyle,
-    elevatedStyle,
+    shadowStyle,
   ];
 
   if (onPress) {
@@ -59,7 +66,12 @@ export const Card: React.FC<CardProps> = ({
           cardBaseStyleWithShadow,
           pressed && !disabled && styles.pressedCard,
         ]}
-        onPress={onPress}
+        onPress={() => {
+          if (Platform.OS !== 'web') {
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+          }
+          onPress();
+        }}
         disabled={disabled}
         android_ripple={{ color: rippleColor }}
         testID={testID}
@@ -83,7 +95,7 @@ const styles = StyleSheet.create({
     borderRadius: theme.borderRadius.lg,
     paddingVertical: 14,
     paddingHorizontal: 16,
-    borderWidth: 1.5,
+    borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.04)',
     width: '100%',
   },
@@ -95,6 +107,7 @@ const styles = StyleSheet.create({
     opacity: 0.4,
   },
   pressedCard: {
-    transform: [{ scale: 0.992 }],
+    transform: [{ scale: 0.97 }],
+    opacity: 0.85,
   },
 });

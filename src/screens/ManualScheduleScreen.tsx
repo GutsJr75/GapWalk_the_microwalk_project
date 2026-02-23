@@ -376,6 +376,15 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
   const [currentSourceLabel, setCurrentSourceLabel] = useState<string>('');
   const [showEditor, setShowEditor] = useState(!manageMode);
   const [selectedSource, setSelectedSource] = useState<'manual' | 'import'>('manual');
+
+  // Reset showEditor when the screen is re-focused with different params.
+  // navigate() reuses existing screens, so the initial useState(!manageMode)
+  // value becomes stale when route.params change on subsequent navigations.
+  useFocusEffect(
+    useCallback(() => {
+      setShowEditor(!manageMode);
+    }, [manageMode])
+  );
   const gridScrollRef = useRef<ScrollView>(null);
   const oneTimeMonthRef = useRef<TextInput>(null);
   const oneTimeDayRef = useRef<TextInput>(null);
@@ -1288,7 +1297,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
           subtitle={manageMode
             ? (showEditor ? 'Edit your schedule and save when ready.' : 'Choose your schedule source, then proceed to edit.')
             : 'Build your weekly schedule'}
-          onBack={manageMode && showEditor ? () => setShowEditor(false) : handleBack}
+          onBack={manageMode ? (showEditor ? () => setShowEditor(false) : undefined) : handleBack}
           backTestID="manual-back"
         />
         {showEditor && usingIcsTemplate && (
@@ -2039,7 +2048,7 @@ const styles = StyleSheet.create({
   },
   header: {
     paddingHorizontal: theme.layout.contentHorizontal,
-    paddingTop: theme.spacing.lg,
+    paddingTop: theme.spacing.lg + 28,
     paddingBottom: theme.spacing.sm,
     alignSelf: 'center',
     width: '100%',

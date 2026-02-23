@@ -37,10 +37,10 @@ export const Container: React.FC<ContainerProps> = ({
   const keyboardAvoidEnabled = keyboardAware && scrollable;
 
   useEffect(() => {
-    Animated.timing(appearAnim, {
+    Animated.spring(appearAnim, {
       toValue: 1,
-      duration: 260,
-      easing: Easing.out(Easing.cubic),
+      tension: 60,
+      friction: 12,
       useNativeDriver: true,
     }).start();
   }, [appearAnim]);
