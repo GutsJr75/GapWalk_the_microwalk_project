@@ -29,35 +29,43 @@ export const Modal: React.FC<ModalProps> = ({
   children,
 }) => {
   const palette = useThemePalette();
-  const scaleAnim = useRef(new Animated.Value(0.92)).current;
+  const scaleAnim = useRef(new Animated.Value(0.94)).current;
   const fadeAnim = useRef(new Animated.Value(0)).current;
+  const translateYAnim = useRef(new Animated.Value(18)).current;
 
   useEffect(() => {
     if (visible) {
-      scaleAnim.setValue(0.92);
+      scaleAnim.setValue(0.94);
       fadeAnim.setValue(0);
+      translateYAnim.setValue(18);
       Animated.parallel([
         Animated.spring(scaleAnim, {
           toValue: 1,
-          tension: 80,
+          tension: 95,
           friction: 10,
+          useNativeDriver: true,
+        }),
+        Animated.timing(translateYAnim, {
+          toValue: 0,
+          duration: 240,
+          easing: Easing.out(Easing.cubic),
           useNativeDriver: true,
         }),
         Animated.timing(fadeAnim, {
           toValue: 1,
-          duration: 200,
+          duration: 220,
           easing: Easing.out(Easing.cubic),
           useNativeDriver: true,
         }),
       ]).start();
     }
-  }, [visible]);
+  }, [fadeAnim, scaleAnim, translateYAnim, visible]);
 
   return (
     <RNModal
       visible={visible}
       transparent
-      animationType="slide"
+      animationType="none"
       onRequestClose={onClose}
       statusBarTranslucent
     >
@@ -75,7 +83,7 @@ export const Modal: React.FC<ModalProps> = ({
                   {
                     backgroundColor: palette.bgSurfaceElevated,
                     borderColor: palette.borderSoft,
-                    transform: [{ scale: scaleAnim }],
+                    transform: [{ translateY: translateYAnim }, { scale: scaleAnim }],
                     opacity: fadeAnim,
                   },
                 ]}

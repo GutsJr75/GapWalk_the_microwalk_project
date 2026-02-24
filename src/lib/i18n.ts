@@ -5,9 +5,13 @@ const esExact: Record<string, string> = {
   'Back': 'Atras',
   'Cancel': 'Cancelar',
   'Change': 'Cambiar',
+  'Update': 'Actualizar',
   'Save': 'Guardar',
+  'Yes, Save': 'Si, guardar',
+  'Yes, Update': 'Si, actualizar',
   'Done': 'Listo',
   'Continue': 'Continuar',
+  'Next': 'Siguiente',
   'Close': 'Cerrar',
   'Yes': 'Si',
   'No': 'No',
@@ -69,6 +73,11 @@ const esExact: Record<string, string> = {
   'Set up your schedule': 'Configura tu horario',
   'Change your schedule source or update existing schedule data.':
     'Cambia la fuente de tu horario o actualiza los datos existentes.',
+  'Cancel schedule update?': 'Cancelar actualizacion del horario?',
+  'Update schedule source?': 'Actualizar fuente del horario?',
+  'No changes to update': 'No hay cambios para actualizar',
+  'Your unsaved schedule source change will be lost. Do you want to leave this screen?':
+    'Se perdera tu cambio no guardado de la fuente del horario. Quieres salir de esta pantalla?',
   'Choose how GapWalk should read your schedule': 'Elige como GapWalk debe leer tu horario',
   'Choose how to add your schedule': 'Elige como agregar tu horario',
   'Link Google Calendar': 'Vincular Google Calendar',
@@ -179,25 +188,32 @@ const esExact: Record<string, string> = {
   'Log out': 'Cerrar sesion',
   'Back to Home Screen': 'Volver a inicio',
   'Back to Home': 'Volver a inicio',
-  'Current source': 'Fuente actual',
-  'Manual schedule': 'Horario manual',
   'Import .ics file': 'Importar archivo .ics',
-  'Manage your schedule': 'Administrar tu horario',
   'View and edit your weekly schedule. Import or clear as needed.': 'Ve y edita tu horario semanal. Importa o limpia segun sea necesario.',
   'Choose your schedule source, then proceed to edit.': 'Elige tu fuente de horario, luego procede a editar.',
+  'Choose your schedule source, then continue to edit.': 'Elige tu fuente de horario, luego continua para editar.',
+  'Choose your schedule source, then select Next to edit.':
+    'Elige tu fuente de horario y luego selecciona Siguiente para editar.',
   'Edit your schedule and save when ready.': 'Edita tu horario y guarda cuando estes listo.',
   'How should GapWalk read your schedule?': 'Como deberia GapWalk leer tu horario?',
-  'Enter manually': 'Introducir manualmente',
   'Build your weekly schedule with a calendar grid.': 'Construye tu horario semanal con una cuadricula de calendario.',
   'Upload a calendar file to populate the grid.': 'Sube un archivo de calendario para rellenar la cuadricula.',
   'Proceed': 'Continuar',
   'Appearance & Language': 'Apariencia e idioma',
   'Theme & language': 'Tema e idioma',
-  'Appearance': 'Apariencia',
   'No gaps found for today': 'No se encontraron huecos para hoy',
   'No gaps are found for today.': 'No se encontraron huecos para hoy.',
   'Could not cancel opportunity': 'No se pudo cancelar la oportunidad',
   'Could not update walk window': 'No se pudo actualizar la ventana de caminata',
+  'Update this walk?': 'Actualizar esta caminata?',
+  'Are you sure you want to update this walk time and duration?':
+    'Seguro que deseas actualizar la hora y duracion de esta caminata?',
+  'Cancel this update?': 'Cancelar esta actualizacion?',
+  'Your unsaved walk updates will be lost. Do you want to close this editor?':
+    'Se perderan los cambios no guardados de esta caminata. Quieres cerrar este editor?',
+  'Cancel this walk setup?': 'Cancelar la configuracion de esta caminata?',
+  'Your unsaved walk details will be lost. Do you want to close this form?':
+    'Se perderan los detalles no guardados de la caminata. Quieres cerrar este formulario?',
   'Please try again.': 'Por favor, intenta de nuevo.',
   'Cancel this walk opportunity?': 'Cancelar esta oportunidad de caminata?',
   'Cancel this walk window': 'Cancelar esta ventana de caminata',
@@ -292,6 +308,12 @@ const esExact: Record<string, string> = {
     'Si cancelas ahora, tus cambios no guardados se descartaran. Quieres continuar?',
   'Do you want to save these preference changes?':
     'Quieres guardar estos cambios de preferencias?',
+  'Update preferences?': 'Actualizar preferencias?',
+  'Do you want to update these preference changes?':
+    'Quieres actualizar estos cambios de preferencias?',
+  'Cancel preference update?': 'Cancelar actualizacion de preferencias?',
+  'Your unsaved preference changes will be lost. Do you want to leave this screen?':
+    'Se perderan tus cambios de preferencias no guardados. Quieres salir de esta pantalla?',
 
   // Manual schedule
   'Update your schedule': 'Actualiza tu horario',
@@ -336,6 +358,16 @@ const esExact: Record<string, string> = {
   'Add at least one event.': 'Agrega al menos un evento.',
   'Discard changes?': 'Descartar cambios?',
   'Discard unsaved schedule changes?': 'Descartar cambios de horario no guardados?',
+  'Cancel schedule editing?': 'Cancelar edicion del horario?',
+  'Your imported schedule has not been saved yet. Do you want to leave without saving?':
+    'El horario importado aun no se guardo. Quieres salir sin guardar?',
+  'Your unsaved schedule changes will be lost. Do you want to leave this screen?':
+    'Se perderan tus cambios de horario no guardados. Quieres salir de esta pantalla?',
+  'Update schedule?': 'Actualizar horario?',
+  'Do you want to update this schedule?':
+    'Quieres actualizar este horario?',
+  'Your unsaved source selection will be lost. Do you want to leave this screen?':
+    'Se perdera tu seleccion de fuente no guardada. Quieres salir de esta pantalla?',
   'Keep editing': 'Seguir editando',
   'Discard': 'Descartar',
   'Remove this event?': 'Eliminar este evento?',

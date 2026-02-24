@@ -6,6 +6,7 @@ import { RootStackParamList } from '../../App';
 import { Text } from '../components/Text';
 import { Button } from '../components/Button';
 import { Modal } from '../components/Modal';
+import { AppIcon } from '../components/AppIcon';
 import { theme } from '../theme';
 import { useThemePalette } from '../theme/palette';
 import { NudgePlan, WalkSession } from '../lib/types';
@@ -248,6 +249,21 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: palette.bgApp }]} edges={['top', 'left', 'right']}>
       <View style={[styles.topBar, { borderBottomColor: topBorder }]}>
+        <Pressable
+          onPress={() => navigation.navigate('Dashboard')}
+          style={({ pressed }) => [
+            styles.backToDashboardBtn,
+            {
+              backgroundColor: palette.bgSurface,
+              borderColor: topBorder,
+            },
+            pressed && styles.backToDashboardBtnPressed,
+          ]}
+          accessibilityLabel="Back"
+          accessibilityRole="button"
+        >
+          <AppIcon name="back" size={20} color={palette.textPrimary} />
+        </Pressable>
         <Text variant="title" style={styles.topTitle}>Walking</Text>
       </View>
 
@@ -402,6 +418,20 @@ const styles = StyleSheet.create({
     paddingTop: 14,
     paddingBottom: 14,
     paddingHorizontal: 16,
+  },
+  backToDashboardBtn: {
+    position: 'absolute',
+    left: 2,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  backToDashboardBtnPressed: {
+    opacity: 0.72,
+    transform: [{ translateX: -2 }, { scale: 0.94 }],
   },
   topTitle: {
     fontSize: 30,

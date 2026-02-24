@@ -18,7 +18,10 @@ import { eventsRepo } from '../lib/repositories/eventsRepo';
 import { plansRepo } from '../lib/repositories/plansRepo';
 import { scheduleSourceRepo } from '../lib/repositories/scheduleSourceRepo';
 import { syncNudgePlansForCurrentSchedule } from '../lib/scheduleSync';
-import { SAVE_CONFIRM_ACTION, SAVE_CONFIRM_MESSAGE, SAVE_CONFIRM_TITLE } from '../lib/confirmMessages';
+import {
+  SAVE_CONFIRM_DECLINE,
+  SAVE_CONFIRM_MESSAGE,
+} from '../lib/confirmMessages';
 import { analyticsService } from '../lib/analytics';
 import { useAppStore } from '../store';
 import {
@@ -58,6 +61,14 @@ export const ScheduleSetupScreen: React.FC<Props> = ({ navigation, route }) => {
       return;
     }
     navigation.navigate(manageMode ? 'ScheduleOverview' : 'Dashboard');
+  };
+
+  const backFromOnboarding = () => {
+    if (navigation.canGoBack()) {
+      navigation.goBack();
+      return;
+    }
+    navigation.navigate('Intro');
   };
 
   const navigateToManualSchedule = () => {
@@ -345,7 +356,7 @@ export const ScheduleSetupScreen: React.FC<Props> = ({ navigation, route }) => {
     }
   };
 
-  /* ── Continue ── */
+  /* ── Next ── */
   const runSelectedOption = async () => {
     if (!selectedOption) return;
     if (selectedOption === 'google') await startGoogleAuth();
@@ -358,6 +369,37 @@ export const ScheduleSetupScreen: React.FC<Props> = ({ navigation, route }) => {
     }
   };
 
+  const selectionMatchesCurrent = (option: ScheduleOption): boolean => {
+    const currentSourceType = scheduleSource?.type;
+    return (
+      (option === 'manual' && currentSourceType === 'manual') ||
+      (option === 'import' && currentSourceType === 'ics') ||
+      (option === 'google' && currentSourceType === 'google')
+    );
+  };
+
+  const handleManageCancel = () => {
+    if (!manageMode) return;
+
+    if (!selectedOption || selectionMatchesCurrent(selectedOption)) {
+      exitScreen();
+      return;
+    }
+
+    const title = 'Cancel schedule update?';
+    const message = 'Your unsaved schedule source change will be lost. Do you want to leave this screen?';
+    if (Platform.OS === 'web' && typeof (globalThis as any).confirm === 'function') {
+      if ((globalThis as any).confirm(`${title}\n\n${message}`)) {
+        exitScreen();
+      }
+      return;
+    }
+    Alert.alert(title, message, [
+      { text: 'No', style: 'cancel' },
+      { text: 'Yes', style: 'destructive', onPress: exitScreen },
+    ]);
+  };
+
   const handleContinue = () => {
     if (!selectedOption || loading) return;
     if (!manageMode) {
@@ -365,22 +407,18 @@ export const ScheduleSetupScreen: React.FC<Props> = ({ navigation, route }) => {
       return;
     }
 
-    const currentSourceType = scheduleSource?.type;
-    const selectionMatchesCurrent =
-      (selectedOption === 'manual' && currentSourceType === 'manual') ||
-      (selectedOption === 'import' && currentSourceType === 'ics') ||
-      (selectedOption === 'google' && currentSourceType === 'google');
+    const sameAsCurrent = selectionMatchesCurrent(selectedOption);
 
-    if (selectionMatchesCurrent) {
+    if (sameAsCurrent) {
       const sourceLabel =
-        currentSourceType === 'manual'
+        scheduleSource?.type === 'manual'
           ? 'manual entry'
-          : currentSourceType === 'ics'
+          : scheduleSource?.type === 'ics'
             ? 'calendar import'
             : 'Google Calendar';
       showMessage(
-        'No changes to save',
-        `Your schedule is already using ${sourceLabel}. Choose a different option if you want to switch, or tap Cancel to go back.`
+        'No changes to update',
+        `Your schedule is already using ${sourceLabel}. Choose a different option if you want to switch, or tap Cancel to leave.`
       );
       return;
     }
@@ -396,11 +434,11 @@ export const ScheduleSetupScreen: React.FC<Props> = ({ navigation, route }) => {
     }
 
     Alert.alert(
-      SAVE_CONFIRM_TITLE,
+      'Update schedule source?',
       message,
       [
-        { text: 'Cancel', style: 'cancel' },
-        { text: SAVE_CONFIRM_ACTION, onPress: () => { void runSelectedOption(); } },
+        { text: SAVE_CONFIRM_DECLINE, style: 'cancel' },
+        { text: 'Yes, Update', onPress: () => { void runSelectedOption(); } },
       ]
     );
   };
@@ -415,6 +453,8 @@ export const ScheduleSetupScreen: React.FC<Props> = ({ navigation, route }) => {
               ? 'Change your schedule source or update existing schedule data.'
               : 'Tell us when you are busy so GapWalk can find walking windows.'
           }
+          onBack={manageMode ? undefined : backFromOnboarding}
+          backTestID={manageMode ? undefined : 'schedule-setup-back'}
         />
         <Text variant="body" style={styles.sectionLabel}>
           {manageMode ? 'Choose how GapWalk should read your schedule' : 'Choose how to add your schedule'}
@@ -500,13 +540,13 @@ export const ScheduleSetupScreen: React.FC<Props> = ({ navigation, route }) => {
             <Button
               title="Cancel"
               variant="secondary"
-              onPress={exitScreen}
+              onPress={handleManageCancel}
               style={styles.footerBtn}
               disabled={loading}
               testID="schedule-setup-cancel"
             />
             <Button
-              title="Save"
+              title="Update"
               onPress={handleContinue}
               disabled={!selectedOption || selectedOption === 'google' || loading}
               loading={loading && !syncStatus}
@@ -516,7 +556,7 @@ export const ScheduleSetupScreen: React.FC<Props> = ({ navigation, route }) => {
           </View>
         ) : (
           <Button
-            title="Continue"
+            title="Next"
             onPress={handleContinue}
             disabled={!selectedOption || selectedOption === 'google' || loading}
             loading={loading && !syncStatus}

@@ -127,6 +127,12 @@ export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
   const [changeDuration, setChangeDuration] = useState('');
   const [changeError, setChangeError] = useState<string | null>(null);
   const [savingChange, setSavingChange] = useState(false);
+  const [changeInitialState, setChangeInitialState] = useState<{
+    hour: string;
+    minute: string;
+    period: TimePeriod;
+    duration: string;
+  } | null>(null);
   const menuSlide = useRef(new Animated.Value(0)).current;
   const [streak, setStreak] = useState<StreakData>({ currentStreak: 0, longestStreak: 0, lastActiveDate: null });
   const [weeklyStats, setWeeklyStats] = useState<WeeklyStats>({
@@ -159,6 +165,12 @@ export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
   const [addWalkDuration, setAddWalkDuration] = useState('10');
   const [addWalkError, setAddWalkError] = useState<string | null>(null);
   const [savingAddWalk, setSavingAddWalk] = useState(false);
+  const [addWalkInitialState, setAddWalkInitialState] = useState<{
+    hour: string;
+    minute: string;
+    period: TimePeriod;
+    duration: string;
+  } | null>(null);
   const [quietHoursBypass, setQuietHoursBypass] = useState(false);
 
   const openAddWalkModal = () => {
@@ -166,10 +178,20 @@ export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
     const nextHour = new Date(now.getTime() + 60 * 60 * 1000);
     nextHour.setMinutes(0, 0, 0);
     const h = nextHour.getHours();
-    setAddWalkHour(String(h % 12 === 0 ? 12 : h % 12).padStart(2, '0'));
-    setAddWalkMinute('00');
-    setAddWalkPeriod(h >= 12 ? 'PM' : 'AM');
-    setAddWalkDuration('10');
+    const initialHour = String(h % 12 === 0 ? 12 : h % 12).padStart(2, '0');
+    const initialMinute = '00';
+    const initialPeriod: TimePeriod = h >= 12 ? 'PM' : 'AM';
+    const initialDuration = '10';
+    setAddWalkHour(initialHour);
+    setAddWalkMinute(initialMinute);
+    setAddWalkPeriod(initialPeriod);
+    setAddWalkDuration(initialDuration);
+    setAddWalkInitialState({
+      hour: initialHour,
+      minute: initialMinute,
+      period: initialPeriod,
+      duration: initialDuration,
+    });
     setAddWalkError(null);
     setQuietHoursBypass(false);
     setShowAddWalkModal(true);
@@ -177,8 +199,39 @@ export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
 
   const closeAddWalkModal = () => {
     if (savingAddWalk) return;
-    setShowAddWalkModal(false);
-    setAddWalkError(null);
+    const hasDraftChanges =
+      !!addWalkInitialState &&
+      (
+        addWalkHour !== addWalkInitialState.hour ||
+        addWalkMinute !== addWalkInitialState.minute ||
+        addWalkPeriod !== addWalkInitialState.period ||
+        addWalkDuration !== addWalkInitialState.duration
+      );
+
+    const closeNow = () => {
+      setShowAddWalkModal(false);
+      setAddWalkError(null);
+      setAddWalkInitialState(null);
+    };
+
+    if (!hasDraftChanges) {
+      closeNow();
+      return;
+    }
+
+    const title = 'Cancel this walk setup?';
+    const message = 'Your unsaved walk details will be lost. Do you want to close this form?';
+    if (Platform.OS === 'web' && typeof (globalThis as any).confirm === 'function') {
+      if ((globalThis as any).confirm(`${title}\n\n${message}`)) {
+        closeNow();
+      }
+      return;
+    }
+
+    Alert.alert(title, message, [
+      { text: 'No', style: 'cancel' },
+      { text: 'Yes', style: 'destructive', onPress: closeNow },
+    ]);
   };
 
   const saveManualWalk = async (bypassQuiet = false) => {
@@ -250,6 +303,7 @@ export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
       setUpcomingPlans(refreshedUpcoming);
       setShowAddWalkModal(false);
       setAddWalkError(null);
+      setAddWalkInitialState(null);
     } catch (error) {
       console.error('Failed to create manual walk:', error);
       setAddWalkError('Could not create walk. Please try again.');
@@ -259,11 +313,33 @@ export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
   };
 
   const requestSaveManualWalk = () => {
-    if (quietHoursBypass) {
-      void saveManualWalk(true);
-    } else {
-      void saveManualWalk(false);
+    if (savingAddWalk) return;
+
+    const baseMessage = 'Do you want to save this walk and schedule a notification?';
+    const quietMessage = `This walk is inside your quiet hours.\n\nDo you still want to save it and schedule a notification?`;
+    const message = quietHoursBypass ? quietMessage : baseMessage;
+
+    if (Platform.OS === 'web' && typeof (globalThis as any).confirm === 'function') {
+      const ok = (globalThis as any).confirm(message);
+      if (ok) {
+        void saveManualWalk(quietHoursBypass);
+      }
+      return;
     }
+
+    Alert.alert(
+      'Save this walk?',
+      message,
+      [
+        { text: 'No', style: 'cancel' },
+        {
+          text: 'Yes, save',
+          onPress: () => {
+            void saveManualWalk(quietHoursBypass);
+          },
+        },
+      ]
+    );
   };
 
   const reconcileTodayPlans = useCallback(async (prefs: NonNullable<typeof preferences>, minutesWalked: number) => {
@@ -394,7 +470,6 @@ export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
       // installed before the permission flow was added)
       if (!hasRequestedPermissions) {
         requestAllPermissions().then((results) => {
-          setHasLocationPermission(results.location);
           setHasNotificationPermission(results.notifications);
           setHasActivityPermission(results.activityRecognition);
           setHasRequestedPermissions(true);
@@ -583,20 +658,58 @@ export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
 
   const openChangeOpportunity = (opportunity: PlanOpportunity) => {
     const parts = to12HourParts(opportunity.plan.walkStart);
+    const initialDuration = String(opportunity.plan.suggestedDurationMinutes);
     setEditingOpportunity(opportunity);
     setChangeHour(parts.hour);
     setChangeMinute(parts.minute);
     setChangePeriod(parts.period);
-    setChangeDuration(String(opportunity.plan.suggestedDurationMinutes));
+    setChangeDuration(initialDuration);
+    setChangeInitialState({
+      hour: parts.hour,
+      minute: parts.minute,
+      period: parts.period,
+      duration: initialDuration,
+    });
     setChangeError(null);
     setShowChangeModal(true);
   };
 
   const closeChangeModal = () => {
     if (savingChange) return;
-    setShowChangeModal(false);
-    setEditingOpportunity(null);
-    setChangeError(null);
+    const hasDraftChanges =
+      !!changeInitialState &&
+      (
+        changeHour !== changeInitialState.hour ||
+        changeMinute !== changeInitialState.minute ||
+        changePeriod !== changeInitialState.period ||
+        changeDuration !== changeInitialState.duration
+      );
+
+    const closeNow = () => {
+      setShowChangeModal(false);
+      setEditingOpportunity(null);
+      setChangeError(null);
+      setChangeInitialState(null);
+    };
+
+    if (!hasDraftChanges) {
+      closeNow();
+      return;
+    }
+
+    const title = 'Cancel this update?';
+    const message = 'Your unsaved walk updates will be lost. Do you want to close this editor?';
+    if (Platform.OS === 'web' && typeof (globalThis as any).confirm === 'function') {
+      if ((globalThis as any).confirm(`${title}\n\n${message}`)) {
+        closeNow();
+      }
+      return;
+    }
+
+    Alert.alert(title, message, [
+      { text: 'No', style: 'cancel' },
+      { text: 'Yes', style: 'destructive', onPress: closeNow },
+    ]);
   };
 
   const applyWalkChange = async () => {
@@ -678,6 +791,7 @@ export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
       setShowChangeModal(false);
       setEditingOpportunity(null);
       setChangeError(null);
+      setChangeInitialState(null);
     } catch (error) {
       console.error('Failed to update walk window:', error);
       Alert.alert('Could not update walk window', 'Please try again.');
@@ -735,18 +849,18 @@ export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
 
     setChangeError(null);
     if (Platform.OS === 'web' && typeof (globalThis as any).confirm === 'function') {
-      const ok = (globalThis as any).confirm('Save this change\n\nAre you sure you want to update this walk time and duration');
+      const ok = (globalThis as any).confirm('Update this walk?\n\nAre you sure you want to update this walk time and duration?');
       if (ok) {
         void applyWalkChange();
       }
       return;
     }
     Alert.alert(
-      'Save this change',
-      'Are you sure you want to update this walk time and duration',
+      'Update this walk?',
+      'Are you sure you want to update this walk time and duration?',
       [
-        { text: 'No, Change', style: 'cancel' },
-        { text: 'Yes', onPress: () => { void applyWalkChange(); } },
+        { text: 'No', style: 'cancel' },
+        { text: 'Yes, Update', onPress: () => { void applyWalkChange(); } },
       ]
     );
   };
@@ -1307,7 +1421,7 @@ export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
                   disabled={savingChange}
                 />
                 <Button
-                  title="Save"
+                  title="Update"
                   onPress={requestSaveWalkChange}
                   style={styles.changeActionBtn}
                   loading={savingChange}

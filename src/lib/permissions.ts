@@ -1,40 +1,24 @@
 import { Alert, Linking, Platform } from 'react-native';
-import * as Location from 'expo-location';
 import * as Notifications from 'expo-notifications';
 import { Pedometer } from 'expo-sensors';
 import { isNotificationsSupported, notificationService } from './notifications';
 
 export interface PermissionResults {
-  location: boolean;
   notifications: boolean;
   activityRecognition: boolean;
 }
 
 /**
- * Request all essential permissions for the app.
- * Called once after onboarding or on first Dashboard load.
+ * Request permissions needed for step counting and notifications.
+ * Location is not requested for now (no map support).
  */
 export async function requestAllPermissions(): Promise<PermissionResults> {
   const results: PermissionResults = {
-    location: false,
     notifications: false,
     activityRecognition: false,
   };
 
-  // 1. Location permission
-  try {
-    const { status: locExisting } = await Location.getForegroundPermissionsAsync();
-    if (locExisting === 'granted') {
-      results.location = true;
-    } else {
-      const { status } = await Location.requestForegroundPermissionsAsync();
-      results.location = status === 'granted';
-    }
-  } catch (e) {
-    console.warn('Location permission request failed:', e);
-  }
-
-  // 2. Notification permission
+  // 1. Notification permission
   try {
     if (isNotificationsSupported) {
       const granted = await notificationService.requestPermissions();
@@ -44,11 +28,10 @@ export async function requestAllPermissions(): Promise<PermissionResults> {
     console.warn('Notification permission request failed:', e);
   }
 
-  // 3. Activity Recognition (for pedometer / step counting)
+  // 2. Activity Recognition (for pedometer / step counting)
   try {
     const available = await Pedometer.isAvailableAsync();
     if (available) {
-      // Requesting pedometer access implicitly requests ACTIVITY_RECOGNITION on Android
       const { status: pedExisting } = await Pedometer.getPermissionsAsync();
       if (pedExisting === 'granted') {
         results.activityRecognition = true;
@@ -69,15 +52,9 @@ export async function requestAllPermissions(): Promise<PermissionResults> {
  */
 export async function checkPermissions(): Promise<PermissionResults> {
   const results: PermissionResults = {
-    location: false,
     notifications: false,
     activityRecognition: false,
   };
-
-  try {
-    const { status } = await Location.getForegroundPermissionsAsync();
-    results.location = status === 'granted';
-  } catch { /* ignore */ }
 
   try {
     if (isNotificationsSupported) {

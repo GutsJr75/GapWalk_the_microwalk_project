@@ -34,7 +34,12 @@ import { eventsRepo } from '../lib/repositories/eventsRepo';
 import { plansRepo } from '../lib/repositories/plansRepo';
 import { scheduleSourceRepo } from '../lib/repositories/scheduleSourceRepo';
 import { syncNudgePlansForCurrentSchedule } from '../lib/scheduleSync';
-import { SAVE_CONFIRM_ACTION, SAVE_CONFIRM_MESSAGE, SAVE_CONFIRM_TITLE } from '../lib/confirmMessages';
+import {
+  SAVE_CONFIRM_ACTION,
+  SAVE_CONFIRM_DECLINE,
+  SAVE_CONFIRM_MESSAGE,
+  SAVE_CONFIRM_TITLE,
+} from '../lib/confirmMessages';
 import { analyticsService } from '../lib/analytics';
 import { useAppStore } from '../store';
 import { addDays, format, setHours, setMinutes, startOfDay } from 'date-fns';
@@ -43,22 +48,66 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 type Props = NativeStackScreenProps<RootStackParamList, 'ManualSchedule'>;
 const DAY_TAB_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] as const;
 const DAY_FULL_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'] as const;
-// 6:00 AM to next day 6:00 AM = 24 hours = 48 x 30-min slots
-const GRID_START_MIN = 6 * 60;   // 6:00 AM
-const GRID_END_MIN = 6 * 60 + 24 * 60;   // next day 6:00 AM (1800)
+// Full-day grid: 12:00 AM to 12:00 AM = 24 hours = 48 x 30-min slots
+const GRID_START_MIN = 0;   // 12:00 AM
+const GRID_END_MIN = 24 * 60;   // next day 12:00 AM (1440)
 const SLOT_MINUTES = 30;
-const SLOT_HEIGHT = 60; // 60px per 30-min slot = 120px per hour (open, clickable)
 const NUM_SLOTS = 48;
-const GRID_BODY_HEIGHT = NUM_SLOTS * SLOT_HEIGHT;
-const TIME_COL_WIDTH = 56;
-const SLOT_INDEX_8_AM = (8 - 6) * 2;
-const GRID_PADDING = 20;
+// Horizontal layout: days = Y (rows), time = X (columns), scroll horizontally
+const DAY_ROW_HEIGHT = 80;
+const SLOT_WIDTH = DAY_ROW_HEIGHT;
+const DAY_LABEL_WIDTH = 50;
+const TIME_ROW_HEIGHT = 28;
+const GRID_PADDING = 16;
+// Legacy (for scroll-to-8am etc.)
+const SLOT_HEIGHT = DAY_ROW_HEIGHT;
+const GRID_BODY_HEIGHT = 7 * DAY_ROW_HEIGHT + TIME_ROW_HEIGHT;
 
-// Full-hour labels only: "6 AM", "7 AM", ... "5 AM" (next day)
+const RECURRING_ID_DAY_SEPARATOR = '__d';
+
+const createRecurringSeriesId = (): string =>
+  `rs-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+const parseRecurringSeriesId = (eventId: string): string | null => {
+  if (eventId.includes(RECURRING_ID_DAY_SEPARATOR)) {
+    return eventId.split(RECURRING_ID_DAY_SEPARATOR)[0] ?? null;
+  }
+  if (eventId.includes('-dup-')) {
+    return eventId.split('-dup-')[0] ?? null;
+  }
+  const legacyMatch = eventId.match(/^(m-\d+)-\d+$/);
+  if (legacyMatch?.[1]) {
+    return legacyMatch[1];
+  }
+  return null;
+};
+
+const resolveRecurringSeriesId = (eventId: string): string =>
+  parseRecurringSeriesId(eventId) ?? eventId;
+
+const buildRecurringEventId = (seriesId: string, dayIndex: number): string =>
+  `${seriesId}${RECURRING_ID_DAY_SEPARATOR}${dayIndex}`;
+
+const to12HourParts = (totalMinutes: number): { hourRaw: string; minuteRaw: string; period: 'AM' | 'PM' } => {
+  const normalized = ((totalMinutes % (24 * 60)) + 24 * 60) % (24 * 60);
+  const hour24 = Math.floor(normalized / 60);
+  const minute = normalized % 60;
+  const period: 'AM' | 'PM' = hour24 >= 12 ? 'PM' : 'AM';
+  const hour12 = hour24 % 12 || 12;
+  return {
+    hourRaw: String(hour12).padStart(2, '0'),
+    minuteRaw: String(minute).padStart(2, '0'),
+    period,
+  };
+};
+
+// Full-hour labels only: "12 AM", "1 AM", ... "11 PM"
 const FULL_HOUR_LABELS: string[] = (() => {
   const out: string[] = [];
-  for (let i = 0; i < 24; i++) {
-    const h = (6 + i) % 24;
+  const startHour = Math.floor(GRID_START_MIN / 60) % 24;
+  const totalHours = Math.max(1, Math.round((GRID_END_MIN - GRID_START_MIN) / 60));
+  for (let i = 0; i < totalHours; i++) {
+    const h = (startHour + i) % 24;
     const period = h >= 12 ? 'PM' : 'AM';
     const h12 = h % 12 === 0 ? 12 : h % 12;
     out.push(`${h12} ${period}`);
@@ -177,6 +226,15 @@ interface TemplateEvent {
   oneTimeDate?: string;
 }
 
+interface GridDisplaySlice {
+  key: string;
+  event: TemplateEvent;
+  sourceDayIndex: number;
+  startMinuteInRow: number;
+  endMinuteInRow: number;
+  isCarryOver: boolean;
+}
+
 type ManualRepeatMode = 'weekly' | 'one_time';
 
 interface ManualFormState {
@@ -208,6 +266,27 @@ const hhmmToMinutes = (hhmm: string): number => {
   const h = isNaN(parts[0]) ? 0 : Math.max(0, Math.min(23, parts[0]));
   const m = isNaN(parts[1]) ? 0 : Math.max(0, Math.min(59, parts[1] || 0));
   return h * 60 + m;
+};
+
+/** True if [s1,e1) and [s2,e2) overlap (handles overnight: pass end as start+24*60 if needed). */
+const timeRangesOverlap = (s1: number, e1: number, s2: number, e2: number): boolean =>
+  s1 < e2 && e1 > s2;
+
+const normalizeToRowMinutes = (minutes: number): number =>
+  minutes < GRID_START_MIN ? minutes + 24 * 60 : minutes;
+
+const buildDayMinuteSegments = (
+  ownerDayIndex: number,
+  startMinute: number,
+  endMinute: number
+): Array<{ dayIndex: number; startMinute: number; endMinute: number }> => {
+  if (endMinute <= startMinute) {
+    return [
+      { dayIndex: ownerDayIndex, startMinute, endMinute: 24 * 60 },
+      { dayIndex: (ownerDayIndex + 1) % 7, startMinute: 0, endMinute },
+    ].filter((segment) => segment.endMinute > segment.startMinute);
+  }
+  return [{ dayIndex: ownerDayIndex, startMinute, endMinute }];
 };
 
 const parseDateKeyParts = (dateKey: string): { monthRaw: string; dayRaw: string; yearRaw: string } => {
@@ -295,6 +374,26 @@ const createDefaultFormState = (dayIndex: number): ManualFormState => {
   };
 };
 
+const buildFormSignature = (form: ManualFormState): string => {
+  return JSON.stringify({
+    title: form.title,
+    dayOfWeek: form.dayOfWeek,
+    repeatDays: [...form.repeatDays].sort((a, b) => a - b),
+    repeatMode: form.repeatMode,
+    oneTimeDate: form.oneTimeDate,
+    oneTimeMonthRaw: form.oneTimeMonthRaw,
+    oneTimeDayRaw: form.oneTimeDayRaw,
+    oneTimeYearRaw: form.oneTimeYearRaw,
+    startHourRaw: form.startHourRaw,
+    startMinuteRaw: form.startMinuteRaw,
+    startPeriod: form.startPeriod,
+    endHourRaw: form.endHourRaw,
+    endMinuteRaw: form.endMinuteRaw,
+    endPeriod: form.endPeriod,
+    description: form.description,
+  });
+};
+
 const createEmptyEntriesByDay = (): Record<number, TemplateEvent[]> => ({
   0: [],
   1: [],
@@ -365,17 +464,22 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
   const [initialSignature, setInitialSignature] = useState<string>(buildScheduleSignature(createEmptyEntriesByDay()));
   const [showAdd, setShowAdd] = useState(false);
   const [editingEventId, setEditingEventId] = useState<string | null>(null);
+  const [editingSeriesId, setEditingSeriesId] = useState<string | null>(null);
   const [savingDone, setSavingDone] = useState(false);
   const [hasSavedSchedule, setHasSavedSchedule] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [selectedDay, setSelectedDay] = useState<number>(todayIndex);
   const [form, setForm] = useState<ManualFormState>(() => createDefaultFormState(todayIndex));
+  const [eventFormInitialSignature, setEventFormInitialSignature] = useState<string>('');
   const [hoveredSlot, setHoveredSlot] = useState<number | null>(null);
   const [importLoading, setImportLoading] = useState(false);
   const [importStatus, setImportStatus] = useState<string | null>(null);
   const [currentSourceLabel, setCurrentSourceLabel] = useState<string>('');
   const [showEditor, setShowEditor] = useState(!manageMode);
   const [selectedSource, setSelectedSource] = useState<'manual' | 'import'>('manual');
+  const [hasTouchedSourceSelection, setHasTouchedSourceSelection] = useState(false);
+  const [slotFeedback, setSlotFeedback] = useState<{ dayIndex: number; slotIndex: number } | null>(null);
+  const { width: winWidth } = useWindowDimensions();
 
   // Reset showEditor when the screen is re-focused with different params.
   // navigate() reuses existing screens, so the initial useState(!manageMode)
@@ -383,6 +487,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
   useFocusEffect(
     useCallback(() => {
       setShowEditor(!manageMode);
+      setHasTouchedSourceSelection(false);
     }, [manageMode])
   );
   const gridScrollRef = useRef<ScrollView>(null);
@@ -390,9 +495,28 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
   const oneTimeDayRef = useRef<TextInput>(null);
   const oneTimeYearRef = useRef<TextInput>(null);
   const appearAnim = useRef(new Animated.Value(0)).current;
+  const slotFeedbackScaleAnim = useRef(new Animated.Value(0.92)).current;
+  const slotFeedbackOpacityAnim = useRef(new Animated.Value(0)).current;
   const { scheduleSource, setScheduleSource, setUpcomingPlans, preferences, themeMode } = useAppStore();
 
-  // Hide scrollbar (web) and auto-scroll to 8:00 AM on mount
+  const scrollGridToNow = useCallback((animated = true) => {
+    const now = new Date();
+    const nowMinutes = now.getHours() * 60 + now.getMinutes();
+    const nowInGridMinutes = nowMinutes < GRID_START_MIN ? nowMinutes + 24 * 60 : nowMinutes;
+    const nowX = ((nowInGridMinutes - GRID_START_MIN) / SLOT_MINUTES) * SLOT_WIDTH;
+
+    const visibleTimeWidth = Math.max(160, winWidth - (GRID_PADDING * 2 + DAY_LABEL_WIDTH + 2));
+    const leadOffset = Math.max(24, Math.min(visibleTimeWidth * 0.35, 220));
+    const maxScrollX = Math.max(0, NUM_SLOTS * SLOT_WIDTH - visibleTimeWidth);
+    const targetX = Math.max(0, Math.min(maxScrollX, nowX - leadOffset));
+
+    gridScrollRef.current?.scrollTo({
+      x: targetX,
+      animated,
+    });
+  }, [winWidth]);
+
+  // Hide scrollbar (web) once on mount
   useEffect(() => {
     if (Platform.OS === 'web') {
       const doc = (globalThis as any).document;
@@ -409,18 +533,35 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
         }
       }
     }
-    const t = setTimeout(() => {
-      if (Platform.OS === 'web') {
-        const node = (gridScrollRef.current as any)?.getScrollableNode?.();
-        if (node) node.setAttribute('data-gapwalk-schedule-scroll', 'true');
-      }
-      gridScrollRef.current?.scrollTo({
-        y: SLOT_INDEX_8_AM * SLOT_HEIGHT,
-        animated: true,
-      });
-    }, 100);
-    return () => clearTimeout(t);
   }, []);
+
+  // Ensure the current-time red line is visible whenever the grid editor appears.
+  useEffect(() => {
+    if (manageMode && !showEditor) return;
+    const t = setTimeout(() => {
+      try {
+        if (Platform.OS === 'web') {
+          const node = (gridScrollRef.current as any)?.getScrollableNode?.();
+          if (node) node.setAttribute('data-gapwalk-schedule-scroll', 'true');
+        }
+        scrollGridToNow(true);
+      } catch (_) {
+        // Ignore scroll errors (e.g. ref not ready on web)
+      }
+    }, 120);
+    return () => clearTimeout(t);
+  }, [manageMode, scrollGridToNow, showEditor]);
+
+  // Re-position the grid to current time each time the screen gains focus.
+  useFocusEffect(
+    useCallback(() => {
+      if (manageMode && !showEditor) return () => {};
+      const t = setTimeout(() => {
+        scrollGridToNow(false);
+      }, 120);
+      return () => clearTimeout(t);
+    }, [manageMode, scrollGridToNow, showEditor])
+  );
 
   useEffect(() => {
     Animated.timing(appearAnim, {
@@ -487,11 +628,29 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
     if (!manageMode) return;
     const loadSource = async () => {
       const src = scheduleSource ?? (await scheduleSourceRepo.get());
-      if (!src) { setCurrentSourceLabel('Not set yet'); setSelectedSource('manual'); return; }
-      if (src.type === 'manual') { setCurrentSourceLabel('Manual schedule'); setSelectedSource('manual'); }
-      else if (src.type === 'ics') { setCurrentSourceLabel(src.filename ? `Calendar file: ${src.filename}` : 'Calendar file (.ics)'); setSelectedSource('import'); }
-      else if (src.type === 'google') { setCurrentSourceLabel('Google Calendar'); setSelectedSource('manual'); }
-      else { setCurrentSourceLabel('Not set yet'); setSelectedSource('manual'); }
+      if (!src) {
+        setCurrentSourceLabel('Not set yet');
+        setSelectedSource('manual');
+        setHasTouchedSourceSelection(false);
+        return;
+      }
+      if (src.type === 'manual') {
+        setCurrentSourceLabel('Manual schedule');
+        setSelectedSource('manual');
+      }
+      else if (src.type === 'ics') {
+        setCurrentSourceLabel(src.filename ? `Calendar file: ${src.filename}` : 'Calendar file (.ics)');
+        setSelectedSource('import');
+      }
+      else if (src.type === 'google') {
+        setCurrentSourceLabel('Google Calendar');
+        setSelectedSource('manual');
+      }
+      else {
+        setCurrentSourceLabel('Not set yet');
+        setSelectedSource('manual');
+      }
+      setHasTouchedSourceSelection(false);
     };
     void loadSource();
   }, [manageMode, scheduleSource]);
@@ -556,13 +715,31 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
     }
   };
 
-  /* ── Landing: proceed to editor ── */
-  const handleLandingProceed = () => {
+  /* ── Landing: continue to editor ── */
+  const handleLandingContinue = () => {
     setShowEditor(true);
   };
 
   const handleLandingCancel = () => {
-    navigation.navigate('Dashboard');
+    const leaveScreen = () => navigation.navigate('Dashboard');
+    if (!hasTouchedSourceSelection) {
+      leaveScreen();
+      return;
+    }
+
+    const title = 'Cancel schedule update?';
+    const message = 'Your unsaved source selection will be lost. Do you want to leave this screen?';
+    if (Platform.OS === 'web' && typeof (globalThis as any).confirm === 'function') {
+      if ((globalThis as any).confirm(`${title}\n\n${message}`)) {
+        leaveScreen();
+      }
+      return;
+    }
+
+    Alert.alert(title, message, [
+      { text: 'No', style: 'cancel' },
+      { text: 'Yes', style: 'destructive', onPress: leaveScreen },
+    ]);
   };
 
   const currentSignature = useMemo(() => buildScheduleSignature(entriesByDay), [entriesByDay]);
@@ -588,20 +765,21 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
       onDiscard();
       return;
     }
+    const title = 'Cancel schedule editing?';
     const message = hasPendingImportedSchedule
-      ? 'Discard this imported schedule before saving?'
-      : 'Discard unsaved schedule changes?';
+      ? 'Your imported schedule has not been saved yet. Do you want to leave without saving?'
+      : 'Your unsaved schedule changes will be lost. Do you want to leave this screen?';
     if (Platform.OS === 'web' && typeof (globalThis as any).confirm === 'function') {
-      const ok = (globalThis as any).confirm(message);
+      const ok = (globalThis as any).confirm(`${title}\n\n${message}`);
       if (ok) onDiscard();
       return;
     }
     Alert.alert(
-      'Discard changes?',
+      title,
       message,
       [
-        { text: 'Keep editing', style: 'cancel' },
-        { text: 'Discard', style: 'destructive', onPress: onDiscard },
+        { text: 'No', style: 'cancel' },
+        { text: 'Yes', style: 'destructive', onPress: onDiscard },
       ]
     );
   };
@@ -634,7 +812,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
   const endValue24 = to24Hour(form.endHourRaw, form.endMinuteRaw, form.endPeriod);
   const hasTitle = form.title.trim().length > 0;
   const hasValidTimes = !!startValue24 && !!endValue24;
-  const isRangeValid = hasValidTimes && startValue24 < endValue24;
+  const isRangeValid = hasValidTimes && startValue24 !== endValue24;
   const oneTimeDateResolution = resolveDateKeyFromParts(
     form.oneTimeMonthRaw,
     form.oneTimeDayRaw,
@@ -653,8 +831,10 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
   const timeError = !hasValidTimes
     ? 'Enter a valid start and end time.'
     : !isRangeValid
-      ? 'End time must be after start time.'
+      ? 'Start and end time cannot be the same.'
       : '';
+  const eventFormHasChanges = eventFormInitialSignature.length > 0 &&
+    buildFormSignature(form) !== eventFormInitialSignature;
 
   const getPreferredOneTimeDateForDay = useCallback((dayIndex: number): string => {
     return getNextDateForDayOfWeek(dayIndex);
@@ -719,6 +899,26 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
     []
   );
 
+  const animateSlotFeedback = useCallback((dayIndex: number, slotIndex: number) => {
+    setSlotFeedback({ dayIndex, slotIndex });
+    slotFeedbackScaleAnim.setValue(0.92);
+    slotFeedbackOpacityAnim.setValue(0.36);
+    Animated.parallel([
+      Animated.spring(slotFeedbackScaleAnim, {
+        toValue: 1,
+        tension: 120,
+        friction: 9,
+        useNativeDriver: true,
+      }),
+      Animated.timing(slotFeedbackOpacityAnim, {
+        toValue: 0,
+        duration: 260,
+        easing: Easing.out(Easing.quad),
+        useNativeDriver: true,
+      }),
+    ]).start(() => setSlotFeedback(null));
+  }, [slotFeedbackOpacityAnim, slotFeedbackScaleAnim]);
+
   const handleSlotClick = (dayIndex: number, slotIndex: number) => {
     openModalFromSlot(dayIndex, slotIndex);
   };
@@ -726,26 +926,27 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
   const openModalFromSlot = (dayIndex: number, slotIndex: number) => {
     const startMin = GRID_START_MIN + slotIndex * SLOT_MINUTES;
     const endMin = Math.min(startMin + SLOT_MINUTES, GRID_END_MIN);
-    const [sh, sm] = [Math.floor(startMin / 60) % 12 || 12, startMin % 60];
-    const [eh, em] = [Math.floor(endMin / 60) % 12 || 12, endMin % 60];
-    const startPeriod = startMin >= 12 * 60 ? 'PM' : 'AM';
-    const endPeriod = endMin >= 12 * 60 ? 'PM' : 'AM';
+    const startParts = to12HourParts(startMin);
+    const endParts = to12HourParts(endMin);
     const defaultOneTimeDate = getPreferredOneTimeDateForDay(dayIndex);
     const defaultParts = parseDateKeyParts(defaultOneTimeDate);
-    setEditingEventId(null);
-    setForm({
+    const nextForm: ManualFormState = {
       ...createDefaultFormState(dayIndex),
       oneTimeDate: defaultOneTimeDate,
       oneTimeMonthRaw: defaultParts.monthRaw,
       oneTimeDayRaw: defaultParts.dayRaw,
       oneTimeYearRaw: defaultParts.yearRaw,
-      startHourRaw: String(sh).padStart(2, '0'),
-      startMinuteRaw: String(sm).padStart(2, '0'),
-      startPeriod,
-      endHourRaw: String(eh).padStart(2, '0'),
-      endMinuteRaw: String(em).padStart(2, '0'),
-      endPeriod,
-    });
+      startHourRaw: startParts.hourRaw,
+      startMinuteRaw: startParts.minuteRaw,
+      startPeriod: startParts.period,
+      endHourRaw: endParts.hourRaw,
+      endMinuteRaw: endParts.minuteRaw,
+      endPeriod: endParts.period,
+    };
+    setEditingEventId(null);
+    setEditingSeriesId(null);
+    setForm(nextForm);
+    setEventFormInitialSignature(buildFormSignature(nextForm));
     setShowAdd(true);
   };
 
@@ -758,11 +959,21 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
     const oneTimeDate = event.oneTimeDate ?? getPreferredOneTimeDateForDay(dayIndex);
     const oneTimeParts = parseDateKeyParts(oneTimeDate);
     const oneTimeDay = getDayOfWeekFromDateKey(oneTimeDate);
-    setEditingEventId(event.id);
-    setForm({
+    const seriesId = repeatMode === 'weekly' ? resolveRecurringSeriesId(event.id) : null;
+    const seriesDays = repeatMode === 'weekly' && seriesId
+      ? [0, 1, 2, 3, 4, 5, 6].filter((candidateDay) =>
+        (entriesByDay[candidateDay] ?? []).some(
+          (candidateEvent) =>
+            !candidateEvent.isOneTime &&
+            resolveRecurringSeriesId(candidateEvent.id) === seriesId
+        )
+      )
+      : [];
+    const resolvedWeeklyDays = seriesDays.length > 0 ? seriesDays : [dayIndex];
+    const nextForm: ManualFormState = {
       title: event.title,
-      dayOfWeek: repeatMode === 'one_time' ? oneTimeDay : dayIndex,
-      repeatDays: repeatMode === 'one_time' ? [oneTimeDay] : [dayIndex],
+      dayOfWeek: repeatMode === 'one_time' ? oneTimeDay : resolvedWeeklyDays[0],
+      repeatDays: repeatMode === 'one_time' ? [oneTimeDay] : resolvedWeeklyDays,
       repeatMode,
       oneTimeDate,
       oneTimeMonthRaw: oneTimeParts.monthRaw,
@@ -775,9 +986,59 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
       endMinuteRaw: String(endMin % 60).padStart(2, '0'),
       endPeriod: endMin >= 12 * 60 ? 'PM' : 'AM',
       description: '',
-    });
+    };
+    setEditingEventId(event.id);
+    setEditingSeriesId(seriesId);
+    setForm(nextForm);
+    setEventFormInitialSignature(buildFormSignature(nextForm));
     setShowAdd(true);
   };
+
+  const closeEventModal = useCallback(() => {
+    setShowAdd(false);
+    setEditingEventId(null);
+    setEditingSeriesId(null);
+    setEventFormInitialSignature('');
+    setForm(createDefaultFormState(todayIndex));
+  }, [todayIndex]);
+
+  const showBinaryConfirm = useCallback(
+    (
+      title: string,
+      message: string,
+      confirmActionText: string,
+      onConfirm: () => void,
+      confirmStyle: 'default' | 'destructive' = 'default'
+    ) => {
+      if (Platform.OS === 'web' && typeof (globalThis as any).confirm === 'function') {
+        const ok = (globalThis as any).confirm(`${title}\n\n${message}`);
+        if (ok) onConfirm();
+        return;
+      }
+      Alert.alert(
+        title,
+        message,
+        [
+          { text: 'No', style: 'cancel' },
+          { text: confirmActionText, style: confirmStyle, onPress: onConfirm },
+        ]
+      );
+    },
+    []
+  );
+
+  const handleCancelEventModal = useCallback(() => {
+    const shouldWarn = !!editingEventId || eventFormHasChanges;
+    if (!shouldWarn) {
+      closeEventModal();
+      return;
+    }
+    const title = editingEventId ? 'Cancel event update?' : 'Discard event draft?';
+    const message = editingEventId
+      ? 'Canceling now will revert all changes to this event. Do you want to continue?'
+      : 'Canceling now will discard the information you entered. Do you want to continue?';
+    showBinaryConfirm(title, message, 'Yes', closeEventModal, 'destructive');
+  }, [closeEventModal, editingEventId, eventFormHasChanges, showBinaryConfirm]);
 
   const toggleRepeatDay = (dayIndex: number) => {
     setForm((prev) => {
@@ -827,8 +1088,9 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
       Alert.alert('Invalid Time', 'Enter valid start and end times.');
       return;
     }
-    if (start >= end) {
-      Alert.alert('Invalid Time', 'End time must be after start time.');
+    // Allow overnight (e.g. sleep 10pm–6am): end can be before start
+    if (start === end) {
+      Alert.alert('Invalid Time', 'Start and end time cannot be the same.');
       return;
     }
     if (form.repeatMode === 'one_time') {
@@ -847,125 +1109,213 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
       return;
     }
 
-    // Duplicate time-frame check: no two events on the same day with identical start & end
+    // Overlap check across day boundaries (supports overnight events spanning to the next day).
     const targetDays = form.repeatMode === 'one_time'
       ? [getDayOfWeekFromDateKey(resolvedOneTimeDate || getPreferredOneTimeDateForDay(form.dayOfWeek))]
       : (form.repeatDays.length > 0 ? form.repeatDays : [form.dayOfWeek]);
-    for (const d of targetDays) {
-      const existing = (entriesByDay[d] ?? []).filter((e) => e.id !== editingEventId);
-      const duplicate = existing.find((e) => e.startTime === start && e.endTime === end);
-      if (duplicate) {
-        const dayName = DAY_FULL_NAMES[d];
-        Alert.alert(
-          'Duplicate time',
-          `${dayName} already has an event ("${duplicate.title}") from ${formatTime12(start)} to ${formatTime12(end)}. Two events cannot share the exact same time frame.`,
+    const newOneTime = form.repeatMode === 'one_time';
+    const startMin = hhmmToMinutes(start);
+    const endMin = hhmmToMinutes(end);
+    const existingSegmentsByDay: Record<number, Array<{
+      startMinute: number;
+      endMinute: number;
+      event: TemplateEvent;
+    }>> = {
+      0: [],
+      1: [],
+      2: [],
+      3: [],
+      4: [],
+      5: [],
+      6: [],
+    };
+    for (const ownerDay of [0, 1, 2, 3, 4, 5, 6]) {
+      const existing = (entriesByDay[ownerDay] ?? []).filter((event) => {
+        if (editingEventId && event.id === editingEventId) return false;
+        if (editingSeriesId && !event.isOneTime && resolveRecurringSeriesId(event.id) === editingSeriesId) {
+          return false;
+        }
+        return true;
+      });
+      for (const event of existing) {
+        const segments = buildDayMinuteSegments(
+          ownerDay,
+          hhmmToMinutes(event.startTime),
+          hhmmToMinutes(event.endTime)
         );
-        return;
+        for (const segment of segments) {
+          existingSegmentsByDay[segment.dayIndex] = [
+            ...(existingSegmentsByDay[segment.dayIndex] ?? []),
+            {
+              startMinute: segment.startMinute,
+              endMinute: segment.endMinute,
+              event,
+            },
+          ];
+        }
+      }
+    }
+    for (const ownerDay of targetDays) {
+      const candidateSegments = buildDayMinuteSegments(ownerDay, startMin, endMin);
+      for (const candidate of candidateSegments) {
+        const existingSegments = existingSegmentsByDay[candidate.dayIndex] ?? [];
+        for (const existing of existingSegments) {
+          if (!timeRangesOverlap(candidate.startMinute, candidate.endMinute, existing.startMinute, existing.endMinute)) {
+            continue;
+          }
+          const existingOneTime = !!existing.event.isOneTime;
+          if (newOneTime && !existingOneTime) continue;
+          const dayName = DAY_FULL_NAMES[candidate.dayIndex];
+          Alert.alert(
+            'Time conflict',
+            `${dayName} already has an event ("${existing.event.title}") that overlaps this time. Only one-time events can replace a recurring event on a specific day; otherwise choose a different time.`,
+          );
+          return;
+        }
       }
     }
 
-    if (editingEventId) {
-      const id = editingEventId;
-      setEntriesByDay((prev) => {
-        const next = { ...prev };
+    const commitAddOrUpdate = () => {
+      const removeEditingTargets = (next: Record<number, TemplateEvent[]>) => {
+        if (!editingEventId && !editingSeriesId) return next;
+        const updated = { ...next };
         for (const d of [0, 1, 2, 3, 4, 5, 6]) {
-          next[d] = (next[d] ?? []).filter((e) => e.id !== id);
+          updated[d] = (updated[d] ?? []).filter((event) => {
+            if (editingSeriesId && !event.isOneTime && resolveRecurringSeriesId(event.id) === editingSeriesId) {
+              return false;
+            }
+            if (editingEventId && event.id === editingEventId) {
+              return false;
+            }
+            return true;
+          });
         }
-        if (form.repeatMode === 'one_time') {
-          const oneTimeDate = resolvedOneTimeDate || getPreferredOneTimeDateForDay(form.dayOfWeek);
-          const oneTimeDay = getDayOfWeekFromDateKey(oneTimeDate);
-          const event: TemplateEvent = {
-            id,
-            title,
-            startTime: start,
-            endTime: end,
-            isOneTime: true,
-            oneTimeDate,
-          };
-          next[oneTimeDay] = [...(next[oneTimeDay] ?? []), event];
+        return updated;
+      };
+
+      if (editingEventId) {
+        const id = editingEventId;
+        setEntriesByDay((prev) => {
+          const next = removeEditingTargets(prev);
+          if (form.repeatMode === 'one_time') {
+            const oneTimeDate = resolvedOneTimeDate || getPreferredOneTimeDateForDay(form.dayOfWeek);
+            const oneTimeDay = getDayOfWeekFromDateKey(oneTimeDate);
+            const event: TemplateEvent = {
+              id,
+              title,
+              startTime: start,
+              endTime: end,
+              isOneTime: true,
+              oneTimeDate,
+            };
+            next[oneTimeDay] = [...(next[oneTimeDay] ?? []), event];
+            return next;
+          }
+          const daysToUpdate = form.repeatDays.length > 0 ? form.repeatDays : [form.dayOfWeek];
+          const seriesId = editingSeriesId ?? createRecurringSeriesId();
+          for (let i = 0; i < daysToUpdate.length; i++) {
+            const d = daysToUpdate[i];
+            const eventId = buildRecurringEventId(seriesId, d);
+            const event: TemplateEvent = { id: eventId, title, startTime: start, endTime: end, isOneTime: false };
+            next[d] = [...(next[d] ?? []), event];
+          }
           return next;
-        }
-        const daysToUpdate = form.repeatDays.length > 0 ? form.repeatDays : [form.dayOfWeek];
-        for (let i = 0; i < daysToUpdate.length; i++) {
-          const d = daysToUpdate[i];
-          const eventId = i === 0 ? id : `${id}-dup-${i}`;
-          const event: TemplateEvent = { id: eventId, title, startTime: start, endTime: end, isOneTime: false };
-          next[d] = [...(next[d] ?? []), event];
-        }
-        return next;
-      });
-    } else {
-      setEntriesByDay((prev) => {
-        const next = { ...prev };
-        const baseId = `m-${Date.now()}`;
-        if (form.repeatMode === 'one_time') {
-          const oneTimeDate = resolvedOneTimeDate || getPreferredOneTimeDateForDay(form.dayOfWeek);
-          const oneTimeDay = getDayOfWeekFromDateKey(oneTimeDate);
-          const event: TemplateEvent = {
-            id: `${baseId}-0`,
-            title,
-            startTime: start,
-            endTime: end,
-            isOneTime: true,
-            oneTimeDate,
-          };
-          next[oneTimeDay] = [...(next[oneTimeDay] ?? []), event];
+        });
+      } else {
+        setEntriesByDay((prev) => {
+          const next = { ...prev };
+          const baseId = `m-${Date.now()}`;
+          if (form.repeatMode === 'one_time') {
+            const oneTimeDate = resolvedOneTimeDate || getPreferredOneTimeDateForDay(form.dayOfWeek);
+            const oneTimeDay = getDayOfWeekFromDateKey(oneTimeDate);
+            const event: TemplateEvent = {
+              id: `${baseId}-0`,
+              title,
+              startTime: start,
+              endTime: end,
+              isOneTime: true,
+              oneTimeDate,
+            };
+            next[oneTimeDay] = [...(next[oneTimeDay] ?? []), event];
+            return next;
+          }
+          const daysToAdd = form.repeatDays.length > 0 ? form.repeatDays : [form.dayOfWeek];
+          const seriesId = createRecurringSeriesId();
+          for (let i = 0; i < daysToAdd.length; i++) {
+            const d = daysToAdd[i];
+            const event: TemplateEvent = {
+              id: buildRecurringEventId(seriesId, d),
+              title,
+              startTime: start,
+              endTime: end,
+              isOneTime: false,
+            };
+            next[d] = [...(next[d] ?? []), event];
+          }
           return next;
-        }
-        const daysToAdd = form.repeatDays.length > 0 ? form.repeatDays : [form.dayOfWeek];
-        for (let i = 0; i < daysToAdd.length; i++) {
-          const d = daysToAdd[i];
-          const event: TemplateEvent = {
-            id: `${baseId}-${i}`,
-            title,
-            startTime: start,
-            endTime: end,
-            isOneTime: false,
-          };
-          next[d] = [...(next[d] ?? []), event];
-        }
-        return next;
-      });
-    }
-    if (form.repeatMode === 'one_time') {
-      const oneTimeDay = getDayOfWeekFromDateKey(resolvedOneTimeDate || getPreferredOneTimeDateForDay(form.dayOfWeek));
-      setSelectedDay(oneTimeDay);
-    }
-    setShowAdd(false);
-    setEditingEventId(null);
-    setForm(createDefaultFormState(todayIndex));
+        });
+      }
+      if (form.repeatMode === 'one_time') {
+        const oneTimeDay = getDayOfWeekFromDateKey(resolvedOneTimeDate || getPreferredOneTimeDateForDay(form.dayOfWeek));
+        setSelectedDay(oneTimeDay);
+      }
+      closeEventModal();
+    };
+
+    const confirmTitle = editingEventId ? 'Update this event?' : 'Save this event?';
+    const confirmMessage = editingEventId
+      ? 'This will update the existing event. Do you want to continue?'
+      : 'This will save the event to your weekly schedule. Do you want to continue?';
+    const confirmAction = editingEventId ? 'Yes, Update' : 'Yes, Save';
+    showBinaryConfirm(confirmTitle, confirmMessage, confirmAction, commitAddOrUpdate);
   };
 
-  const deleteEntryFromModal = (eventId?: string | null) => {
+  const deleteEntryFromModal = (eventId?: string | null, seriesId?: string | null) => {
     const idToDelete = eventId ?? editingEventId;
-    if (!idToDelete) return;
+    const seriesIdToDelete = seriesId ?? editingSeriesId;
+    if (!idToDelete && !seriesIdToDelete) return;
     setEntriesByDay((prev) => {
       const next = { ...prev };
       for (const d of [0, 1, 2, 3, 4, 5, 6]) {
-        next[d] = (next[d] ?? []).filter((e) => e.id !== idToDelete);
+        next[d] = (next[d] ?? []).filter((event) => {
+          if (seriesIdToDelete && !event.isOneTime && resolveRecurringSeriesId(event.id) === seriesIdToDelete) {
+            return false;
+          }
+          if (idToDelete && event.id === idToDelete) {
+            return false;
+          }
+          return true;
+        });
       }
       return next;
     });
-    setShowAdd(false);
-    setEditingEventId(null);
+    closeEventModal();
   };
 
   const confirmDelete = () => {
     const id = editingEventId;
+    const seriesId = editingSeriesId;
     if (!id) return;
+    const deletingSeries = !!seriesId;
+    const title = deletingSeries ? 'Delete recurring event?' : 'Delete event';
+    const message = deletingSeries ? 'Remove this event from all repeated days?' : 'Remove this event?';
     // Alert.alert button callbacks don't fire on web (react-native-web limitation)
     if (Platform.OS === 'web' && typeof (globalThis as any).confirm === 'function') {
-      if ((globalThis as any).confirm('Remove this event?')) {
-        deleteEntryFromModal(id);
+      if ((globalThis as any).confirm(message)) {
+        deleteEntryFromModal(id, deletingSeries ? seriesId : null);
       }
       return;
     }
     Alert.alert(
-      'Delete event',
-      'Remove this event?',
+      title,
+      message,
       [
         { text: 'Cancel', style: 'cancel' },
-        { text: 'Delete', style: 'destructive', onPress: () => deleteEntryFromModal(id) },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: () => deleteEntryFromModal(id, deletingSeries ? seriesId : null),
+        },
       ]
     );
   };
@@ -1026,11 +1376,16 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
       return dayEvents.map((e) => {
         const [sh, sm] = parseTime(e.startTime);
         const [eh, em] = parseTime(e.endTime);
+        const startAt = setMinutes(setHours(date, sh), sm);
+        let endAt = setMinutes(setHours(date, eh), em);
+        if (endAt <= startAt) {
+          endAt = addDays(endAt, 1);
+        }
         return {
           id: `me-${e.id}-${offset}`,
           title: e.title,
-          start: setMinutes(setHours(date, sh), sm).toISOString(),
-          end: setMinutes(setHours(date, eh), em).toISOString(),
+          start: startAt.toISOString(),
+          end: endAt.toISOString(),
           source: eventSource,
           isAllDay: false,
           createdAt: new Date().toISOString(),
@@ -1047,12 +1402,17 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
         if (normalizedDate < base || normalizedDate >= rangeEnd) return [];
         const [sh, sm] = parseTime(entry.startTime);
         const [eh, em] = parseTime(entry.endTime);
+        const startAt = setMinutes(setHours(normalizedDate, sh), sm);
+        let endAt = setMinutes(setHours(normalizedDate, eh), em);
+        if (endAt <= startAt) {
+          endAt = addDays(endAt, 1);
+        }
         return [
           {
             id: `me-${entry.id}-${entry.oneTimeDate}`,
             title: entry.title,
-            start: setMinutes(setHours(normalizedDate, sh), sm).toISOString(),
-            end: setMinutes(setHours(normalizedDate, eh), em).toISOString(),
+            start: startAt.toISOString(),
+            end: endAt.toISOString(),
             source: eventSource,
             isAllDay: false,
             createdAt: new Date().toISOString(),
@@ -1134,9 +1494,11 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
       return;
     }
 
-    const message = SAVE_CONFIRM_MESSAGE;
+    const confirmTitle = manageMode ? 'Update schedule?' : SAVE_CONFIRM_TITLE;
+    const confirmMessage = manageMode ? 'Do you want to update this schedule?' : SAVE_CONFIRM_MESSAGE;
+    const confirmAction = manageMode ? 'Yes, Update' : SAVE_CONFIRM_ACTION;
     if (Platform.OS === 'web' && typeof (globalThis as any).confirm === 'function') {
-      const ok = (globalThis as any).confirm(message);
+      const ok = (globalThis as any).confirm(`${confirmTitle}\n\n${confirmMessage}`);
       if (ok) {
         void performSave();
       }
@@ -1144,11 +1506,11 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
     }
 
     Alert.alert(
-      SAVE_CONFIRM_TITLE,
-      message,
+      confirmTitle,
+      confirmMessage,
       [
-        { text: 'Cancel', style: 'cancel' },
-        { text: SAVE_CONFIRM_ACTION, onPress: () => { void performSave(); } },
+        { text: SAVE_CONFIRM_DECLINE, style: 'cancel' },
+        { text: confirmAction, onPress: () => { void performSave(); } },
       ]
     );
   };
@@ -1175,6 +1537,147 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
     return out;
   }, [entriesByDay]);
 
+  const displaySlicesByDay = useMemo(() => {
+    const rawByDay: Record<number, GridDisplaySlice[]> = {
+      0: [],
+      1: [],
+      2: [],
+      3: [],
+      4: [],
+      5: [],
+      6: [],
+    };
+
+    for (let sourceDayIndex = 0; sourceDayIndex <= 6; sourceDayIndex++) {
+      const sourceEvents = entriesByDaySorted[sourceDayIndex] ?? [];
+      for (const event of sourceEvents) {
+        const startMinute = hhmmToMinutes(event.startTime);
+        const endMinute = hhmmToMinutes(event.endTime);
+        const startInRow = normalizeToRowMinutes(startMinute);
+        let endInRow = normalizeToRowMinutes(endMinute);
+        if (endInRow <= startInRow) {
+          endInRow += 24 * 60;
+        }
+
+        const sameDayStart = Math.max(GRID_START_MIN, startInRow);
+        const sameDayEnd = Math.min(GRID_END_MIN, endInRow);
+        if (sameDayEnd > sameDayStart) {
+          rawByDay[sourceDayIndex] = [
+            ...(rawByDay[sourceDayIndex] ?? []),
+            {
+              key: `${event.id}-${sourceDayIndex}-base-${sameDayStart}`,
+              event,
+              sourceDayIndex,
+              startMinuteInRow: sameDayStart,
+              endMinuteInRow: sameDayEnd,
+              isCarryOver: false,
+            },
+          ];
+        }
+
+        if (endInRow > GRID_END_MIN) {
+          const overflowMinutes = endInRow - GRID_END_MIN;
+          const carryEnd = Math.min(GRID_END_MIN, GRID_START_MIN + overflowMinutes);
+          if (carryEnd > GRID_START_MIN) {
+            const nextDayIndex = (sourceDayIndex + 1) % 7;
+            rawByDay[nextDayIndex] = [
+              ...(rawByDay[nextDayIndex] ?? []),
+              {
+                key: `${event.id}-${nextDayIndex}-carry-${carryEnd}`,
+                event,
+                sourceDayIndex,
+                startMinuteInRow: GRID_START_MIN,
+                endMinuteInRow: carryEnd,
+                isCarryOver: true,
+              },
+            ];
+          }
+        }
+      }
+    }
+
+    const out: Record<number, GridDisplaySlice[]> = {
+      0: [],
+      1: [],
+      2: [],
+      3: [],
+      4: [],
+      5: [],
+      6: [],
+    };
+    for (let dayIndex = 0; dayIndex <= 6; dayIndex++) {
+      const daySlices = rawByDay[dayIndex] ?? [];
+      const oneTimeSlices = daySlices.filter((slice) => !!slice.event.isOneTime);
+      const recurringSlices = daySlices.filter((slice) => !slice.event.isOneTime);
+      const recurringNotOverlappedByOneTime = recurringSlices.filter((slice) => {
+        return !oneTimeSlices.some((oneTimeSlice) =>
+          timeRangesOverlap(
+            slice.startMinuteInRow,
+            slice.endMinuteInRow,
+            oneTimeSlice.startMinuteInRow,
+            oneTimeSlice.endMinuteInRow
+          )
+        );
+      });
+      const combined = [...oneTimeSlices, ...recurringNotOverlappedByOneTime].sort((a, b) => {
+        if (a.startMinuteInRow !== b.startMinuteInRow) {
+          return a.startMinuteInRow - b.startMinuteInRow;
+        }
+        return a.endMinuteInRow - b.endMinuteInRow;
+      });
+      const nonOverlapping: GridDisplaySlice[] = [];
+      let lastEnd = -1;
+      for (const slice of combined) {
+        if (slice.startMinuteInRow >= lastEnd) {
+          nonOverlapping.push(slice);
+          lastEnd = slice.endMinuteInRow;
+        }
+      }
+      out[dayIndex] = nonOverlapping;
+    }
+    return out;
+  }, [entriesByDaySorted]);
+
+  const getSliceSlotBounds = useCallback((slice: GridDisplaySlice): {
+    startSlot: number;
+    endSlotExclusive: number;
+    left: number;
+    width: number;
+  } => {
+    const startSlotRaw = Math.floor((slice.startMinuteInRow - GRID_START_MIN) / SLOT_MINUTES);
+    const endSlotRaw = Math.ceil((slice.endMinuteInRow - GRID_START_MIN) / SLOT_MINUTES);
+    const startSlot = Math.max(0, Math.min(NUM_SLOTS - 1, startSlotRaw));
+    const endSlotExclusive = Math.max(startSlot + 1, Math.min(NUM_SLOTS, endSlotRaw));
+    const spanSlots = Math.max(1, endSlotExclusive - startSlot);
+
+    return {
+      startSlot,
+      endSlotExclusive,
+      left: startSlot * SLOT_WIDTH + 1,
+      width: Math.max(spanSlots * SLOT_WIDTH - 2, 44),
+    };
+  }, []);
+
+  const handleGridCellPress = useCallback((dayIndex: number, slotIndex: number, daySlices: GridDisplaySlice[]) => {
+    setSelectedDay(dayIndex);
+    animateSlotFeedback(dayIndex, slotIndex);
+
+    const eventAtSlot = daySlices.find((slice) => {
+      const bounds = getSliceSlotBounds(slice);
+      return slotIndex >= bounds.startSlot && slotIndex < bounds.endSlotExclusive;
+    });
+
+    const openEventEditor = () => {
+      if (eventAtSlot) {
+        openModalFromEvent(eventAtSlot.event, eventAtSlot.sourceDayIndex);
+        return;
+      }
+      handleSlotClick(dayIndex, slotIndex);
+    };
+
+    setTimeout(openEventEditor, 70);
+  }, [animateSlotFeedback, getSliceSlotBounds, handleSlotClick, openModalFromEvent]);
+
   const handleBack = () => {
     exitManualScreen();
   };
@@ -1194,68 +1697,37 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
   };
 
   /* ── Clear day ── */
-  const handleClearDay = () => {
-    const dayName = DAY_FULL_NAMES[selectedDay];
-    const count = (entriesByDay[selectedDay] ?? []).length;
+  const handleClearDay = (dayIndex?: number) => {
+    const d = dayIndex ?? selectedDay;
+    const dayName = DAY_FULL_NAMES[d];
+    const count = (entriesByDay[d] ?? []).length;
     if (count === 0) return;
     const title = `Clear ${dayName}?`;
-    const message = `This will remove all ${count} event${count > 1 ? 's' : ''} from ${dayName}.`;
+    const message = `Remove all ${count} event${count > 1 ? 's' : ''} from ${dayName}.`;
     if (Platform.OS === 'web' && typeof (globalThis as any).confirm === 'function') {
       if ((globalThis as any).confirm(`${title}\n\n${message}`)) {
-        setEntriesByDay((prev) => ({ ...prev, [selectedDay]: [] }));
+        setEntriesByDay((prev) => ({ ...prev, [d]: [] }));
       }
       return;
     }
     Alert.alert(title, message, [
       { text: 'Cancel', style: 'cancel' },
-      { text: 'Clear', style: 'destructive', onPress: () => setEntriesByDay((prev) => ({ ...prev, [selectedDay]: [] })) },
+      { text: 'Clear', style: 'destructive', onPress: () => setEntriesByDay((prev) => ({ ...prev, [d]: [] })) },
     ]);
   };
 
-  /* ── Copy day ── */
-  const [showCopyModal, setShowCopyModal] = useState(false);
-  const [copyTargets, setCopyTargets] = useState<number[]>([]);
-
-  const handleCopyDay = () => {
-    const count = (entriesByDay[selectedDay] ?? []).length;
-    if (count === 0) {
-      showMessage('Nothing to copy', `${DAY_FULL_NAMES[selectedDay]} has no events.`);
-      return;
-    }
-    setCopyTargets([]);
-    setShowCopyModal(true);
-  };
-
-  const confirmCopyDay = () => {
-    if (copyTargets.length === 0) return;
-    const sourceEvents = entriesByDay[selectedDay] ?? [];
-    setEntriesByDay((prev) => {
-      const next = { ...prev };
-      for (const target of copyTargets) {
-        const copied = sourceEvents.map((ev) => ({
-          ...ev,
-          id: `${ev.id}-cp-${target}-${Date.now()}`,
-          isOneTime: false as const,
-          oneTimeDate: undefined,
-        }));
-        next[target] = [...(next[target] ?? []), ...copied];
-      }
-      return next;
-    });
-    setShowCopyModal(false);
-    showMessage('Copied', `Copied ${sourceEvents.length} event${sourceEvents.length > 1 ? 's' : ''} to ${copyTargets.length} day${copyTargets.length > 1 ? 's' : ''}.`);
-  };
-
-  /* ── Current-time indicator ── */
+  /* ── Current-time indicator (vertical line in horizontal grid) ── */
   const now = new Date();
   const nowMinutes = now.getHours() * 60 + now.getMinutes();
   const todayDayIndex = now.getDay();
   const isSelectedDayToday = selectedDay === todayDayIndex;
-  const nowOffsetMin = nowMinutes >= GRID_START_MIN ? nowMinutes - GRID_START_MIN : nowMinutes + (24 * 60 - GRID_START_MIN);
-  const nowTop = (nowOffsetMin / SLOT_MINUTES) * SLOT_HEIGHT;
+  const nowInGridMinutes = nowMinutes < GRID_START_MIN ? nowMinutes + 24 * 60 : nowMinutes;
+  const nowOffsetMin = nowInGridMinutes - GRID_START_MIN;
+  const nowColumnFloat = nowOffsetMin / SLOT_MINUTES;
+  const nowLeft = nowColumnFloat * SLOT_WIDTH;
+  const fullWeekGridHeight = TIME_ROW_HEIGHT + 7 * DAY_ROW_HEIGHT;
 
-  const { width: winWidth, height: winHeight } = useWindowDimensions();
-  const gridBodyMaxHeight = Math.max(320, winHeight - 220);
+  const gridScrollWidth = NUM_SLOTS * SLOT_WIDTH;
   const selectedDayEvents = entriesByDaySorted[selectedDay] ?? [];
   const palette = getThemePalette(themeMode);
   const isDark = themeMode === 'dark';
@@ -1279,6 +1751,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
     inputRange: [0, 1],
     outputRange: [8, 0],
   });
+  const slotHintText = 'Tap any slot/cell to add an event or tap on an existing event to edit/delete it.';
 
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: palette.bgApp }]}>
@@ -1291,14 +1764,13 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
           },
         ]}
       >
-      <View style={styles.header}>
+      <View style={[styles.header, showEditor && styles.headerCompact]}>
         <ScreenHeader
           title={manageMode ? 'Manage your schedule' : 'Set up your schedule'}
-          subtitle={manageMode
-            ? (showEditor ? 'Edit your schedule and save when ready.' : 'Choose your schedule source, then proceed to edit.')
-            : 'Build your weekly schedule'}
-          onBack={manageMode ? (showEditor ? () => setShowEditor(false) : undefined) : handleBack}
+          subtitle={showEditor ? undefined : (manageMode ? 'Choose your schedule source, then select Next to edit.' : slotHintText)}
+          onBack={manageMode ? undefined : handleBack}
           backTestID="manual-back"
+          style={showEditor ? { marginBottom: 0, paddingBottom: 4 } : undefined}
         />
         {showEditor && usingIcsTemplate && (
           <View style={styles.icsBadge}>
@@ -1330,7 +1802,10 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
             </View>
             <View style={styles.landingRow}>
               <Pressable
-                onPress={() => setSelectedSource('manual')}
+                onPress={() => {
+                  setHasTouchedSourceSelection(true);
+                  setSelectedSource('manual');
+                }}
                 android_ripple={{ color: selectedSource === 'manual' ? 'rgba(0,0,0,0.12)' : 'rgba(255,255,255,0.14)' }}
                 style={({ pressed }) => [
                   styles.landingPill,
@@ -1352,7 +1827,10 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
                 </Text>
               </Pressable>
               <Pressable
-                onPress={() => setSelectedSource('import')}
+                onPress={() => {
+                  setHasTouchedSourceSelection(true);
+                  setSelectedSource('import');
+                }}
                 android_ripple={{ color: selectedSource === 'import' ? 'rgba(0,0,0,0.12)' : 'rgba(255,255,255,0.14)' }}
                 style={({ pressed }) => [
                   styles.landingPill,
@@ -1437,8 +1915,8 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
                 disabled={importLoading}
               />
               <Button
-                title="Proceed"
-                onPress={handleLandingProceed}
+                title="Next"
+                onPress={handleLandingContinue}
                 style={styles.footerBtn}
                 disabled={importLoading}
               />
@@ -1448,236 +1926,260 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
         </ScrollView>
       )}
 
-      {/* ── Grid editor (visible after proceeding from landing) ── */}
+      {/* ── Grid editor (visible after continuing from landing) ── */}
       {(showEditor || !manageMode) && (
-      <>
-      {/* Day tabs (Google Calendar style: select one day) */}
-      <View style={[styles.dayTabsWrap, { borderBottomColor: gridLineSoft }]}>
-        {DAY_TAB_LABELS.map((d, idx) => {
-          const active = idx === selectedDay;
-          const eventCount = (entriesByDay[idx] ?? []).length;
-          const isToday = idx === todayDayIndex;
-          return (
-            <TouchableOpacity
-              key={d}
-              style={[styles.dayTab, active && styles.dayTabActive]}
-              onPress={() => setSelectedDay(idx)}
-              activeOpacity={0.8}
-            >
-              <Text
-                variant="bodySmall"
-                style={StyleSheet.flatten([
-                  styles.dayTabText,
-                  active && styles.dayTabTextActive,
-                  active && { color: mintTextOnTint },
-                  isToday && !active && { color: palette.textPrimary },
-                ])}
-              >
-                {d}
-              </Text>
-              {eventCount > 0 && (
-                <View style={[styles.dayTabBadge, { backgroundColor: active ? palette.accentPrimary : (isDark ? 'rgba(255,255,255,0.15)' : 'rgba(15,23,42,0.12)') }]}>
-                  <Text style={[styles.dayTabBadgeText, { color: active ? '#06261d' : palette.textMuted }]}>{eventCount}</Text>
-                </View>
-              )}
-            </TouchableOpacity>
-          );
-        })}
-      </View>
-
-      {/* Quick actions toolbar */}
+      <ScrollView
+        style={styles.editorScroll}
+        contentContainerStyle={styles.editorScrollContent}
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+        nestedScrollEnabled
+      >
       <View style={[styles.gridToolbar, { borderBottomColor: gridLineSoft }]}>
-        <Text variant="bodySmall" style={{ color: palette.textPrimary, fontWeight: theme.fontWeight.semibold }}>
-          {DAY_FULL_NAMES[selectedDay]}
+        <Text variant="bodySmall" style={{ color: palette.textMuted, flex: 1 }}>
+          {slotHintText}
         </Text>
-        <View style={styles.gridToolbarActions}>
-          <Pressable
-            onPress={handleCopyDay}
-            style={({ pressed }) => [styles.gridToolbarBtn, { borderColor: palette.borderStrong }, pressed && { opacity: 0.6 }]}
-          >
-            <AppIcon name="sync" size={12} color={palette.textMuted} />
-            <Text variant="bodySmall" style={{ color: palette.textMuted, marginLeft: 4 }}>Copy</Text>
-          </Pressable>
-          <Pressable
-            onPress={handleClearDay}
-            disabled={(entriesByDay[selectedDay] ?? []).length === 0}
-            style={({ pressed }) => [styles.gridToolbarBtn, { borderColor: palette.borderStrong }, pressed && { opacity: 0.6 }, (entriesByDay[selectedDay] ?? []).length === 0 && { opacity: 0.35 }]}
-          >
-            <Text variant="bodySmall" style={{ color: palette.textMuted }}>Clear</Text>
-          </Pressable>
-        </View>
+        <Pressable
+          onPress={() => handleClearDay()}
+          disabled={(entriesByDay[selectedDay] ?? []).length === 0}
+          style={({ pressed }) => [
+            styles.gridToolbarBtn,
+            { borderColor: palette.borderStrong },
+            pressed && { opacity: 0.6 },
+            (entriesByDay[selectedDay] ?? []).length === 0 && { opacity: 0.35 },
+          ]}
+        >
+          <Text variant="bodySmall" style={{ color: palette.textMuted }}>Clear {DAY_TAB_LABELS[selectedDay]}</Text>
+        </Pressable>
       </View>
 
-      {/* Day view: scrollable time grid for selected day only */}
+      {/* Grid: fixed day labels + horizontally scrollable time slots */}
       <View style={[styles.gridContainer, { paddingHorizontal: GRID_PADDING }]}>
-        <View style={[styles.gridWrap, { backgroundColor: palette.bgSurface, borderColor: gridLineStrong, shadowColor: palette.shadow, shadowOpacity: isDark ? 0.25 : 0.12 }]}>
-          <ScrollView
-            ref={gridScrollRef}
-            style={[styles.gridBodyScroll, { maxHeight: gridBodyMaxHeight }]}
-            contentContainerStyle={{ height: GRID_BODY_HEIGHT }}
-            showsVerticalScrollIndicator={false}
-          >
-            <View style={styles.gridBodyRow}>
-              <View style={[styles.gridTimeCol, { backgroundColor: palette.bgSurface, borderRightColor: gridLineStrong }]}>
-                {SLOT_INDICES.map((idx) => (
-                  <View
-                    key={idx}
+        <View
+          style={[
+            styles.gridWrap,
+            {
+              backgroundColor: palette.bgSurface,
+              borderColor: gridLineStrong,
+              borderRadius: 12,
+              height: fullWeekGridHeight,
+            },
+          ]}
+        >
+          <View style={styles.gridShell}>
+            <View style={[styles.gridDayRail, { width: DAY_LABEL_WIDTH, borderRightColor: gridLineStrong }]}>
+              <View style={[styles.gridDayRailHeader, { height: TIME_ROW_HEIGHT, borderBottomColor: gridLineStrong }]} />
+              {[0, 1, 2, 3, 4, 5, 6].map((dayIndex) => {
+                const isToday = dayIndex === todayDayIndex;
+                return (
+                  <TouchableOpacity
+                    key={`label-${dayIndex}`}
                     style={[
-                      styles.gridTimeSlot,
-                      idx % 2 === 1 && styles.gridTimeSlotHalf,
-                      idx % 2 === 0 && [styles.gridHourLine, { borderTopColor: gridLineStrong }],
+                      styles.dayLabelCell,
+                      {
+                        height: DAY_ROW_HEIGHT,
+                        borderBottomColor: gridLineSoft,
+                        backgroundColor: dayIndex % 2 === 1 ? gridAltBg : palette.bgSurface,
+                      },
+                      selectedDay === dayIndex && { backgroundColor: isDark ? 'rgba(46,233,166,0.16)' : 'rgba(46,233,166,0.14)' },
                     ]}
+                    onPress={() => setSelectedDay(dayIndex)}
+                    onLongPress={() => handleClearDay(dayIndex)}
+                    activeOpacity={0.82}
                   >
-                    {idx % 2 === 0 ? (
-                      <Text variant="bodySmall" color={palette.textMuted} style={styles.gridTimeLabel}>
-                        {FULL_HOUR_LABELS[idx / 2]}
+                    <Text
+                      variant="bodySmall"
+                      style={[
+                        styles.dayLabelText,
+                        { color: selectedDay === dayIndex ? palette.accentPrimary : palette.textPrimary },
+                        isToday && { fontWeight: '700' as any },
+                      ]}
+                    >
+                      {DAY_TAB_LABELS[dayIndex]}
+                    </Text>
+                    {(entriesByDay[dayIndex] ?? []).length > 0 && (
+                      <Text variant="bodySmall" style={{ color: palette.textMuted, fontSize: 10, marginTop: 2 }}>
+                        {(entriesByDay[dayIndex] ?? []).length}
                       </Text>
-                    ) : (
-                      <View style={[styles.gridTimeHalfLine, { borderTopColor: gridLineSoft }]} />
                     )}
-                  </View>
-                ))}
-                {/* NOW label in time column */}
-                {isSelectedDayToday && (
-                  <View style={[styles.nowTimeLabel, { top: nowTop - 8 }]} pointerEvents="none">
-                    <Text style={styles.nowTimeLabelText}>NOW</Text>
-                  </View>
-                )}
-              </View>
-              <View style={styles.gridDayColSingle}>
-                {SLOT_INDICES.map((slotIndex) => {
-                  const isHovered = hoveredSlot === slotIndex;
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+
+            <ScrollView
+              ref={gridScrollRef}
+              horizontal
+              showsHorizontalScrollIndicator
+              contentContainerStyle={{ width: gridScrollWidth }}
+              style={styles.gridTimeScroll}
+            >
+              <View style={{ width: gridScrollWidth }}>
+                <View style={[styles.timeRow, { height: TIME_ROW_HEIGHT, borderBottomColor: gridLineStrong }]}>
+                  {SLOT_INDICES.map((slotIndex) => (
+                    <View
+                      key={`time-${slotIndex}`}
+                      style={[
+                        styles.hSlotCell,
+                        {
+                          width: SLOT_WIDTH,
+                          borderRightWidth: slotIndex % 2 === 0 ? 1 : StyleSheet.hairlineWidth,
+                          borderRightColor: slotIndex % 2 === 0 ? gridLineStrong : gridLineSoft,
+                        },
+                      ]}
+                    >
+                      {slotIndex % 2 === 0 ? (
+                        <Text variant="bodySmall" color={palette.textMuted} style={styles.hTimeLabel} numberOfLines={1}>
+                          {FULL_HOUR_LABELS[slotIndex / 2]}
+                        </Text>
+                      ) : null}
+                    </View>
+                  ))}
+                </View>
+
+                {[0, 1, 2, 3, 4, 5, 6].map((dayIndex) => {
+                  const daySlices = displaySlicesByDay[dayIndex] ?? [];
                   return (
                     <View
-                      key={slotIndex}
+                      key={`row-${dayIndex}`}
                       style={[
-                        styles.gridSlot, { borderBottomColor: gridLineSoft },
-                        slotIndex % 2 === 1 && [styles.gridSlotAlt, { backgroundColor: gridAltBg }],
-                        slotIndex % 2 === 0 && [styles.gridSlotHourBorder, { borderBottomColor: gridLineStrong }],
-                        isHovered && styles.gridSlotHover,
+                        styles.gridTimeRow,
+                        {
+                          height: DAY_ROW_HEIGHT,
+                          borderBottomColor: gridLineSoft,
+                          backgroundColor: dayIndex % 2 === 1 ? gridAltBg : undefined,
+                        },
                       ]}
-                      {...(Platform.OS === 'web' && {
-                        onMouseEnter: () => setHoveredSlot(slotIndex),
-                        onMouseLeave: () => setHoveredSlot(null),
-                      } as any)}
                     >
-                      <TouchableOpacity
-                        style={StyleSheet.absoluteFill}
-                        onPress={() => handleSlotClick(selectedDay, slotIndex)}
-                        activeOpacity={0.7}
-                      />
+                      <View style={StyleSheet.absoluteFill} pointerEvents="none">
+                        <View style={styles.gridCellRow}>
+                          {SLOT_INDICES.map((slotIndex) => (
+                            <View
+                              key={`cell-bg-${dayIndex}-${slotIndex}`}
+                              style={[
+                                styles.gridCell,
+                                {
+                                  width: SLOT_WIDTH,
+                                  borderRightWidth: slotIndex % 2 === 0 ? 1 : StyleSheet.hairlineWidth,
+                                  borderRightColor: slotIndex % 2 === 0 ? gridLineStrong : gridLineSoft,
+                                  backgroundColor: slotIndex % 2 === 0
+                                    ? (isDark ? 'rgba(255,255,255,0.025)' : 'rgba(15,23,42,0.03)')
+                                    : (isDark ? 'rgba(255,255,255,0.008)' : 'rgba(15,23,42,0.012)'),
+                                },
+                              ]}
+                            />
+                          ))}
+                        </View>
+                      </View>
+
+                      <View style={styles.gridCellRow}>
+                        {SLOT_INDICES.map((slotIndex) => (
+                          <Pressable
+                            key={`cell-touch-${dayIndex}-${slotIndex}`}
+                            onPress={() => handleGridCellPress(dayIndex, slotIndex, daySlices)}
+                            style={({ pressed }) => [
+                              styles.gridCellPressable,
+                              {
+                                width: SLOT_WIDTH,
+                                borderRightWidth: slotIndex % 2 === 0 ? 1 : StyleSheet.hairlineWidth,
+                                borderRightColor: slotIndex % 2 === 0 ? gridLineStrong : gridLineSoft,
+                                backgroundColor: pressed
+                                  ? (isDark ? 'rgba(46,233,166,0.24)' : 'rgba(46,233,166,0.2)')
+                                  : 'transparent',
+                              },
+                            ]}
+                          />
+                        ))}
+                      </View>
+
+                      <View style={StyleSheet.absoluteFill} pointerEvents="none">
+                        {daySlices.map((slice) => {
+                          const bounds = getSliceSlotBounds(slice);
+                          const durationMinutes = Math.max(1, slice.endMinuteInRow - slice.startMinuteInRow);
+                          const isCompact = bounds.width < SLOT_WIDTH * 1.6;
+                          const timeStr = slice.isCarryOver
+                            ? `Continues, ends ${formatTime12(slice.event.endTime)}`
+                            : isCompact
+                              ? `${slice.event.startTime}\n${slice.event.endTime}`
+                              : `${formatTime12(slice.event.startTime)} - ${formatTime12(slice.event.endTime)}`;
+                          return (
+                            <View
+                              key={slice.key}
+                              style={[
+                                styles.gridEventBlockH,
+                                isCompact && styles.gridEventBlockHCompact,
+                                {
+                                  left: bounds.left,
+                                  width: bounds.width,
+                                  top: 4,
+                                  height: DAY_ROW_HEIGHT - 8,
+                                  borderColor: eventBorderColor,
+                                },
+                              ]}
+                            >
+                              <Text
+                                variant="bodySmall"
+                                style={[styles.gridEventTitleH, isCompact && styles.gridEventTitleHCompact]}
+                                numberOfLines={isCompact ? 1 : 2}
+                              >
+                                {slice.event.title}
+                              </Text>
+                              <Text
+                                variant="bodySmall"
+                                style={[styles.gridEventTimeH, isCompact && styles.gridEventTimeHCompact]}
+                                numberOfLines={isCompact ? 2 : 1}
+                              >
+                                {timeStr}
+                              </Text>
+                              {!isCompact && (
+                                <Text variant="bodySmall" style={styles.gridEventDurationH} numberOfLines={1}>
+                                  {durationMinutes} min
+                                </Text>
+                              )}
+                            </View>
+                          );
+                        })}
+                      </View>
                     </View>
                   );
                 })}
-                <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
-                  {(() => {
-                    // Compute overlap columns (Google Calendar algorithm)
-                    type LayoutEvent = { ev: typeof selectedDayEvents[0]; startMin: number; endMin: number; col: number; totalCols: number };
-                    const items: LayoutEvent[] = selectedDayEvents.map((ev) => {
-                      const s = hhmmToMinutes(ev.startTime);
-                      let e = hhmmToMinutes(ev.endTime);
-                      if (e <= s) e += 24 * 60;
-                      return { ev, startMin: s, endMin: e, col: 0, totalCols: 1 };
-                    });
-                    // Sort by start, then by longer duration first
-                    items.sort((a, b) => a.startMin - b.startMin || (b.endMin - b.startMin) - (a.endMin - a.startMin));
-                    // Group overlapping events into clusters
-                    const clusters: LayoutEvent[][] = [];
-                    for (const item of items) {
-                      let placed = false;
-                      for (const cluster of clusters) {
-                        const clusterEnd = Math.max(...cluster.map((c) => c.endMin));
-                        if (item.startMin < clusterEnd) {
-                          // Find first available column
-                          const usedCols = new Set(cluster.map((c) => c.col));
-                          let col = 0;
-                          while (usedCols.has(col)) col++;
-                          item.col = col;
-                          cluster.push(item);
-                          placed = true;
-                          break;
-                        }
-                      }
-                      if (!placed) {
-                        item.col = 0;
-                        clusters.push([item]);
-                      }
-                    }
-                    // Set totalCols for each cluster
-                    for (const cluster of clusters) {
-                      const maxCol = Math.max(...cluster.map((c) => c.col)) + 1;
-                      for (const c of cluster) c.totalCols = maxCol;
-                    }
 
-                    return items.map(({ ev, startMin, endMin, col, totalCols }) => {
-                    const top = Math.max(0, (startMin - GRID_START_MIN) / SLOT_MINUTES * SLOT_HEIGHT);
-                    const spanMin = Math.min(endMin - startMin, GRID_END_MIN - startMin);
-                    const height = Math.max(SLOT_HEIGHT / 2, (spanMin / SLOT_MINUTES) * SLOT_HEIGHT);
-                    const maxHeight = GRID_BODY_HEIGHT - top;
-                    const finalHeight = Math.min(height, maxHeight);
-                    const titleFontSize = Math.round(Math.min(16, Math.max(11, finalHeight * 0.20)));
-                    const timeFontSize = Math.round(titleFontSize * 0.82);
-                    const paddingV = Math.min(10, Math.max(4, Math.floor(finalHeight * 0.08)));
-                    const showMeta = finalHeight >= 46 && totalCols <= 2;
-                    const rangeLabel = `${formatTime12(ev.startTime)} - ${formatTime12(ev.endTime)}`;
-                    let subLabel = rangeLabel;
-                    if (ev.isOneTime && ev.oneTimeDate) {
-                      const dt = new Date(`${ev.oneTimeDate}T00:00:00`);
-                      if (!Number.isNaN(dt.getTime())) {
-                        subLabel = `One-time • ${format(dt, 'EEE, MMM d')} • ${rangeLabel}`;
-                      } else {
-                        subLabel = `One-time event • ${rangeLabel}`;
-                      }
-                    }
-                    // Overlap layout: divide width by totalCols, offset by col
-                    const colWidthPct = `${100 / totalCols}%` as const;
-                    const leftPct = `${(col / totalCols) * 100}%` as const;
-                    const overlapStyle = totalCols > 1
-                      ? { left: leftPct, width: colWidthPct, right: undefined as any, paddingHorizontal: 6 }
-                      : {};
-                    return (
-                      <TouchableOpacity
-                        key={ev.id}
-                        style={[styles.gridEventBlock, { top, height: finalHeight, paddingVertical: paddingV, borderColor: eventBorderColor }, overlapStyle]}
-                        onPress={() => openModalFromEvent(ev, selectedDay)}
-                        activeOpacity={0.9}
-                      >
-                        <View style={styles.gridEventTopRow}>
-                          <Text
-                            numberOfLines={totalCols > 1 ? 2 : 1}
-                            style={StyleSheet.flatten([
-                              styles.gridEventTitle,
-                              { fontSize: totalCols > 2 ? Math.max(10, titleFontSize - 2) : titleFontSize, marginRight: ev.isOneTime ? 6 : 0 },
-                            ])}
-                          >
-                            {ev.title}
-                          </Text>
-                          {ev.isOneTime && totalCols <= 2 ? (
-                            <View style={styles.gridEventBadge}>
-                              <Text variant="bodySmall" style={styles.gridEventBadgeText}>One-time event</Text>
-                            </View>
-                          ) : null}
-                        </View>
-                        {showMeta ? (
-                          <Text numberOfLines={1} style={StyleSheet.flatten([styles.gridEventTime, { fontSize: timeFontSize }])}>
-                            {subLabel}
-                          </Text>
-                        ) : null}
-                      </TouchableOpacity>
-                    );
-                  });
-                  })()}
-                </View>
-                {/* Current-time indicator (red line) */}
-                {isSelectedDayToday && (
-                  <View style={[styles.nowLine, { top: nowTop }]} pointerEvents="none">
+                {slotFeedback && (
+                  <Animated.View
+                    pointerEvents="none"
+                    style={[
+                      styles.slotFeedbackPulse,
+                      {
+                        left: slotFeedback.slotIndex * SLOT_WIDTH + 1,
+                        top: TIME_ROW_HEIGHT + slotFeedback.dayIndex * DAY_ROW_HEIGHT + 1,
+                        width: SLOT_WIDTH - 2,
+                        height: DAY_ROW_HEIGHT - 2,
+                        opacity: slotFeedbackOpacityAnim,
+                        transform: [{ scale: slotFeedbackScaleAnim }],
+                      },
+                    ]}
+                  />
+                )}
+
+                {todayDayIndex >= 0 && nowColumnFloat >= 0 && nowColumnFloat < NUM_SLOTS && (
+                  <View
+                    style={[
+                      styles.nowLineVertical,
+                      {
+                        left: nowLeft,
+                        top: TIME_ROW_HEIGHT,
+                        height: 7 * DAY_ROW_HEIGHT,
+                      },
+                    ]}
+                    pointerEvents="none"
+                  >
                     <View style={styles.nowDot} />
-                    <View style={styles.nowLineBar} />
+                    <View style={styles.nowLineBarVertical} />
                   </View>
                 )}
               </View>
-            </View>
-          </ScrollView>
+            </ScrollView>
+          </View>
         </View>
       </View>
 
@@ -1704,7 +2206,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
               testID="manual-cancel"
             />
             <Button
-              title="Save"
+              title="Update"
               onPress={handleDone}
               style={styles.footerBtn}
               loading={savingDone}
@@ -1739,70 +2241,74 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
         )}
         <Text variant="muted" style={styles.privacy}>Your schedule stays private. Privacy is our top priority.</Text>
       </View>
-      </>
+      </ScrollView>
       )}
       </Animated.View>
 
       <Modal
         visible={showAdd}
-        onClose={() => { setShowAdd(false); setEditingEventId(null); }}
+        onClose={handleCancelEventModal}
         title={editingEventId ? 'Edit Event' : 'Add Event'}
       >
         <View style={styles.mForm}>
-          <Text variant="muted">Title</Text>
-          <TextInput
-            style={[styles.input, themedInput]}
-            value={form.title}
-            onChangeText={(t) => setForm((prev) => ({ ...prev, title: t }))}
-            placeholder="e.g. Work, Class"
-            placeholderTextColor={palette.textMuted}
-          />
+          <View style={styles.modalSection}>
+            <Text variant="bodySmall" style={styles.modalLabel}>Title</Text>
+            <TextInput
+              style={[styles.input, themedInput]}
+              value={form.title}
+              onChangeText={(t) => setForm((prev) => ({ ...prev, title: t }))}
+              placeholder="e.g. Work, Class"
+              placeholderTextColor={palette.textMuted}
+            />
+          </View>
 
-          <Text variant="muted">Frequency</Text>
-          <View style={styles.freqModeRow}>
-            <TouchableOpacity
-              style={[
-                styles.freqModeChip,
-                themedChip,
-                form.repeatMode === 'weekly' && styles.freqModeChipActive,
-              ]}
-              onPress={() => setRepeatMode('weekly')}
-            >
-              <Text
-                variant="bodySmall"
-                style={StyleSheet.flatten([
-                  styles.freqModeText,
-                  form.repeatMode === 'weekly' && styles.freqModeTextActive,
-                  form.repeatMode === 'weekly' && { color: mintTextOnTint },
-                ])}
+          <View style={styles.modalSection}>
+            <Text variant="bodySmall" style={styles.modalLabel}>Frequency</Text>
+            <View style={styles.freqModeRow}>
+              <TouchableOpacity
+                style={[
+                  styles.freqModeChip,
+                  themedChip,
+                  form.repeatMode === 'weekly' && styles.freqModeChipActive,
+                ]}
+                onPress={() => setRepeatMode('weekly')}
               >
-                Repeats weekly
-              </Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[
-                styles.freqModeChip,
-                themedChip,
-                form.repeatMode === 'one_time' && styles.freqModeChipActive,
-              ]}
-              onPress={() => setRepeatMode('one_time')}
-            >
-              <Text
-                variant="bodySmall"
-                style={StyleSheet.flatten([
-                  styles.freqModeText,
-                  form.repeatMode === 'one_time' && styles.freqModeTextActive,
-                  form.repeatMode === 'one_time' && { color: mintTextOnTint },
-                ])}
+                <Text
+                  variant="bodySmall"
+                  style={StyleSheet.flatten([
+                    styles.freqModeText,
+                    form.repeatMode === 'weekly' && styles.freqModeTextActive,
+                    form.repeatMode === 'weekly' && { color: mintTextOnTint },
+                  ])}
+                >
+                  Repeats weekly
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[
+                  styles.freqModeChip,
+                  themedChip,
+                  form.repeatMode === 'one_time' && styles.freqModeChipActive,
+                ]}
+                onPress={() => setRepeatMode('one_time')}
               >
-                One-time event
-              </Text>
-            </TouchableOpacity>
+                <Text
+                  variant="bodySmall"
+                  style={StyleSheet.flatten([
+                    styles.freqModeText,
+                    form.repeatMode === 'one_time' && styles.freqModeTextActive,
+                    form.repeatMode === 'one_time' && { color: mintTextOnTint },
+                  ])}
+                >
+                  One-time event
+                </Text>
+              </TouchableOpacity>
+            </View>
           </View>
 
           {form.repeatMode === 'weekly' ? (
-            <>
-              <Text variant="muted">Days (select one or more)</Text>
+            <View style={styles.modalSection}>
+              <Text variant="bodySmall" style={styles.modalLabel}>Days (select one or more)</Text>
               <View style={styles.repeatDaysRow}>
                 {DAY_TAB_LABELS.map((d, idx) => (
                   <TouchableOpacity
@@ -1812,6 +2318,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
                   >
                     <Text
                       variant="bodySmall"
+                      numberOfLines={1}
                       style={StyleSheet.flatten([
                         styles.repeatDayChipText,
                         form.repeatDays.includes(idx) && styles.repeatDayChipTextActive,
@@ -1828,10 +2335,10 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
                   ? 'Tap days to add or remove this event. At least one day must be selected.'
                   : 'This event repeats every week on the selected days.'}
               </Text>
-            </>
+            </View>
           ) : (
-            <>
-              <Text variant="muted">Event date</Text>
+            <View style={styles.modalSection}>
+              <Text variant="bodySmall" style={styles.modalLabel}>Event date</Text>
               <View style={styles.dateInputRow}>
                 <TextInput
                   ref={oneTimeMonthRef}
@@ -1879,117 +2386,135 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
               <Text variant="muted" style={styles.repeatHint}>
                 This event is used once on the selected date only.
               </Text>
-            </>
+            </View>
           )}
 
-          <Text variant="muted">Description (optional)</Text>
-          <TextInput
-            style={[styles.input, styles.inputMultiline, themedInput]}
-            value={form.description}
-            onChangeText={(t) => setForm((prev) => ({ ...prev, description: t }))}
-            placeholder="Add a description"
-            placeholderTextColor={palette.textMuted}
-            multiline
-            numberOfLines={2}
-          />
-
-          <View style={styles.timeR}>
-            <View style={styles.timeC}>
-              <Text variant="muted">Start</Text>
-              <View style={styles.timeInputRow}>
-                <View style={styles.clockRow}>
-                  <TwoDigitTimeInput
-                    mode="hour"
-                    style={[styles.input, styles.timeInput, themedInput]}
-                    value={form.startHourRaw}
-                    onChange={(value) => setForm((prev) => ({ ...prev, startHourRaw: value }))}
-                    onBlurNormalize={() =>
-                      setForm((prev) => ({
-                        ...prev,
-                        startHourRaw: normalizeOnBlur('hour', prev.startHourRaw),
-                      }))
-                    }
-                    placeholder="HH"
-                  />
-                  <Text variant="body">:</Text>
-                  <TwoDigitTimeInput
-                    mode="minute"
-                    style={[styles.input, styles.timeInput, themedInput]}
-                    value={form.startMinuteRaw}
-                    onChange={(value) => setForm((prev) => ({ ...prev, startMinuteRaw: value }))}
-                    onBlurNormalize={() =>
-                      setForm((prev) => ({
-                        ...prev,
-                        startMinuteRaw: normalizeOnBlur('minute', prev.startMinuteRaw),
-                      }))
-                    }
-                    placeholder="MM"
-                  />
-                </View>
-                <View style={styles.periodRow}>
-                  {(['AM', 'PM'] as const).map((p) => (
-                    <TouchableOpacity
-                      key={`start-${p}`}
-                      style={[styles.periodBtn, themedChip, form.startPeriod === p && styles.periodBtnActive]}
-                      onPress={() => setForm((prev) => ({ ...prev, startPeriod: p }))}
-                    >
-                      <Text variant="bodySmall" color={form.startPeriod === p ? theme.colors.bgApp : theme.colors.textPrimary}>{p}</Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-              </View>
-            </View>
-
-            <View style={styles.timeC}>
-              <Text variant="muted">End</Text>
-              <View style={styles.timeInputRow}>
-                <View style={styles.clockRow}>
-                  <TwoDigitTimeInput
-                    mode="hour"
-                    style={[styles.input, styles.timeInput, themedInput]}
-                    value={form.endHourRaw}
-                    onChange={(value) => setForm((prev) => ({ ...prev, endHourRaw: value }))}
-                    onBlurNormalize={() =>
-                      setForm((prev) => ({
-                        ...prev,
-                        endHourRaw: normalizeOnBlur('hour', prev.endHourRaw),
-                      }))
-                    }
-                    placeholder="HH"
-                  />
-                  <Text variant="body">:</Text>
-                  <TwoDigitTimeInput
-                    mode="minute"
-                    style={[styles.input, styles.timeInput, themedInput]}
-                    value={form.endMinuteRaw}
-                    onChange={(value) => setForm((prev) => ({ ...prev, endMinuteRaw: value }))}
-                    onBlurNormalize={() =>
-                      setForm((prev) => ({
-                        ...prev,
-                        endMinuteRaw: normalizeOnBlur('minute', prev.endMinuteRaw),
-                      }))
-                    }
-                    placeholder="MM"
-                  />
-                </View>
-                <View style={styles.periodRow}>
-                  {(['AM', 'PM'] as const).map((p) => (
-                    <TouchableOpacity
-                      key={`end-${p}`}
-                      style={[styles.periodBtn, themedChip, form.endPeriod === p && styles.periodBtnActive]}
-                      onPress={() => setForm((prev) => ({ ...prev, endPeriod: p }))}
-                    >
-                      <Text variant="bodySmall" color={form.endPeriod === p ? theme.colors.bgApp : theme.colors.textPrimary}>{p}</Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-              </View>
-            </View>
+          <View style={styles.modalSection}>
+            <Text variant="bodySmall" style={styles.modalLabel}>Description (optional)</Text>
+            <TextInput
+              style={[styles.input, styles.inputMultiline, themedInput]}
+              value={form.description}
+              onChangeText={(t) => setForm((prev) => ({ ...prev, description: t }))}
+              placeholder="Add a description"
+              placeholderTextColor={palette.textMuted}
+              multiline
+              numberOfLines={2}
+            />
           </View>
-          {!!timeError && <Text variant="muted" style={styles.timeError}>{timeError}</Text>}
 
-          <View style={styles.saveButtonWrap}>
-            <Button title="Save" onPress={addOrUpdateEntry} disabled={!canAdd} />
+          <View style={styles.modalSection}>
+            <View style={styles.timeR}>
+              <View style={styles.timeC}>
+                <Text variant="bodySmall" style={styles.modalLabel}>Start</Text>
+                <View style={styles.timeInputRow}>
+                  <View style={styles.clockRow}>
+                    <TwoDigitTimeInput
+                      mode="hour"
+                      style={[styles.input, styles.timeInput, themedInput]}
+                      value={form.startHourRaw}
+                      onChange={(value) => setForm((prev) => ({ ...prev, startHourRaw: value }))}
+                      onBlurNormalize={() =>
+                        setForm((prev) => ({
+                          ...prev,
+                          startHourRaw: normalizeOnBlur('hour', prev.startHourRaw),
+                        }))
+                      }
+                      placeholder="HH"
+                    />
+                    <Text variant="body" style={styles.clockSeparator}>:</Text>
+                    <TwoDigitTimeInput
+                      mode="minute"
+                      style={[styles.input, styles.timeInput, themedInput]}
+                      value={form.startMinuteRaw}
+                      onChange={(value) => setForm((prev) => ({ ...prev, startMinuteRaw: value }))}
+                      onBlurNormalize={() =>
+                        setForm((prev) => ({
+                          ...prev,
+                          startMinuteRaw: normalizeOnBlur('minute', prev.startMinuteRaw),
+                        }))
+                      }
+                      placeholder="MM"
+                    />
+                  </View>
+                  <View style={styles.periodRow}>
+                    {(['AM', 'PM'] as const).map((p) => (
+                      <TouchableOpacity
+                        key={`start-${p}`}
+                        style={[styles.periodBtn, themedChip, form.startPeriod === p && styles.periodBtnActive]}
+                        onPress={() => setForm((prev) => ({ ...prev, startPeriod: p }))}
+                      >
+                        <Text variant="bodySmall" color={form.startPeriod === p ? theme.colors.bgApp : theme.colors.textPrimary}>{p}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                </View>
+              </View>
+
+              <View style={styles.timeC}>
+                <Text variant="bodySmall" style={styles.modalLabel}>End</Text>
+                <View style={styles.timeInputRow}>
+                  <View style={styles.clockRow}>
+                    <TwoDigitTimeInput
+                      mode="hour"
+                      style={[styles.input, styles.timeInput, themedInput]}
+                      value={form.endHourRaw}
+                      onChange={(value) => setForm((prev) => ({ ...prev, endHourRaw: value }))}
+                      onBlurNormalize={() =>
+                        setForm((prev) => ({
+                          ...prev,
+                          endHourRaw: normalizeOnBlur('hour', prev.endHourRaw),
+                        }))
+                      }
+                      placeholder="HH"
+                    />
+                    <Text variant="body" style={styles.clockSeparator}>:</Text>
+                    <TwoDigitTimeInput
+                      mode="minute"
+                      style={[styles.input, styles.timeInput, themedInput]}
+                      value={form.endMinuteRaw}
+                      onChange={(value) => setForm((prev) => ({ ...prev, endMinuteRaw: value }))}
+                      onBlurNormalize={() =>
+                        setForm((prev) => ({
+                          ...prev,
+                          endMinuteRaw: normalizeOnBlur('minute', prev.endMinuteRaw),
+                        }))
+                      }
+                      placeholder="MM"
+                    />
+                  </View>
+                  <View style={styles.periodRow}>
+                    {(['AM', 'PM'] as const).map((p) => (
+                      <TouchableOpacity
+                        key={`end-${p}`}
+                        style={[styles.periodBtn, themedChip, form.endPeriod === p && styles.periodBtnActive]}
+                        onPress={() => setForm((prev) => ({ ...prev, endPeriod: p }))}
+                      >
+                        <Text variant="bodySmall" color={form.endPeriod === p ? theme.colors.bgApp : theme.colors.textPrimary}>{p}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                </View>
+              </View>
+            </View>
+            {!!timeError && <Text variant="muted" style={styles.timeError}>{timeError}</Text>}
+            <Text variant="bodySmall" color={palette.textMuted} style={styles.timeTipText}>
+              Tip: For overnight (e.g. sleep 10pm-6am), set end time earlier than start; it will end the next day.
+            </Text>
+          </View>
+
+          <View style={styles.modalActionsRow}>
+            <Button
+              title="Cancel"
+              variant="secondary"
+              onPress={handleCancelEventModal}
+              style={styles.modalActionButton}
+            />
+            <Button
+              title={editingEventId ? 'Update' : 'Save'}
+              onPress={addOrUpdateEntry}
+              disabled={!canAdd}
+              style={styles.modalActionButton}
+            />
           </View>
           {editingEventId ? (
             <TouchableOpacity style={styles.deleteBtn} onPress={confirmDelete} activeOpacity={0.8}>
@@ -1999,44 +2524,6 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
         </View>
       </Modal>
 
-      {/* Copy Day modal */}
-      <Modal
-        visible={showCopyModal}
-        onClose={() => setShowCopyModal(false)}
-        title={`Copy ${DAY_FULL_NAMES[selectedDay]}`}
-      >
-        <View style={styles.mForm}>
-          <Text variant="muted" style={{ marginBottom: 8 }}>
-            Copy {(entriesByDay[selectedDay] ?? []).length} event{(entriesByDay[selectedDay] ?? []).length !== 1 ? 's' : ''} to:
-          </Text>
-          <View style={styles.daySelectorRow}>
-            {DAY_TAB_LABELS.map((label, idx) => {
-              if (idx === selectedDay) return null;
-              const isSelected = copyTargets.includes(idx);
-              return (
-                <TouchableOpacity
-                  key={label}
-                  style={[styles.daySelectorBtn, isSelected && styles.daySelectorBtnActive]}
-                  onPress={() => {
-                    setCopyTargets((prev) =>
-                      prev.includes(idx) ? prev.filter((d) => d !== idx) : [...prev, idx].sort((a, b) => a - b)
-                    );
-                  }}
-                  activeOpacity={0.8}
-                >
-                  <Text variant="bodySmall" style={{ color: isSelected ? '#06261d' : palette.textPrimary, fontWeight: isSelected ? theme.fontWeight.bold : theme.fontWeight.medium }}>
-                    {label}
-                  </Text>
-                </TouchableOpacity>
-              );
-            })}
-          </View>
-          <View style={{ marginTop: 16, gap: 10 }}>
-            <Button title="Paste" onPress={confirmCopyDay} disabled={copyTargets.length === 0} full />
-            <Button title="Cancel" variant="secondary" onPress={() => setShowCopyModal(false)} full />
-          </View>
-        </View>
-      </Modal>
     </SafeAreaView>
   );
 };
@@ -2053,6 +2540,11 @@ const styles = StyleSheet.create({
     alignSelf: 'center',
     width: '100%',
     maxWidth: theme.layout.contentMaxWidth,
+  },
+  headerCompact: {
+    paddingTop: theme.spacing.sm,
+    paddingBottom: theme.spacing.xs,
+    marginBottom: 0,
   },
   icsBadge: {
     alignSelf: 'center',
@@ -2170,6 +2662,12 @@ const styles = StyleSheet.create({
     gap: 10,
     marginBottom: 14,
   },
+  editorScroll: {
+    flex: 1,
+  },
+  editorScrollContent: {
+    paddingBottom: theme.spacing.sm,
+  },
   e2eBtn: {
     marginBottom: 8,
   },
@@ -2210,6 +2708,51 @@ const styles = StyleSheet.create({
   },
   dayTabBadgeText: {
     fontSize: 9,
+    fontWeight: '700' as any,
+  },
+  weekHeaderWrap: {
+    flexDirection: 'row',
+    paddingVertical: 10,
+    paddingHorizontal: 0,
+    borderBottomWidth: 1,
+  },
+  weekHeaderTimeCell: {
+    flexShrink: 0,
+  },
+  weekHeaderDaysRow: {
+    flexDirection: 'row',
+  },
+  weekHeaderDayCell: {
+    paddingVertical: 8,
+    paddingHorizontal: 4,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderLeftWidth: 1,
+  },
+  weekHeaderDayCellActive: {
+    borderRadius: 8,
+  },
+  weekHeaderDayName: {
+    fontSize: 11,
+    textTransform: 'uppercase',
+    letterSpacing: 0.3,
+  },
+  weekHeaderDayDate: {
+    fontSize: 18,
+    fontWeight: '600' as any,
+    marginTop: 2,
+  },
+  weekHeaderBadge: {
+    marginTop: 4,
+    minWidth: 18,
+    height: 18,
+    borderRadius: 9,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 5,
+  },
+  weekHeaderBadgeText: {
+    fontSize: 10,
     fontWeight: '700' as any,
   },
   gridToolbar: {
@@ -2264,7 +2807,6 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
   },
   gridContainer: {
-    flex: 1,
     width: '100%',
     paddingVertical: GRID_PADDING,
   },
@@ -2281,6 +2823,40 @@ const styles = StyleSheet.create({
     shadowRadius: 10,
     elevation: 6,
   },
+  gridShell: {
+    flex: 1,
+    flexDirection: 'row',
+  },
+  gridDayRail: {
+    borderRightWidth: 1,
+  },
+  gridDayRailHeader: {
+    borderBottomWidth: 1,
+  },
+  gridTimeScroll: {
+    flex: 1,
+  },
+  gridTimeRow: {
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  gridCellRow: {
+    flexDirection: 'row',
+    height: '100%',
+  },
+  gridCell: {
+    height: '100%',
+  },
+  gridCellPressable: {
+    height: '100%',
+  },
+  slotFeedbackPulse: {
+    position: 'absolute',
+    borderRadius: 6,
+    backgroundColor: 'rgba(46,233,166,0.22)',
+    borderWidth: 1,
+    borderColor: 'rgba(46,233,166,0.52)',
+    zIndex: 25,
+  },
   gridBodyScroll: {
     flexGrow: 0,
   },
@@ -2289,7 +2865,7 @@ const styles = StyleSheet.create({
     height: GRID_BODY_HEIGHT,
   },
   gridTimeCol: {
-    width: TIME_COL_WIDTH,
+    width: SLOT_WIDTH,
     backgroundColor: theme.colors.bgSurface,
     borderRightWidth: 1,
     borderRightColor: 'rgba(255,255,255,0.1)',
@@ -2322,6 +2898,13 @@ const styles = StyleSheet.create({
     position: 'relative',
     borderRightWidth: 0,
   },
+  weekGridScroll: {
+    flex: 1,
+  },
+  gridDayCol: {
+    position: 'relative',
+    overflow: 'hidden',
+  },
   gridSlot: {
     height: SLOT_HEIGHT,
     borderBottomWidth: StyleSheet.hairlineWidth,
@@ -2336,6 +2919,96 @@ const styles = StyleSheet.create({
   },
   gridSlotHover: {
     backgroundColor: 'rgba(46,233,166,0.12)',
+  },
+  timeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderBottomWidth: 1,
+  },
+  dayRow: {
+    flexDirection: 'row',
+    alignItems: 'stretch',
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  dayLabelCell: {
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingVertical: 4,
+    borderRightWidth: 0,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  dayLabelText: {
+    fontWeight: '600' as any,
+  },
+  hSlotCell: {
+    borderRightWidth: StyleSheet.hairlineWidth,
+    minWidth: 1,
+  },
+  hTimeLabel: {
+    fontSize: 11,
+    fontWeight: theme.fontWeight.semibold,
+    textAlign: 'center',
+  },
+  gridEventBlockH: {
+    position: 'absolute',
+    backgroundColor: theme.colors.accentPrimary,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(6,38,29,0.28)',
+    borderLeftWidth: 4,
+    borderLeftColor: 'rgba(6,38,29,0.38)',
+    paddingHorizontal: 6,
+    paddingVertical: 6,
+    justifyContent: 'flex-start',
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.16,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  gridEventBlockHCompact: {
+    paddingHorizontal: 5,
+    paddingVertical: 5,
+  },
+  gridEventTitleH: {
+    color: '#06261d',
+    fontWeight: '600' as any,
+    fontSize: 13,
+    lineHeight: 16,
+  },
+  gridEventTitleHCompact: {
+    fontSize: 12,
+    lineHeight: 14,
+  },
+  gridEventTimeH: {
+    color: 'rgba(6,38,29,0.85)',
+    fontSize: 11,
+    lineHeight: 13,
+    marginTop: 1,
+  },
+  gridEventTimeHCompact: {
+    fontSize: 10,
+    lineHeight: 11,
+  },
+  gridEventDurationH: {
+    color: 'rgba(6,38,29,0.72)',
+    fontSize: 10,
+    lineHeight: 12,
+    marginTop: 2,
+    fontWeight: theme.fontWeight.medium,
+  },
+  nowLineVertical: {
+    position: 'absolute',
+    flexDirection: 'column',
+    alignItems: 'center',
+    zIndex: 20,
+  },
+  nowLineBarVertical: {
+    width: 2,
+    backgroundColor: '#ef4444',
+    flex: 1,
+    marginTop: 2,
   },
   gridEventBlock: {
     position: 'absolute',
@@ -2400,12 +3073,13 @@ const styles = StyleSheet.create({
   },
   freqModeRow: {
     flexDirection: 'row',
-    gap: 8,
+    gap: 10,
   },
   freqModeChip: {
     flex: 1,
-    paddingVertical: 8,
-    paddingHorizontal: 10,
+    minHeight: 48,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
     borderRadius: theme.borderRadius.sm,
     alignItems: 'center',
     justifyContent: 'center',
@@ -2424,16 +3098,21 @@ const styles = StyleSheet.create({
   },
   repeatDaysRow: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
+    flexWrap: 'nowrap',
+    gap: 4,
   },
   repeatDayChip: {
+    flex: 1,
+    minWidth: 0,
+    minHeight: 40,
     paddingVertical: 8,
-    paddingHorizontal: 12,
+    paddingHorizontal: 4,
     borderRadius: theme.borderRadius.sm,
     backgroundColor: theme.colors.bgApp,
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.1)',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   repeatDayChipActive: {
     backgroundColor: 'rgba(46,233,166,0.2)',
@@ -2441,6 +3120,9 @@ const styles = StyleSheet.create({
   },
   repeatDayChipText: {
     color: theme.colors.textMuted,
+    fontSize: theme.fontSize.xs,
+    lineHeight: 14,
+    textAlign: 'center',
   },
   repeatDayChipTextActive: {
     color: theme.colors.accentPrimary,
@@ -2448,7 +3130,7 @@ const styles = StyleSheet.create({
   },
   repeatHint: {
     fontSize: theme.fontSize.xs,
-    marginTop: -4,
+    marginTop: 0,
   },
   dateInputRow: {
     flexDirection: 'row',
@@ -2457,28 +3139,28 @@ const styles = StyleSheet.create({
   },
   datePartInput: {
     flex: 0,
-    width: 64,
+    width: 68,
     textAlign: 'center',
   },
   dateYearInput: {
     flex: 1,
-    minWidth: 86,
+    minWidth: 92,
     textAlign: 'center',
   },
   dateSep: {
     fontWeight: theme.fontWeight.semibold,
+    marginHorizontal: -2,
   },
   inputMultiline: {
-    minHeight: 56,
+    minHeight: 86,
+    paddingTop: 10,
+    paddingBottom: 10,
     textAlignVertical: 'top',
-  },
-  saveButtonWrap: {
-    marginTop: 24,
   },
   deleteBtn: {
     alignSelf: 'center',
-    paddingVertical: theme.spacing.sm,
-    marginTop: theme.spacing.sm,
+    paddingVertical: 6,
+    marginTop: 4,
   },
   deleteBtnText: {
     fontWeight: theme.fontWeight.semibold,
@@ -2499,15 +3181,27 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   privacy: { textAlign: 'center', marginTop: 12 },
-  mForm: { gap: 12 },
+  mForm: {
+    gap: 16,
+    paddingBottom: 8,
+  },
+  modalSection: {
+    gap: 8,
+  },
+  modalLabel: {
+    color: theme.colors.textMuted,
+    fontWeight: theme.fontWeight.semibold,
+    letterSpacing: 0.1,
+  },
   input: {
     backgroundColor: theme.colors.bgApp,
-    borderRadius: theme.borderRadius.sm,
+    borderRadius: theme.borderRadius.md,
+    minHeight: 50,
     paddingVertical: Platform.OS === 'android' ? 8 : 10,
-    paddingHorizontal: 10,
+    paddingHorizontal: 12,
     color: theme.colors.textPrimary,
     fontSize: theme.fontSize.md,
-    lineHeight: 22,
+    lineHeight: 20,
     textAlignVertical: 'center',
   },
   lockedDay: {
@@ -2518,24 +3212,42 @@ const styles = StyleSheet.create({
   },
   timeR: { gap: 12 },
   timeC: { width: '100%' },
-  timeInputRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 },
-  clockRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  timeInput: { flex: 0, width: 56, textAlign: 'center' },
-  periodRow: { flexDirection: 'row', gap: 4 },
+  timeInputRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
+  clockRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  clockSeparator: {
+    fontWeight: theme.fontWeight.semibold,
+    color: theme.colors.textMuted,
+    minWidth: 10,
+    textAlign: 'center',
+  },
+  timeInput: { flex: 0, width: 60, textAlign: 'center' },
+  periodRow: { flexDirection: 'row', gap: 6 },
   periodBtn: {
-    borderRadius: theme.borderRadius.sm,
+    borderRadius: theme.borderRadius.md,
     backgroundColor: theme.colors.bgApp,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 7,
-    paddingHorizontal: 8,
-    minWidth: 42,
+    minHeight: 42,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    minWidth: 48,
   },
   periodBtnActive: { backgroundColor: theme.colors.accentPrimary },
   timeError: {
     color: theme.colors.warning,
     marginTop: 2,
     marginBottom: 2,
+  },
+  timeTipText: {
+    marginTop: 2,
+  },
+  modalActionsRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 4,
+  },
+  modalActionButton: {
+    flex: 1,
   },
   saveError: {
     color: theme.colors.warning,

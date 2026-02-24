@@ -41,8 +41,7 @@ export const AppIcon: React.FC<AppIconProps> = ({
     <Svg width={size} height={size} viewBox="0 0 24 24" accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
       {name === 'back' && (
         <>
-          <Path d="M15 18L9 12L15 6" {...common} />
-          <Path d="M9 12H21" {...common} />
+          <Path d="M15 5L9 12L15 19" {...common} />
         </>
       )}
       {name === 'bell' && (

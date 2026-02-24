@@ -13,8 +13,11 @@ export const generateBusyEventsFromTemplate = (
 ): BusyEvent[] => {
   const events: BusyEvent[] = [];
   const today = startOfDay(new Date());
-  const currentWeekStart = startOfWeek(today);
+  const currentWeekStart = startOfWeek(today, { weekStartsOn: 0 });
   const rangeEnd = addDays(today, weeksAhead * 7);
+
+  const isOvernight = (startH: number, startM: number, endH: number, endM: number) =>
+    endH < startH || (endH === startH && endM <= startM);
 
   for (const entry of entries) {
     if (!entry.isOneTime || !entry.oneTimeDate) continue;
@@ -25,7 +28,10 @@ export const generateBusyEventsFromTemplate = (
     const [startHour, startMin] = entry.startTime.split(':').map(Number);
     const [endHour, endMin] = entry.endTime.split(':').map(Number);
     const start = setMinutes(setHours(normalizedDate, startHour), startMin);
-    const end = setMinutes(setHours(normalizedDate, endHour), endMin);
+    let end = setMinutes(setHours(normalizedDate, endHour), endMin);
+    if (isOvernight(startHour, startMin, endHour, endMin)) {
+      end = addDays(end, 1);
+    }
     events.push({
       id: `manual-once-${entry.id}-${entry.oneTimeDate}`,
       title: entry.title,
@@ -45,7 +51,10 @@ export const generateBusyEventsFromTemplate = (
       const [endHour, endMin] = entry.endTime.split(':').map(Number);
 
       const start = setMinutes(setHours(eventDate, startHour), startMin);
-      const end = setMinutes(setHours(eventDate, endHour), endMin);
+      let end = setMinutes(setHours(eventDate, endHour), endMin);
+      if (isOvernight(startHour, startMin, endHour, endMin)) {
+        end = addDays(end, 1);
+      }
 
       events.push({
         id: `manual-event-${entry.id}-week${week}`,

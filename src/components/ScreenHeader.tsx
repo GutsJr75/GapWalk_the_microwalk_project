@@ -43,28 +43,31 @@ export const ScreenHeader: React.FC<ScreenHeaderProps> = ({
       {(onBack || rightAccessory) && (
         <View style={styles.topRow}>
           {onBack ? (
-            <Pressable
-              onPress={() => {
-                if (Platform.OS !== 'web') {
-                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-                }
-                onBack();
-              }}
-              testID={backTestID}
-              accessibilityLabel={backTestID}
-              android_ripple={{ color: backChipRipple }}
-              style={({ pressed }) => [
-                styles.backChip,
-                {
-                  backgroundColor: backChipBg,
-                  borderColor: backChipBorder,
-                },
-                pressed && styles.backChipPressed,
-              ]}
-            >
-              <AppIcon name="back" size={16} color={backChipText} />
-              <Text variant="bodySmall" style={[styles.backLabel, { color: backChipText }]}>{backLabel}</Text>
-            </Pressable>
+            <View style={styles.backAnchor}>
+              <Pressable
+                onPress={() => {
+                  if (Platform.OS !== 'web') {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+                  }
+                  onBack();
+                }}
+                testID={backTestID}
+                accessibilityLabel={backLabel}
+                accessibilityRole="button"
+                hitSlop={6}
+                android_ripple={{ color: backChipRipple }}
+                style={({ pressed }) => [
+                  styles.backIconBtn,
+                  {
+                    backgroundColor: backChipBg,
+                    borderColor: backChipBorder,
+                  },
+                  pressed && styles.backIconBtnPressed,
+                ]}
+              >
+                <AppIcon name="back" size={18} color={backChipText} />
+              </Pressable>
+            </View>
           ) : (
             <View />
           )}
@@ -103,26 +106,25 @@ const styles = StyleSheet.create({
     marginBottom: theme.spacing.xl,
   },
   topRow: {
-    minHeight: 36,
+    minHeight: 40,
     marginBottom: theme.spacing.md,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
   },
-  backChip: {
-    minHeight: 34,
-    paddingHorizontal: 12,
-    borderRadius: theme.borderRadius.md,
+  backAnchor: {
+    marginLeft: -theme.layout.contentHorizontal,
+  },
+  backIconBtn: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
     borderWidth: 1,
-    flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
+    justifyContent: 'center',
   },
-  backChipPressed: {
-    transform: [{ scale: 0.985 }],
-  },
-  backLabel: {
-    fontWeight: theme.fontWeight.semibold,
+  backIconBtnPressed: {
+    transform: [{ translateX: -2 }, { scale: 0.94 }],
   },
   title: {
     marginBottom: 8,

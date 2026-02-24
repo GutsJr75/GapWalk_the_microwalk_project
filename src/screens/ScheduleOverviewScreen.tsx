@@ -142,7 +142,7 @@ export const ScheduleOverviewScreen: React.FC<Props> = ({ navigation }) => {
           </View>
 
           <Text variant="bodySmall" style={[styles.guideNote, { color: palette.textMuted }]}>
-            Tip: If you open this screen and make no changes, you can cancel safely.
+            Tip: If you open this screen and make no changes, you can go back safely.
           </Text>
         </Card>
 
@@ -158,13 +158,6 @@ export const ScheduleOverviewScreen: React.FC<Props> = ({ navigation }) => {
             onPress={updateCurrentSchedule}
             full
             variant="secondary"
-            style={styles.actionBtn}
-          />
-          <Button
-            title="Cancel"
-            onPress={handleBack}
-            full
-            variant="muted"
             style={styles.actionBtn}
           />
         </View>

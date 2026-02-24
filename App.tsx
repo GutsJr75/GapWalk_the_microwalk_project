@@ -250,13 +250,22 @@ export default function App() {
         if (__DEV__) console.warn('Failed to recover orphaned session:', e);
       }
       
-      // Check if user has completed onboarding
+      // Check if user has completed onboarding (preferences saved).
+      // If preferences exist but no schedule source (e.g. old install or edge case),
+      // create a default manual source so we open to Dashboard.
       const prefsExist = await preferencesRepo.exists();
-      const sourceExists = await scheduleSourceRepo.exists();
-      
+      let sourceExists = await scheduleSourceRepo.exists();
+      if (prefsExist && !sourceExists) {
+        await scheduleSourceRepo.save({
+          type: 'manual',
+          lastImportedAt: new Date().toISOString(),
+        });
+        sourceExists = true;
+      }
+
       if (prefsExist && sourceExists) {
         setHasCompletedOnboarding(true);
-        
+
         // Load preferences and source into store
         const prefs = await preferencesRepo.get();
         const source = await scheduleSourceRepo.get();
@@ -264,12 +273,11 @@ export default function App() {
         setScheduleSource(source);
         await refreshDashboardSnapshot();
 
-        // Request all permissions on first launch after onboarding
+        // Request permissions (notifications + activity for steps; no location for now)
         if (!hasRequestedPermissions) {
           void (async () => {
             try {
               const permResults = await requestAllPermissions();
-              setHasLocationPermission(permResults.location);
               setHasNotificationPermission(permResults.notifications);
               setHasActivityPermission(permResults.activityRecognition);
               setHasRequestedPermissions(true);

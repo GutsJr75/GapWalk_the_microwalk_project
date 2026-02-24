@@ -1,4 +1,4 @@
-﻿import React, { useCallback, useState, useRef } from 'react';
+import React, { useCallback, useState, useRef } from 'react';
 import {
   View,
   StyleSheet,
@@ -29,7 +29,12 @@ import { Preferences, DEFAULT_PREFERENCES, PreferredWalkingPeriod } from '../lib
 import { preferencesRepo } from '../lib/repositories/preferencesRepo';
 import { notificationService, isNotificationsSupported } from '../lib/notifications';
 import { syncNudgePlansForCurrentSchedule } from '../lib/scheduleSync';
-import { SAVE_CONFIRM_ACTION, SAVE_CONFIRM_MESSAGE, SAVE_CONFIRM_TITLE } from '../lib/confirmMessages';
+import {
+  SAVE_CONFIRM_ACTION,
+  SAVE_CONFIRM_DECLINE,
+  SAVE_CONFIRM_MESSAGE,
+  SAVE_CONFIRM_TITLE,
+} from '../lib/confirmMessages';
 import { analyticsService } from '../lib/analytics';
 import { translateLiteral } from '../lib/i18n';
 import { useAppStore } from '../store';
@@ -157,12 +162,21 @@ const Section: React.FC<{
   subtitle?: string;
   icon?: AppIconName;
   defaultExpanded?: boolean;
+  onFirstExpand?: () => void;
   children: React.ReactNode;
-}> = ({ title, subtitle, icon, defaultExpanded = false, children }) => {
+}> = ({ title, subtitle, icon, defaultExpanded = false, onFirstExpand, children }) => {
   const [expanded, setExpanded] = useState(defaultExpanded);
+  const hasReportedExpand = useRef(false);
   const rotateAnim = useRef(new Animated.Value(defaultExpanded ? 1 : 0)).current;
   const { themeMode } = useAppStore();
   const palette = getThemePalette(themeMode);
+
+  React.useEffect(() => {
+    if (expanded && onFirstExpand && !hasReportedExpand.current) {
+      hasReportedExpand.current = true;
+      onFirstExpand();
+    }
+  }, [expanded, onFirstExpand]);
 
   const toggle = () => {
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
@@ -257,6 +271,10 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
   const manageMode = !!route.params?.manageMode;
   const [prefs, setPrefs] = useState<Preferences>(DEFAULT_PREFERENCES);
   const [hasChanges, setHasChanges] = useState(false);
+  // Onboarding: user must open each section at least once before Continue (can still use recommended).
+  const [hasSeenWalkingGoals, setHasSeenWalkingGoals] = useState(true);
+  const [hasSeenNotifications, setHasSeenNotifications] = useState(false);
+  const [hasSeenAdvanced, setHasSeenAdvanced] = useState(false);
   const [showQuietModal, setShowQuietModal] = useState(false);
   const [showPreferredModal, setShowPreferredModal] = useState(false);
   const [quietError, setQuietError] = useState<string | null>(null);
@@ -486,6 +504,7 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
     }
   }
 
+  const hasSeenAllSections = hasSeenWalkingGoals && hasSeenNotifications && hasSeenAdvanced;
   const canContinue =
     !dailyTargetError &&
     !notifError &&
@@ -493,7 +512,8 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
     !reminderGapError &&
     !stepGoalError &&
     !preferredPeriodsError &&
-    !savingPrefs;
+    !savingPrefs &&
+    (manageMode || hasSeenAllSections);
 
   /* â”€â”€ save â”€â”€ */
   const savePreferences = async (p: Preferences) => {
@@ -523,7 +543,6 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
         // Request ALL permissions (location, notifications, activity recognition)
         try {
           const permResults = await requestAllPermissions();
-          setHasLocationPermission(permResults.location);
           setHasNotificationPermission(permResults.notifications);
           setHasActivityPermission(permResults.activityRecognition);
           setHasRequestedPermissions(true);
@@ -585,7 +604,7 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
       title,
       message,
       [
-        { text: 'Cancel', style: 'cancel' },
+        { text: SAVE_CONFIRM_DECLINE, style: 'cancel' },
         {
           text: actionLabel,
           onPress: () => {
@@ -603,19 +622,20 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
       return;
     }
 
-    const discardMessage = 'If you cancel now, your unsaved changes will be lost. Continue';
+    const discardTitle = 'Cancel preference update?';
+    const discardMessage = 'Your unsaved preference changes will be lost. Do you want to leave this screen?';
     if (Platform.OS === 'web' && typeof (globalThis as any).confirm === 'function') {
-      if ((globalThis as any).confirm(discardMessage)) {
+      if ((globalThis as any).confirm(`${discardTitle}\n\n${discardMessage}`)) {
         navigation.navigate('Dashboard');
       }
       return;
     }
     Alert.alert(
-      'Discard changes?',
+      discardTitle,
       discardMessage,
       [
-        { text: 'Keep editing', style: 'cancel' },
-        { text: 'Discard', style: 'destructive', onPress: () => navigation.navigate('Dashboard') },
+        { text: 'No', style: 'cancel' },
+        { text: 'Yes', style: 'destructive', onPress: () => navigation.navigate('Dashboard') },
       ]
     );
   };
@@ -636,9 +656,9 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
   const handleManageSave = () => {
     if (savingPrefs || !canContinue) return;
     confirmAndSavePreferences(prefs, {
-      title: 'Save preferences?',
-      message: 'Do you want to save these preference changes?',
-      actionLabel: 'Save',
+      title: 'Update preferences?',
+      message: 'Do you want to update these preference changes?',
+      actionLabel: 'Yes, Update',
     });
   };
 
@@ -674,7 +694,7 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
         />
 
         {/* â•â•â•â•â•â•â•â•â•â• Walking Goals â•â•â•â•â•â•â•â•â•â• */}
-        <Section title="Walking Goals" subtitle="Target, buffer & reminders" icon="adjust" defaultExpanded>
+        <Section title="Walking Goals" subtitle="Target, buffer & reminders" icon="adjust" defaultExpanded onFirstExpand={() => setHasSeenWalkingGoals(true)}>
           {/* Walking Goal */}
           <View style={styles.field}>
             <View style={styles.fieldHeader}>
@@ -737,7 +757,7 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
         </Section>
 
         {/* â•â•â•â•â•â•â•â•â•â• Other Settings â•â•â•â•â•â•â•â•â•â• */}
-        <Section title="Notifications" subtitle="Timing, spacing & quiet hours" icon="bell">
+        <Section title="Notifications" subtitle="Timing, spacing & quiet hours" icon="bell" onFirstExpand={() => setHasSeenNotifications(true)}>
           {/* When to Notify (simplified radio) */}
           <View style={styles.field}>
             <Text variant="bodySmall" style={styles.fieldLabel}>When to notify</Text>
@@ -800,7 +820,7 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
         </Section>
 
         {/* Advanced settings */}
-        <Section title="Advanced" subtitle="Strictness, step goals & preferred periods" icon="settings">
+        <Section title="Advanced" subtitle="Strictness, step goals & preferred periods" icon="settings" onFirstExpand={() => setHasSeenAdvanced(true)}>
           {/* Strictness */}
           <View style={styles.field}>
             <View style={styles.fieldHeader}>
@@ -981,7 +1001,7 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
                 testID="preferences-cancel"
               />
               <Button
-                title="Save"
+                title="Update"
                 onPress={handleManageSave}
                 style={styles.btnHalf}
                 loading={savingPrefs}
@@ -990,14 +1010,21 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
               />
             </>
           ) : (
-            <Button
-              title="Continue"
-              onPress={handleOnboardingContinue}
-              style={styles.btnHalf}
-              loading={savingPrefs}
-              disabled={!canContinue}
-              testID="preferences-continue"
-            />
+            <>
+              {!hasSeenAllSections && (
+                <Text variant="bodySmall" color={palette.textMuted} style={styles.reviewHint}>
+                  Open each section above (Walking Goals, Notifications, Advanced) to review options, then continue. You can keep the recommended settings.
+                </Text>
+              )}
+              <Button
+                title="Continue"
+                onPress={handleOnboardingContinue}
+                style={styles.btnHalf}
+                loading={savingPrefs}
+                disabled={!canContinue}
+                testID="preferences-continue"
+              />
+            </>
           )}
         </View>
         <Text variant="muted" style={styles.privacy}>Your schedule stays private. Privacy is our top priority.</Text>
@@ -1360,6 +1387,7 @@ const styles = StyleSheet.create({
   footer: { paddingHorizontal: theme.layout.contentHorizontal, paddingBottom: 20, alignSelf: 'center', width: '100%', maxWidth: theme.layout.contentMaxWidth },
   btnRow: { flexDirection: 'row', gap: 10, marginBottom: 14 },
   btnHalf: { flex: 1 },
+  reviewHint: { textAlign: 'center', marginBottom: 10, paddingHorizontal: 8 },
   privacy: { textAlign: 'center' },
 
   /* quiet modal */
