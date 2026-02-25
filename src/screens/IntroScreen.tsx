@@ -1,6 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { View, StyleSheet, TouchableOpacity, Animated, Easing, useWindowDimensions } from 'react-native';
+import { Alert, View, StyleSheet, TouchableOpacity, Animated, Easing, useWindowDimensions } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
+import * as AuthSession from 'expo-auth-session';
+import * as WebBrowser from 'expo-web-browser';
 import { RootStackParamList } from '../../App';
 import { Container } from '../components/Container';
 import { Text } from '../components/Text';
@@ -10,21 +12,43 @@ import { useAppStore } from '../store';
 import { useThemePalette } from '../theme/palette';
 import Svg, { Path } from 'react-native-svg';
 import { analyticsService } from '../lib/analytics';
+import { getAuth0Discovery, getAuth0RequestConfig, isAuth0Configured } from '../lib/auth0';
 
-type Props = NativeStackScreenProps<RootStackParamList, 'Intro'>;
+WebBrowser.maybeCompleteAuthSession();
 
-export const IntroScreen: React.FC<Props> = ({ navigation }) => {
+interface Props extends NativeStackScreenProps<RootStackParamList, 'Intro'> {
+  isAuthenticated?: boolean;
+  onAuthenticated?: () => void;
+}
+
+export const IntroScreen: React.FC<Props> = ({
+  navigation,
+  isAuthenticated = false,
+  onAuthenticated,
+}) => {
   const { hasSetPreferences } = useAppStore();
   const palette = useThemePalette();
   const [showHowItWorks, setShowHowItWorks] = useState(false);
+  const [isAuthLoading, setIsAuthLoading] = useState(false);
   const howAnim = useRef(new Animated.Value(0)).current;
+  const handledAuthResponseRef = useRef<string | null>(null);
   const { height: viewportHeight } = useWindowDimensions();
+  const authConfigured = isAuth0Configured();
+  const discovery = getAuth0Discovery();
 
   const verticalScreenPadding = Math.round(viewportHeight * 0.1);
   const heroVerticalPadding = Math.max(theme.spacing.md, Math.round(viewportHeight * 0.02));
   const heroToWhyGap = Math.max(theme.spacing.xl, Math.round(viewportHeight * 0.055));
   const whyToHowGap = Math.max(theme.spacing.lg, Math.round(viewportHeight * 0.045));
   const ctaTopGap = Math.max(theme.spacing.md, Math.round(viewportHeight * 0.03));
+  const [loginRequest, loginResponse, promptLogin] = AuthSession.useAuthRequest(
+    getAuth0RequestConfig('login'),
+    discovery ?? null
+  );
+  const [signupRequest, signupResponse, promptSignup] = AuthSession.useAuthRequest(
+    getAuth0RequestConfig('signup'),
+    discovery ?? null
+  );
 
   useEffect(() => {
     Animated.timing(howAnim, {
@@ -34,6 +58,36 @@ export const IntroScreen: React.FC<Props> = ({ navigation }) => {
       useNativeDriver: false,
     }).start();
   }, [showHowItWorks, howAnim]);
+
+  useEffect(() => {
+    const activeResponse = loginResponse ?? signupResponse;
+    if (!activeResponse) return;
+
+    const responseKey =
+      activeResponse.type === 'success'
+        ? `success:${activeResponse.params.code ?? ''}`
+        : `other:${activeResponse.type}`;
+    if (handledAuthResponseRef.current === responseKey) return;
+    handledAuthResponseRef.current = responseKey;
+
+    if (activeResponse.type === 'success') {
+      setIsAuthLoading(false);
+      onAuthenticated?.();
+      return;
+    }
+
+    if (activeResponse.type === 'dismiss' || activeResponse.type === 'cancel') {
+      setIsAuthLoading(false);
+      return;
+    }
+
+    setIsAuthLoading(false);
+    const details =
+      activeResponse.type === 'error'
+        ? activeResponse.error?.message ?? 'Please try again.'
+        : 'Please try again.';
+    Alert.alert('Login failed', details);
+  }, [loginResponse, onAuthenticated, signupResponse]);
 
   const chevronRotate = howAnim.interpolate({
     inputRange: [0, 1],
@@ -68,6 +122,32 @@ export const IntroScreen: React.FC<Props> = ({ navigation }) => {
       navigation.navigate('Dashboard');
     } else {
       navigation.navigate('ScheduleSetup');
+    }
+  };
+
+  const runAuth = async (mode: 'login' | 'signup') => {
+    if (!authConfigured) {
+      Alert.alert(
+        'Auth0 is not configured',
+        'Add EXPO_PUBLIC_AUTH0_DOMAIN and EXPO_PUBLIC_AUTH0_CLIENT_ID to your .env file.'
+      );
+      return;
+    }
+
+    const request = mode === 'login' ? loginRequest : signupRequest;
+    if (!request) {
+      Alert.alert('Please wait', 'Authentication is still loading.');
+      return;
+    }
+
+    setIsAuthLoading(true);
+    try {
+      const prompt = mode === 'login' ? promptLogin : promptSignup;
+      await prompt();
+    } catch (error) {
+      setIsAuthLoading(false);
+      const message = error instanceof Error ? error.message : 'Please try again.';
+      Alert.alert('Login failed', message);
     }
   };
 
@@ -217,14 +297,41 @@ export const IntroScreen: React.FC<Props> = ({ navigation }) => {
         </View>
 
         <View style={[styles.bottom, { paddingTop: ctaTopGap }]}>
-          <Button
-            title={hasSetPreferences ? 'Go to Dashboard' : 'Get Started'}
-            onPress={handleCta}
-            full
-            testID="intro-get-started"
-          />
+          {!isAuthenticated ? (
+            <>
+              <Button
+                title="Log in"
+                onPress={() => {
+                  void runAuth('login');
+                }}
+                full
+                loading={isAuthLoading}
+                disabled={!authConfigured}
+                testID="intro-auth-login"
+              />
+              <Button
+                title="Sign up"
+                onPress={() => {
+                  void runAuth('signup');
+                }}
+                variant="secondary"
+                full
+                disabled={!authConfigured || isAuthLoading}
+                testID="intro-auth-signup"
+              />
+            </>
+          ) : (
+            <Button
+              title={hasSetPreferences ? 'Go to Dashboard' : 'Get Started'}
+              onPress={handleCta}
+              full
+              testID="intro-get-started"
+            />
+          )}
           <Text variant="muted" style={styles.footer}>
-            No account needed - 100% free - Your data stays on device.
+            {isAuthenticated
+              ? 'Welcome back. Continue your setup when you are ready.'
+              : 'Use your account to continue. Login or sign up to get started.'}
           </Text>
         </View>
       </View>

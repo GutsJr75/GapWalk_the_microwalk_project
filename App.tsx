@@ -92,6 +92,7 @@ export default function App() {
   const pendingWalkPlanIdRef = useRef<string | null>(null);
   const lastHandledResponseRef = useRef<string | null>(null);
   const [isBootstrapDone, setIsBootstrapDone] = useState(false);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const lastAndroidRootBackPressRef = useRef(0);
@@ -377,8 +378,20 @@ export default function App() {
             }}
           >
             <Stack.Navigator
-              key={hasCompletedOnboarding ? 'onboarded' : 'fresh'}
-              initialRouteName={hasCompletedOnboarding ? 'Dashboard' : 'Intro'}
+              key={
+                isAuthenticated
+                  ? hasCompletedOnboarding
+                    ? 'authed-onboarded'
+                    : 'authed-fresh'
+                  : 'guest'
+              }
+              initialRouteName={
+                isAuthenticated
+                  ? hasCompletedOnboarding
+                    ? 'Dashboard'
+                    : 'Intro'
+                  : 'Intro'
+              }
               screenOptions={{
                 headerShown: false,
                 contentStyle: { backgroundColor: palette.bgApp },
@@ -386,7 +399,18 @@ export default function App() {
                 gestureEnabled: true,
               }}
             >
-              <Stack.Screen name="Intro" component={IntroScreen} />
+              <Stack.Screen
+                name="Intro"
+                children={(props) => (
+                  <IntroScreen
+                    {...props}
+                    isAuthenticated={isAuthenticated}
+                    onAuthenticated={() => {
+                      setIsAuthenticated(true);
+                    }}
+                  />
+                )}
+              />
               <Stack.Screen name="ScheduleSetup" component={ScheduleSetupScreen} />
               <Stack.Screen name="ManualSchedule" component={ManualScheduleScreen} />
               <Stack.Screen name="Preferences" component={PreferencesScreen} />

@@ -881,6 +881,7 @@ export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
   };
 
   const navigateToManageSchedule = () => { closeMenu(); navigation.navigate('ManualSchedule', { manageMode: true }); };
+  const navigateToProfile = () => { closeMenu(); navigation.navigate('Settings'); };
   const navigateToPreferences = () => { closeMenu(); navigation.push('Preferences', { manageMode: true }); };
   const navigateToSettings = () => { closeMenu(); navigation.navigate('Settings'); };
   const navigateToWeeklyData = () => { closeMenu(); navigation.navigate('WeeklyData'); };
@@ -1600,7 +1601,33 @@ export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
               },
             ]}
           >
+            <View style={[styles.profileCard, { borderColor: palette.borderSoft, backgroundColor: palette.bgSurfaceElevated }]}>
+              <View style={[styles.profileAvatar, { backgroundColor: palette.bgSurface }]}>
+                <Ionicons name="person" size={20} color={palette.textPrimary} />
+              </View>
+              <View style={styles.profileMeta}>
+                <Text variant="body" style={styles.profileName}>Your Profile</Text>
+                <Text variant="bodySmall" color={palette.textMuted}>
+                  {hasSetPreferences ? 'Onboarding complete' : 'Complete setup to personalize your account'}
+                </Text>
+              </View>
+            </View>
             <Text variant="title" style={styles.menuTitle}>Options</Text>
+            <Pressable
+              style={({ pressed }) => [styles.menuItem, { borderBottomColor: palette.borderSoft }, pressed && styles.menuItemPressed]}
+              onPress={() => {
+                if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+                navigateToProfile();
+              }}
+              android_ripple={{ color: 'rgba(46,233,166,0.12)' }}
+              testID="dashboard-menu-profile"
+            >
+              <View style={styles.menuItemRow}>
+                <Ionicons name="person-circle-outline" size={18} color={palette.textPrimary} />
+                <Text variant="body" style={styles.menuItemLabel}>Profile</Text>
+                <AppIcon name="chevronRight" size={16} color={palette.textMuted} />
+              </View>
+            </Pressable>
             <Pressable
               style={({ pressed }) => [styles.menuItem, { borderBottomColor: palette.borderSoft }, pressed && styles.menuItemPressed]}
               onPress={() => {
@@ -1908,6 +1935,29 @@ const styles = StyleSheet.create({
     borderLeftColor: 'rgba(255,255,255,0.1)',
   },
   menuTitle: { marginBottom: 30, textAlign: 'center' },
+  profileCard: {
+    borderWidth: 1,
+    borderRadius: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginBottom: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  profileAvatar: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  profileMeta: {
+    flex: 1,
+  },
+  profileName: {
+    fontWeight: theme.fontWeight.semibold,
+  },
   menuItem: {
     paddingVertical: 15,
     paddingHorizontal: 4,
