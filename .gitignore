@@ -14,3 +14,4 @@ npm-debug.*
 web-build/
 .DS_Store
 *.db
+scripts/__pycache__/
