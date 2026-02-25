@@ -1,11 +1,11 @@
 import React from 'react';
-import { Platform, Pressable, StyleProp, StyleSheet, View, ViewStyle } from 'react-native';
-import * as Haptics from 'expo-haptics';
+import { Pressable, StyleProp, StyleSheet, View, ViewStyle } from 'react-native';
 import { theme } from '../theme';
 import { getThemePalette } from '../theme/palette';
 import { useAppStore } from '../store';
 import { Text } from './Text';
 import { AppIcon } from './AppIcon';
+import { useTapFeedbackAction } from '../lib/useTapFeedbackAction';
 
 interface ScreenHeaderProps {
   title: string;
@@ -36,7 +36,13 @@ export const ScreenHeader: React.FC<ScreenHeaderProps> = ({
   const backChipBg = palette.bgSurface;
   const backChipBorder = palette.borderStrong;
   const backChipText = palette.textPrimary;
-  const backChipRipple = themeMode === 'dark' ? 'rgba(255,255,255,0.14)' : 'rgba(15,23,42,0.10)';
+  const backChipRipple = palette.inputBg;
+  const { isTapActive, handlePress, handlePressIn, handlePressOut } = useTapFeedbackAction({
+    onPress: () => {
+      onBack?.();
+    },
+    enabled: !!onBack,
+  });
 
   return (
     <View style={[styles.root, style]}>
@@ -45,12 +51,9 @@ export const ScreenHeader: React.FC<ScreenHeaderProps> = ({
           {onBack ? (
             <View style={styles.backAnchor}>
               <Pressable
-                onPress={() => {
-                  if (Platform.OS !== 'web') {
-                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-                  }
-                  onBack();
-                }}
+                onPress={handlePress}
+                onPressIn={handlePressIn}
+                onPressOut={handlePressOut}
                 testID={backTestID}
                 accessibilityLabel={backLabel}
                 accessibilityRole="button"
@@ -61,6 +64,13 @@ export const ScreenHeader: React.FC<ScreenHeaderProps> = ({
                   {
                     backgroundColor: backChipBg,
                     borderColor: backChipBorder,
+                  },
+                  isTapActive && {
+                    shadowColor: palette.accentPrimary,
+                    shadowOpacity: 0.3,
+                    shadowRadius: 8,
+                    shadowOffset: { width: 0, height: 0 },
+                    elevation: 4,
                   },
                   pressed && styles.backIconBtnPressed,
                 ]}
@@ -127,8 +137,8 @@ const styles = StyleSheet.create({
     transform: [{ translateX: -2 }, { scale: 0.94 }],
   },
   title: {
-    marginBottom: 8,
-    fontSize: theme.fontSize.xl + 2,
+    marginBottom: theme.spacing.sm,
+    fontSize: theme.fontSize.display,
   },
   subtitle: {
     lineHeight: 20,

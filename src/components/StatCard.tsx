@@ -75,10 +75,10 @@ export const StatCard: React.FC<StatCardProps> = ({
   }, []);
 
   const toneColor = (() => {
-    if (tone === 'target') return '#4ade80';
-    if (tone === 'notifications') return '#38bdf8';
-    if (tone === 'steps') return '#f59e0b';
-    return theme.colors.accentPrimary;
+    if (tone === 'target') return palette.success;
+    if (tone === 'notifications') return palette.info;
+    if (tone === 'steps') return theme.colors.warning;
+    return palette.accentPrimary;
   })();
 
   const hexToRgb = (hex: string): { r: number; g: number; b: number } | null => {
@@ -106,7 +106,7 @@ export const StatCard: React.FC<StatCardProps> = ({
   const cardTint = withAlpha(
     toneColor,
     isDark ? 0.08 : 0.10,
-    isDark ? '#16233a' : '#dde4ee'
+    isDark ? palette.bgSurfaceElevated : palette.bgSurfaceElevated
   );
   const borderTint = withAlpha(
     toneColor,
@@ -179,11 +179,11 @@ export const StatCard: React.FC<StatCardProps> = ({
 };
 
 const styles = StyleSheet.create({
-  card: { marginBottom: 16, paddingVertical: 16 },
-  headerRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 },
+  card: { marginBottom: theme.spacing.md, paddingVertical: theme.spacing.md },
+  headerRow: { flexDirection: 'row', alignItems: 'center', gap: theme.spacing.sm, marginBottom: theme.spacing.sm + theme.spacing.xs },
   titleDot: { width: 9, height: 9, borderRadius: 5 },
   title: { fontWeight: theme.fontWeight.semibold, marginBottom: 0 },
-  circleContainer: { alignItems: 'center', marginBottom: 12 },
+  circleContainer: { alignItems: 'center', marginBottom: theme.spacing.sm + theme.spacing.xs },
   svgWrapper: { position: 'relative', justifyContent: 'center', alignItems: 'center' },
   circleCore: {
     position: 'absolute',
@@ -193,22 +193,22 @@ const styles = StyleSheet.create({
   },
   circleText: { position: 'absolute', justifyContent: 'center', alignItems: 'center' },
   currentValue: { fontWeight: theme.fontWeight.bold, lineHeight: 30 },
-  currentValueMedium: { fontWeight: theme.fontWeight.bold, fontSize: 22, lineHeight: 26 },
-  currentValueCompact: { fontWeight: theme.fontWeight.bold, fontSize: 20, lineHeight: 24 },
+  currentValueMedium: { fontWeight: theme.fontWeight.bold, fontSize: theme.fontSize.xl - 2, lineHeight: 26 },
+  currentValueCompact: { fontWeight: theme.fontWeight.bold, fontSize: theme.fontSize.xl - 4, lineHeight: 24 },
   goalValue: {
-    fontSize: 17,
+    fontSize: theme.fontSize.lg,
     fontWeight: theme.fontWeight.semibold,
     color: theme.colors.textMuted,
     lineHeight: 22,
   },
   goalValueMedium: {
-    fontSize: 15,
+    fontSize: theme.fontSize.sm + 1,
     fontWeight: theme.fontWeight.semibold,
     color: theme.colors.textMuted,
     lineHeight: 20,
   },
   goalValueCompact: {
-    fontSize: 13,
+    fontSize: theme.fontSize.xs + 1,
     fontWeight: theme.fontWeight.semibold,
     color: theme.colors.textMuted,
     lineHeight: 18,

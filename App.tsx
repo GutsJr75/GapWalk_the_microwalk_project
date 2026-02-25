@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Animated, Platform, StyleSheet, View } from 'react-native';
+import { Animated, BackHandler, Platform, StyleSheet, ToastAndroid, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import * as SplashScreen from 'expo-splash-screen';
 import { NavigationContainer, createNavigationContainerRef } from '@react-navigation/native';
@@ -70,11 +70,13 @@ export type RootStackParamList = {
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 const navigationRef = createNavigationContainerRef<RootStackParamList>();
+const ROOT_BACK_EXIT_WINDOW_MS = 1800;
 
 export default function App() {
   const {
     hasCompletedOnboarding,
     setHasCompletedOnboarding,
+    setHasSetPreferences,
     setPreferences,
     setScheduleSource,
     setTodayStats,
@@ -92,6 +94,7 @@ export default function App() {
   const [isBootstrapDone, setIsBootstrapDone] = useState(false);
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const pulseAnim = useRef(new Animated.Value(1)).current;
+  const lastAndroidRootBackPressRef = useRef(0);
 
   // Hide native splash immediately so the app starts from our UI (no splash screen).
   useEffect(() => {
@@ -265,6 +268,7 @@ export default function App() {
 
       if (prefsExist && sourceExists) {
         setHasCompletedOnboarding(true);
+        setHasSetPreferences(true);
 
         // Load preferences and source into store
         const prefs = await preferencesRepo.get();
@@ -308,6 +312,31 @@ export default function App() {
     }).start();
   }, [isBootstrapDone, fadeAnim]);
 
+  // Android: require a double-press to exit only when already at app root.
+  useEffect(() => {
+    if (Platform.OS !== 'android') return;
+
+    const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (!navigationRef.isReady()) return false;
+      if (navigationRef.canGoBack()) return false;
+
+      const routeName = navigationRef.getCurrentRoute()?.name;
+      if (routeName !== 'Intro' && routeName !== 'Dashboard') return false;
+
+      const now = Date.now();
+      if (now - lastAndroidRootBackPressRef.current < ROOT_BACK_EXIT_WINDOW_MS) {
+        lastAndroidRootBackPressRef.current = 0;
+        return false;
+      }
+
+      lastAndroidRootBackPressRef.current = now;
+      ToastAndroid.show('Press back again to exit', ToastAndroid.SHORT);
+      return true;
+    });
+
+    return () => subscription.remove();
+  }, []);
+
   if (!isBootstrapDone) {
     return (
       <>
@@ -318,7 +347,7 @@ export default function App() {
               style={[
                 styles.bootDot,
                 {
-                  backgroundColor: isDark ? '#2ee9a6' : '#16a34a',
+                  backgroundColor: palette.accentPrimary,
                   opacity: pulseAnim.interpolate({
                     inputRange: [0.35, 1],
                     outputRange: [0.2, 0.7],

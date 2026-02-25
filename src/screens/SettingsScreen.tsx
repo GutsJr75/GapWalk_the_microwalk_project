@@ -33,11 +33,11 @@ export const SettingsScreen: React.FC<Props> = ({ navigation }) => {
     }, [])
   );
   const isE2E = process.env.EXPO_PUBLIC_E2E === '1';
-  const selectedPillTextColor = '#06261d';
+  const selectedPillTextColor = palette.pillSelectedText;
   const unselectedPillBg = palette.bgSurface;
   const unselectedPillBorder = palette.borderStrong;
-  const pillRipple = themeMode === 'dark' ? 'rgba(255,255,255,0.14)' : 'rgba(15,23,42,0.08)';
-  const pillRippleSelected = themeMode === 'dark' ? 'rgba(0,0,0,0.12)' : 'rgba(15,23,42,0.16)';
+  const pillRipple = palette.inputBg;
+  const pillRippleSelected = 'rgba(255,255,255,0.18)';
 
   const t = (key: string) => translateLiteral(key, language);
   const darkLabel = t('Dark');

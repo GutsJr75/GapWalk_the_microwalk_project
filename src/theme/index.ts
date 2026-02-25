@@ -23,7 +23,9 @@ export const theme = {
 
   spacing: {
     xs: 4,
+    ms: 6,
     sm: 8,
+    ml: 10,
     md: 16,
     lg: 20,
     xl: 30,
@@ -38,12 +40,14 @@ export const theme = {
   },
 
   fontSize: {
+    xxs: 11,
     xs: 12,
     sm: 14,
     md: 16,
     lg: 17,
     xl: 24,
     heading: 36,
+    display: 38,
   },
 
   fontWeight: {
@@ -55,6 +59,15 @@ export const theme = {
 
   letterSpacing: {
     heading: 0.72, // 2% of 36
+  },
+
+  shadow: {
+    card: {
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 0.08,
+      shadowRadius: 6,
+      elevation: 2,
+    },
   },
 
   layout: {

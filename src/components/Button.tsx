@@ -1,10 +1,10 @@
 import React from 'react';
 import { Pressable, StyleSheet, ActivityIndicator, ViewStyle, TextStyle, StyleProp, Platform } from 'react-native';
-import * as Haptics from 'expo-haptics';
 import { theme } from '../theme';
 import { useAppStore } from '../store';
 import { useThemePalette } from '../theme/palette';
 import { Text } from './Text';
+import { useTapFeedbackAction } from '../lib/useTapFeedbackAction';
 
 interface ButtonProps {
   title: string;
@@ -43,6 +43,11 @@ export const Button: React.FC<ButtonProps> = ({
           ? palette.textMuted
           : palette.textPrimary;
   const spinnerColor = disabled ? palette.textMuted : labelColor;
+  const glowColor = variant === 'danger' ? theme.colors.danger : palette.accentPrimary;
+  const { isTapActive, handlePress, handlePressIn, handlePressOut } = useTapFeedbackAction({
+    onPress,
+    enabled: !(disabled || loading),
+  });
 
   return (
     <Pressable
@@ -62,21 +67,25 @@ export const Button: React.FC<ButtonProps> = ({
         variant === 'danger' && styles.dangerButton,
         disabled && styles.disabledButton,
         full && styles.fullWidth,
+        (pressed || isTapActive) && !disabled && !loading && {
+          shadowColor: glowColor,
+          shadowOffset: { width: 0, height: 0 },
+          shadowOpacity: Platform.OS === 'ios' ? 0.3 : 0.18,
+          shadowRadius: 10,
+          elevation: 5,
+        },
         pressed && !disabled && !loading && styles.pressedButton,
         style,
       ]}
-      onPress={() => {
-        if (Platform.OS !== 'web') {
-          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-        }
-        onPress();
-      }}
+      onPress={handlePress}
+      onPressIn={handlePressIn}
+      onPressOut={handlePressOut}
       disabled={disabled || loading}
       accessibilityRole="button"
       testID={testID}
       accessibilityLabel={testID}
       android_ripple={{
-        color: isPrimaryLike ? 'rgba(255,255,255,0.18)' : isDark ? 'rgba(255,255,255,0.10)' : 'rgba(15,23,42,0.10)',
+        color: isPrimaryLike ? 'rgba(255,255,255,0.18)' : palette.inputBg,
       }}
     >
       {loading ? (

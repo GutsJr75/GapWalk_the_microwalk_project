@@ -14,6 +14,7 @@ import {
   ActivityIndicator,
   useWindowDimensions,
   Platform,
+  Modal as RNModal,
 } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useFocusEffect } from '@react-navigation/native';
@@ -22,7 +23,7 @@ import { RootStackParamList } from '../../App';
 import { Text } from '../components/Text';
 import { Button } from '../components/Button';
 import { Card } from '../components/Card';
-import { Modal } from '../components/Modal';
+import { Modal as AppModal } from '../components/Modal';
 import { ScreenHeader } from '../components/ScreenHeader';
 import { AppIcon } from '../components/AppIcon';
 import { theme } from '../theme';
@@ -34,6 +35,7 @@ import { eventsRepo } from '../lib/repositories/eventsRepo';
 import { plansRepo } from '../lib/repositories/plansRepo';
 import { scheduleSourceRepo } from '../lib/repositories/scheduleSourceRepo';
 import { syncNudgePlansForCurrentSchedule } from '../lib/scheduleSync';
+import { toUserFriendlyError } from '../lib/errorMessages';
 import {
   SAVE_CONFIRM_ACTION,
   SAVE_CONFIRM_DECLINE,
@@ -201,15 +203,24 @@ const TwoDigitTimeInput: React.FC<TwoDigitTimeInputProps> = ({
 }) => {
   const { themeMode } = useAppStore();
   const palette = getThemePalette(themeMode);
+  const webTextInputReset = Platform.OS === 'web'
+    ? ({
+        outlineStyle: 'none',
+        outlineWidth: 0,
+        outlineColor: 'transparent',
+        boxShadow: 'none',
+      } as any)
+    : null;
 
   return (
     <TextInput
-      style={style}
+      style={[style, webTextInputReset]}
       value={value}
       onChangeText={(nextText) => onChange(normalizeTyping(mode, nextText))}
       onBlur={onBlurNormalize}
       keyboardType="number-pad"
       maxLength={2}
+      underlineColorAndroid="transparent"
       placeholder={placeholder}
       placeholderTextColor={placeholderTextColor ?? palette.textMuted}
       selectTextOnFocus
@@ -449,18 +460,27 @@ const buildScheduleSignature = (entriesByDay: Record<number, TemplateEvent[]>): 
   return JSON.stringify(normalized);
 };
 
+const cloneEntriesByDay = (entriesByDay: Record<number, TemplateEvent[]>): Record<number, TemplateEvent[]> => {
+  const clone = createEmptyEntriesByDay();
+  for (const day of [0, 1, 2, 3, 4, 5, 6]) {
+    clone[day] = (entriesByDay[day] ?? []).map((event) => ({ ...event }));
+  }
+  return clone;
+};
+
 export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => {
   const today = new Date();
   const todayIndex = Number.isFinite(today.getDay()) ? today.getDay() : 1;
   const manageMode = !!route.params?.manageMode;
-  const importedFilename = route.params?.importedFilename?.trim();
+  const routeImportedFilename = route.params?.importedFilename?.trim();
   const importedEventCount = route.params?.importedEventCount;
   const prefillTemplate = route.params?.prefillTemplate;
   const startWithEmpty = !!route.params?.startWithEmpty && !manageMode;
   const requireSaveBeforeContinue = !!route.params?.requireSaveBeforeContinue && !manageMode;
   const isE2E = process.env.EXPO_PUBLIC_E2E === '1';
-  const usingIcsTemplate = !!importedFilename;
+  const initialSourceType: 'manual' | 'import' = routeImportedFilename ? 'import' : 'manual';
   const [entriesByDay, setEntriesByDay] = useState<Record<number, TemplateEvent[]>>(createEmptyEntriesByDay());
+  const [savedEntriesByDay, setSavedEntriesByDay] = useState<Record<number, TemplateEvent[]>>(createEmptyEntriesByDay());
   const [initialSignature, setInitialSignature] = useState<string>(buildScheduleSignature(createEmptyEntriesByDay()));
   const [showAdd, setShowAdd] = useState(false);
   const [editingEventId, setEditingEventId] = useState<string | null>(null);
@@ -474,22 +494,26 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
   const [hoveredSlot, setHoveredSlot] = useState<number | null>(null);
   const [importLoading, setImportLoading] = useState(false);
   const [importStatus, setImportStatus] = useState<string | null>(null);
-  const [currentSourceLabel, setCurrentSourceLabel] = useState<string>('');
-  const [showEditor, setShowEditor] = useState(!manageMode);
-  const [selectedSource, setSelectedSource] = useState<'manual' | 'import'>('manual');
-  const [hasTouchedSourceSelection, setHasTouchedSourceSelection] = useState(false);
+  const [manageScreenMode, setManageScreenMode] = useState<'view' | 'edit'>(manageMode ? 'view' : 'edit');
+  const [showSourceSheet, setShowSourceSheet] = useState(false);
+  const [sourceType, setSourceType] = useState<'manual' | 'import'>(initialSourceType);
+  const [savedSourceType, setSavedSourceType] = useState<'manual' | 'import'>(initialSourceType);
+  const [importedFilename, setImportedFilename] = useState<string | undefined>(routeImportedFilename);
+  const [savedImportedFilename, setSavedImportedFilename] = useState<string | undefined>(routeImportedFilename);
+  const [sheetSourceType, setSheetSourceType] = useState<'manual' | 'import'>(initialSourceType);
+  const [sheetImportedFilename, setSheetImportedFilename] = useState<string | undefined>(routeImportedFilename);
+  const [sheetImportedTemplate, setSheetImportedTemplate] = useState<Record<number, TemplateEvent[]> | null>(null);
   const [slotFeedback, setSlotFeedback] = useState<{ dayIndex: number; slotIndex: number } | null>(null);
+  const [clearArmedDay, setClearArmedDay] = useState<number | null>(null);
+  const [poppingEventKey, setPoppingEventKey] = useState<string | null>(null);
   const { width: winWidth } = useWindowDimensions();
+  const allowNextBeforeRemoveRef = useRef(false);
 
-  // Reset showEditor when the screen is re-focused with different params.
-  // navigate() reuses existing screens, so the initial useState(!manageMode)
-  // value becomes stale when route.params change on subsequent navigations.
-  useFocusEffect(
-    useCallback(() => {
-      setShowEditor(!manageMode);
-      setHasTouchedSourceSelection(false);
-    }, [manageMode])
-  );
+  // navigate() reuses existing screens, so keep the base mode in sync with params.
+  useEffect(() => {
+    setManageScreenMode(manageMode ? 'view' : 'edit');
+    setShowSourceSheet(false);
+  }, [manageMode]);
   const gridScrollRef = useRef<ScrollView>(null);
   const oneTimeMonthRef = useRef<TextInput>(null);
   const oneTimeDayRef = useRef<TextInput>(null);
@@ -497,6 +521,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
   const appearAnim = useRef(new Animated.Value(0)).current;
   const slotFeedbackScaleAnim = useRef(new Animated.Value(0.92)).current;
   const slotFeedbackOpacityAnim = useRef(new Animated.Value(0)).current;
+  const eventPopAnim = useRef(new Animated.Value(0)).current;
   const { scheduleSource, setScheduleSource, setUpcomingPlans, preferences, themeMode } = useAppStore();
 
   const scrollGridToNow = useCallback((animated = true) => {
@@ -537,7 +562,6 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
 
   // Ensure the current-time red line is visible whenever the grid editor appears.
   useEffect(() => {
-    if (manageMode && !showEditor) return;
     const t = setTimeout(() => {
       try {
         if (Platform.OS === 'web') {
@@ -550,17 +574,16 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
       }
     }, 120);
     return () => clearTimeout(t);
-  }, [manageMode, scrollGridToNow, showEditor]);
+  }, [scrollGridToNow]);
 
   // Re-position the grid to current time each time the screen gains focus.
   useFocusEffect(
     useCallback(() => {
-      if (manageMode && !showEditor) return () => {};
       const t = setTimeout(() => {
         scrollGridToNow(false);
       }, 120);
       return () => clearTimeout(t);
-    }, [manageMode, scrollGridToNow, showEditor])
+    }, [scrollGridToNow])
   );
 
   useEffect(() => {
@@ -576,20 +599,56 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
     useCallback(() => {
       let active = true;
       const loadSavedTemplate = async () => {
+        const resolveSourceState = async (): Promise<{ type: 'manual' | 'import'; filename?: string }> => {
+          const src = scheduleSource ?? (await scheduleSourceRepo.get());
+          if (!src) {
+            return {
+              type: routeImportedFilename ? 'import' : 'manual',
+              filename: routeImportedFilename,
+            };
+          }
+          if (src.type === 'ics') {
+            return { type: 'import', filename: src.filename ?? routeImportedFilename };
+          }
+          return { type: 'manual' };
+        };
+
         if (Array.isArray(prefillTemplate)) {
           const grouped = groupTemplateEntries(prefillTemplate);
           if (!active) return;
           setEntriesByDay(grouped);
+          setSavedEntriesByDay(cloneEntriesByDay(grouped));
           setInitialSignature(buildScheduleSignature(grouped));
           setHasSavedSchedule(false);
+          const resolvedSource = routeImportedFilename
+            ? { type: 'import' as const, filename: routeImportedFilename }
+            : await resolveSourceState();
+          if (!active) return;
+          setSourceType(resolvedSource.type);
+          setSavedSourceType(resolvedSource.type);
+          setImportedFilename(resolvedSource.type === 'import' ? resolvedSource.filename : undefined);
+          setSavedImportedFilename(resolvedSource.type === 'import' ? resolvedSource.filename : undefined);
+          setSheetSourceType(resolvedSource.type);
+          setSheetImportedFilename(resolvedSource.type === 'import' ? resolvedSource.filename : undefined);
+          setSheetImportedTemplate(null);
           return;
         }
         if (startWithEmpty) {
           const empty = createEmptyEntriesByDay();
           if (!active) return;
           setEntriesByDay(empty);
+          setSavedEntriesByDay(cloneEntriesByDay(empty));
           setInitialSignature(buildScheduleSignature(empty));
           setHasSavedSchedule(false);
+          const resolvedSource = await resolveSourceState();
+          if (!active) return;
+          setSourceType(resolvedSource.type);
+          setSavedSourceType(resolvedSource.type);
+          setImportedFilename(resolvedSource.type === 'import' ? resolvedSource.filename : undefined);
+          setSavedImportedFilename(resolvedSource.type === 'import' ? resolvedSource.filename : undefined);
+          setSheetSourceType(resolvedSource.type);
+          setSheetImportedFilename(resolvedSource.type === 'import' ? resolvedSource.filename : undefined);
+          setSheetImportedTemplate(null);
           return;
         }
         try {
@@ -605,14 +664,34 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
           const grouped = groupTemplateEntries(cleaned);
           if (!active) return;
           setEntriesByDay(grouped);
+          setSavedEntriesByDay(cloneEntriesByDay(grouped));
           setInitialSignature(buildScheduleSignature(grouped));
           setHasSavedSchedule(!requireSaveBeforeContinue);
+          const resolvedSource = await resolveSourceState();
+          if (!active) return;
+          setSourceType(resolvedSource.type);
+          setSavedSourceType(resolvedSource.type);
+          setImportedFilename(resolvedSource.type === 'import' ? resolvedSource.filename : undefined);
+          setSavedImportedFilename(resolvedSource.type === 'import' ? resolvedSource.filename : undefined);
+          setSheetSourceType(resolvedSource.type);
+          setSheetImportedFilename(resolvedSource.type === 'import' ? resolvedSource.filename : undefined);
+          setSheetImportedTemplate(null);
         } catch (error) {
           if (!active) return;
           const empty = createEmptyEntriesByDay();
           setEntriesByDay(empty);
+          setSavedEntriesByDay(cloneEntriesByDay(empty));
           setInitialSignature(buildScheduleSignature(empty));
           setHasSavedSchedule(false);
+          const resolvedSource = await resolveSourceState();
+          if (!active) return;
+          setSourceType(resolvedSource.type);
+          setSavedSourceType(resolvedSource.type);
+          setImportedFilename(resolvedSource.type === 'import' ? resolvedSource.filename : undefined);
+          setSavedImportedFilename(resolvedSource.type === 'import' ? resolvedSource.filename : undefined);
+          setSheetSourceType(resolvedSource.type);
+          setSheetImportedFilename(resolvedSource.type === 'import' ? resolvedSource.filename : undefined);
+          setSheetImportedTemplate(null);
           console.error('Failed to load saved manual schedule:', error);
         }
       };
@@ -620,43 +699,14 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
       return () => {
         active = false;
       };
-    }, [prefillTemplate, requireSaveBeforeContinue, startWithEmpty])
+    }, [prefillTemplate, requireSaveBeforeContinue, routeImportedFilename, scheduleSource, startWithEmpty])
   );
 
-  // Load current source label in manage mode
-  useEffect(() => {
-    if (!manageMode) return;
-    const loadSource = async () => {
-      const src = scheduleSource ?? (await scheduleSourceRepo.get());
-      if (!src) {
-        setCurrentSourceLabel('Not set yet');
-        setSelectedSource('manual');
-        setHasTouchedSourceSelection(false);
-        return;
-      }
-      if (src.type === 'manual') {
-        setCurrentSourceLabel('Manual schedule');
-        setSelectedSource('manual');
-      }
-      else if (src.type === 'ics') {
-        setCurrentSourceLabel(src.filename ? `Calendar file: ${src.filename}` : 'Calendar file (.ics)');
-        setSelectedSource('import');
-      }
-      else if (src.type === 'google') {
-        setCurrentSourceLabel('Google Calendar');
-        setSelectedSource('manual');
-      }
-      else {
-        setCurrentSourceLabel('Not set yet');
-        setSelectedSource('manual');
-      }
-      setHasTouchedSourceSelection(false);
-    };
-    void loadSource();
-  }, [manageMode, scheduleSource]);
-
-  /* ── ICS re-import (inline, no extra screen) ── */
-  const handleReImportIcs = async () => {
+  const pickAndParseIcsTemplate = async (): Promise<{
+    grouped: Record<number, TemplateEvent[]>;
+    filename: string;
+    eventsParsed: number;
+  } | null> => {
     try {
       setImportLoading(true);
       setImportStatus('Opening file picker...');
@@ -667,10 +717,12 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
       if (result.canceled) {
         setImportLoading(false);
         setImportStatus(null);
-        return;
+        return null;
       }
+
       const file = result.assets[0];
-      setImportStatus(`Reading ${file.name || 'calendar file'}...`);
+      const resolvedFilename = file.name || 'calendar.ics';
+      setImportStatus(`Reading ${resolvedFilename}...`);
       let content = '';
       const webFile = (file as any).file;
       if (Platform.OS === 'web' && webFile && typeof webFile.text === 'function') {
@@ -685,67 +737,65 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
       setImportStatus('Parsing calendar...');
       const parseResult = await parseICSFile(content);
       if (parseResult.errors.length > 0) {
-        const warningText = parseResult.errors.slice(0, 3).join('\n');
+        const warningText = parseResult.errors
+          .slice(0, 3)
+          .map((e) => toUserFriendlyError(new Error(e)))
+          .join('\n');
         showMessage('Import Warning', warningText);
       }
       if (parseResult.events.length === 0) {
         setImportLoading(false);
         setImportStatus(null);
         showMessage('No Events', 'No events found in the ICS file.');
-        return;
+        return null;
       }
+
       const weeklyTemplate: ManualScheduleEntry[] = buildWeeklyTemplateFromIcsEvents(parseResult.events);
       analyticsService.track('ics_import_parsed', {
-        filename: file.name || 'calendar.ics',
+        filename: resolvedFilename,
         eventsParsed: parseResult.events.length,
         weeklyTemplateEntries: weeklyTemplate.length,
       });
+
       const grouped = groupTemplateEntries(weeklyTemplate);
-      setEntriesByDay(grouped);
       setImportLoading(false);
       setImportStatus(null);
-      setShowEditor(true);
-      showMessage('Imported', `Loaded ${parseResult.events.length} events from ${file.name || 'calendar.ics'}. Review the grid and save.`);
+      return {
+        grouped,
+        filename: resolvedFilename,
+        eventsParsed: parseResult.events.length,
+      };
     } catch (error) {
-      console.error('ICS re-import failed:', error);
+      console.error('ICS import failed:', error);
       setImportLoading(false);
       setImportStatus(null);
-      const msg = error instanceof Error ? error.message : 'Failed to import ICS file. Please try again.';
+      const msg = toUserFriendlyError(error);
       showMessage('Import Failed', msg);
+      return null;
     }
-  };
-
-  /* ── Landing: continue to editor ── */
-  const handleLandingContinue = () => {
-    setShowEditor(true);
-  };
-
-  const handleLandingCancel = () => {
-    const leaveScreen = () => navigation.navigate('Dashboard');
-    if (!hasTouchedSourceSelection) {
-      leaveScreen();
-      return;
-    }
-
-    const title = 'Cancel schedule update?';
-    const message = 'Your unsaved source selection will be lost. Do you want to leave this screen?';
-    if (Platform.OS === 'web' && typeof (globalThis as any).confirm === 'function') {
-      if ((globalThis as any).confirm(`${title}\n\n${message}`)) {
-        leaveScreen();
-      }
-      return;
-    }
-
-    Alert.alert(title, message, [
-      { text: 'No', style: 'cancel' },
-      { text: 'Yes', style: 'destructive', onPress: leaveScreen },
-    ]);
   };
 
   const currentSignature = useMemo(() => buildScheduleSignature(entriesByDay), [entriesByDay]);
   const hasUnsavedChanges = currentSignature !== initialSignature;
-  const hasPendingImportedSchedule = usingIcsTemplate && Array.isArray(prefillTemplate) && !hasSavedSchedule;
-  const isReadyToContinue = hasSavedSchedule && !hasUnsavedChanges;
+  const hasPendingImportedSchedule = sourceType === 'import' && Array.isArray(prefillTemplate) && !hasSavedSchedule;
+  const hasSourceChanges =
+    sourceType !== savedSourceType ||
+    (
+      sourceType === 'import' &&
+      (importedFilename ?? '') !== (savedImportedFilename ?? '')
+    );
+  const hasManageChanges = hasUnsavedChanges || hasSourceChanges;
+  const isReadyToContinue = hasSavedSchedule && !hasUnsavedChanges && !hasSourceChanges;
+  const isManageViewOnly = manageMode && manageScreenMode === 'view';
+  const sheetResolvedFilename = sheetImportedFilename ?? importedFilename;
+  const sourceSheetHasChanges =
+    sheetSourceType !== sourceType ||
+    (
+      sheetSourceType === 'import' &&
+      (sheetResolvedFilename ?? '') !== (importedFilename ?? '')
+    ) ||
+    sheetImportedTemplate !== null;
+  const sourceSheetNeedsImportFile = sheetSourceType === 'import' && !(sheetResolvedFilename?.trim());
 
   const showMessage = (title: string, message: string, onAcknowledge?: () => void) => {
     if (Platform.OS === 'web' && typeof (globalThis as any).alert === 'function') {
@@ -760,15 +810,22 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
     Alert.alert(title, message);
   };
 
+  const runAllowedNavigation = useCallback((action: () => void) => {
+    allowNextBeforeRemoveRef.current = true;
+    action();
+  }, []);
+
   const confirmDiscardChanges = (onDiscard: () => void) => {
-    if (!hasUnsavedChanges && !hasPendingImportedSchedule) {
+    if (!hasUnsavedChanges && !hasPendingImportedSchedule && !hasSourceChanges) {
       onDiscard();
       return;
     }
     const title = 'Cancel schedule editing?';
     const message = hasPendingImportedSchedule
       ? 'Your imported schedule has not been saved yet. Do you want to leave without saving?'
-      : 'Your unsaved schedule changes will be lost. Do you want to leave this screen?';
+      : hasSourceChanges
+        ? 'Your unsaved source changes will be lost. Do you want to leave this screen?'
+        : 'Your unsaved schedule changes will be lost. Do you want to leave this screen?';
     if (Platform.OS === 'web' && typeof (globalThis as any).confirm === 'function') {
       const ok = (globalThis as any).confirm(`${title}\n\n${message}`);
       if (ok) onDiscard();
@@ -787,17 +844,34 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
   const exitManualScreen = () => {
     const goOut = () => {
       if (manageMode) {
-        navigation.navigate('Dashboard');
+        runAllowedNavigation(() => navigation.navigate('Dashboard'));
         return;
       }
       if (navigation.canGoBack()) {
-        navigation.goBack();
+        runAllowedNavigation(() => navigation.goBack());
         return;
       }
-      navigation.navigate('ScheduleSetup');
+      runAllowedNavigation(() => navigation.navigate('ScheduleSetup'));
     };
     confirmDiscardChanges(goOut);
   };
+
+  useEffect(() => {
+    const unsubscribe = navigation.addListener('beforeRemove', (e) => {
+      if (allowNextBeforeRemoveRef.current) {
+        allowNextBeforeRemoveRef.current = false;
+        return;
+      }
+      if (!hasUnsavedChanges && !hasPendingImportedSchedule && !hasSourceChanges) return;
+
+      e.preventDefault();
+      confirmDiscardChanges(() => {
+        allowNextBeforeRemoveRef.current = true;
+        navigation.dispatch(e.data.action);
+      });
+    });
+    return unsubscribe;
+  }, [confirmDiscardChanges, hasPendingImportedSchedule, hasSourceChanges, hasUnsavedChanges, navigation]);
 
   const to24Hour = (hourText: string, minuteText: string, period: 'AM' | 'PM'): string | null => {
     if (!isValidHour(hourText) || !isValidMinute(minuteText)) return null;
@@ -1039,6 +1113,119 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
       : 'Canceling now will discard the information you entered. Do you want to continue?';
     showBinaryConfirm(title, message, 'Yes', closeEventModal, 'destructive');
   }, [closeEventModal, editingEventId, eventFormHasChanges, showBinaryConfirm]);
+
+  const resetSourceSheetState = () => {
+    setSheetSourceType(sourceType);
+    setSheetImportedFilename(importedFilename);
+    setSheetImportedTemplate(null);
+    setImportStatus(null);
+  };
+
+  const handleOpenSourceSheet = () => {
+    resetSourceSheetState();
+    setShowSourceSheet(true);
+  };
+
+  const handleCloseSourceSheet = () => {
+    if (importLoading) return;
+    if (!sourceSheetHasChanges) {
+      setShowSourceSheet(false);
+      resetSourceSheetState();
+      return;
+    }
+    showBinaryConfirm(
+      'Discard source changes?',
+      'Your source changes in this panel will be lost. Do you want to close it?',
+      'Yes, close',
+      () => {
+        setShowSourceSheet(false);
+        resetSourceSheetState();
+      },
+      'destructive'
+    );
+  };
+
+  const handlePickIcsForSourceSheet = async () => {
+    const imported = await pickAndParseIcsTemplate();
+    if (!imported) return;
+    setSheetSourceType('import');
+    setSheetImportedFilename(imported.filename);
+    setSheetImportedTemplate(imported.grouped);
+  };
+
+  const applySourceSheetChanges = () => {
+    const nextSourceType = sheetSourceType;
+    const nextFilename = nextSourceType === 'import' ? sheetResolvedFilename : undefined;
+    if (nextSourceType === 'import' && !nextFilename) {
+      showMessage('Import needed', 'Choose a .ics file before saving source changes.');
+      return;
+    }
+
+    if (sheetImportedTemplate) {
+      setEntriesByDay(cloneEntriesByDay(sheetImportedTemplate));
+      setHasSavedSchedule(false);
+    }
+    setSourceType(nextSourceType);
+    setImportedFilename(nextFilename);
+    setManageScreenMode('edit');
+    setShowSourceSheet(false);
+    setSheetImportedTemplate(null);
+    setImportStatus(null);
+  };
+
+  const handleSaveSourceSheet = () => {
+    if (importLoading) return;
+    if (!sourceSheetHasChanges) {
+      setShowSourceSheet(false);
+      resetSourceSheetState();
+      return;
+    }
+    if (sourceSheetNeedsImportFile) {
+      showMessage('Import needed', 'Choose a .ics file before continuing.');
+      return;
+    }
+    if (sheetImportedTemplate) {
+      showBinaryConfirm(
+        'Replace current schedule?',
+        'This will replace your current grid with the imported schedule.',
+        'Yes, replace',
+        applySourceSheetChanges,
+        'destructive'
+      );
+      return;
+    }
+    applySourceSheetChanges();
+  };
+
+  const handleManageStartEdit = () => {
+    setManageScreenMode('edit');
+  };
+
+  const handleManageCancelEdit = () => {
+    if (!hasManageChanges) {
+      setManageScreenMode('view');
+      return;
+    }
+    showBinaryConfirm(
+      'Discard unsaved changes?',
+      'This will discard your unsaved schedule and source edits.',
+      'Yes, discard',
+      () => {
+        const restored = cloneEntriesByDay(savedEntriesByDay);
+        setEntriesByDay(restored);
+        setInitialSignature(buildScheduleSignature(restored));
+        setSourceType(savedSourceType);
+        setImportedFilename(savedSourceType === 'import' ? savedImportedFilename : undefined);
+        setSheetSourceType(savedSourceType);
+        setSheetImportedFilename(savedSourceType === 'import' ? savedImportedFilename : undefined);
+        setSheetImportedTemplate(null);
+        setHasSavedSchedule(true);
+        setSaveError(null);
+        setManageScreenMode('view');
+      },
+      'destructive'
+    );
+  };
 
   const toggleRepeatDay = (dayIndex: number) => {
     setForm((prev) => {
@@ -1338,6 +1525,10 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
 
   const performSave = async () => {
     if (savingDone) return;
+    if (sourceType === 'import' && !importedFilename) {
+      showMessage('Import needed', 'Choose a .ics file before saving this schedule.');
+      return;
+    }
     setSaveError(null);
     setSavingDone(true);
 
@@ -1359,7 +1550,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
       })
     );
 
-    const eventSource: 'ics' | 'manual' = usingIcsTemplate ? 'ics' : 'manual';
+    const eventSource: 'ics' | 'manual' = sourceType === 'import' ? 'ics' : 'manual';
     const base = startOfDay(new Date());
     const rangeEnd = addDays(base, 14);
     const recurringByDay = weeklyTemplate
@@ -1423,24 +1614,45 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
 
     // Attempt save up to 2 times (retry once on failure).
     let lastError: unknown = null;
+    let failedStep = '';
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
-        await manualScheduleRepo.deleteAll();
-        await manualScheduleRepo.saveMany(weeklyTemplate);
-        await eventsRepo.deleteAll();
-        await eventsRepo.saveMany(events);
-        const src = usingIcsTemplate
+        try {
+          await manualScheduleRepo.deleteAll();
+          await manualScheduleRepo.saveMany(weeklyTemplate);
+        } catch (e) {
+          failedStep = 'saving your schedule to storage';
+          throw e;
+        }
+        try {
+          await eventsRepo.deleteAll();
+          await eventsRepo.saveMany(events);
+        } catch (e) {
+          failedStep = 'saving calendar events';
+          throw e;
+        }
+        const src = sourceType === 'import'
           ? { type: 'ics' as const, filename: importedFilename, lastImportedAt: new Date().toISOString() }
           : { type: 'manual' as const, lastImportedAt: new Date().toISOString() };
-        await scheduleSourceRepo.save(src);
-        setScheduleSource(src);
+        try {
+          await scheduleSourceRepo.save(src);
+          setScheduleSource(src);
+        } catch (e) {
+          failedStep = 'saving schedule source';
+          throw e;
+        }
 
-        await syncNudgePlansForCurrentSchedule(preferences);
-        const refreshedUpcoming = await plansRepo.getUpcomingPlans(20);
-        setUpcomingPlans(refreshedUpcoming);
+        try {
+          await syncNudgePlansForCurrentSchedule(preferences);
+          const refreshedUpcoming = await plansRepo.getUpcomingPlans(20);
+          setUpcomingPlans(refreshedUpcoming);
+        } catch (e) {
+          failedStep = 'updating walk opportunities';
+          throw e;
+        }
 
         analyticsService.track('schedule_saved', {
-          source: usingIcsTemplate ? 'ics' : 'manual',
+          source: sourceType === 'import' ? 'ics' : 'manual',
           weeklyEntries: weeklyTemplate.filter((entry) => !entry.isOneTime).length,
           oneTimeEntries: weeklyTemplate.filter((entry) => entry.isOneTime).length,
           generatedEvents: events.length,
@@ -1448,15 +1660,18 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
         });
 
         setInitialSignature(currentSignature);
+        setSavedEntriesByDay(cloneEntriesByDay(entriesByDay));
+        setSavedSourceType(sourceType);
+        setSavedImportedFilename(sourceType === 'import' ? importedFilename : undefined);
+        setSheetSourceType(sourceType);
+        setSheetImportedFilename(sourceType === 'import' ? importedFilename : undefined);
+        setSheetImportedTemplate(null);
         setHasSavedSchedule(true);
         setSavingDone(false);
 
         if (manageMode) {
-          showMessage(
-            'Schedule saved',
-            'Your schedule was updated and walking opportunities were synced.',
-            exitManualScreen
-          );
+          setManageScreenMode('view');
+          showMessage('Schedule saved', 'Your schedule was updated and walking opportunities were synced.');
           return;
         }
 
@@ -1464,17 +1679,20 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
           return;
         }
 
-        navigation.navigate('Preferences', {});
+        runAllowedNavigation(() => navigation.navigate('Preferences', {}));
         return;
       } catch (err) {
         lastError = err;
-        console.error(`Save schedule attempt ${attempt + 1} failed:`, err);
+        console.error(`Save schedule attempt ${attempt + 1} failed${failedStep ? ` at step: ${failedStep}` : ''}:`, err);
         if (attempt === 0) await new Promise((r) => setTimeout(r, 500));
       }
     }
 
-    const msg = lastError instanceof Error ? lastError.message : String(lastError);
-    setSaveError(`Save failed: ${msg}`);
+    const msg = toUserFriendlyError(lastError);
+    const stepHint = failedStep ? ` The problem occurred while ${failedStep}.` : '';
+    const rawMsg = lastError instanceof Error ? lastError.message : String(lastError);
+    const devHint = __DEV__ ? ` (Technical: ${rawMsg.slice(0, 100)}${rawMsg.length > 100 ? '…' : ''})` : '';
+    setSaveError(`Could not save your schedule.${stepHint} ${msg}${devHint}`);
     setSavingDone(false);
   };
 
@@ -1485,18 +1703,17 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
       showMessage('Empty', 'Add at least one event.');
       return;
     }
-    if (manageMode && !hasUnsavedChanges && !hasPendingImportedSchedule) {
+    if (manageMode && !hasManageChanges && !hasPendingImportedSchedule) {
       showMessage(
         'No changes',
-        'No changes were detected. Your existing schedule is already active.',
-        exitManualScreen
+        'No changes were detected. Your existing schedule is already active.'
       );
       return;
     }
 
-    const confirmTitle = manageMode ? 'Update schedule?' : SAVE_CONFIRM_TITLE;
-    const confirmMessage = manageMode ? 'Do you want to update this schedule?' : SAVE_CONFIRM_MESSAGE;
-    const confirmAction = manageMode ? 'Yes, Update' : SAVE_CONFIRM_ACTION;
+    const confirmTitle = manageMode ? 'Save schedule changes?' : SAVE_CONFIRM_TITLE;
+    const confirmMessage = manageMode ? 'Do you want to save these schedule changes?' : SAVE_CONFIRM_MESSAGE;
+    const confirmAction = manageMode ? 'Yes, Save' : SAVE_CONFIRM_ACTION;
     if (Platform.OS === 'web' && typeof (globalThis as any).confirm === 'function') {
       const ok = (globalThis as any).confirm(`${confirmTitle}\n\n${confirmMessage}`);
       if (ok) {
@@ -1517,9 +1734,13 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
 
   const handleContinueAfterSave = () => {
     if (savingDone) return;
-    if (!hasSavedSchedule || hasUnsavedChanges) {
+    if (!hasSavedSchedule || hasUnsavedChanges || hasSourceChanges) {
       if (hasUnsavedChanges) {
         showMessage('Unsaved changes', 'Save your latest schedule changes before continuing.');
+        return;
+      }
+      if (hasSourceChanges) {
+        showMessage('Unsaved changes', 'Save your latest source changes before continuing.');
         return;
       }
       showMessage('Save first', 'Please save this schedule before continuing.');
@@ -1660,6 +1881,8 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
 
   const handleGridCellPress = useCallback((dayIndex: number, slotIndex: number, daySlices: GridDisplaySlice[]) => {
     setSelectedDay(dayIndex);
+    setClearArmedDay(null);
+    if (isManageViewOnly) return;
     animateSlotFeedback(dayIndex, slotIndex);
 
     const eventAtSlot = daySlices.find((slice) => {
@@ -1667,16 +1890,28 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
       return slotIndex >= bounds.startSlot && slotIndex < bounds.endSlotExclusive;
     });
 
-    const openEventEditor = () => {
-      if (eventAtSlot) {
+    if (eventAtSlot) {
+      setPoppingEventKey(eventAtSlot.key);
+      eventPopAnim.stopAnimation();
+      eventPopAnim.setValue(0);
+      Animated.timing(eventPopAnim, {
+        toValue: 1,
+        duration: 180,
+        easing: Easing.out(Easing.back(1.5)),
+        useNativeDriver: true,
+      }).start(({ finished }) => {
+        setPoppingEventKey(null);
+        eventPopAnim.setValue(0);
+        if (!finished) return;
         openModalFromEvent(eventAtSlot.event, eventAtSlot.sourceDayIndex);
-        return;
-      }
-      handleSlotClick(dayIndex, slotIndex);
-    };
+      });
+      return;
+    }
 
-    setTimeout(openEventEditor, 70);
-  }, [animateSlotFeedback, getSliceSlotBounds, handleSlotClick, openModalFromEvent]);
+    setTimeout(() => {
+      handleSlotClick(dayIndex, slotIndex);
+    }, 70);
+  }, [animateSlotFeedback, eventPopAnim, getSliceSlotBounds, handleSlotClick, isManageViewOnly, openModalFromEvent]);
 
   const handleBack = () => {
     exitManualScreen();
@@ -1731,7 +1966,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
   const selectedDayEvents = entriesByDaySorted[selectedDay] ?? [];
   const palette = getThemePalette(themeMode);
   const isDark = themeMode === 'dark';
-  const mintTextOnTint = isDark ? theme.colors.accentPrimary : '#0f5132';
+  const mintTextOnTint = palette.accentOnTint;
   const gridLineStrong = isDark ? 'rgba(255,255,255,0.1)' : palette.borderStrong;
   const gridLineSoft = isDark ? 'rgba(255,255,255,0.06)' : palette.borderSoft;
   const gridAltBg = isDark ? 'rgba(255,255,255,0.02)' : 'rgba(15,23,42,0.03)';
@@ -1751,7 +1986,9 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
     inputRange: [0, 1],
     outputRange: [8, 0],
   });
-  const slotHintText = 'Tap any slot/cell to add an event or tap on an existing event to edit/delete it.';
+  const slotHintText = isManageViewOnly
+    ? 'Review your weekly schedule. Tap Edit Schedule to make changes.'
+    : 'Tap any slot/cell to add an event or tap on an existing event to edit/delete it.';
 
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: palette.bgApp }]}>
@@ -1764,170 +2001,28 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
           },
         ]}
       >
-      <View style={[styles.header, showEditor && styles.headerCompact]}>
+      <View style={[styles.header, styles.headerCompact]}>
         <ScreenHeader
-          title={manageMode ? 'Manage your schedule' : 'Set up your schedule'}
-          subtitle={showEditor ? undefined : (manageMode ? 'Choose your schedule source, then select Next to edit.' : slotHintText)}
+          title={manageMode ? 'Manage schedule' : 'Set up your schedule'}
           onBack={manageMode ? undefined : handleBack}
-          backTestID="manual-back"
-          style={showEditor ? { marginBottom: 0, paddingBottom: 4 } : undefined}
+          backTestID={manageMode ? undefined : 'manual-back'}
+          style={{ marginBottom: 0, paddingTop: 0, paddingBottom: 0 }}
         />
-        {showEditor && usingIcsTemplate && (
+        {sourceType === 'import' && importedFilename ? (
           <View style={styles.icsBadge}>
             <Text variant="bodySmall" style={[styles.icsBadgeText, { color: mintTextOnTint }]} numberOfLines={1}>
               ICS file: {importedFilename}
             </Text>
           </View>
-        )}
-        {requireSaveBeforeContinue && (
-          <Text variant="bodySmall" style={styles.importHint}>
-            {usingIcsTemplate
-              ? typeof importedEventCount === 'number' && importedEventCount > 0
-                ? `Loaded ${importedEventCount} events from your calendar file. Review the grid, tap Save, then Continue.`
-                : 'Review the imported schedule, make any edits, then tap Save. When ready, tap Continue.'
-              : 'Build your weekly schedule, tap Save, then tap Continue.'}
-          </Text>
-        )}
-      </View>
-
-      {/* ── Landing: source selection (manage-mode only, before editor) ── */}
-      {!showEditor && manageMode && (
-        <ScrollView style={{ flex: 1 }} contentContainerStyle={[styles.landingContent, { flexGrow: 1 }]}>
-          <Card elevated style={styles.landingCard}>
-            <View style={styles.landingLabelRow}>
-              <AppIcon name="calendar" size={14} color={palette.accentPrimary} />
-              <Text variant="bodySmall" style={{ color: palette.textMuted }}>
-                Schedule source
-              </Text>
-            </View>
-            <View style={styles.landingRow}>
-              <Pressable
-                onPress={() => {
-                  setHasTouchedSourceSelection(true);
-                  setSelectedSource('manual');
-                }}
-                android_ripple={{ color: selectedSource === 'manual' ? 'rgba(0,0,0,0.12)' : 'rgba(255,255,255,0.14)' }}
-                style={({ pressed }) => [
-                  styles.landingPill,
-                  {
-                    backgroundColor: selectedSource === 'manual' ? palette.accentPrimary : palette.bgSurface,
-                    borderColor: selectedSource === 'manual' ? 'transparent' : palette.borderStrong,
-                  },
-                  pressed && styles.landingPillPressed,
-                ]}
-              >
-                <Text
-                  variant="body"
-                  style={[
-                    styles.landingPillLabel,
-                    { color: selectedSource === 'manual' ? '#06261d' : palette.textPrimary },
-                  ]}
-                >
-                  {selectedSource === 'manual' ? '\u2713  Manual' : 'Manual'}
-                </Text>
-              </Pressable>
-              <Pressable
-                onPress={() => {
-                  setHasTouchedSourceSelection(true);
-                  setSelectedSource('import');
-                }}
-                android_ripple={{ color: selectedSource === 'import' ? 'rgba(0,0,0,0.12)' : 'rgba(255,255,255,0.14)' }}
-                style={({ pressed }) => [
-                  styles.landingPill,
-                  {
-                    backgroundColor: selectedSource === 'import' ? palette.accentPrimary : palette.bgSurface,
-                    borderColor: selectedSource === 'import' ? 'transparent' : palette.borderStrong,
-                  },
-                  pressed && styles.landingPillPressed,
-                ]}
-              >
-                <Text
-                  variant="body"
-                  style={[
-                    styles.landingPillLabel,
-                    { color: selectedSource === 'import' ? '#06261d' : palette.textPrimary },
-                  ]}
-                >
-                  {selectedSource === 'import' ? '\u2713  Import' : 'Import'}
-                </Text>
-              </Pressable>
-            </View>
-          </Card>
-
-          <Card elevated style={styles.landingCard}>
-            <View style={styles.landingLabelRow}>
-              <AppIcon name="adjust" size={14} color={palette.accentPrimary} />
-              <Text variant="bodySmall" style={{ color: palette.textMuted }}>
-                About this option
-              </Text>
-            </View>
-            <Text variant="bodySmall" style={{ color: palette.textMuted, lineHeight: 20, marginTop: 2 }}>
-              {selectedSource === 'manual'
-                ? 'Build your weekly schedule with a calendar grid. Tap time-slots to mark when you are busy.'
-                : 'Upload a .ics calendar file and GapWalk will populate the grid for you automatically.'}
+        ) : manageMode ? (
+          <View style={styles.sourceInfoBar}>
+            <AppIcon name="adjust" size={13} color={palette.accentPrimary} />
+            <Text variant="bodySmall" style={{ color: palette.textMuted }}>
+              Source: Manual entry
             </Text>
-          </Card>
-
-          {selectedSource === 'import' && scheduleSource?.type === 'ics' && scheduleSource.filename && (
-            <Card elevated style={styles.landingCard}>
-              <View style={styles.landingLabelRow}>
-                <AppIcon name="calendar" size={14} color={palette.accentPrimary} />
-                <Text variant="bodySmall" style={{ color: palette.textMuted }}>
-                  Previously imported
-                </Text>
-              </View>
-              <View style={styles.landingFileRow}>
-                <Text variant="bodySmall" style={{ color: palette.accentPrimary, lineHeight: 20, flex: 1 }} numberOfLines={1}>
-                  {scheduleSource.filename}
-                </Text>
-                <Pressable
-                  onPress={() => { void handleReImportIcs(); }}
-                  style={({ pressed }) => [
-                    styles.landingChangeBtn,
-                    { borderColor: palette.accentPrimary },
-                    pressed && { opacity: 0.7 },
-                  ]}
-                >
-                  <Text variant="bodySmall" style={{ color: palette.accentPrimary, fontWeight: theme.fontWeight.semibold }}>
-                    Change
-                  </Text>
-                </Pressable>
-              </View>
-            </Card>
-          )}
-
-          {importLoading && importStatus && (
-            <View style={styles.landingStatusRow}>
-              <ActivityIndicator size="small" color={palette.accentPrimary} />
-              <Text variant="bodySmall" style={{ color: palette.accentPrimary, marginLeft: 8 }}>{importStatus}</Text>
-            </View>
-          )}
-
-          <View style={{ flex: 1 }} />
-
-          <View style={styles.landingFooter}>
-            <View style={styles.landingBtnRow}>
-              <Button
-                title="Cancel"
-                variant="danger"
-                onPress={handleLandingCancel}
-                style={styles.footerBtn}
-                disabled={importLoading}
-              />
-              <Button
-                title="Next"
-                onPress={handleLandingContinue}
-                style={styles.footerBtn}
-                disabled={importLoading}
-              />
-            </View>
-            <Text variant="muted" style={styles.privacy}>Your schedule stays private. Privacy is our top priority.</Text>
           </View>
-        </ScrollView>
-      )}
-
-      {/* ── Grid editor (visible after continuing from landing) ── */}
-      {(showEditor || !manageMode) && (
+        ) : null}
+      </View>
       <ScrollView
         style={styles.editorScroll}
         contentContainerStyle={styles.editorScrollContent}
@@ -1939,18 +2034,20 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
         <Text variant="bodySmall" style={{ color: palette.textMuted, flex: 1 }}>
           {slotHintText}
         </Text>
-        <Pressable
-          onPress={() => handleClearDay()}
-          disabled={(entriesByDay[selectedDay] ?? []).length === 0}
-          style={({ pressed }) => [
-            styles.gridToolbarBtn,
-            { borderColor: palette.borderStrong },
-            pressed && { opacity: 0.6 },
-            (entriesByDay[selectedDay] ?? []).length === 0 && { opacity: 0.35 },
-          ]}
-        >
-          <Text variant="bodySmall" style={{ color: palette.textMuted }}>Clear {DAY_TAB_LABELS[selectedDay]}</Text>
-        </Pressable>
+        {!isManageViewOnly && (
+          <Pressable
+            onPress={() => handleClearDay()}
+            disabled={(entriesByDay[selectedDay] ?? []).length === 0}
+            style={({ pressed }) => [
+              styles.gridToolbarBtn,
+              { borderColor: palette.borderStrong },
+              pressed && { opacity: 0.6 },
+              (entriesByDay[selectedDay] ?? []).length === 0 && { opacity: 0.35 },
+            ]}
+          >
+            <Text variant="bodySmall" style={{ color: palette.textMuted }}>Clear {DAY_TAB_LABELS[selectedDay]}</Text>
+          </Pressable>
+        )}
       </View>
 
       {/* Grid: fixed day labels + horizontally scrollable time slots */}
@@ -1984,7 +2081,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
                       selectedDay === dayIndex && { backgroundColor: isDark ? 'rgba(46,233,166,0.16)' : 'rgba(46,233,166,0.14)' },
                     ]}
                     onPress={() => setSelectedDay(dayIndex)}
-                    onLongPress={() => handleClearDay(dayIndex)}
+                    onLongPress={isManageViewOnly ? undefined : () => handleClearDay(dayIndex)}
                     activeOpacity={0.82}
                   >
                     <Text
@@ -2077,13 +2174,14 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
                           <Pressable
                             key={`cell-touch-${dayIndex}-${slotIndex}`}
                             onPress={() => handleGridCellPress(dayIndex, slotIndex, daySlices)}
+                            disabled={isManageViewOnly}
                             style={({ pressed }) => [
                               styles.gridCellPressable,
                               {
                                 width: SLOT_WIDTH,
                                 borderRightWidth: slotIndex % 2 === 0 ? 1 : StyleSheet.hairlineWidth,
                                 borderRightColor: slotIndex % 2 === 0 ? gridLineStrong : gridLineSoft,
-                                backgroundColor: pressed
+                                backgroundColor: !isManageViewOnly && pressed
                                   ? (isDark ? 'rgba(46,233,166,0.24)' : 'rgba(46,233,166,0.2)')
                                   : 'transparent',
                               },
@@ -2097,6 +2195,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
                           const bounds = getSliceSlotBounds(slice);
                           const durationMinutes = Math.max(1, slice.endMinuteInRow - slice.startMinuteInRow);
                           const isCompact = bounds.width < SLOT_WIDTH * 1.6;
+                          const isSelectedDay = dayIndex === selectedDay;
                           const timeStr = slice.isCarryOver
                             ? `Continues, ends ${formatTime12(slice.event.endTime)}`
                             : isCompact
@@ -2108,6 +2207,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
                               style={[
                                 styles.gridEventBlockH,
                                 isCompact && styles.gridEventBlockHCompact,
+                                isSelectedDay ? styles.gridEventBlockHSelected : styles.gridEventBlockHFaded,
                                 {
                                   left: bounds.left,
                                   width: bounds.width,
@@ -2167,14 +2267,38 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
                       styles.nowLineVertical,
                       {
                         left: nowLeft,
-                        top: TIME_ROW_HEIGHT,
-                        height: 7 * DAY_ROW_HEIGHT,
+                        top: TIME_ROW_HEIGHT - 4,
+                        height: 8 + 7 * DAY_ROW_HEIGHT,
                       },
                     ]}
                     pointerEvents="none"
                   >
-                    <View style={styles.nowDot} />
-                    <View style={styles.nowLineBarVertical} />
+                    <View
+                      style={[
+                        styles.nowDot,
+                        {
+                          backgroundColor: palette.accentPrimary,
+                          shadowColor: palette.accentPrimary,
+                          shadowOffset: { width: 0, height: 0 },
+                          shadowOpacity: 0.9,
+                          shadowRadius: 6,
+                          elevation: 8,
+                        },
+                      ]}
+                    />
+                    <View
+                      style={[
+                        styles.nowLineBarVertical,
+                        {
+                          backgroundColor: palette.accentPrimary,
+                          shadowColor: palette.accentPrimary,
+                          shadowOffset: { width: 0, height: 0 },
+                          shadowOpacity: 0.7,
+                          shadowRadius: 4,
+                          elevation: 6,
+                        },
+                      ]}
+                    />
                   </View>
                 )}
               </View>
@@ -2183,9 +2307,20 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
         </View>
       </View>
 
-      <View style={[styles.footer, { paddingHorizontal: GRID_PADDING }]}>
-        {!!saveError && <Text variant="muted" style={styles.saveError}>{saveError}</Text>}
-        {isE2E && (
+      </ScrollView>
+
+      <View
+        style={[
+          styles.footer,
+          {
+            paddingHorizontal: GRID_PADDING,
+            borderTopColor: gridLineSoft,
+            backgroundColor: palette.bgApp,
+          },
+        ]}
+      >
+        {!!saveError && <Text variant="bodySmall" style={styles.saveError}>{saveError}</Text>}
+        {isE2E && !isManageViewOnly && (
           <Button
             title="Add sample event (E2E)"
             variant="muted"
@@ -2197,22 +2332,44 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
         )}
         {manageMode ? (
           <View style={styles.footerActions}>
-            <Button
-              title="Cancel"
-              variant="secondary"
-              onPress={handleBack}
-              style={styles.footerBtn}
-              disabled={savingDone}
-              testID="manual-cancel"
-            />
-            <Button
-              title="Update"
-              onPress={handleDone}
-              style={styles.footerBtn}
-              loading={savingDone}
-              disabled={savingDone}
-              testID="manual-save"
-            />
+            {isManageViewOnly ? (
+              <>
+                <Button
+                  title="Edit Schedule"
+                  onPress={handleManageStartEdit}
+                  style={styles.footerBtn}
+                  disabled={savingDone}
+                  testID="manual-edit"
+                />
+                <Button
+                  title="Switch Source"
+                  variant="secondary"
+                  onPress={handleOpenSourceSheet}
+                  style={styles.footerBtn}
+                  disabled={savingDone}
+                  testID="manual-change-source"
+                />
+              </>
+            ) : (
+              <>
+                <Button
+                  title="Cancel"
+                  variant="secondary"
+                  onPress={handleManageCancelEdit}
+                  style={styles.footerBtn}
+                  disabled={savingDone}
+                  testID="manual-cancel"
+                />
+                <Button
+                  title="Save"
+                  onPress={handleDone}
+                  style={styles.footerBtn}
+                  loading={savingDone}
+                  disabled={savingDone || !hasManageChanges}
+                  testID="manual-save"
+                />
+              </>
+            )}
           </View>
         ) : (
           requireSaveBeforeContinue ? (
@@ -2231,7 +2388,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
                 variant={isReadyToContinue ? 'primary' : 'secondary'}
                 onPress={handleContinueAfterSave}
                 style={styles.footerBtn}
-                disabled={savingDone || !hasSavedSchedule || hasUnsavedChanges}
+                disabled={savingDone || !hasSavedSchedule || hasUnsavedChanges || hasSourceChanges}
                 testID="manual-continue"
               />
             </View>
@@ -2239,31 +2396,167 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
             <Button title="Done" onPress={handleDone} full loading={savingDone} disabled={savingDone} testID="manual-done" />
           )
         )}
-        <Text variant="muted" style={styles.privacy}>Your schedule stays private. Privacy is our top priority.</Text>
+        {!manageMode && <Text variant="muted" style={styles.privacy}>Your schedule stays private. Privacy is our top priority.</Text>}
       </View>
-      </ScrollView>
-      )}
       </Animated.View>
 
-      <Modal
+      <RNModal
+        visible={showSourceSheet}
+        animationType="slide"
+        onRequestClose={handleCloseSourceSheet}
+        statusBarTranslucent
+      >
+        <SafeAreaView style={[styles.safe, { backgroundColor: palette.bgApp }]}>
+          <View style={styles.switchSourceScreen}>
+            <View style={styles.switchSourceHeader}>
+              <ScreenHeader
+                title="Switch Source"
+                subtitle="Choose how GapWalk reads your schedule."
+                onBack={handleCloseSourceSheet}
+                backTestID="switch-source-back"
+                style={{ marginBottom: 0, paddingTop: 0, paddingBottom: 0 }}
+              />
+            </View>
+
+            <ScrollView
+              style={styles.switchSourceScrollArea}
+              contentContainerStyle={styles.switchSourceScrollContent}
+              showsVerticalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
+            >
+              {/* Manual Entry card */}
+              <Card
+                selected={sheetSourceType === 'manual'}
+                onPress={() => setSheetSourceType('manual')}
+                style={styles.switchSourceCard}
+                testID="switch-source-manual"
+              >
+                <View style={styles.switchSourceCardHeader}>
+                  <AppIcon name="adjust" size={16} color={palette.accentPrimary} />
+                  <Text variant="body" style={styles.switchSourceCardTitle}>Manual Entry</Text>
+                  {sourceType === 'manual' && (
+                    <View style={[styles.switchSourceCurrentTag, { backgroundColor: palette.accentMuted }]}>
+                      <Text variant="bodySmall" style={{ color: palette.accentPrimary, fontSize: theme.fontSize.xxs, fontWeight: theme.fontWeight.semibold }}>
+                        Current
+                      </Text>
+                    </View>
+                  )}
+                </View>
+                <Text variant="bodySmall" style={{ color: palette.textMuted, lineHeight: 20, marginTop: 6 }}>
+                  Build your weekly schedule by adding events manually on the grid.
+                </Text>
+              </Card>
+
+              {/* Import card */}
+              <Card
+                selected={sheetSourceType === 'import'}
+                onPress={() => setSheetSourceType('import')}
+                style={styles.switchSourceCard}
+                testID="switch-source-import"
+              >
+                <View style={styles.switchSourceCardHeader}>
+                  <AppIcon name="calendar" size={16} color={palette.accentPrimary} />
+                  <Text variant="body" style={styles.switchSourceCardTitle}>Import (.ics file)</Text>
+                  {sourceType === 'import' && (
+                    <View style={[styles.switchSourceCurrentTag, { backgroundColor: palette.accentMuted }]}>
+                      <Text variant="bodySmall" style={{ color: palette.accentPrimary, fontSize: theme.fontSize.xxs, fontWeight: theme.fontWeight.semibold }}>
+                        Current
+                      </Text>
+                    </View>
+                  )}
+                </View>
+                <Text variant="bodySmall" style={{ color: palette.textMuted, lineHeight: 20, marginTop: 6 }}>
+                  Import from your calendar app and GapWalk will populate your grid automatically.
+                </Text>
+
+                {sheetSourceType === 'import' && (
+                  <View style={styles.switchSourceFileSection}>
+                    <View style={[styles.switchSourceFileBanner, { backgroundColor: palette.bgSurfaceElevated, borderColor: palette.borderSoft }]}>
+                      <AppIcon name="calendar" size={13} color={sheetResolvedFilename ? palette.accentPrimary : palette.textMuted} />
+                      <Text
+                        variant="bodySmall"
+                        style={{ color: sheetResolvedFilename ? palette.accentPrimary : palette.textMuted, flex: 1, fontWeight: theme.fontWeight.medium }}
+                        numberOfLines={1}
+                      >
+                        {sheetResolvedFilename || 'No file selected'}
+                      </Text>
+                      <Pressable
+                        onPress={() => { void handlePickIcsForSourceSheet(); }}
+                        disabled={importLoading}
+                        style={({ pressed }) => [
+                          styles.switchSourceFileBtn,
+                          { borderColor: palette.accentPrimary },
+                          pressed && { opacity: 0.7 },
+                          importLoading && { opacity: 0.5 },
+                        ]}
+                      >
+                        <Text variant="bodySmall" style={{ color: palette.accentPrimary, fontWeight: theme.fontWeight.semibold, fontSize: theme.fontSize.xs }}>
+                          {sheetResolvedFilename ? 'Change' : 'Choose file'}
+                        </Text>
+                      </Pressable>
+                    </View>
+                  </View>
+                )}
+              </Card>
+
+              {/* Loading status */}
+              {importLoading && importStatus && (
+                <View style={styles.switchSourceStatusRow}>
+                  <ActivityIndicator size="small" color={palette.accentPrimary} />
+                  <Text variant="bodySmall" style={{ color: palette.accentPrimary, marginLeft: 8 }}>{importStatus}</Text>
+                </View>
+              )}
+            </ScrollView>
+
+            {/* Footer */}
+            <View style={[styles.switchSourceFooter, { borderTopColor: gridLineSoft, backgroundColor: palette.bgApp }]}>
+              {sourceSheetNeedsImportFile && sheetSourceType === 'import' && (
+                <Text variant="bodySmall" style={styles.switchSourceWarning}>
+                  Choose a .ics file before continuing.
+                </Text>
+              )}
+              <View style={styles.footerActions}>
+                <Button
+                  title="Cancel"
+                  variant="secondary"
+                  onPress={handleCloseSourceSheet}
+                  style={styles.footerBtn}
+                  disabled={importLoading}
+                  testID="switch-source-cancel"
+                />
+                <Button
+                  title="Continue"
+                  onPress={handleSaveSourceSheet}
+                  style={styles.footerBtn}
+                  disabled={importLoading || !sourceSheetHasChanges || sourceSheetNeedsImportFile}
+                  testID="switch-source-continue"
+                />
+              </View>
+            </View>
+          </View>
+        </SafeAreaView>
+      </RNModal>
+
+      <AppModal
         visible={showAdd}
         onClose={handleCancelEventModal}
         title={editingEventId ? 'Edit Event' : 'Add Event'}
       >
         <View style={styles.mForm}>
           <View style={styles.modalSection}>
-            <Text variant="bodySmall" style={styles.modalLabel}>Title</Text>
+            <Text variant="bodySmall" style={[styles.modalLabel, { color: palette.textMuted }]}>Title</Text>
             <TextInput
               style={[styles.input, themedInput]}
               value={form.title}
               onChangeText={(t) => setForm((prev) => ({ ...prev, title: t }))}
               placeholder="e.g. Work, Class"
               placeholderTextColor={palette.textMuted}
+              underlineColorAndroid="transparent"
             />
           </View>
 
           <View style={styles.modalSection}>
-            <Text variant="bodySmall" style={styles.modalLabel}>Frequency</Text>
+            <Text variant="bodySmall" style={[styles.modalLabel, { color: palette.textMuted }]}>Frequency</Text>
             <View style={styles.freqModeRow}>
               <TouchableOpacity
                 style={[
@@ -2278,7 +2571,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
                   style={StyleSheet.flatten([
                     styles.freqModeText,
                     form.repeatMode === 'weekly' && styles.freqModeTextActive,
-                    form.repeatMode === 'weekly' && { color: mintTextOnTint },
+                    form.repeatMode === 'weekly' && { color: palette.pillSelectedText },
                   ])}
                 >
                   Repeats weekly
@@ -2297,7 +2590,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
                   style={StyleSheet.flatten([
                     styles.freqModeText,
                     form.repeatMode === 'one_time' && styles.freqModeTextActive,
-                    form.repeatMode === 'one_time' && { color: mintTextOnTint },
+                    form.repeatMode === 'one_time' && { color: palette.pillSelectedText },
                   ])}
                 >
                   One-time event
@@ -2308,7 +2601,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
 
           {form.repeatMode === 'weekly' ? (
             <View style={styles.modalSection}>
-              <Text variant="bodySmall" style={styles.modalLabel}>Days (select one or more)</Text>
+              <Text variant="bodySmall" style={[styles.modalLabel, { color: palette.textMuted }]}>Days (select one or more)</Text>
               <View style={styles.repeatDaysRow}>
                 {DAY_TAB_LABELS.map((d, idx) => (
                   <TouchableOpacity
@@ -2322,7 +2615,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
                       style={StyleSheet.flatten([
                         styles.repeatDayChipText,
                         form.repeatDays.includes(idx) && styles.repeatDayChipTextActive,
-                        form.repeatDays.includes(idx) && { color: mintTextOnTint },
+                        form.repeatDays.includes(idx) && { color: palette.pillSelectedText },
                       ])}
                     >
                       {d}
@@ -2338,7 +2631,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
             </View>
           ) : (
             <View style={styles.modalSection}>
-              <Text variant="bodySmall" style={styles.modalLabel}>Event date</Text>
+              <Text variant="bodySmall" style={[styles.modalLabel, { color: palette.textMuted }]}>Event date</Text>
               <View style={styles.dateInputRow}>
                 <TextInput
                   ref={oneTimeMonthRef}
@@ -2352,6 +2645,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
                   placeholderTextColor={palette.textMuted}
                   returnKeyType="next"
                   selectTextOnFocus
+                  underlineColorAndroid="transparent"
                 />
                 <Text variant="body" style={styles.dateSep}>/</Text>
                 <TextInput
@@ -2366,6 +2660,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
                   placeholderTextColor={palette.textMuted}
                   returnKeyType="next"
                   selectTextOnFocus
+                  underlineColorAndroid="transparent"
                 />
                 <Text variant="body" style={styles.dateSep}>/</Text>
                 <TextInput
@@ -2380,6 +2675,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
                   placeholderTextColor={palette.textMuted}
                   returnKeyType="done"
                   selectTextOnFocus
+                  underlineColorAndroid="transparent"
                 />
               </View>
               {!!oneTimeDateError && <Text variant="muted" style={styles.timeError}>{oneTimeDateError}</Text>}
@@ -2390,27 +2686,15 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
           )}
 
           <View style={styles.modalSection}>
-            <Text variant="bodySmall" style={styles.modalLabel}>Description (optional)</Text>
-            <TextInput
-              style={[styles.input, styles.inputMultiline, themedInput]}
-              value={form.description}
-              onChangeText={(t) => setForm((prev) => ({ ...prev, description: t }))}
-              placeholder="Add a description"
-              placeholderTextColor={palette.textMuted}
-              multiline
-              numberOfLines={2}
-            />
-          </View>
-
-          <View style={styles.modalSection}>
-            <View style={styles.timeR}>
-              <View style={styles.timeC}>
-                <Text variant="bodySmall" style={styles.modalLabel}>Start</Text>
-                <View style={styles.timeInputRow}>
-                  <View style={styles.clockRow}>
+            <Text variant="bodySmall" style={[styles.modalLabel, { color: palette.textMuted }]}>Time</Text>
+            <View style={styles.timeStack}>
+              <View style={[styles.timeCard, themedChip]}>
+                <Text variant="bodySmall" style={styles.timeCardLabel}>Start</Text>
+                <View style={styles.timeCardControls}>
+                  <View style={[styles.timeDisplay, themedInput]}>
                     <TwoDigitTimeInput
                       mode="hour"
-                      style={[styles.input, styles.timeInput, themedInput]}
+                      style={[styles.timeDisplayInput, { color: palette.textPrimary }]}
                       value={form.startHourRaw}
                       onChange={(value) => setForm((prev) => ({ ...prev, startHourRaw: value }))}
                       onBlurNormalize={() =>
@@ -2421,10 +2705,10 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
                       }
                       placeholder="HH"
                     />
-                    <Text variant="body" style={styles.clockSeparator}>:</Text>
+                    <Text variant="body" style={styles.timeDisplaySeparator}>:</Text>
                     <TwoDigitTimeInput
                       mode="minute"
-                      style={[styles.input, styles.timeInput, themedInput]}
+                      style={[styles.timeDisplayInput, { color: palette.textPrimary }]}
                       value={form.startMinuteRaw}
                       onChange={(value) => setForm((prev) => ({ ...prev, startMinuteRaw: value }))}
                       onBlurNormalize={() =>
@@ -2443,20 +2727,20 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
                         style={[styles.periodBtn, themedChip, form.startPeriod === p && styles.periodBtnActive]}
                         onPress={() => setForm((prev) => ({ ...prev, startPeriod: p }))}
                       >
-                        <Text variant="bodySmall" color={form.startPeriod === p ? theme.colors.bgApp : theme.colors.textPrimary}>{p}</Text>
+                        <Text variant="bodySmall" color={form.startPeriod === p ? palette.pillSelectedText : palette.textPrimary}>{p}</Text>
                       </TouchableOpacity>
                     ))}
                   </View>
                 </View>
               </View>
 
-              <View style={styles.timeC}>
-                <Text variant="bodySmall" style={styles.modalLabel}>End</Text>
-                <View style={styles.timeInputRow}>
-                  <View style={styles.clockRow}>
+              <View style={[styles.timeCard, themedChip]}>
+                <Text variant="bodySmall" style={styles.timeCardLabel}>End</Text>
+                <View style={styles.timeCardControls}>
+                  <View style={[styles.timeDisplay, themedInput]}>
                     <TwoDigitTimeInput
                       mode="hour"
-                      style={[styles.input, styles.timeInput, themedInput]}
+                      style={[styles.timeDisplayInput, { color: palette.textPrimary }]}
                       value={form.endHourRaw}
                       onChange={(value) => setForm((prev) => ({ ...prev, endHourRaw: value }))}
                       onBlurNormalize={() =>
@@ -2467,10 +2751,10 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
                       }
                       placeholder="HH"
                     />
-                    <Text variant="body" style={styles.clockSeparator}>:</Text>
+                    <Text variant="body" style={styles.timeDisplaySeparator}>:</Text>
                     <TwoDigitTimeInput
                       mode="minute"
-                      style={[styles.input, styles.timeInput, themedInput]}
+                      style={[styles.timeDisplayInput, { color: palette.textPrimary }]}
                       value={form.endMinuteRaw}
                       onChange={(value) => setForm((prev) => ({ ...prev, endMinuteRaw: value }))}
                       onBlurNormalize={() =>
@@ -2489,7 +2773,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
                         style={[styles.periodBtn, themedChip, form.endPeriod === p && styles.periodBtnActive]}
                         onPress={() => setForm((prev) => ({ ...prev, endPeriod: p }))}
                       >
-                        <Text variant="bodySmall" color={form.endPeriod === p ? theme.colors.bgApp : theme.colors.textPrimary}>{p}</Text>
+                        <Text variant="bodySmall" color={form.endPeriod === p ? palette.pillSelectedText : palette.textPrimary}>{p}</Text>
                       </TouchableOpacity>
                     ))}
                   </View>
@@ -2497,9 +2781,20 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
               </View>
             </View>
             {!!timeError && <Text variant="muted" style={styles.timeError}>{timeError}</Text>}
-            <Text variant="bodySmall" color={palette.textMuted} style={styles.timeTipText}>
-              Tip: For overnight (e.g. sleep 10pm-6am), set end time earlier than start; it will end the next day.
-            </Text>
+          </View>
+
+          <View style={styles.modalSection}>
+            <Text variant="bodySmall" style={[styles.modalLabel, { color: palette.textMuted }]}>Description (optional)</Text>
+            <TextInput
+              style={[styles.input, styles.inputMultiline, themedInput]}
+              value={form.description}
+              onChangeText={(t) => setForm((prev) => ({ ...prev, description: t }))}
+              placeholder="Add a description"
+              placeholderTextColor={palette.textMuted}
+              multiline
+              numberOfLines={2}
+              underlineColorAndroid="transparent"
+            />
           </View>
 
           <View style={styles.modalActionsRow}>
@@ -2522,7 +2817,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
             </TouchableOpacity>
           ) : null}
         </View>
-      </Modal>
+      </AppModal>
 
     </SafeAreaView>
   );
@@ -2542,8 +2837,8 @@ const styles = StyleSheet.create({
     maxWidth: theme.layout.contentMaxWidth,
   },
   headerCompact: {
-    paddingTop: theme.spacing.sm,
-    paddingBottom: theme.spacing.xs,
+    paddingTop: theme.spacing.xs,
+    paddingBottom: 0,
     marginBottom: 0,
   },
   icsBadge: {
@@ -2559,11 +2854,6 @@ const styles = StyleSheet.create({
   icsBadgeText: {
     color: theme.colors.accentPrimary,
     fontWeight: theme.fontWeight.medium,
-  },
-  importHint: {
-    marginTop: theme.spacing.sm,
-    textAlign: 'center',
-    color: theme.colors.textMuted,
   },
   sourceCard: {
     marginBottom: 10,
@@ -2662,6 +2952,94 @@ const styles = StyleSheet.create({
     gap: 10,
     marginBottom: 14,
   },
+  sourceInfoBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'center',
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: theme.borderRadius.sm,
+  },
+  /* ── Switch Source full-screen ── */
+  switchSourceScreen: {
+    flex: 1,
+  },
+  switchSourceHeader: {
+    paddingHorizontal: theme.layout.contentHorizontal,
+    paddingTop: theme.spacing.xs,
+    paddingBottom: 0,
+    alignSelf: 'center',
+    width: '100%',
+    maxWidth: theme.layout.contentMaxWidth,
+  },
+  switchSourceScrollArea: {
+    flex: 1,
+  },
+  switchSourceScrollContent: {
+    paddingHorizontal: theme.layout.contentHorizontal,
+    paddingTop: theme.spacing.md,
+    paddingBottom: 40,
+    alignSelf: 'center',
+    width: '100%',
+    maxWidth: theme.layout.contentMaxWidth,
+  },
+  switchSourceCard: {
+    marginBottom: 16,
+  },
+  switchSourceCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  switchSourceCardTitle: {
+    fontWeight: theme.fontWeight.semibold,
+    flex: 1,
+  },
+  switchSourceCurrentTag: {
+    borderRadius: 6,
+    paddingVertical: 2,
+    paddingHorizontal: 8,
+  },
+  switchSourceFileSection: {
+    marginTop: 12,
+  },
+  switchSourceFileBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: theme.borderRadius.sm,
+    borderWidth: 1,
+  },
+  switchSourceFileBtn: {
+    borderWidth: 1,
+    borderRadius: theme.borderRadius.sm,
+    paddingVertical: 4,
+    paddingHorizontal: 10,
+  },
+  switchSourceStatusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 12,
+  },
+  switchSourceFooter: {
+    paddingHorizontal: theme.layout.contentHorizontal,
+    paddingTop: theme.spacing.sm,
+    paddingBottom: theme.spacing.sm,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    alignSelf: 'center',
+    width: '100%',
+    maxWidth: theme.layout.contentMaxWidth,
+  },
+  switchSourceWarning: {
+    textAlign: 'center',
+    color: theme.colors.warning,
+    marginBottom: theme.spacing.sm,
+    fontSize: theme.fontSize.xs,
+  },
   editorScroll: {
     flex: 1,
   },
@@ -2759,6 +3137,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    gap: 20,
     paddingHorizontal: GRID_PADDING,
     paddingVertical: 8,
     borderBottomWidth: StyleSheet.hairlineWidth,
@@ -2787,8 +3166,6 @@ const styles = StyleSheet.create({
     width: 8,
     height: 8,
     borderRadius: 4,
-    backgroundColor: '#ef4444',
-    marginLeft: -4,
   },
   nowLineBar: {
     flex: 1,
@@ -2971,6 +3348,19 @@ const styles = StyleSheet.create({
     paddingHorizontal: 5,
     paddingVertical: 5,
   },
+  gridEventBlockHSelected: {
+    shadowColor: theme.colors.accentPrimary,
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.6,
+    shadowRadius: 8,
+    elevation: 6,
+  },
+  gridEventBlockHFaded: {
+    opacity: 0.55,
+    shadowOpacity: 0.08,
+    shadowRadius: 2,
+    elevation: 1,
+  },
   gridEventTitleH: {
     color: '#06261d',
     fontWeight: '600' as any,
@@ -3006,9 +3396,8 @@ const styles = StyleSheet.create({
   },
   nowLineBarVertical: {
     width: 2,
-    backgroundColor: '#ef4444',
     flex: 1,
-    marginTop: 2,
+    marginTop: -4,
   },
   gridEventBlock: {
     position: 'absolute',
@@ -3085,7 +3474,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   freqModeChipActive: {
-    backgroundColor: 'rgba(46,233,166,0.2)',
+    backgroundColor: theme.colors.accentPrimary,
     borderColor: theme.colors.accentPrimary,
   },
   freqModeText: {
@@ -3115,7 +3504,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   repeatDayChipActive: {
-    backgroundColor: 'rgba(46,233,166,0.2)',
+    backgroundColor: theme.colors.accentPrimary,
     borderColor: theme.colors.accentPrimary,
   },
   repeatDayChipText: {
@@ -3167,8 +3556,9 @@ const styles = StyleSheet.create({
   },
   footer: {
     paddingHorizontal: theme.layout.contentHorizontal,
-    paddingTop: theme.spacing.md,
-    paddingBottom: theme.spacing.lg,
+    paddingTop: theme.spacing.sm,
+    paddingBottom: theme.spacing.sm,
+    borderTopWidth: StyleSheet.hairlineWidth,
     alignSelf: 'center',
     width: '100%',
     maxWidth: theme.layout.contentMaxWidth,
@@ -3203,6 +3593,14 @@ const styles = StyleSheet.create({
     fontSize: theme.fontSize.md,
     lineHeight: 20,
     textAlignVertical: 'center',
+    ...(Platform.OS === 'web'
+      ? ({
+          outlineStyle: 'none',
+          outlineWidth: 0,
+          outlineColor: 'transparent',
+          boxShadow: 'none',
+        } as any)
+      : {}),
   },
   lockedDay: {
     backgroundColor: theme.colors.bgApp,
@@ -3210,8 +3608,38 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     paddingHorizontal: 10,
   },
-  timeR: { gap: 12 },
-  timeC: { width: '100%' },
+  timeStack: { flexDirection: 'row', gap: 12 },
+  timeCard: {
+    flex: 1,
+    minWidth: 0,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: theme.borderRadius.sm,
+    gap: 8,
+  },
+  timeCardLabel: {
+    color: theme.colors.textMuted,
+    fontWeight: theme.fontWeight.medium,
+  },
+  timeCardControls: { gap: 8 },
+  timeDisplay: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderRadius: theme.borderRadius.md,
+  },
+  timeDisplayInput: {
+    minWidth: 36,
+    fontSize: theme.fontSize.md,
+    textAlign: 'center',
+  },
+  timeDisplaySeparator: {
+    fontWeight: theme.fontWeight.semibold,
+  },
+  timeR: { flexDirection: 'row', gap: 12 },
+  timeC: { flex: 1, minWidth: 0 },
   timeInputRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
   clockRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   clockSeparator: {
@@ -3227,10 +3655,10 @@ const styles = StyleSheet.create({
     backgroundColor: theme.colors.bgApp,
     alignItems: 'center',
     justifyContent: 'center',
-    minHeight: 42,
-    paddingVertical: 8,
-    paddingHorizontal: 10,
-    minWidth: 48,
+    minHeight: 32,
+    paddingVertical: 4,
+    paddingHorizontal: 6,
+    minWidth: 36,
   },
   periodBtnActive: { backgroundColor: theme.colors.accentPrimary },
   timeError: {
@@ -3250,7 +3678,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   saveError: {
-    color: theme.colors.warning,
+    color: theme.colors.error,
     textAlign: 'center',
     marginBottom: 8,
   },

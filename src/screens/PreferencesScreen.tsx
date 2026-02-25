@@ -1,4 +1,4 @@
-import React, { useCallback, useState, useRef } from 'react';
+import React, { useCallback, useEffect, useState, useRef } from 'react';
 import {
   View,
   StyleSheet,
@@ -39,6 +39,7 @@ import { analyticsService } from '../lib/analytics';
 import { translateLiteral } from '../lib/i18n';
 import { useAppStore } from '../store';
 import { requestAllPermissions } from '../lib/permissions';
+import { toUserFriendlyError } from '../lib/errorMessages';
 
 const isFabric = !!(globalThis as any).nativeFabricUIManager;
 
@@ -223,7 +224,7 @@ const Section: React.FC<{
 const RadioOption: React.FC<{ selected: boolean; label: string; onPress: () => void }> = ({ selected, label, onPress }) => {
   const { themeMode } = useAppStore();
   const palette = getThemePalette(themeMode);
-  const radioBorderColor = themeMode === 'dark' ? 'rgba(255,255,255,0.2)' : palette.borderStrong;
+  const radioBorderColor = palette.borderStrong;
 
   return (
     <TouchableOpacity onPress={onPress} activeOpacity={0.7} style={styles.radioRow}>
@@ -242,8 +243,8 @@ const InfoTip: React.FC<{ text: string }> = ({ text }) => {
   const palette = getThemePalette(themeMode);
   const tooltipTheme = {
     backgroundColor: themeMode === 'dark' ? theme.colors.bgSurface : palette.bgSurfaceElevated,
-    borderColor: themeMode === 'dark' ? 'rgba(46,233,166,0.25)' : 'rgba(46,233,166,0.45)',
-    shadowColor: themeMode === 'dark' ? '#000' : '#0f172a',
+    borderColor: palette.accentBorder,
+    shadowColor: palette.shadow,
   };
 
   return (
@@ -267,7 +268,7 @@ const InfoTip: React.FC<{ text: string }> = ({ text }) => {
 
 /* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• main screen â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
 export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
-  const { preferences: storedPreferences, setPreferences, setHasSetPreferences, setHasNotificationPermission, setHasLocationPermission, setHasActivityPermission, setHasRequestedPermissions, themeMode, setThemeMode, language, setLanguage } = useAppStore();
+  const { preferences: storedPreferences, setPreferences, setHasSetPreferences, setHasCompletedOnboarding, setHasNotificationPermission, setHasLocationPermission, setHasActivityPermission, setHasRequestedPermissions, themeMode, setThemeMode, language, setLanguage } = useAppStore();
   const manageMode = !!route.params?.manageMode;
   const [prefs, setPrefs] = useState<Preferences>(DEFAULT_PREFERENCES);
   const [hasChanges, setHasChanges] = useState(false);
@@ -288,6 +289,7 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
   const [preferredForm, setPreferredForm] = useState<PreferredPeriodForm[]>([
     toPreferredForm(DEFAULT_PREFERRED_PERIOD),
   ]);
+  const allowNextBeforeRemoveRef = useRef(false);
   const notificationsSupported = isNotificationsSupported;
   const palette = getThemePalette(themeMode);
   const isDark = themeMode === 'dark';
@@ -334,13 +336,67 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
     setHasChanges(true);
   };
 
-  const handleBack = () => {
-    if (navigation.canGoBack()) {
-      navigation.goBack();
+  const runAllowedNavigation = useCallback((action: () => void) => {
+    allowNextBeforeRemoveRef.current = true;
+    action();
+  }, []);
+
+  const confirmDiscardPreferenceChanges = useCallback((
+    onDiscard: () => void,
+    options?: {
+      title?: string;
+      message?: string;
+    }
+  ) => {
+    if (!hasChanges) {
+      onDiscard();
       return;
     }
-    navigation.navigate('ManualSchedule');
+
+    const discardTitle = options?.title ?? 'Discard preference changes?';
+    const discardMessage = options?.message ?? 'Your unsaved preference changes will be lost. Do you want to leave this screen?';
+    if (Platform.OS === 'web' && typeof (globalThis as any).confirm === 'function') {
+      if ((globalThis as any).confirm(`${discardTitle}\n\n${discardMessage}`)) {
+        onDiscard();
+      }
+      return;
+    }
+    Alert.alert(
+      discardTitle,
+      discardMessage,
+      [
+        { text: 'No', style: 'cancel' },
+        { text: 'Yes', style: 'destructive', onPress: onDiscard },
+      ]
+    );
+  }, [hasChanges]);
+
+  const handleBack = () => {
+    confirmDiscardPreferenceChanges(() => {
+      if (navigation.canGoBack()) {
+        runAllowedNavigation(() => navigation.goBack());
+        return;
+      }
+      runAllowedNavigation(() => navigation.navigate('ManualSchedule'));
+    });
   };
+
+  useEffect(() => {
+    const unsubscribe = navigation.addListener('beforeRemove', (e) => {
+      if (allowNextBeforeRemoveRef.current) {
+        allowNextBeforeRemoveRef.current = false;
+        return;
+      }
+      if (!hasChanges || savingPrefs) return;
+
+      e.preventDefault();
+      confirmDiscardPreferenceChanges(() => {
+        allowNextBeforeRemoveRef.current = true;
+        navigation.dispatch(e.data.action);
+      });
+    });
+    return unsubscribe;
+  }, [confirmDiscardPreferenceChanges, hasChanges, navigation, savingPrefs]);
 
   /* â”€â”€ quiet hours â”€â”€ */
   const openQuietModal = () => {
@@ -539,6 +595,8 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
         await preferencesRepo.save(normalizedPrefs);
         setPreferences(normalizedPrefs);
         setHasSetPreferences(true);
+        setHasCompletedOnboarding(true);
+        setHasChanges(false);
 
         // Request ALL permissions (location, notifications, activity recognition)
         try {
@@ -565,7 +623,7 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
           preferredWalkingPeriodsCount: normalizedPrefs.preferredWalkingPeriods.length,
         });
         setSavingPrefs(false);
-        navigation.navigate('Dashboard');
+        runAllowedNavigation(() => navigation.navigate('Dashboard'));
         return;
       } catch (error) {
         lastError = error;
@@ -573,8 +631,8 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
         if (attempt === 0) await new Promise(r => setTimeout(r, 500));
       }
     }
-    const msg = lastError instanceof Error ? lastError.message : String(lastError);
-    Alert.alert('Could not save preferences', `Please try again.\n\nDetails: ${msg}`);
+    const msg = toUserFriendlyError(lastError);
+    Alert.alert('Could Not Save', msg);
     setSavingPrefs(false);
   };
 
@@ -617,26 +675,12 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
   };
 
   const handleManageCancel = () => {
-    if (!hasChanges) {
-      navigation.navigate('Dashboard');
-      return;
-    }
-
-    const discardTitle = 'Cancel preference update?';
-    const discardMessage = 'Your unsaved preference changes will be lost. Do you want to leave this screen?';
-    if (Platform.OS === 'web' && typeof (globalThis as any).confirm === 'function') {
-      if ((globalThis as any).confirm(`${discardTitle}\n\n${discardMessage}`)) {
-        navigation.navigate('Dashboard');
+    confirmDiscardPreferenceChanges(
+      () => runAllowedNavigation(() => navigation.navigate('Dashboard')),
+      {
+        title: 'Cancel preference update?',
+        message: 'Your unsaved preference changes will be lost. Do you want to leave this screen?',
       }
-      return;
-    }
-    Alert.alert(
-      discardTitle,
-      discardMessage,
-      [
-        { text: 'No', style: 'cancel' },
-        { text: 'Yes', style: 'destructive', onPress: () => navigation.navigate('Dashboard') },
-      ]
     );
   };
 

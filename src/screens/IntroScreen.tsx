@@ -256,16 +256,16 @@ const styles = StyleSheet.create({
   },
   headingGap: {
     letterSpacing: theme.letterSpacing?.heading ?? 0,
-    fontSize: theme.fontSize.heading + 2,
-    lineHeight: theme.fontSize.heading + 8,
+    fontSize: theme.fontSize.display,
+    lineHeight: theme.fontSize.display + 6,
   },
   headingWalk: {
     letterSpacing: theme.letterSpacing?.heading ?? 0,
-    fontSize: theme.fontSize.heading + 2,
-    lineHeight: theme.fontSize.heading + 8,
+    fontSize: theme.fontSize.display,
+    lineHeight: theme.fontSize.display + 6,
   },
   subtitle: {
-    marginTop: 14,
+    marginTop: theme.spacing.md,
     lineHeight: 22,
     fontSize: theme.fontSize.md,
     textAlign: 'center',
@@ -278,7 +278,7 @@ const styles = StyleSheet.create({
     alignSelf: 'center',
   },
   sectionTitle: {
-    marginBottom: 22,
+    marginBottom: theme.spacing.lg,
     textAlign: 'center',
   },
   feature: {
@@ -296,7 +296,7 @@ const styles = StyleSheet.create({
     borderRadius: 22,
     alignItems: 'center',
     justifyContent: 'center',
-    marginRight: 14,
+    marginRight: theme.spacing.md,
   },
   iconEmoji: {
     fontSize: 20,
@@ -306,7 +306,7 @@ const styles = StyleSheet.create({
   },
   featureTitle: {
     fontWeight: theme.fontWeight.semibold,
-    marginBottom: 6,
+    marginBottom: theme.spacing.ms,
   },
   howSection: {
     width: '100%',
@@ -317,8 +317,8 @@ const styles = StyleSheet.create({
     minHeight: 52,
     borderWidth: 1,
     borderRadius: theme.borderRadius.lg,
-    paddingVertical: 14,
-    paddingHorizontal: 16,
+    paddingVertical: theme.spacing.md,
+    paddingHorizontal: theme.spacing.md,
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
@@ -334,7 +334,7 @@ const styles = StyleSheet.create({
   },
   howDetails: {
     borderRadius: theme.borderRadius.lg,
-    padding: 16,
+    padding: theme.spacing.md,
     gap: 12,
     borderWidth: 1,
   },

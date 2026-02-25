@@ -30,6 +30,7 @@ import {
   getGoogleRedirectUri,
   isGoogleConfigured,
 } from '../lib/googleCalendar';
+import { toUserFriendlyError } from '../lib/errorMessages';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'ScheduleSetup'>;
 type ScheduleOption = 'google' | 'import' | 'manual' | null;
@@ -134,7 +135,8 @@ export const ScheduleSetupScreen: React.FC<Props> = ({ navigation, route }) => {
       }
     } else if (response?.type === 'error') {
       setLoading(false);
-      Alert.alert('Sign-in Failed', response.error?.message || 'Could not sign in with Google.');
+      const msg = toUserFriendlyError(response.error ?? new Error('Could not sign in with Google'));
+      Alert.alert('Sign-in Failed', msg);
     } else if (response?.type === 'dismiss') {
       setLoading(false);
     }
@@ -208,10 +210,10 @@ export const ScheduleSetupScreen: React.FC<Props> = ({ navigation, route }) => {
       );
     } catch (error) {
       console.error('Google Calendar sync error:', error);
-      const msg = error instanceof Error ? error.message : String(error);
+      const msg = toUserFriendlyError(error);
       setLoading(false);
       setSyncStatus(null);
-      Alert.alert('Sync failed', `Could not fetch calendar events: ${msg}`);
+      Alert.alert('Sync Failed', msg);
     }
   };
 
@@ -266,7 +268,10 @@ export const ScheduleSetupScreen: React.FC<Props> = ({ navigation, route }) => {
       setSyncStatus('Parsing calendar...');
       const parseResult = await parseICSFile(content);
       if (parseResult.errors.length > 0) {
-        const warningText = parseResult.errors.slice(0, 3).join('\n');
+        const warningText = parseResult.errors
+          .slice(0, 3)
+          .map((e) => toUserFriendlyError(new Error(e)))
+          .join('\n');
         showMessage('Import Warning', warningText);
       }
       if (parseResult.events.length === 0) {
@@ -301,7 +306,7 @@ export const ScheduleSetupScreen: React.FC<Props> = ({ navigation, route }) => {
       console.error('ICS import failed:', error);
       setLoading(false);
       setSyncStatus(null);
-      const msg = error instanceof Error ? error.message : 'Failed to import ICS file. Please try again.';
+      const msg = toUserFriendlyError(error);
       showMessage('Import Failed', msg);
     }
   };
@@ -352,7 +357,7 @@ export const ScheduleSetupScreen: React.FC<Props> = ({ navigation, route }) => {
       console.error('E2E sample import failed:', error);
       setLoading(false);
       setSyncStatus(null);
-      showMessage('Import Failed', 'Could not load sample import data.');
+      showMessage('Import Failed', 'The sample calendar could not be loaded. Please try again.');
     }
   };
 

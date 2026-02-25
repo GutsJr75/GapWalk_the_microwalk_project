@@ -20,7 +20,7 @@ export const ScheduleOverviewScreen: React.FC<Props> = ({ navigation }) => {
   const { scheduleSource, setScheduleSource, themeMode } = useAppStore();
   const palette = useThemePalette();
   const isDark = themeMode === 'dark';
-  const mintTextOnTint = isDark ? theme.colors.accentPrimary : '#0f5132';
+  const mintTextOnTint = palette.accentOnTint;
 
   useFocusEffect(
     React.useCallback(() => {
@@ -46,11 +46,11 @@ export const ScheduleOverviewScreen: React.FC<Props> = ({ navigation }) => {
     : 'Calendar file (.ics)';
 
   const guideItemStyle = {
-    backgroundColor: isDark ? 'rgba(46,233,166,0.08)' : 'rgba(46,233,166,0.10)',
-    borderColor: isDark ? 'rgba(46,233,166,0.22)' : 'rgba(46,233,166,0.28)',
+    backgroundColor: palette.accentMuted,
+    borderColor: palette.accentBorder,
   };
   const guideIndexStyle = {
-    backgroundColor: isDark ? 'rgba(46,233,166,0.16)' : 'rgba(46,233,166,0.20)',
+    backgroundColor: palette.accentMuted,
   };
 
   const handleBack = () => {

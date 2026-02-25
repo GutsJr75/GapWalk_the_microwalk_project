@@ -18,6 +18,7 @@ import {
   calculateWeeklyHistory,
   WeeklyHistoryEntry,
 } from '../lib/statsUtils';
+import { toUserFriendlyError } from '../lib/errorMessages';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'WeeklyData'>;
 
@@ -38,9 +39,7 @@ export const WeeklyDataScreen: React.FC<Props> = ({ navigation }) => {
       const sessions = await sessionsRepo.getAll();
       setWeeklyHistory(calculateWeeklyHistory(sessions));
     } catch (e) {
-      setLoadError(
-        e instanceof Error ? e.message : 'Failed to load weekly data',
-      );
+      setLoadError(toUserFriendlyError(e));
       setWeeklyHistory([]);
     } finally {
       setLoading(false);
@@ -137,7 +136,7 @@ export const WeeklyDataScreen: React.FC<Props> = ({ navigation }) => {
               <Card
                 key={week.weekStart}
                 elevated
-                style={[styles.weekCard, isLatest && styles.latestWeekCard]}
+                style={[styles.weekCard, isLatest && [styles.latestWeekCard, { borderColor: palette.accentBorder }]]}
               >
                 {/* Header row */}
                 <View style={styles.weekHeader}>
@@ -157,7 +156,7 @@ export const WeeklyDataScreen: React.FC<Props> = ({ navigation }) => {
                         {
                           backgroundColor:
                             trendInfo.direction === 'up'
-                              ? 'rgba(46,233,166,0.12)'
+                              ? palette.accentMuted
                               : 'rgba(251,146,60,0.12)',
                         },
                       ]}
@@ -172,7 +171,7 @@ export const WeeklyDataScreen: React.FC<Props> = ({ navigation }) => {
                         color={
                           trendInfo.direction === 'up'
                             ? accentPrimary
-                            : '#fb923c'
+                            : palette.trendDown
                         }
                       />
                       <Text
@@ -183,7 +182,7 @@ export const WeeklyDataScreen: React.FC<Props> = ({ navigation }) => {
                           color:
                             trendInfo.direction === 'up'
                               ? accentPrimary
-                              : '#fb923c',
+                              : palette.trendDown,
                         }}
                       >
                         {Math.abs(trendInfo.pct)}%
@@ -274,7 +273,6 @@ const styles = StyleSheet.create({
   },
   latestWeekCard: {
     borderWidth: 1,
-    borderColor: 'rgba(46,233,166,0.25)',
   },
   weekHeader: {
     flexDirection: 'row',

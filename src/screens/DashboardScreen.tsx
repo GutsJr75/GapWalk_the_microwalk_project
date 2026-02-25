@@ -29,6 +29,7 @@ import { calculateStreak, calculateWeeklyStats, getMotivationalMessage, StreakDa
 import { addMinutes, format, isAfter, isBefore, parseISO, subMinutes, subDays, isSameDay } from 'date-fns';
 import { timeUtils } from '../lib/time';
 import { requestAllPermissions } from '../lib/permissions';
+import { toUserFriendlyError } from '../lib/errorMessages';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Dashboard'>;
 
@@ -306,7 +307,7 @@ export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
       setAddWalkInitialState(null);
     } catch (error) {
       console.error('Failed to create manual walk:', error);
-      setAddWalkError('Could not create walk. Please try again.');
+      setAddWalkError(toUserFriendlyError(error));
     } finally {
       setSavingAddWalk(false);
     }
@@ -625,7 +626,7 @@ export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
         );
       } catch (error) {
         console.error('Failed to cancel walk opportunity:', error);
-        Alert.alert('Could not cancel this walk window', 'Please try again.');
+        Alert.alert('Could Not Cancel', toUserFriendlyError(error));
       }
     };
 
@@ -794,7 +795,7 @@ export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
       setChangeInitialState(null);
     } catch (error) {
       console.error('Failed to update walk window:', error);
-      Alert.alert('Could not update walk window', 'Please try again.');
+      Alert.alert('Could Not Update', toUserFriendlyError(error));
     } finally {
       setSavingChange(false);
     }
@@ -912,7 +913,7 @@ export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
       Alert.alert('Synced', `Updated ${events.length} events from Google Calendar.`);
     } catch (err) {
       console.error('Re-sync error:', err);
-      Alert.alert('Sync Failed', 'Could not refresh calendar events. Please try again.');
+      Alert.alert('Sync Failed', toUserFriendlyError(err));
     }
   };
 

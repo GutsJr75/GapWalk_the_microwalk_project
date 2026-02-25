@@ -1,10 +1,10 @@
 import React from 'react';
-import { View, StyleSheet, Pressable, Platform } from 'react-native';
-import * as Haptics from 'expo-haptics';
+import { View, StyleSheet, Pressable } from 'react-native';
 import { Text } from './Text';
 import { theme } from '../theme';
 import { useAppStore } from '../store';
 import { useThemePalette } from '../theme/palette';
+import { useTapFeedbackAction } from '../lib/useTapFeedbackAction';
 
 interface GapItemProps {
   /** Time range when gap is available (e.g. "3:00 PM - 7:00 PM") */
@@ -45,7 +45,7 @@ export const GapItem: React.FC<GapItemProps> = ({
   };
 
   const badgeTheme = {
-    backgroundColor: isDark ? 'rgba(46,233,166,0.12)' : 'rgba(46,233,166,0.2)',
+    backgroundColor: palette.accentMuted,
   };
 
   const barTrackTheme = {
@@ -58,8 +58,24 @@ export const GapItem: React.FC<GapItemProps> = ({
   const changeBtnTheme = {
     backgroundColor: isDark ? 'rgba(56,189,248,0.14)' : 'rgba(56,189,248,0.18)',
   };
-  const badgeTextColor = isDark ? theme.colors.accentPrimary : '#0f5132';
-  const changeTextColor = isDark ? '#38bdf8' : '#0369a1';
+  const badgeTextColor = palette.accentOnTint;
+  const changeTextColor = palette.info;
+  const {
+    isTapActive: isChangeTapActive,
+    handlePress: handleChangePress,
+    handlePressIn: handleChangePressIn,
+    handlePressOut: handleChangePressOut,
+  } = useTapFeedbackAction({
+    onPress: onChange,
+  });
+  const {
+    isTapActive: isCancelTapActive,
+    handlePress: handleCancelPress,
+    handlePressIn: handleCancelPressIn,
+    handlePressOut: handleCancelPressOut,
+  } = useTapFeedbackAction({
+    onPress: onCancel,
+  });
 
   return (
     <View style={[styles.container, containerTheme]}>
@@ -85,23 +101,43 @@ export const GapItem: React.FC<GapItemProps> = ({
 
       <View style={styles.actions}>
         <Pressable
-          onPress={() => {
-            if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-            onChange();
-          }}
+          onPress={handleChangePress}
+          onPressIn={handleChangePressIn}
+          onPressOut={handleChangePressOut}
           hitSlop={8}
-          style={({ pressed }) => [styles.actionBtn, changeBtnTheme, pressed && styles.actionBtnPressed]}
+          style={({ pressed }) => [
+            styles.actionBtn,
+            changeBtnTheme,
+            (pressed || isChangeTapActive) && {
+              shadowColor: palette.info,
+              shadowOpacity: 0.28,
+              shadowRadius: 8,
+              shadowOffset: { width: 0, height: 0 },
+              elevation: 4,
+            },
+            pressed && styles.actionBtnPressed,
+          ]}
           android_ripple={{ color: 'rgba(56,189,248,0.25)', borderless: false }}
         >
           <Text variant="bodySmall" style={[styles.changeText, { color: changeTextColor }]}>Change</Text>
         </Pressable>
         <Pressable
-          onPress={() => {
-            if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-            onCancel();
-          }}
+          onPress={handleCancelPress}
+          onPressIn={handleCancelPressIn}
+          onPressOut={handleCancelPressOut}
           hitSlop={8}
-          style={({ pressed }) => [styles.actionBtn, cancelBtnTheme, pressed && styles.actionBtnPressed]}
+          style={({ pressed }) => [
+            styles.actionBtn,
+            cancelBtnTheme,
+            (pressed || isCancelTapActive) && {
+              shadowColor: theme.colors.error,
+              shadowOpacity: 0.28,
+              shadowRadius: 8,
+              shadowOffset: { width: 0, height: 0 },
+              elevation: 4,
+            },
+            pressed && styles.actionBtnPressed,
+          ]}
           android_ripple={{ color: 'rgba(239,68,68,0.25)', borderless: false }}
         >
           <Text variant="bodySmall" style={styles.cancelText}>Cancel</Text>
@@ -116,16 +152,12 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'flex-start',
     borderRadius: theme.borderRadius.md,
-    paddingVertical: 14,
-    paddingHorizontal: 16,
-    marginBottom: 10,
+    paddingVertical: theme.spacing.md,
+    paddingHorizontal: theme.spacing.md,
+    marginBottom: theme.spacing.ml,
     borderWidth: 1,
     // native depth
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.08,
-    shadowRadius: 6,
-    elevation: 2,
+    ...theme.shadow.card,
   },
   actionBtnPressed: {
     transform: [{ scale: 0.93 }],
@@ -134,7 +166,7 @@ const styles = StyleSheet.create({
   left: { flex: 1 },
   time: { fontWeight: theme.fontWeight.semibold, marginBottom: 2 },
   gapLabel: { fontSize: theme.fontSize.xs, marginBottom: 2 },
-  notifyLabel: { fontSize: theme.fontSize.xs, marginBottom: 6 },
+  notifyLabel: { fontSize: theme.fontSize.xs, marginBottom: theme.spacing.ms },
   meta: { flexDirection: 'row', alignItems: 'center', marginBottom: 8 },
   badge: {
     borderRadius: 6,
@@ -157,11 +189,11 @@ const styles = StyleSheet.create({
     borderRadius: 3,
   },
   barLabel: {
-    fontSize: 11,
+    fontSize: theme.fontSize.xxs,
   },
-  actions: { alignItems: 'stretch' as const, marginLeft: 10, paddingTop: 2, gap: 8, width: 80 },
+  actions: { alignItems: 'stretch' as const, marginLeft: theme.spacing.ml, paddingTop: 2, gap: theme.spacing.sm, width: 80 },
   actionBtn: {
-    paddingVertical: 6,
+    paddingVertical: theme.spacing.ms,
     borderRadius: theme.borderRadius.sm,
     alignItems: 'center' as const,
   },
