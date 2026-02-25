@@ -53,4 +53,4 @@ name: notification-actions
     text: OK
     optional: true
 - assertVisible:
-    id: settings-back
+    id: settings-done

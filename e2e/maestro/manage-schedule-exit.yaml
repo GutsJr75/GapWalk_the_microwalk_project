@@ -1,0 +1,29 @@
+appId: com.gapwalk.app
+name: manage-schedule-exit
+---
+- launchApp:
+    clearState: true
+- runFlow:
+    file: helpers/bootstrap-onboarding-manual.yaml
+- tapOn:
+    id: dashboard-open-menu
+- tapOn:
+    id: dashboard-menu-schedule
+- extendedWaitUntil:
+    visible:
+      id: schedule-overview-edit-schedule
+    timeout: 20000
+- assertVisible:
+    id: schedule-overview-change-source
+- tapOn:
+    id: schedule-overview-edit-schedule
+- extendedWaitUntil:
+    visible:
+      id: manual-manage-done
+    timeout: 20000
+- tapOn:
+    id: manual-manage-done
+- extendedWaitUntil:
+    visible:
+      id: dashboard-open-menu
+    timeout: 30000

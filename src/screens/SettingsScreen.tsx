@@ -9,6 +9,7 @@ import { Text } from '../components/Text';
 import { Card } from '../components/Card';
 import { Button } from '../components/Button';
 import { ScreenHeader } from '../components/ScreenHeader';
+import { TwoActionBar } from '../components/TwoActionBar';
 import { AppIcon } from '../components/AppIcon';
 import { theme } from '../theme';
 import { getThemePalette } from '../theme/palette';
@@ -45,11 +46,7 @@ export const SettingsScreen: React.FC<Props> = ({ navigation }) => {
   const englishLabel = t('English');
   const espanolLabel = t('Espa\u00F1ol');
 
-  const handleBack = () => {
-    if (navigation.canGoBack()) {
-      navigation.goBack();
-      return;
-    }
+  const handleDone = () => {
     navigation.navigate('Dashboard');
   };
 
@@ -160,8 +157,6 @@ export const SettingsScreen: React.FC<Props> = ({ navigation }) => {
         <ScreenHeader
           title="Settings"
           subtitle="Choose how GapWalk looks and which language it uses."
-          onBack={handleBack}
-          backTestID="settings-back"
           themeMode={themeMode}
         />
 
@@ -237,6 +232,15 @@ export const SettingsScreen: React.FC<Props> = ({ navigation }) => {
             </View>
           </Card>
         )}
+
+        <TwoActionBar
+          style={styles.footer}
+          primaryAction={{
+            title: 'Done',
+            onPress: handleDone,
+            testID: 'settings-done',
+          }}
+        />
       </View>
     </Container>
   );
@@ -272,4 +276,8 @@ const styles = StyleSheet.create({
     fontWeight: theme.fontWeight.semibold,
   },
   stack: { gap: 10 },
+  footer: {
+    marginTop: theme.spacing.sm,
+    marginBottom: theme.spacing.xl,
+  },
 });

@@ -5,9 +5,9 @@ import { useFocusEffect } from '@react-navigation/native';
 import { RootStackParamList } from '../../App';
 import { Container } from '../components/Container';
 import { Text } from '../components/Text';
-import { Button } from '../components/Button';
 import { Card } from '../components/Card';
 import { ScreenHeader } from '../components/ScreenHeader';
+import { TwoActionBar } from '../components/TwoActionBar';
 import { AppIcon } from '../components/AppIcon';
 import { theme } from '../theme';
 import { useThemePalette } from '../theme/palette';
@@ -53,14 +53,6 @@ export const ScheduleOverviewScreen: React.FC<Props> = ({ navigation }) => {
     backgroundColor: palette.accentMuted,
   };
 
-  const handleBack = () => {
-    if (navigation.canGoBack()) {
-      navigation.goBack();
-      return;
-    }
-    navigation.navigate('Dashboard');
-  };
-
   const openSourceSetup = () => {
     navigation.navigate('ScheduleSetup', { manageMode: true });
   };
@@ -86,7 +78,6 @@ export const ScheduleOverviewScreen: React.FC<Props> = ({ navigation }) => {
         <ScreenHeader
           title="Manage your schedule"
           subtitle="Change your schedule source or update your current schedule without repeating onboarding."
-          onBack={handleBack}
         />
 
         <Card elevated style={styles.card}>
@@ -146,21 +137,20 @@ export const ScheduleOverviewScreen: React.FC<Props> = ({ navigation }) => {
           </Text>
         </Card>
 
-        <View style={styles.actions}>
-          <Button
-            title="Change schedule source"
-            onPress={openSourceSetup}
-            full
-            style={styles.actionBtn}
-          />
-          <Button
-            title={scheduleSource?.type === 'manual' || !scheduleSource ? 'Update current schedule' : 'Update imported schedule'}
-            onPress={updateCurrentSchedule}
-            full
-            variant="secondary"
-            style={styles.actionBtn}
-          />
-        </View>
+        <TwoActionBar
+          style={styles.actions}
+          secondaryAction={{
+            title: 'Change source',
+            onPress: openSourceSetup,
+            variant: 'secondary',
+            testID: 'schedule-overview-change-source',
+          }}
+          primaryAction={{
+            title: 'Edit schedule',
+            onPress: updateCurrentSchedule,
+            testID: 'schedule-overview-edit-schedule',
+          }}
+        />
       </View>
     </Container>
   );
@@ -205,6 +195,5 @@ const styles = StyleSheet.create({
   guideItemTitle: { fontWeight: theme.fontWeight.semibold, marginBottom: 2 },
   guideItemDesc: { lineHeight: 18 },
   guideNote: { marginTop: 12, fontStyle: 'italic' },
-  actions: { marginTop: 12, gap: 10 },
-  actionBtn: { },
+  actions: { marginTop: 12 },
 });

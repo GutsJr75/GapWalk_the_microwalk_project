@@ -13,6 +13,7 @@
     "ios:e2e": "EXPO_PUBLIC_E2E=1 expo run:ios",
     "e2e:maestro:manual": "maestro test e2e/maestro/onboarding-manual.yaml",
     "e2e:maestro:import": "maestro test e2e/maestro/onboarding-import.yaml",
+    "e2e:maestro:manage": "maestro test e2e/maestro/manage-schedule-exit.yaml",
     "e2e:maestro:notifications": "maestro test e2e/maestro/notification-actions.yaml",
     "e2e:maestro:all": "maestro test e2e/maestro"
   },

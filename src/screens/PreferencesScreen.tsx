@@ -371,16 +371,6 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
     );
   }, [hasChanges]);
 
-  const handleBack = () => {
-    confirmDiscardPreferenceChanges(() => {
-      if (navigation.canGoBack()) {
-        runAllowedNavigation(() => navigation.goBack());
-        return;
-      }
-      runAllowedNavigation(() => navigation.navigate('ManualSchedule'));
-    });
-  };
-
   useEffect(() => {
     const unsubscribe = navigation.addListener('beforeRemove', (e) => {
       if (allowNextBeforeRemoveRef.current) {
@@ -733,8 +723,6 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
         <ScreenHeader
           title="Preferences"
           subtitle={manageMode ? 'Review your choices and save when ready.' : 'You can change this anytime.'}
-          onBack={manageMode ? undefined : handleBack}
-          backTestID={manageMode ? undefined : 'preferences-back'}
         />
 
         {/* â•â•â•â•â•â•â•â•â•â• Walking Goals â•â•â•â•â•â•â•â•â•â• */}

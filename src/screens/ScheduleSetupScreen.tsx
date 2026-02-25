@@ -31,6 +31,7 @@ import {
   isGoogleConfigured,
 } from '../lib/googleCalendar';
 import { toUserFriendlyError } from '../lib/errorMessages';
+import { useUnsavedChangesGuard } from '../lib/useUnsavedChangesGuard';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'ScheduleSetup'>;
 type ScheduleOption = 'google' | 'import' | 'manual' | null;
@@ -62,14 +63,6 @@ export const ScheduleSetupScreen: React.FC<Props> = ({ navigation, route }) => {
       return;
     }
     navigation.navigate(manageMode ? 'ScheduleOverview' : 'Dashboard');
-  };
-
-  const backFromOnboarding = () => {
-    if (navigation.canGoBack()) {
-      navigation.goBack();
-      return;
-    }
-    navigation.navigate('Intro');
   };
 
   const navigateToManualSchedule = () => {
@@ -383,27 +376,15 @@ export const ScheduleSetupScreen: React.FC<Props> = ({ navigation, route }) => {
     );
   };
 
-  const handleManageCancel = () => {
-    if (!manageMode) return;
+  const hasUnsavedSourceSelection =
+    !!manageMode && !!selectedOption && !selectionMatchesCurrent(selectedOption);
 
-    if (!selectedOption || selectionMatchesCurrent(selectedOption)) {
-      exitScreen();
-      return;
-    }
-
-    const title = 'Cancel schedule update?';
-    const message = 'Your unsaved schedule source change will be lost. Do you want to leave this screen?';
-    if (Platform.OS === 'web' && typeof (globalThis as any).confirm === 'function') {
-      if ((globalThis as any).confirm(`${title}\n\n${message}`)) {
-        exitScreen();
-      }
-      return;
-    }
-    Alert.alert(title, message, [
-      { text: 'No', style: 'cancel' },
-      { text: 'Yes', style: 'destructive', onPress: exitScreen },
-    ]);
-  };
+  useUnsavedChangesGuard({
+    navigation,
+    enabled: hasUnsavedSourceSelection,
+    title: 'Leave without saving source change?',
+    message: 'You changed your schedule source but have not saved it yet. If you leave now, your change will be lost.',
+  });
 
   const handleContinue = () => {
     if (!selectedOption || loading) return;
@@ -458,8 +439,6 @@ export const ScheduleSetupScreen: React.FC<Props> = ({ navigation, route }) => {
               ? 'Change your schedule source or update existing schedule data.'
               : 'Tell us when you are busy so GapWalk can find walking windows.'
           }
-          onBack={manageMode ? undefined : backFromOnboarding}
-          backTestID={manageMode ? undefined : 'schedule-setup-back'}
         />
         <Text variant="body" style={styles.sectionLabel}>
           {manageMode ? 'Choose how GapWalk should read your schedule' : 'Choose how to add your schedule'}
@@ -545,7 +524,7 @@ export const ScheduleSetupScreen: React.FC<Props> = ({ navigation, route }) => {
             <Button
               title="Cancel"
               variant="secondary"
-              onPress={handleManageCancel}
+              onPress={exitScreen}
               style={styles.footerBtn}
               disabled={loading}
               testID="schedule-setup-cancel"

@@ -880,7 +880,7 @@ export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
     menuSlide.setValue(1);
   };
 
-  const navigateToManageSchedule = () => { closeMenu(); navigation.navigate('ManualSchedule', { manageMode: true }); };
+  const navigateToManageSchedule = () => { closeMenu(); navigation.navigate('ScheduleOverview'); };
   const navigateToProfile = () => { closeMenu(); navigation.navigate('Settings'); };
   const navigateToPreferences = () => { closeMenu(); navigation.push('Preferences', { manageMode: true }); };
   const navigateToSettings = () => { closeMenu(); navigation.navigate('Settings'); };

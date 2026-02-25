@@ -1,18 +1,35 @@
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, PngImagePlugin
 import numpy as np
 import os
+import shutil
 
 SRC = os.path.join(os.path.dirname(__file__), "..", "assets", "icon.png")
+BACKUP = SRC + ".bak"
 OUT = SRC
 BG = np.array([11, 18, 32], dtype=np.uint8)
 SCALE = 0.65
+TOLERANCE = 30  # Sum of absolute differences (approx 10 per channel)
 
-img = Image.open(SRC).convert("RGB")
+# Check if SRC is new or processed to keep BACKUP fresh
+if os.path.exists(SRC):
+    with Image.open(SRC) as check_img:
+        is_processed = check_img.info.get("GapWalkProcessed") == "true"
+
+    if not is_processed:
+        print("Detected new source icon. Updating backup.")
+        shutil.copy2(SRC, BACKUP)
+
+if not os.path.exists(BACKUP):
+    print("Error: No backup source found.")
+    exit(1)
+
+img = Image.open(BACKUP).convert("RGB")
 px = np.array(img)
 h, w, _ = px.shape
 print(f"Loaded {w}x{h}")
 
-is_figure = np.any(px != BG, axis=-1)
+diff = np.abs(px.astype(int) - BG.astype(int))
+is_figure = np.sum(diff, axis=2) > TOLERANCE
 fig_count = is_figure.sum()
 print(f"Figure pixels: {fig_count:,}")
 if fig_count == 0:
@@ -33,8 +50,8 @@ fig_mask = Image.fromarray(fig_mask_arr)
 fig_crop = fig_crop_rgb.convert("RGBA")
 fig_crop.putalpha(fig_mask)
 
-new_fig_w = int(fig_w * SCALE)
-new_fig_h = int(fig_h * SCALE)
+new_fig_w = max(1, int(fig_w * SCALE))
+new_fig_h = max(1, int(fig_h * SCALE))
 fig_small = fig_crop.resize((new_fig_w, new_fig_h), Image.LANCZOS)
 print(f"Shrunk to {new_fig_w}x{new_fig_h}")
 
@@ -49,5 +66,8 @@ ImageDraw.Draw(mask_img).rounded_rectangle([(0, 0), (w-1, h-1)], radius=radius, 
 corner_arr = np.array(mask_img) <= 128
 out = np.array(canvas)
 out[corner_arr] = BG
-Image.fromarray(out).save(OUT, "PNG")
+
+meta = PngImagePlugin.PngInfo()
+meta.add_text("GapWalkProcessed", "true")
+Image.fromarray(out).save(OUT, "PNG", pnginfo=meta)
 print(f"Saved to {os.path.abspath(OUT)}")

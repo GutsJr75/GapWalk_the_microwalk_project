@@ -10,7 +10,6 @@ import { RootStackParamList } from '../../App';
 import { Text } from '../components/Text';
 import { Button } from '../components/Button';
 import { Modal } from '../components/Modal';
-import { AppIcon } from '../components/AppIcon';
 import { Ionicons } from '@expo/vector-icons';
 import { theme } from '../theme';
 import { useThemePalette } from '../theme/palette';
@@ -145,6 +144,7 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
   const permissionDeniedRef = useRef(false);
   const sessionFinalizedRef = useRef(false);
   const checkpointWriteChainRef = useRef<Promise<void>>(Promise.resolve());
+  const allowLeaveRef = useRef(false);
 
   const completionPopAnim = useRef(new Animated.Value(0)).current;
   const completionBurstAnim = useRef(new Animated.Value(0)).current;
@@ -688,6 +688,7 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
       }
 
       if (options?.showCompletion === false) {
+        allowLeaveRef.current = true;
         navigation.navigate('Dashboard');
         return;
       }
@@ -722,6 +723,7 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
 
       setTimeout(() => {
         setShowCompletion(false);
+        allowLeaveRef.current = true;
         navigation.navigate('Dashboard');
       }, 3500);
     } catch (e) {
@@ -745,6 +747,15 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
     setShowIdleModal(false);
     await saveSession({ showCompletion: false, planStatus: 'cancelled', endReason: 'idle_later' });
   };
+
+  useEffect(() => {
+    const unsubscribe = navigation.addListener('beforeRemove', (e) => {
+      if (allowLeaveRef.current) return;
+      e.preventDefault();
+      setShowEndModal(true);
+    });
+    return unsubscribe;
+  }, [navigation]);
 
   // Keep notifActionRef in sync with latest closures so notification actions work correctly
   notifActionRef.current = (actionId: string) => {
@@ -790,26 +801,6 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: palette.bgApp }]} edges={['top', 'left', 'right']}>
       <View style={[styles.topBar, { backgroundColor: topBarBg, borderBottomColor: sheetBorder }]}>
-        <Pressable
-          onPress={() => {
-            if (Platform.OS !== 'web') {
-              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-            }
-            navigation.navigate('Dashboard');
-          }}
-          style={({ pressed }) => [
-            styles.backToDashboardBtn,
-            {
-              backgroundColor: palette.bgSurface,
-              borderColor: sheetBorder,
-            },
-            pressed && styles.backToDashboardBtnPressed,
-          ]}
-          accessibilityLabel="Back"
-          accessibilityRole="button"
-        >
-          <AppIcon name="back" size={20} color={palette.textPrimary} />
-        </Pressable>
         <Text variant="title" style={styles.topTitle}>Walking</Text>
       </View>
 
@@ -1073,20 +1064,6 @@ const styles = StyleSheet.create({
     paddingTop: 14,
     paddingBottom: 14,
     paddingHorizontal: 16,
-  },
-  backToDashboardBtn: {
-    position: 'absolute',
-    left: 2,
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    borderWidth: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  backToDashboardBtnPressed: {
-    opacity: 0.72,
-    transform: [{ translateX: -2 }, { scale: 0.94 }],
   },
   topTitle: {
     fontSize: 30,

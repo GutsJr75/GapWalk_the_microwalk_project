@@ -10,6 +10,7 @@ import { ScreenHeader } from '../components/ScreenHeader';
 import { Card } from '../components/Card';
 import { Text } from '../components/Text';
 import { Button } from '../components/Button';
+import { TwoActionBar } from '../components/TwoActionBar';
 import { theme } from '../theme';
 import { useThemePalette } from '../theme/palette';
 import { useAppStore } from '../store';
@@ -52,11 +53,7 @@ export const WeeklyDataScreen: React.FC<Props> = ({ navigation }) => {
     }, [load]),
   );
 
-  const handleBack = () => {
-    if (navigation.canGoBack()) {
-      navigation.goBack();
-      return;
-    }
+  const handleDone = () => {
     navigation.navigate('Dashboard');
   };
 
@@ -80,8 +77,6 @@ export const WeeklyDataScreen: React.FC<Props> = ({ navigation }) => {
         <ScreenHeader
           title="Weekly Data"
           subtitle="Review your weekly walking totals and trends."
-          onBack={handleBack}
-          backTestID="weekly-data-back"
         />
 
         {loading ? (
@@ -234,6 +229,15 @@ export const WeeklyDataScreen: React.FC<Props> = ({ navigation }) => {
             );
           })
         )}
+
+        <TwoActionBar
+          style={styles.footer}
+          primaryAction={{
+            title: 'Done',
+            onPress: handleDone,
+            testID: 'weekly-data-done',
+          }}
+        />
       </View>
     </Container>
   );
@@ -313,5 +317,8 @@ const styles = StyleSheet.create({
     width: 1,
     height: 32,
     opacity: 0.18,
+  },
+  footer: {
+    marginTop: theme.spacing.sm,
   },
 });

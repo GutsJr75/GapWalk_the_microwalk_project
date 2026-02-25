@@ -3,6 +3,7 @@
 from PIL import Image
 import subprocess
 import os
+import tempfile
 
 ROOT = os.path.join(os.path.dirname(__file__), "..")
 SRC = os.path.join(ROOT, "assets", "icon.png")
@@ -37,16 +38,22 @@ launcher_sizes = {
 
 for folder, size in launcher_sizes.items():
     resized = img.resize((size, size), Image.LANCZOS)
-    tmp_png = f"/tmp/icon_{size}.png"
-    resized.save(tmp_png, "PNG")
-    
-    for name in ["ic_launcher_foreground", "ic_launcher", "ic_launcher_round"]:
-        out_path = os.path.join(RES, folder, f"{name}.webp")
-        if os.path.exists(out_path):
-            subprocess.run(["cwebp", "-q", "90", tmp_png, "-o", out_path],
-                         capture_output=True, check=True)
-            print(f"  Launcher: {folder}/{name}.webp ({size}x{size})")
-    
-    os.remove(tmp_png)
+
+    # Use mkstemp to avoid Windows file locking issues
+    fd, tmp_png = tempfile.mkstemp(suffix=".png")
+    os.close(fd)
+
+    try:
+        resized.save(tmp_png, "PNG")
+
+        for name in ["ic_launcher_foreground", "ic_launcher", "ic_launcher_round"]:
+            out_path = os.path.join(RES, folder, f"{name}.webp")
+            if os.path.exists(out_path):
+                subprocess.run(["cwebp", "-q", "90", tmp_png, "-o", out_path],
+                             capture_output=True, check=True)
+                print(f"  Launcher: {folder}/{name}.webp ({size}x{size})")
+    finally:
+        if os.path.exists(tmp_png):
+            os.remove(tmp_png)
 
 print("Done - all icons updated")

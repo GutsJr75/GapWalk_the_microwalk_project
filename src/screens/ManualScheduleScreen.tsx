@@ -25,6 +25,7 @@ import { Button } from '../components/Button';
 import { Card } from '../components/Card';
 import { Modal as AppModal } from '../components/Modal';
 import { ScreenHeader } from '../components/ScreenHeader';
+import { TwoActionBar } from '../components/TwoActionBar';
 import { AppIcon } from '../components/AppIcon';
 import { theme } from '../theme';
 import { getThemePalette } from '../theme/palette';
@@ -839,21 +840,6 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
         { text: 'Yes', style: 'destructive', onPress: onDiscard },
       ]
     );
-  };
-
-  const exitManualScreen = () => {
-    const goOut = () => {
-      if (manageMode) {
-        runAllowedNavigation(() => navigation.navigate('Dashboard'));
-        return;
-      }
-      if (navigation.canGoBack()) {
-        runAllowedNavigation(() => navigation.goBack());
-        return;
-      }
-      runAllowedNavigation(() => navigation.navigate('ScheduleSetup'));
-    };
-    confirmDiscardChanges(goOut);
   };
 
   useEffect(() => {
@@ -1913,8 +1899,8 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
     }, 70);
   }, [animateSlotFeedback, eventPopAnim, getSliceSlotBounds, handleSlotClick, isManageViewOnly, openModalFromEvent]);
 
-  const handleBack = () => {
-    exitManualScreen();
+  const handleManageDone = () => {
+    runAllowedNavigation(() => navigation.navigate('Dashboard'));
   };
 
   const applyE2ESampleSchedule = () => {
@@ -2004,8 +1990,6 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
       <View style={[styles.header, styles.headerCompact]}>
         <ScreenHeader
           title={manageMode ? 'Manage schedule' : 'Set up your schedule'}
-          onBack={manageMode ? undefined : handleBack}
-          backTestID={manageMode ? undefined : 'manual-back'}
           style={{ marginBottom: 0, paddingTop: 0, paddingBottom: 0 }}
         />
         {sourceType === 'import' && importedFilename ? (
@@ -2331,46 +2315,40 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
           />
         )}
         {manageMode ? (
-          <View style={styles.footerActions}>
-            {isManageViewOnly ? (
-              <>
-                <Button
-                  title="Edit Schedule"
-                  onPress={handleManageStartEdit}
-                  style={styles.footerBtn}
-                  disabled={savingDone}
-                  testID="manual-edit"
-                />
-                <Button
-                  title="Switch Source"
-                  variant="secondary"
-                  onPress={handleOpenSourceSheet}
-                  style={styles.footerBtn}
-                  disabled={savingDone}
-                  testID="manual-change-source"
-                />
-              </>
-            ) : (
-              <>
-                <Button
-                  title="Cancel"
-                  variant="secondary"
-                  onPress={handleManageCancelEdit}
-                  style={styles.footerBtn}
-                  disabled={savingDone}
-                  testID="manual-cancel"
-                />
-                <Button
-                  title="Save"
-                  onPress={handleDone}
-                  style={styles.footerBtn}
-                  loading={savingDone}
-                  disabled={savingDone || !hasManageChanges}
-                  testID="manual-save"
-                />
-              </>
-            )}
-          </View>
+          isManageViewOnly ? (
+            <TwoActionBar
+              secondaryAction={{
+                title: 'Done',
+                onPress: handleManageDone,
+                variant: 'secondary',
+                disabled: savingDone,
+                testID: 'manual-manage-done',
+              }}
+              primaryAction={{
+                title: 'Edit Schedule',
+                onPress: handleManageStartEdit,
+                disabled: savingDone,
+                testID: 'manual-edit',
+              }}
+            />
+          ) : (
+            <TwoActionBar
+              secondaryAction={{
+                title: 'Cancel',
+                onPress: handleManageCancelEdit,
+                variant: 'secondary',
+                disabled: savingDone,
+                testID: 'manual-cancel',
+              }}
+              primaryAction={{
+                title: 'Save',
+                onPress: handleDone,
+                loading: savingDone,
+                disabled: savingDone || !hasManageChanges,
+                testID: 'manual-save',
+              }}
+            />
+          )
         ) : (
           requireSaveBeforeContinue ? (
             <View style={styles.footerActions}>
@@ -2412,8 +2390,6 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
               <ScreenHeader
                 title="Switch Source"
                 subtitle="Choose how GapWalk reads your schedule."
-                onBack={handleCloseSourceSheet}
-                backTestID="switch-source-back"
                 style={{ marginBottom: 0, paddingTop: 0, paddingBottom: 0 }}
               />
             </View>
