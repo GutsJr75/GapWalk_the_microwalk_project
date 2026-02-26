@@ -130,6 +130,14 @@ android {
     androidResources {
         ignoreAssetsPattern '!.svn:!.git:!.ds_store:!*.scc:!CVS:!thumbs.db:!picasa.ini:!*~'
     }
+
+    applicationVariants.all { variant ->
+        variant.outputs.all { output ->
+            if (output.outputFileName != null && output.outputFileName.toString().endsWith(".apk")) {
+                output.outputFileName = "GapWalk_v1.0.1.apk"
+            }
+        }
+    }
 }
 
 // Apply static values from `gradle.properties` to the `android.packagingOptions`
