@@ -16,6 +16,23 @@ const rescheduleFutureNudges = async () => {
 };
 
 export const notificationPlanActions = {
+  async expireStaleNotifiedPlans(): Promise<number> {
+    const todayPlans = await plansRepo.getTodayPlans();
+    const now = new Date();
+    let expired = 0;
+    for (const plan of todayPlans) {
+      if (
+        (plan.status === 'notified' || plan.status === 'planned') &&
+        isAfter(now, parseISO(plan.gapEnd))
+      ) {
+        await plansRepo.updateStatusWithReason(plan.id, 'cancelled', 'missed');
+        analyticsService.track('plan_expired', { planId: plan.id, previousStatus: plan.status });
+        expired++;
+      }
+    }
+    return expired;
+  },
+
   async markNotifiedIfPlanned(planId: string): Promise<boolean> {
     const plan = await plansRepo.getById(planId);
     if (!plan || terminalStatuses.has(plan.status)) return false;
@@ -26,6 +43,20 @@ export const notificationPlanActions = {
       return true;
     }
     return false;
+  },
+
+  async skipPlan(planId: string): Promise<boolean> {
+    const plan = await plansRepo.getById(planId);
+    if (!plan || terminalStatuses.has(plan.status)) return false;
+
+    await plansRepo.updateStatus(plan.id, 'skipped');
+    await rescheduleFutureNudges();
+    analyticsService.track('notification_skip_action', {
+      planId: plan.id,
+      skippedGapStart: plan.gapStart,
+      skippedGapEnd: plan.gapEnd,
+    });
+    return true;
   },
 
   async skipGap(planId: string): Promise<boolean> {

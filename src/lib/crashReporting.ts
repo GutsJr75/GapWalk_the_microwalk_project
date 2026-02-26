@@ -2,13 +2,55 @@ import { analyticsService } from './analytics';
 import { analyticsRepo } from './repositories/analyticsRepo';
 
 let installed = false;
+type CrashContext = Record<string, unknown>;
+type CrashTrackEvent = 'app_crash' | 'unhandled_rejection' | 'render_crash';
 
 const toError = (value: unknown): Error => {
   if (value instanceof Error) return value;
   return new Error(typeof value === 'string' ? value : 'Unknown error');
 };
 
+const reportCrash = ({
+  error,
+  isFatal,
+  context,
+  trackEvent,
+}: {
+  error: unknown;
+  isFatal: boolean;
+  context?: CrashContext;
+  trackEvent: CrashTrackEvent;
+}): Error => {
+  const normalized = toError(error);
+  const hasContext = !!context && Object.keys(context).length > 0;
+  void analyticsRepo.saveCrash({
+    message: normalized.message,
+    stack: normalized.stack,
+    isFatal,
+    ...(hasContext ? { context } : {}),
+  }).catch((saveError) => {
+    if (__DEV__) console.error('Failed to persist crash report:', saveError);
+  });
+
+  analyticsService.track(trackEvent, {
+    isFatal,
+    message: normalized.message,
+    ...(hasContext ? context : {}),
+  });
+
+  return normalized;
+};
+
 export const crashReporting = {
+  logError(error: unknown, context?: CrashContext): void {
+    reportCrash({
+      error,
+      isFatal: false,
+      context: { ...(context ?? {}), kind: 'error_boundary' },
+      trackEvent: 'render_crash',
+    });
+  },
+
   install(): void {
     if (installed) return;
     installed = true;
@@ -20,17 +62,10 @@ export const crashReporting = {
         : null;
 
       errorUtils.setGlobalHandler((error: unknown, isFatal?: boolean) => {
-        const normalized = toError(error);
-        void analyticsRepo.saveCrash({
-          message: normalized.message,
-          stack: normalized.stack,
+        const normalized = reportCrash({
+          error,
           isFatal: !!isFatal,
-        }).catch((saveError) => {
-          console.error('Failed to persist crash report:', saveError);
-        });
-        analyticsService.track('app_crash', {
-          isFatal: !!isFatal,
-          message: normalized.message,
+          trackEvent: 'app_crash',
         });
 
         if (typeof previous === 'function') {
@@ -41,17 +76,11 @@ export const crashReporting = {
 
     if (typeof (globalThis as any).addEventListener === 'function') {
       (globalThis as any).addEventListener('unhandledrejection', (event: any) => {
-        const normalized = toError(event?.reason);
-        void analyticsRepo.saveCrash({
-          message: normalized.message,
-          stack: normalized.stack,
+        reportCrash({
+          error: event?.reason,
           isFatal: false,
           context: { kind: 'unhandledrejection' },
-        }).catch((saveError) => {
-          console.error('Failed to persist rejected promise:', saveError);
-        });
-        analyticsService.track('unhandled_rejection', {
-          message: normalized.message,
+          trackEvent: 'unhandled_rejection',
         });
       });
     }

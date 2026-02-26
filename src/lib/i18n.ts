@@ -25,6 +25,7 @@ const esExact: Record<string, string> = {
     'Completa una caminata para comenzar a crear historial semanal.',
   'Week of': 'Semana del',
   'Settings': 'Configuracion',
+  'Viewer Settings': 'Configuracion de vista',
   'Appearance': 'Apariencia',
   'Language': 'Idioma',
   'Dark': 'Oscuro',
@@ -368,6 +369,8 @@ const esExact: Record<string, string> = {
     'Quieres actualizar este horario?',
   'Your unsaved source selection will be lost. Do you want to leave this screen?':
     'Se perdera tu seleccion de fuente no guardada. Quieres salir de esta pantalla?',
+  'Your unsaved settings changes will be lost. Do you want to go back?':
+    'Se perderan tus cambios de configuracion no guardados. Quieres volver?',
   'Keep editing': 'Seguir editando',
   'Discard': 'Descartar',
   'Remove this event?': 'Eliminar este evento?',

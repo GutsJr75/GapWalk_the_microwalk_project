@@ -1,5 +1,5 @@
 import React from 'react';
-import { Pressable, StyleProp, StyleSheet, View, ViewStyle } from 'react-native';
+import { Pressable, StyleProp, StyleSheet, View, ViewStyle, useWindowDimensions } from 'react-native';
 import { theme } from '../theme';
 import { getThemePalette } from '../theme/palette';
 import { useAppStore } from '../store';
@@ -31,12 +31,17 @@ export const ScreenHeader: React.FC<ScreenHeaderProps> = ({
   themeMode: controlledThemeMode,
 }) => {
   const { themeMode: storeThemeMode } = useAppStore();
+  const { width: viewportWidth } = useWindowDimensions();
   const themeMode = controlledThemeMode ?? storeThemeMode;
   const palette = getThemePalette(themeMode);
   const backChipBg = palette.bgSurface;
   const backChipBorder = palette.borderStrong;
   const backChipText = palette.textPrimary;
   const backChipRipple = palette.inputBg;
+  const [headerWidth, setHeaderWidth] = React.useState(0);
+  const backAnchorOffset = headerWidth > 0
+    ? theme.layout.contentHorizontal - (viewportWidth - headerWidth) / 2
+    : -theme.layout.contentHorizontal;
   const { isTapActive, handlePress, handlePressIn, handlePressOut } = useTapFeedbackAction({
     onPress: () => {
       onBack?.();
@@ -45,11 +50,17 @@ export const ScreenHeader: React.FC<ScreenHeaderProps> = ({
   });
 
   return (
-    <View style={[styles.root, style]}>
+    <View
+      style={[styles.root, style]}
+      onLayout={(event) => {
+        const nextWidth = Math.round(event.nativeEvent.layout.width);
+        if (nextWidth !== headerWidth) setHeaderWidth(nextWidth);
+      }}
+    >
       {(onBack || rightAccessory) && (
         <View style={styles.topRow}>
           {onBack ? (
-            <View style={styles.backAnchor}>
+            <View style={[styles.backAnchor, { marginLeft: backAnchorOffset }]}>
               <Pressable
                 onPress={handlePress}
                 onPressIn={handlePressIn}
@@ -123,7 +134,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   backAnchor: {
-    marginLeft: -theme.layout.contentHorizontal,
+    marginLeft: 0,
   },
   backIconBtn: {
     width: 38,

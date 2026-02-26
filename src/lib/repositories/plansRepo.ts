@@ -164,6 +164,14 @@ export const plansRepo = {
     );
   },
 
+  async updateStatusWithReason(id: string, status: NudgePlanStatus, reason: string): Promise<void> {
+    const db = await getDatabase();
+    await db.runAsync(
+      'UPDATE nudge_plans SET status = ?, reason = ? WHERE id = ?',
+      [status, reason, id]
+    );
+  },
+
   async updateTiming(
     id: string,
     timing: {

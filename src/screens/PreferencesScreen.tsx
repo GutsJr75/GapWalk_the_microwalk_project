@@ -1,7 +1,8 @@
-import React, { useCallback, useEffect, useState, useRef } from 'react';
+import React, { useCallback, useEffect, useMemo, useState, useRef } from 'react';
 import {
   View,
   StyleSheet,
+  ScrollView,
   TextInput,
   StyleProp,
   TextStyle,
@@ -12,6 +13,8 @@ import {
   LayoutAnimation,
   Platform,
   UIManager,
+  Modal as RNModal,
+  useWindowDimensions,
 } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useFocusEffect } from '@react-navigation/native';
@@ -24,10 +27,10 @@ import { Modal } from '../components/Modal';
 import { ScreenHeader } from '../components/ScreenHeader';
 import { AppIcon, AppIconName } from '../components/AppIcon';
 import { theme } from '../theme';
+import { screenChrome } from '../theme/screenChrome';
 import { getThemePalette } from '../theme/palette';
 import { Preferences, DEFAULT_PREFERENCES, PreferredWalkingPeriod } from '../lib/types';
 import { preferencesRepo } from '../lib/repositories/preferencesRepo';
-import { notificationService, isNotificationsSupported } from '../lib/notifications';
 import { syncNudgePlansForCurrentSchedule } from '../lib/scheduleSync';
 import {
   SAVE_CONFIRM_ACTION,
@@ -50,6 +53,19 @@ if (Platform.OS === 'android' && !isFabric && UIManager.setLayoutAnimationEnable
 type Props = NativeStackScreenProps<RootStackParamList, 'Preferences'>;
 type TimeInputMode = 'hour' | 'minute';
 type TimePeriod = 'AM' | 'PM';
+
+interface InfoAnchorRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+interface ActiveInfoState {
+  id: string;
+  text: string;
+  anchor: InfoAnchorRect;
+}
 
 /* â”€â”€â”€â”€â”€ time-input helpers â”€â”€â”€â”€â”€ */
 const onlyDigits = (value: string): string => value.replace(/[^0-9]/g, '').slice(0, 2);
@@ -160,12 +176,11 @@ const TwoDigitTimeInput: React.FC<TwoDigitTimeInputProps> = ({ mode, value, onCh
 /* â”€â”€ collapsible section â”€â”€ */
 const Section: React.FC<{
   title: string;
-  subtitle?: string;
   icon?: AppIconName;
   defaultExpanded?: boolean;
   onFirstExpand?: () => void;
   children: React.ReactNode;
-}> = ({ title, subtitle, icon, defaultExpanded = false, onFirstExpand, children }) => {
+}> = ({ title, icon, defaultExpanded = false, onFirstExpand, children }) => {
   const [expanded, setExpanded] = useState(defaultExpanded);
   const hasReportedExpand = useRef(false);
   const rotateAnim = useRef(new Animated.Value(defaultExpanded ? 1 : 0)).current;
@@ -197,8 +212,7 @@ const Section: React.FC<{
             </View>
           )}
           <View style={styles.sectionHeaderText}>
-          <Text variant="body" style={styles.sectionTitle}>{title}</Text>
-          {subtitle && <Text variant="muted" style={styles.sectionSubtitle}>{subtitle}</Text>}
+            <Text variant="body" style={styles.sectionTitle}>{title}</Text>
           </View>
         </View>
         <Animated.View
@@ -236,32 +250,34 @@ const RadioOption: React.FC<{ selected: boolean; label: string; onPress: () => v
   );
 };
 
-/* â”€â”€ info tooltip (mint accent, renders ABOVE the label) â”€â”€ */
-const InfoTip: React.FC<{ text: string }> = ({ text }) => {
-  const [show, setShow] = useState(false);
-  const { themeMode } = useAppStore();
-  const palette = getThemePalette(themeMode);
-  const tooltipTheme = {
-    backgroundColor: themeMode === 'dark' ? theme.colors.bgSurface : palette.bgSurfaceElevated,
-    borderColor: palette.accentBorder,
-    shadowColor: palette.shadow,
-  };
+/* â”€â”€ info trigger â”€â”€ */
+const InfoTip: React.FC<{
+  id: string;
+  text: string;
+  activeInfoId: string | null;
+  onToggle: (next: ActiveInfoState) => void;
+}> = ({ id, text, activeInfoId, onToggle }) => {
+  const anchorRef = useRef<View>(null);
+  const isActive = activeInfoId === id;
+
+  const handlePress = useCallback(() => {
+    if (!anchorRef.current) return;
+    anchorRef.current.measureInWindow((x, y, width, height) => {
+      onToggle({
+        id,
+        text,
+        anchor: { x, y, width, height },
+      });
+    });
+  }, [id, onToggle, text]);
 
   return (
-    <View style={styles.infoWrap}>
-      <TouchableOpacity onPress={() => setShow(s => !s)} hitSlop={10} style={styles.infoBtn}>
-        <View style={styles.infoCircle}>
+    <View ref={anchorRef} collapsable={false} style={styles.infoWrap}>
+      <TouchableOpacity onPress={handlePress} hitSlop={10} style={styles.infoBtn}>
+        <View style={[styles.infoCircle, isActive && styles.infoCircleActive]}>
           <Text style={styles.infoLetter}>i</Text>
         </View>
       </TouchableOpacity>
-      {show && (
-        <TouchableOpacity activeOpacity={1} onPress={() => setShow(false)} style={styles.tooltipBackdrop} />
-      )}
-      {show && (
-        <View style={[styles.tooltip, tooltipTheme]}>
-          <Text variant="bodySmall" style={styles.tooltipText}>{text}</Text>
-        </View>
-      )}
     </View>
   );
 };
@@ -273,7 +289,7 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
   const [prefs, setPrefs] = useState<Preferences>(DEFAULT_PREFERENCES);
   const [hasChanges, setHasChanges] = useState(false);
   // Onboarding: user must open each section at least once before Continue (can still use recommended).
-  const [hasSeenWalkingGoals, setHasSeenWalkingGoals] = useState(true);
+  const [hasSeenWalkingGoals, setHasSeenWalkingGoals] = useState(false);
   const [hasSeenNotifications, setHasSeenNotifications] = useState(false);
   const [hasSeenAdvanced, setHasSeenAdvanced] = useState(false);
   const [showQuietModal, setShowQuietModal] = useState(false);
@@ -281,6 +297,8 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
   const [quietError, setQuietError] = useState<string | null>(null);
   const [preferredError, setPreferredError] = useState<string | null>(null);
   const [savingPrefs, setSavingPrefs] = useState(false);
+  const [activeInfo, setActiveInfo] = useState<ActiveInfoState | null>(null);
+  const { width: viewportWidth, height: viewportHeight } = useWindowDimensions();
   const [quietForm, setQuietForm] = useState(() => {
     const start = to12HourParts(DEFAULT_PREFERENCES.quietHoursStart);
     const end = to12HourParts(DEFAULT_PREFERENCES.quietHoursEnd);
@@ -290,7 +308,6 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
     toPreferredForm(DEFAULT_PREFERRED_PERIOD),
   ]);
   const allowNextBeforeRemoveRef = useRef(false);
-  const notificationsSupported = isNotificationsSupported;
   const palette = getThemePalette(themeMode);
   const isDark = themeMode === 'dark';
   const themedInput = {
@@ -303,6 +320,40 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
     borderColor: isDark ? 'rgba(255,255,255,0.06)' : palette.borderStrong,
     borderWidth: 1,
   };
+  const infoOverlayTheme = {
+    backgroundColor: isDark ? theme.colors.bgSurface : palette.bgSurfaceElevated,
+    borderColor: isDark ? 'rgba(46,233,166,0.36)' : 'rgba(18,120,92,0.32)',
+    shadowColor: palette.shadow,
+  };
+
+  const closeInfoOverlay = useCallback(() => {
+    setActiveInfo(null);
+  }, []);
+
+  const handleInfoToggle = useCallback((next: ActiveInfoState) => {
+    setActiveInfo((prev) => (prev?.id === next.id ? null : next));
+  }, []);
+
+  const infoOverlayPosition = useMemo(() => {
+    if (!activeInfo) return null;
+    const tooltipWidth = Math.min(280, Math.max(220, viewportWidth - 32));
+    const anchorCenter = activeInfo.anchor.x + (activeInfo.anchor.width / 2);
+    const clampedLeft = Math.min(
+      Math.max(16, anchorCenter - (tooltipWidth / 2)),
+      Math.max(16, viewportWidth - tooltipWidth - 16)
+    );
+    const estimatedHeight = 160;
+    const belowTop = activeInfo.anchor.y + activeInfo.anchor.height + 10;
+    const aboveTop = activeInfo.anchor.y - estimatedHeight - 10;
+    const top = belowTop + estimatedHeight <= viewportHeight - 16
+      ? belowTop
+      : Math.max(16, aboveTop);
+    return {
+      left: clampedLeft,
+      top,
+      width: tooltipWidth,
+    };
+  }, [activeInfo, viewportHeight, viewportWidth]);
 
   useFocusEffect(
     useCallback(() => {
@@ -321,9 +372,17 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
         } catch (e) { console.error('Failed to load preferences:', e); }
       };
       load();
-      return () => { active = false; };
-    }, [storedPreferences])
+      return () => {
+        active = false;
+        closeInfoOverlay();
+      };
+    }, [closeInfoOverlay, storedPreferences])
   );
+
+  useEffect(() => {
+    const unsubscribeBlur = navigation.addListener('blur', closeInfoOverlay);
+    return unsubscribeBlur;
+  }, [closeInfoOverlay, navigation]);
 
   const update = <K extends keyof Preferences>(key: K, value: Preferences[K]) => {
     setPrefs(prev => ({ ...prev, [key]: value }));
@@ -390,6 +449,7 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
 
   /* â”€â”€ quiet hours â”€â”€ */
   const openQuietModal = () => {
+    closeInfoOverlay();
     const start = to12HourParts(prefs.quietHoursStart);
     const end = to12HourParts(prefs.quietHoursEnd);
     setQuietForm({ startHourRaw: start.hourRaw, startMinuteRaw: start.minuteRaw, startPeriod: start.period, endHourRaw: end.hourRaw, endMinuteRaw: end.minuteRaw, endPeriod: end.period });
@@ -408,6 +468,7 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
   };
 
   const openPreferredModal = () => {
+    closeInfoOverlay();
     const seed = prefs.preferredWalkingPeriods.length > 0
       ? prefs.preferredWalkingPeriods
       : [DEFAULT_PREFERRED_PERIOD];
@@ -595,7 +656,7 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
           setHasActivityPermission(permResults.activityRecognition);
           setHasRequestedPermissions(true);
         } catch (e) {
-          console.warn('Permission request failed during onboarding:', e);
+          if (__DEV__) console.warn('Permission request failed during onboarding:', e);
         }
 
         try {
@@ -617,7 +678,7 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
         return;
       } catch (error) {
         lastError = error;
-        console.error(`Save preferences attempt ${attempt + 1} failed:`, error);
+        if (__DEV__) console.error(`Save preferences attempt ${attempt + 1} failed:`, error);
         if (attempt === 0) await new Promise(r => setTimeout(r, 500));
       }
     }
@@ -718,336 +779,391 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
 
   /* â•â•â•â•â•â•â•â•â•â•â• render â•â•â•â•â•â•â•â•â•â•â• */
   return (
-    <Container scrollable>
-      <View style={styles.content}>
-        <ScreenHeader
-          title="Preferences"
-          subtitle={manageMode ? 'Review your choices and save when ready.' : 'You can change this anytime.'}
-        />
+    <Container>
+      <View style={styles.screen}>
+        <ScrollView
+          style={styles.contentScroll}
+          contentContainerStyle={styles.contentScrollInner}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+          onScrollBeginDrag={closeInfoOverlay}
+          onMomentumScrollBegin={closeInfoOverlay}
+        >
+          <View style={styles.content}>
+            <ScreenHeader
+              title="Preferences"
+              subtitle={manageMode ? 'Review your choices and save when ready.' : 'Choose what GapWalk should optimize for you.'}
+            />
 
-        {/* â•â•â•â•â•â•â•â•â•â• Walking Goals â•â•â•â•â•â•â•â•â•â• */}
-        <Section title="Walking Goals" subtitle="Target, buffer & reminders" icon="adjust" defaultExpanded onFirstExpand={() => setHasSeenWalkingGoals(true)}>
-          {/* Walking Goal */}
-          <View style={styles.field}>
-            <View style={styles.fieldHeader}>
-              <Text variant="bodySmall" style={styles.fieldLabel}>Walking Goal</Text>
-              <InfoTip text="Total walking minutes you aim for each day. GapWalk splits this across your free gaps." />
-            </View>
-            <View style={styles.inputRow}>
-              <TextInput
-                style={[styles.input, themedInput]}
-                value={String(prefs.dailyTargetMinutes)}
-                onChangeText={t => update('dailyTargetMinutes', parseInt(t) || 0)}
-                keyboardType="number-pad"
-                placeholderTextColor={palette.textMuted}
-              />
-              <Text variant="muted" style={styles.unit}>min</Text>
-            </View>
-            {dailyTargetError && <Text variant="bodySmall" style={styles.errorText}>{dailyTargetError}</Text>}
-          </View>
-
-          {/* Buffer (input field) */}
-          <View style={styles.field}>
-            <View style={styles.fieldHeader}>
-              <Text variant="bodySmall" style={styles.fieldLabel}>Buffer</Text>
-              <InfoTip text="Breathing room around your busy events so notifications aren't too tight together." />
-            </View>
-            <View style={styles.inputRow}>
-              <TextInput
-                style={[styles.input, themedInput]}
-                value={String(prefs.bufferMinutes)}
-                onChangeText={t => update('bufferMinutes', parseInt(t) || 0)}
-                keyboardType="number-pad"
-                placeholderTextColor={palette.textMuted}
-              />
-              <Text variant="muted" style={styles.unit}>min</Text>
-            </View>
-            {bufferError && <Text variant="bodySmall" style={styles.errorText}>{bufferError}</Text>}
-          </View>
-
-          {/* Reminders */}
-          <View style={styles.field}>
-            <View style={styles.fieldHeader}>
-              <Text variant="bodySmall" style={styles.fieldLabel}>Reminders</Text>
-              <InfoTip text="How many walk notifications GapWalk can send per day." />
-            </View>
-            <View style={styles.inputRow}>
-              <TextInput
-                style={[styles.input, themedInput]}
-                value={String(prefs.notificationCountPerDay)}
-                onChangeText={t => update('notificationCountPerDay', parseInt(t) || 0)}
-                keyboardType="number-pad"
-                placeholderTextColor={palette.textMuted}
-              />
-              <Text variant="muted" style={styles.unit}>per day</Text>
-            </View>
-            {notifError && <Text variant="bodySmall" style={styles.errorText}>{notifError}</Text>}
-            {!notificationsSupported && (
-              <Text variant="muted" style={styles.note}>Notifications are limited in Expo Go.</Text>
-            )}
-          </View>
-        </Section>
-
-        {/* â•â•â•â•â•â•â•â•â•â• Other Settings â•â•â•â•â•â•â•â•â•â• */}
-        <Section title="Notifications" subtitle="Timing, spacing & quiet hours" icon="bell" onFirstExpand={() => setHasSeenNotifications(true)}>
-          {/* When to Notify (simplified radio) */}
-          <View style={styles.field}>
-            <Text variant="bodySmall" style={styles.fieldLabel}>When to notify</Text>
-            <View style={styles.radioGroup}>
-              <RadioOption
-                selected={notifyChoice === 'gap'}
-                label="When the app finds a gap"
-                onPress={() => setNotifyChoice('gap')}
-              />
-              <RadioOption
-                selected={notifyChoice === '5min'}
-                label="5 minutes before the micro walk"
-                onPress={() => setNotifyChoice('5min')}
-              />
-              <RadioOption
-                selected={notifyChoice === '10min'}
-                label="10 minutes before the micro walk"
-                onPress={() => setNotifyChoice('10min')}
-              />
-            </View>
-          </View>
-
-          {/* Reminder spacing limiter */}
-          <View style={styles.field}>
-            <View style={styles.fieldHeader}>
-              <Text variant="bodySmall" style={styles.fieldLabel}>Minimum time between reminders</Text>
-              <InfoTip text="Prevents reminder overload. Recommended: 60 min. You can set between 30 min and 6 hours." />
-            </View>
-            <View style={styles.inputRow}>
-              <TextInput
-                style={[styles.input, themedInput]}
-                value={String(prefs.notificationMinGapMinutes)}
-                onChangeText={t => update('notificationMinGapMinutes', parseInt(t) || 0)}
-                keyboardType="number-pad"
-                placeholderTextColor={palette.textMuted}
-              />
-              <Text variant="muted" style={styles.unit}>min</Text>
-            </View>
-            {reminderGapError && <Text variant="bodySmall" style={styles.errorText}>{reminderGapError}</Text>}
-          </View>
-
-          {/* Quiet Hours (moved here from Advanced) */}
-          <View style={styles.field}>
-            <Text variant="bodySmall" style={styles.fieldLabel}>Quiet Hours</Text>
-            <TouchableOpacity onPress={openQuietModal} style={[styles.quietBtn, themedSurface]} activeOpacity={0.7}>
-              <View style={styles.quietRow}>
-                <Text
-                  variant="body"
-                  style={styles.quietValue}
-                  numberOfLines={1}
-                >
-                  {formatTime12(prefs.quietHoursStart)} - {formatTime12(prefs.quietHoursEnd)}
-                </Text>
-                <Text variant="muted" style={styles.quietEdit} numberOfLines={1}>
-                  Tap to edit
+            {!manageMode && !hasSeenAllSections && (
+              <View style={styles.reviewGateWarning}>
+                <Text variant="body" style={styles.reviewGateWarningTitle}>Review all sections to continue</Text>
+                <Text variant="bodySmall" style={styles.reviewGateWarningBody}>
+                  Open Walking Goals, Notifications, and Advanced once. You can keep recommended settings.
                 </Text>
               </View>
-            </TouchableOpacity>
-          </View>
-        </Section>
-
-        {/* Advanced settings */}
-        <Section title="Advanced" subtitle="Strictness, step goals & preferred periods" icon="settings" onFirstExpand={() => setHasSeenAdvanced(true)}>
-          {/* Strictness */}
-          <View style={styles.field}>
-            <View style={styles.fieldHeader}>
-              <Text variant="bodySmall" style={styles.fieldLabel}>Strictness</Text>
-              <InfoTip text="No Excuses enforces step-goal checks. Easygoing keeps walk timing flexible." />
-            </View>
-            <View style={styles.radioGroup}>
-              <RadioOption
-                selected={prefs.strictnessMode === 'easygoing'}
-                label="Easygoing"
-                onPress={() => updateMany({ strictnessMode: 'easygoing' })}
-              />
-              <RadioOption
-                selected={prefs.strictnessMode === 'no_excuses'}
-                label="No Excuses"
-                onPress={() =>
-                  updateMany({
-                    strictnessMode: 'no_excuses',
-                    stepGoalEnabled: true,
-                    stepGoal: Math.max(500, prefs.stepGoal || DEFAULT_PREFERENCES.stepGoal),
-                  })
-                }
-              />
-            </View>
-            <Text variant="muted" style={styles.note}>
-              {prefs.strictnessMode === 'no_excuses'
-                ? 'Step goal is required in No Excuses mode.'
-                : 'Easygoing keeps your step goal optional.'}
-            </Text>
-          </View>
-
-          {/* Step goal */}
-          <View style={styles.field}>
-            <View style={styles.fieldHeader}>
-              <Text variant="bodySmall" style={styles.fieldLabel}>Step Goal</Text>
-              <InfoTip text="Recommended: 1000 steps. Range: 500 to 6000." />
-            </View>
-            {prefs.strictnessMode === 'easygoing' && (
-              <View style={styles.togglePillRow}>
-                <TouchableOpacity
-                  style={[
-                    styles.togglePill,
-                    themedSurface,
-                    !prefs.stepGoalEnabled && styles.togglePillActive,
-                  ]}
-                  activeOpacity={0.75}
-                  onPress={() => update('stepGoalEnabled', false)}
-                >
-                  <Text
-                    variant="bodySmall"
-                    style={!prefs.stepGoalEnabled ? styles.togglePillTextActive : styles.togglePillText}
-                  >
-                    Off
-                  </Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[
-                    styles.togglePill,
-                    themedSurface,
-                    prefs.stepGoalEnabled && styles.togglePillActive,
-                  ]}
-                  activeOpacity={0.75}
-                  onPress={() => updateMany({
-                    stepGoalEnabled: true,
-                    stepGoal: Math.max(500, prefs.stepGoal || DEFAULT_PREFERENCES.stepGoal),
-                  })}
-                >
-                  <Text
-                    variant="bodySmall"
-                    style={prefs.stepGoalEnabled ? styles.togglePillTextActive : styles.togglePillText}
-                  >
-                    On
-                  </Text>
-                </TouchableOpacity>
-              </View>
             )}
-            {stepGoalEnabled ? (
-              <>
+
+            <Section
+              title="Walking Goals"
+              icon="adjust"
+              onFirstExpand={() => setHasSeenWalkingGoals(true)}
+            >
+              <View style={[styles.field, styles.settingRowCard, themedSurface]}>
+                <View style={styles.fieldHeader}>
+                  <Text variant="bodySmall" style={styles.fieldLabel}>Walking Goal</Text>
+                  <InfoTip
+                    id="walking-goal"
+                    text="Total walking minutes you aim for each day. GapWalk splits this across your free gaps."
+                    activeInfoId={activeInfo?.id ?? null}
+                    onToggle={handleInfoToggle}
+                  />
+                </View>
                 <View style={styles.inputRow}>
                   <TextInput
                     style={[styles.input, themedInput]}
-                    value={String(prefs.stepGoal)}
-                    onChangeText={(t) => update('stepGoal', Math.max(0, parseInt(t, 10) || 0))}
+                    value={String(prefs.dailyTargetMinutes)}
+                    onChangeText={(t) => update('dailyTargetMinutes', parseInt(t, 10) || 0)}
                     keyboardType="number-pad"
                     placeholderTextColor={palette.textMuted}
                   />
-                  <Text variant="muted" style={styles.unit}>steps</Text>
+                  <Text variant="muted" style={styles.unit}>min</Text>
                 </View>
-                <Text variant="muted" style={styles.note}>Recommended: 1000 steps</Text>
+                {dailyTargetError && <Text variant="bodySmall" style={styles.errorText}>{dailyTargetError}</Text>}
+              </View>
+
+              <View style={[styles.field, styles.settingRowCard, themedSurface]}>
+                <View style={styles.fieldHeader}>
+                  <Text variant="bodySmall" style={styles.fieldLabel}>Walk buffer</Text>
+                  <InfoTip
+                    id="walk-buffer"
+                    text="Adds space before and after busy events so walk suggestions are not too tight. Example: 10 min means no walk suggestion in the 10 min before or after each event."
+                    activeInfoId={activeInfo?.id ?? null}
+                    onToggle={handleInfoToggle}
+                  />
+                </View>
+                <View style={styles.inputRow}>
+                  <TextInput
+                    style={[styles.input, themedInput]}
+                    value={String(prefs.bufferMinutes)}
+                    onChangeText={(t) => update('bufferMinutes', parseInt(t, 10) || 0)}
+                    keyboardType="number-pad"
+                    placeholderTextColor={palette.textMuted}
+                  />
+                  <Text variant="muted" style={styles.unit}>min</Text>
+                </View>
+                {bufferError && <Text variant="bodySmall" style={styles.errorText}>{bufferError}</Text>}
+              </View>
+
+              <View style={[styles.field, styles.settingRowCard, themedSurface]}>
+                <View style={styles.fieldHeader}>
+                  <Text variant="bodySmall" style={styles.fieldLabel}>Reminders</Text>
+                  <InfoTip
+                    id="reminders"
+                    text="How many walk notifications GapWalk can send per day."
+                    activeInfoId={activeInfo?.id ?? null}
+                    onToggle={handleInfoToggle}
+                  />
+                </View>
+                <View style={styles.inputRow}>
+                  <TextInput
+                    style={[styles.input, themedInput]}
+                    value={String(prefs.notificationCountPerDay)}
+                    onChangeText={(t) => update('notificationCountPerDay', parseInt(t, 10) || 0)}
+                    keyboardType="number-pad"
+                    placeholderTextColor={palette.textMuted}
+                  />
+                  <Text variant="muted" style={styles.unit}>per day</Text>
+                </View>
+                {notifError && <Text variant="bodySmall" style={styles.errorText}>{notifError}</Text>}
+              </View>
+            </Section>
+
+            <Section
+              title="Notifications"
+              icon="bell"
+              onFirstExpand={() => setHasSeenNotifications(true)}
+            >
+              <View style={[styles.field, styles.settingRowCard, themedSurface]}>
+                <View style={styles.fieldHeader}>
+                  <Text variant="bodySmall" style={styles.fieldLabel}>When to notify</Text>
+                  <InfoTip
+                    id="when-to-notify"
+                    text="Choose when GapWalk should alert you about a suggested walk."
+                    activeInfoId={activeInfo?.id ?? null}
+                    onToggle={handleInfoToggle}
+                  />
+                </View>
+                <View style={styles.radioGroup}>
+                  <RadioOption
+                    selected={notifyChoice === 'gap'}
+                    label="When the app finds a gap"
+                    onPress={() => setNotifyChoice('gap')}
+                  />
+                  <RadioOption
+                    selected={notifyChoice === '5min'}
+                    label="5 minutes before the micro walk"
+                    onPress={() => setNotifyChoice('5min')}
+                  />
+                  <RadioOption
+                    selected={notifyChoice === '10min'}
+                    label="10 minutes before the micro walk"
+                    onPress={() => setNotifyChoice('10min')}
+                  />
+                </View>
+              </View>
+
+              <View style={[styles.field, styles.settingRowCard, themedSurface]}>
+                <View style={styles.fieldHeader}>
+                  <Text variant="bodySmall" style={styles.fieldLabel}>Minimum time between reminders</Text>
+                  <InfoTip
+                    id="notification-min-gap"
+                    text="Prevents reminder overload. Recommended: 60 min. You can set between 30 min and 6 hours."
+                    activeInfoId={activeInfo?.id ?? null}
+                    onToggle={handleInfoToggle}
+                  />
+                </View>
+                <View style={styles.inputRow}>
+                  <TextInput
+                    style={[styles.input, themedInput]}
+                    value={String(prefs.notificationMinGapMinutes)}
+                    onChangeText={(t) => update('notificationMinGapMinutes', parseInt(t, 10) || 0)}
+                    keyboardType="number-pad"
+                    placeholderTextColor={palette.textMuted}
+                  />
+                  <Text variant="muted" style={styles.unit}>min</Text>
+                </View>
+                {reminderGapError && <Text variant="bodySmall" style={styles.errorText}>{reminderGapError}</Text>}
+              </View>
+
+              <View style={[styles.field, styles.settingRowCard, themedSurface]}>
+                <View style={styles.fieldHeader}>
+                  <Text variant="bodySmall" style={styles.fieldLabel}>Quiet Hours</Text>
+                  <InfoTip
+                    id="quiet-hours"
+                    text="GapWalk will not send reminders during this time range."
+                    activeInfoId={activeInfo?.id ?? null}
+                    onToggle={handleInfoToggle}
+                  />
+                </View>
+                <TouchableOpacity onPress={openQuietModal} style={[styles.quietBtn, themedSurface]} activeOpacity={0.7}>
+                  <View style={styles.quietRow}>
+                    <Text variant="body" style={styles.quietValue} numberOfLines={1}>
+                      {formatTime12(prefs.quietHoursStart)} - {formatTime12(prefs.quietHoursEnd)}
+                    </Text>
+                    <Text variant="muted" style={styles.quietEdit} numberOfLines={1}>
+                      Tap to edit
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+              </View>
+            </Section>
+
+            <Section
+              title="Advanced"
+              icon="settings"
+              onFirstExpand={() => setHasSeenAdvanced(true)}
+            >
+              <View style={[styles.field, styles.settingRowCard, themedSurface]}>
+                <View style={styles.fieldHeader}>
+                  <Text variant="bodySmall" style={styles.fieldLabel}>Strictness</Text>
+                  <InfoTip
+                    id="strictness"
+                    text="No Excuses enforces step-goal checks. Easygoing keeps walk timing flexible."
+                    activeInfoId={activeInfo?.id ?? null}
+                    onToggle={handleInfoToggle}
+                  />
+                </View>
+                <View style={styles.radioGroup}>
+                  <RadioOption
+                    selected={prefs.strictnessMode === 'easygoing'}
+                    label="Easygoing"
+                    onPress={() => updateMany({ strictnessMode: 'easygoing' })}
+                  />
+                  <RadioOption
+                    selected={prefs.strictnessMode === 'no_excuses'}
+                    label="No Excuses"
+                    onPress={() =>
+                      updateMany({
+                        strictnessMode: 'no_excuses',
+                        stepGoalEnabled: true,
+                        stepGoal: Math.max(500, prefs.stepGoal || DEFAULT_PREFERENCES.stepGoal),
+                      })
+                    }
+                  />
+                </View>
+                <Text variant="muted" style={styles.note}>
+                  {prefs.strictnessMode === 'no_excuses'
+                    ? 'Step goal is required in No Excuses mode.'
+                    : 'Easygoing keeps your step goal optional.'}
+                </Text>
+              </View>
+
+              <View style={[styles.field, styles.settingRowCard, themedSurface]}>
+                <View style={styles.fieldHeader}>
+                  <Text variant="bodySmall" style={styles.fieldLabel}>Step Goal</Text>
+                  <InfoTip
+                    id="step-goal"
+                    text="Recommended: 1000 steps. Range: 500 to 6000."
+                    activeInfoId={activeInfo?.id ?? null}
+                    onToggle={handleInfoToggle}
+                  />
+                </View>
+                {prefs.strictnessMode === 'easygoing' && (
+                  <View style={[styles.togglePillRow, styles.controlStartGap]}>
+                    <TouchableOpacity
+                      style={[
+                        styles.togglePill,
+                        themedSurface,
+                        !prefs.stepGoalEnabled && styles.togglePillActive,
+                      ]}
+                      activeOpacity={0.75}
+                      onPress={() => update('stepGoalEnabled', false)}
+                    >
+                      <Text
+                        variant="bodySmall"
+                        style={!prefs.stepGoalEnabled ? styles.togglePillTextActive : styles.togglePillText}
+                      >
+                        Off
+                      </Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[
+                        styles.togglePill,
+                        themedSurface,
+                        prefs.stepGoalEnabled && styles.togglePillActive,
+                      ]}
+                      activeOpacity={0.75}
+                      onPress={() => updateMany({
+                        stepGoalEnabled: true,
+                        stepGoal: Math.max(500, prefs.stepGoal || DEFAULT_PREFERENCES.stepGoal),
+                      })}
+                    >
+                      <Text
+                        variant="bodySmall"
+                        style={prefs.stepGoalEnabled ? styles.togglePillTextActive : styles.togglePillText}
+                      >
+                        On
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+                {stepGoalEnabled ? (
+                  <>
+                    <View
+                      style={[
+                        styles.inputRow,
+                        prefs.strictnessMode === 'no_excuses' && styles.controlStartGap,
+                      ]}
+                    >
+                      <TextInput
+                        style={[styles.input, themedInput]}
+                        value={String(prefs.stepGoal)}
+                        onChangeText={(t) => update('stepGoal', Math.max(0, parseInt(t, 10) || 0))}
+                        keyboardType="number-pad"
+                        placeholderTextColor={palette.textMuted}
+                      />
+                      <Text variant="muted" style={styles.unit}>steps</Text>
+                    </View>
+                  </>
+                ) : (
+                  <Text variant="muted" style={styles.note}>Step goal is currently off.</Text>
+                )}
+                {stepGoalError && <Text variant="bodySmall" style={styles.errorText}>{stepGoalError}</Text>}
+              </View>
+
+              <View style={[styles.field, styles.settingRowCard, themedSurface]}>
+                <View style={styles.fieldHeader}>
+                  <Text variant="bodySmall" style={styles.fieldLabel}>Preferred walking periods (optional)</Text>
+                  <InfoTip
+                    id="preferred-periods"
+                    text="Pick up to 5 preferred time windows for walks. GapWalk will prioritize these windows when suggesting walk times, but other gaps will still be shown."
+                    activeInfoId={activeInfo?.id ?? null}
+                    onToggle={handleInfoToggle}
+                  />
+                </View>
+                <View style={[styles.togglePillRow, styles.controlStartGap]}>
+                  <TouchableOpacity
+                    style={[
+                      styles.togglePill,
+                      themedSurface,
+                      !prefs.preferredWalkingPeriodsEnabled && styles.togglePillActive,
+                    ]}
+                    activeOpacity={0.75}
+                    onPress={disablePreferredPeriods}
+                  >
+                    <Text
+                      variant="bodySmall"
+                      style={!prefs.preferredWalkingPeriodsEnabled ? styles.togglePillTextActive : styles.togglePillText}
+                    >
+                      Off
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[
+                      styles.togglePill,
+                      themedSurface,
+                      prefs.preferredWalkingPeriodsEnabled && styles.togglePillActive,
+                    ]}
+                    activeOpacity={0.75}
+                    onPress={enablePreferredPeriods}
+                  >
+                    <Text
+                      variant="bodySmall"
+                      style={prefs.preferredWalkingPeriodsEnabled ? styles.togglePillTextActive : styles.togglePillText}
+                    >
+                      On
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+                {prefs.preferredWalkingPeriodsEnabled ? (
+                  <TouchableOpacity
+                    onPress={openPreferredModal}
+                    style={[styles.preferredSummaryBtn, themedSurface]}
+                    activeOpacity={0.7}
+                  >
+                    <View style={styles.preferredSummaryHeader}>
+                      <Text variant="muted" style={styles.preferredSummaryLabel}>Selected periods</Text>
+                      <View style={styles.preferredSummaryAction}>
+                        <Text variant="bodySmall" style={styles.preferredSummaryActionText}>Edit</Text>
+                        <AppIcon name="chevronRight" size={14} color={theme.colors.accentPrimary} />
+                      </View>
+                    </View>
+                    <Text variant="body" style={styles.preferredSummaryValue} numberOfLines={3}>
+                      {preferredPeriodsDisplay}
+                    </Text>
+                  </TouchableOpacity>
+                ) : (
+                  <Text variant="muted" style={styles.note}>No preferred period selected.</Text>
+                )}
+                {preferredPeriodsError && <Text variant="bodySmall" style={styles.errorText}>{preferredPeriodsError}</Text>}
+              </View>
+            </Section>
+          </View>
+        </ScrollView>
+
+        <View style={styles.footer}>
+          <View style={styles.btnRow}>
+            {manageMode ? (
+              <>
+                <Button
+                  title="Cancel"
+                  onPress={handleManageCancel}
+                  variant="danger"
+                  style={styles.btnHalf}
+                  disabled={savingPrefs}
+                  testID="preferences-cancel"
+                />
+                <Button
+                  title="Update"
+                  onPress={handleManageSave}
+                  style={styles.btnHalf}
+                  loading={savingPrefs}
+                  disabled={!canContinue}
+                  testID="preferences-save"
+                />
               </>
             ) : (
-              <Text variant="muted" style={styles.note}>Step goal is currently off.</Text>
-            )}
-            {stepGoalError && <Text variant="bodySmall" style={styles.errorText}>{stepGoalError}</Text>}
-          </View>
-
-          {/* Preferred walking periods */}
-          <View style={styles.field}>
-            <View style={styles.fieldHeader}>
-              <Text variant="bodySmall" style={styles.fieldLabel}>Preferred walking periods (optional)</Text>
-              <InfoTip text="Pick up to 5 preferred time windows for walks. GapWalk will only suggest opportunities inside these windows when this is enabled." />
-            </View>
-            <View style={styles.togglePillRow}>
-              <TouchableOpacity
-                style={[
-                  styles.togglePill,
-                  themedSurface,
-                  !prefs.preferredWalkingPeriodsEnabled && styles.togglePillActive,
-                ]}
-                activeOpacity={0.75}
-                onPress={disablePreferredPeriods}
-              >
-                <Text
-                  variant="bodySmall"
-                  style={!prefs.preferredWalkingPeriodsEnabled ? styles.togglePillTextActive : styles.togglePillText}
-                >
-                  Off
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[
-                  styles.togglePill,
-                  themedSurface,
-                  prefs.preferredWalkingPeriodsEnabled && styles.togglePillActive,
-                ]}
-                activeOpacity={0.75}
-                onPress={enablePreferredPeriods}
-              >
-                <Text
-                  variant="bodySmall"
-                  style={prefs.preferredWalkingPeriodsEnabled ? styles.togglePillTextActive : styles.togglePillText}
-                >
-                  On
-                </Text>
-              </TouchableOpacity>
-            </View>
-            {prefs.preferredWalkingPeriodsEnabled ? (
-              <TouchableOpacity
-                onPress={openPreferredModal}
-                style={[styles.preferredSummaryBtn, themedSurface]}
-                activeOpacity={0.7}
-              >
-                <View style={styles.preferredSummaryHeader}>
-                  <Text variant="muted" style={styles.preferredSummaryLabel}>Selected periods</Text>
-                  <View style={styles.preferredSummaryAction}>
-                    <Text variant="bodySmall" style={styles.preferredSummaryActionText}>Edit</Text>
-                    <AppIcon name="chevronRight" size={14} color={theme.colors.accentPrimary} />
-                  </View>
-                </View>
-                <Text variant="body" style={styles.preferredSummaryValue} numberOfLines={3}>
-                  {preferredPeriodsDisplay}
-                </Text>
-                <Text variant="muted" style={styles.preferredSummaryHint} numberOfLines={1}>
-                  Tap to edit periods
-                </Text>
-              </TouchableOpacity>
-            ) : (
-              <Text variant="muted" style={styles.note}>No preferred period selected.</Text>
-            )}
-            {preferredPeriodsError && <Text variant="bodySmall" style={styles.errorText}>{preferredPeriodsError}</Text>}
-          </View>
-        </Section>
-
-
-      </View>
-
-      {/* footer */}
-      <View style={styles.footer}>
-        <View style={styles.btnRow}>
-          {manageMode ? (
-            <>
-              <Button
-                title="Cancel"
-                onPress={handleManageCancel}
-                variant="danger"
-                style={styles.btnHalf}
-                disabled={savingPrefs}
-                testID="preferences-cancel"
-              />
-              <Button
-                title="Update"
-                onPress={handleManageSave}
-                style={styles.btnHalf}
-                loading={savingPrefs}
-                disabled={!canContinue}
-                testID="preferences-save"
-              />
-            </>
-          ) : (
-            <>
-              {!hasSeenAllSections && (
-                <Text variant="bodySmall" color={palette.textMuted} style={styles.reviewHint}>
-                  Open each section above (Walking Goals, Notifications, Advanced) to review options, then continue. You can keep the recommended settings.
-                </Text>
-              )}
               <Button
                 title="Continue"
                 onPress={handleOnboardingContinue}
@@ -1056,11 +1172,37 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
                 disabled={!canContinue}
                 testID="preferences-continue"
               />
-            </>
+            )}
+          </View>
+          <Text variant="muted" style={styles.privacy}>Your schedule stays private. Privacy is our top priority.</Text>
+        </View>
+      </View>
+
+      <RNModal
+        visible={!!activeInfo}
+        transparent
+        animationType="fade"
+        onRequestClose={closeInfoOverlay}
+      >
+        <View style={styles.infoOverlayRoot}>
+          <Pressable style={styles.infoOverlayBackdrop} onPress={closeInfoOverlay} />
+          {activeInfo && infoOverlayPosition && (
+            <View
+              style={[
+                styles.infoOverlayCard,
+                infoOverlayTheme,
+                {
+                  left: infoOverlayPosition.left,
+                  top: infoOverlayPosition.top,
+                  width: infoOverlayPosition.width,
+                },
+              ]}
+            >
+              <Text variant="bodySmall" style={styles.infoOverlayText}>{activeInfo.text}</Text>
+            </View>
           )}
         </View>
-        <Text variant="muted" style={styles.privacy}>Your schedule stays private. Privacy is our top priority.</Text>
-      </View>
+      </RNModal>
 
       {/* quiet hours modal */}
       <Modal visible={showQuietModal} onClose={() => setShowQuietModal(false)} title="Quiet Hours">
@@ -1109,7 +1251,7 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
         title="Preferred Walking Periods"
       >
         <Text variant="bodySmall" color={palette.textMuted} style={styles.qDesc}>
-          Add 1 to 5 preferred time periods. GapWalk will suggest walks only in these windows when enabled.
+          Add 1 to 5 preferred time periods. GapWalk will prioritize these windows, but other gaps will still be shown.
         </Text>
         {preferredForm.map((period, idx) => (
           <View key={period.id} style={styles.prefPeriodCard}>
@@ -1222,23 +1364,52 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
 
 /* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• styles â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
 const styles = StyleSheet.create({
-  content: {
+  screen: {
     flex: 1,
+  },
+  contentScroll: {
+    flex: 1,
+  },
+  contentScrollInner: {
+    flexGrow: 1,
+    paddingBottom: theme.spacing.lg,
+  },
+  content: {
     paddingHorizontal: theme.layout.contentHorizontal,
-    paddingTop: theme.spacing.lg + 28,
+    paddingTop: screenChrome.TITLE_CONTENT_TOP_PADDING,
     alignSelf: 'center',
     width: '100%',
     maxWidth: theme.layout.contentMaxWidth,
   },
+  reviewGateWarning: {
+    marginBottom: 14,
+    alignItems: 'center',
+  },
+  reviewGateWarningTitle: {
+    color: theme.colors.warning,
+    fontWeight: theme.fontWeight.semibold,
+    marginBottom: 3,
+    textAlign: 'center',
+    textShadowColor: 'rgba(245,158,11,0.32)',
+    textShadowOffset: { width: 0, height: 0 },
+    textShadowRadius: 6,
+  },
+  reviewGateWarningBody: {
+    color: theme.colors.warning,
+    lineHeight: 19,
+    textAlign: 'center',
+    textShadowColor: 'rgba(245,158,11,0.22)',
+    textShadowOffset: { width: 0, height: 0 },
+    textShadowRadius: 4,
+  },
 
   /* section */
-  sectionCard: { marginBottom: 16, paddingVertical: 0, paddingHorizontal: 0 },
+  sectionCard: { marginBottom: 14, paddingVertical: 0, paddingHorizontal: 0 },
   sectionHeader: { flexDirection: 'row', alignItems: 'center', paddingVertical: 14, paddingHorizontal: 16 },
   sectionHeaderTextWrap: { flexDirection: 'row', alignItems: 'flex-start', gap: 10, flex: 1 },
   sectionIconWrap: { marginTop: 2 },
   sectionHeaderText: { flex: 1 },
   sectionTitle: { fontWeight: theme.fontWeight.semibold },
-  sectionSubtitle: { fontSize: theme.fontSize.xs, marginTop: 2 },
   chevronButton: {
     width: 30,
     height: 30,
@@ -1254,8 +1425,13 @@ const styles = StyleSheet.create({
   sectionBody: { paddingHorizontal: 16, paddingBottom: 16 },
 
   /* fields */
-  field: { marginBottom: 22, zIndex: 1 },
-  fieldHeader: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 8, zIndex: 10 },
+  field: { marginBottom: 12, zIndex: 1 },
+  settingRowCard: {
+    borderRadius: theme.borderRadius.md,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+  },
+  fieldHeader: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 6, zIndex: 10 },
   fieldLabel: { fontWeight: theme.fontWeight.semibold, color: theme.colors.textPrimary },
   inputRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   input: {
@@ -1272,10 +1448,10 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(255,255,255,0.06)',
   },
   unit: { minWidth: 48 },
-  note: { marginTop: 6, fontSize: theme.fontSize.xs },
+  note: { marginTop: 8, fontSize: theme.fontSize.xs, lineHeight: 17 },
 
   /* radio */
-  radioGroup: { gap: 4, marginTop: 8 },
+  radioGroup: { gap: 4, marginTop: 6 },
   radioRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 8 },
   radioCircle: {
     width: 20,
@@ -1290,6 +1466,7 @@ const styles = StyleSheet.create({
   radioDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: theme.colors.accentPrimary },
   radioLabelDefault: { color: theme.colors.textPrimary },
   radioLabelActive: { color: theme.colors.accentPrimary, fontWeight: theme.fontWeight.semibold },
+  controlStartGap: { marginTop: 6 },
   togglePillRow: { flexDirection: 'row', gap: 10, marginBottom: 10 },
   togglePill: {
     flex: 1,
@@ -1305,7 +1482,7 @@ const styles = StyleSheet.create({
   togglePillText: { color: theme.colors.textPrimary },
   togglePillTextActive: { color: theme.colors.accentPrimary, fontWeight: theme.fontWeight.semibold },
 
-  /* info tooltip (mint accent) */
+  /* info */
   infoWrap: { position: 'relative', zIndex: 100 },
   infoBtn: { padding: 2 },
   infoCircle: {
@@ -1317,39 +1494,39 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  infoCircleActive: {
+    backgroundColor: 'rgba(46,233,166,0.16)',
+  },
   infoLetter: {
     fontSize: 9,
     fontWeight: theme.fontWeight.bold,
     color: theme.colors.accentPrimary,
     lineHeight: 11,
   },
-  tooltipBackdrop: {
-    position: 'fixed' as any,
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    zIndex: 998,
+  infoOverlayRoot: {
+    flex: 1,
+    position: 'relative',
   },
-  tooltip: {
+  infoOverlayBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(4,16,40,0.28)',
+  },
+  infoOverlayCard: {
     position: 'absolute',
-    bottom: 28,
-    left: -8,
-    width: 240,
+    maxWidth: 280,
+    minWidth: 220,
     backgroundColor: theme.colors.bgSurface,
     borderRadius: theme.borderRadius.md,
     padding: 14,
     borderWidth: 1,
     borderColor: 'rgba(46,233,166,0.25)',
-    zIndex: 999,
-    elevation: 20,
-    // shadow for native
+    elevation: 18,
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: -4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.22,
+    shadowRadius: 10,
   },
-  tooltipText: { color: theme.colors.textPrimary, lineHeight: 18, fontSize: theme.fontSize.sm },
+  infoOverlayText: { color: theme.colors.textPrimary, lineHeight: 19, fontSize: theme.fontSize.sm },
 
   /* quiet hours */
   quietBtn: {
@@ -1410,17 +1587,19 @@ const styles = StyleSheet.create({
     fontWeight: theme.fontWeight.medium,
     lineHeight: 24,
   },
-  preferredSummaryHint: {
-    marginTop: 8,
-    fontSize: theme.fontSize.xs,
-  },
 
   /* footer */
-  footer: { paddingHorizontal: theme.layout.contentHorizontal, paddingBottom: 20, alignSelf: 'center', width: '100%', maxWidth: theme.layout.contentMaxWidth },
-  btnRow: { flexDirection: 'row', gap: 10, marginBottom: 14 },
+  footer: {
+    paddingHorizontal: theme.layout.contentHorizontal,
+    paddingTop: screenChrome.FOOTER_PADDING_TOP,
+    paddingBottom: screenChrome.FOOTER_PADDING_BOTTOM,
+    alignSelf: 'center',
+    width: '100%',
+    maxWidth: theme.layout.contentMaxWidth,
+  },
+  btnRow: { flexDirection: 'row', gap: screenChrome.FOOTER_BUTTON_GAP },
   btnHalf: { flex: 1 },
-  reviewHint: { textAlign: 'center', marginBottom: 10, paddingHorizontal: 8 },
-  privacy: { textAlign: 'center' },
+  privacy: { textAlign: 'center', marginTop: screenChrome.FOOTER_NOTE_MARGIN_TOP },
 
   /* quiet modal */
   qDesc: { marginBottom: 16, textAlign: 'center' },

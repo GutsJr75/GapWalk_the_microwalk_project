@@ -1,6 +1,6 @@
 {
   "name": "gapwalk",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "main": "index.js",
   "scripts": {
     "start": "expo start",
@@ -36,6 +36,7 @@
     "expo-linear-gradient": "~15.0.8",
     "expo-location": "~19.0.8",
     "expo-notifications": "~0.32.16",
+    "expo-secure-store": "~15.0.8",
     "expo-sensors": "~15.0.8",
     "expo-splash-screen": "~31.0.13",
     "expo-sqlite": "~16.0.10",

@@ -10,7 +10,7 @@ import { Button } from '../components/Button';
 import { StatCard } from '../components/StatCard';
 import { GapItem } from '../components/GapItem';
 import { Card } from '../components/Card';
-import { AppIcon } from '../components/AppIcon';
+import { AppIcon, type AppIconName } from '../components/AppIcon';
 import { theme } from '../theme';
 import { getThemePalette } from '../theme/palette';
 import { useAppStore } from '../store';
@@ -22,14 +22,16 @@ import { eventsRepo } from '../lib/repositories/eventsRepo';
 import { achievementsRepo, ACHIEVEMENTS, UnlockedAchievement, getAchievementDef, AchievementId } from '../lib/repositories/achievementsRepo';
 import { gapEngine } from '../lib/gapEngine';
 import { isNotificationsSupported, notificationService } from '../lib/notifications';
+import { notificationPlanActions } from '../lib/notificationPlanActions';
 import { googleCalendarService } from '../lib/googleCalendar';
-import { NudgePlan, Preferences } from '../lib/types';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { NudgePlan } from '../lib/types';
 import { calculateStreak, calculateWeeklyStats, getMotivationalMessage, StreakData, WeeklyStats } from '../lib/statsUtils';
 import { addMinutes, format, isAfter, isBefore, parseISO, subMinutes, subDays, isSameDay } from 'date-fns';
 import { timeUtils } from '../lib/time';
 import { requestAllPermissions } from '../lib/permissions';
 import { toUserFriendlyError } from '../lib/errorMessages';
+import { authStorage } from '../lib/authStorage';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Dashboard'>;
 
@@ -53,23 +55,14 @@ interface PlanOpportunity {
 
 type TimePeriod = 'AM' | 'PM';
 
+const MENU_WIDTH_RATIO = 0.78;
+const MENU_MAX_WIDTH = 360;
+
 const getPlanWalkEnd = (plan: NudgePlan): Date => {
   const walkStart = parseISO(plan.walkStart);
   const rawWalkEnd = addMinutes(walkStart, Math.max(1, plan.suggestedDurationMinutes));
   const gapEnd = parseISO(plan.gapEnd);
   return isAfter(rawWalkEnd, gapEnd) ? gapEnd : rawWalkEnd;
-};
-
-const isPlanInsidePreferredPeriods = (plan: NudgePlan, prefs: Preferences): boolean => {
-  if (!prefs.preferredWalkingPeriodsEnabled || prefs.preferredWalkingPeriods.length === 0) {
-    return true;
-  }
-  const walkStart = parseISO(plan.walkStart);
-  const walkEnd = getPlanWalkEnd(plan);
-  return (
-    timeUtils.isInPreferredPeriods(walkStart, prefs.preferredWalkingPeriods) &&
-    timeUtils.isInPreferredPeriods(walkEnd, prefs.preferredWalkingPeriods)
-  );
 };
 
 const to12HourParts = (iso: string): { hour: string; minute: string; period: TimePeriod } => {
@@ -108,7 +101,7 @@ const BurgerIcon = ({
   </Pressable>
 );
 
-export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
+export const DashboardScreen: React.FC<Props> = ({ navigation, route }) => {
   const {
     preferences, setPreferences, hasSetPreferences, setHasSetPreferences,
     todayMinutesWalked, todayNotificationCount, upcomingPlans,
@@ -117,6 +110,11 @@ export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
     hasRequestedPermissions, setHasRequestedPermissions,
     setHasLocationPermission, setHasNotificationPermission, setHasActivityPermission,
     themeMode, language,
+    authUser,
+    isAuthenticated,
+    hasCompletedOnboarding,
+    setIsAuthenticated,
+    setAuthUser,
   } = useAppStore();
   const [refreshing, setRefreshing] = useState(false);
   const [menuVisible, setMenuVisible] = useState(false);
@@ -134,6 +132,14 @@ export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
     period: TimePeriod;
     duration: string;
   } | null>(null);
+  const hasChangeDraft =
+    !!changeInitialState &&
+    (
+      changeHour !== changeInitialState.hour ||
+      changeMinute !== changeInitialState.minute ||
+      changePeriod !== changeInitialState.period ||
+      changeDuration !== changeInitialState.duration
+    );
   const menuSlide = useRef(new Animated.Value(0)).current;
   const [streak, setStreak] = useState<StreakData>({ currentStreak: 0, longestStreak: 0, lastActiveDate: null });
   const [weeklyStats, setWeeklyStats] = useState<WeeklyStats>({
@@ -151,12 +157,23 @@ export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
   const previousMinutesRef = useRef<number | null>(null);
   const lastCelebratedDateRef = useRef<string | null>(null);
   const { width, height } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
+  const menuPanelWidth = Math.min(Math.round(width * MENU_WIDTH_RATIO), MENU_MAX_WIDTH);
   const dashboardScrollRef = useRef<ScrollView>(null);
   const [unlockedAchievements, setUnlockedAchievements] = useState<UnlockedAchievement[]>([]);
   const [newBadgeIds, setNewBadgeIds] = useState<AchievementId[]>([]);
   const [showBadgeModal, setShowBadgeModal] = useState(false);
   const badgeAnim = useRef(new Animated.Value(0)).current;
   const [yesterdayMinutes, setYesterdayMinutes] = useState<number | null>(null);
+  const [missedPlans, setMissedPlans] = useState<NudgePlan[]>([]);
+
+  useEffect(() => {
+    if (isAuthenticated || hasCompletedOnboarding) return;
+    navigation.reset({
+      index: 0,
+      routes: [{ name: 'Intro' }],
+    });
+  }, [hasCompletedOnboarding, isAuthenticated, navigation]);
 
   /* ---- Add Walk modal state ---- */
   const [showAddWalkModal, setShowAddWalkModal] = useState(false);
@@ -306,7 +323,7 @@ export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
       setAddWalkError(null);
       setAddWalkInitialState(null);
     } catch (error) {
-      console.error('Failed to create manual walk:', error);
+      if (__DEV__) console.error('Failed to create manual walk:', error);
       setAddWalkError(toUserFriendlyError(error));
     } finally {
       setSavingAddWalk(false);
@@ -385,11 +402,9 @@ export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
     const hasInvalidDuration = autoPlans.some((plan) => plan.suggestedDurationMinutes <= 0);
     const exceedsPlanCount = autoPlans.length > prefs.notificationCountPerDay;
     const hasCustomizedPlan = autoPlans.some((plan) => plan.reason === 'customized');
-    const hasOutsidePreferredPeriods = autoPlans.some((plan) => !isPlanInsidePreferredPeriods(plan, prefs));
 
     if (
-      hasOutsidePreferredPeriods ||
-      (!hasCustomizedPlan && (!samePlanShape || hasInvalidDuration || exceedsPlanCount))
+      !hasCustomizedPlan && (!samePlanShape || hasInvalidDuration || exceedsPlanCount)
     ) {
       for (const plan of autoPlans) {
         await plansRepo.updateStatus(plan.id, 'cancelled');
@@ -426,10 +441,17 @@ export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
       await reconcileTodayPlans(prefsFromDb, mins);
     }
 
+    // Expire stale notified/planned plans whose gap window has passed
+    await notificationPlanActions.expireStaleNotifiedPlans();
+
     const cnt = await plansRepo.getTodayNotifiedCount();
     setTodayStats(mins, cnt);
     const refreshedUpcoming = await plansRepo.getUpcomingPlans(20);
     setUpcomingPlans(refreshedUpcoming);
+
+    // Load missed plans for today (cancelled with reason "missed")
+    const allTodayPlans = await plansRepo.getTodayPlans();
+    setMissedPlans(allTodayPlans.filter((p) => p.status === 'cancelled' && p.reason === 'missed'));
 
     const allSessions = await sessionsRepo.getAll();
     setStreak(calculateStreak(allSessions));
@@ -557,7 +579,7 @@ export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
     try {
       await load();
     } catch (e) {
-      console.error('Dashboard refresh failed:', e);
+      if (__DEV__) console.error('Dashboard refresh failed:', e);
     } finally {
       setRefreshing(false);
     }
@@ -625,7 +647,7 @@ export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
           `Walk time: ${format(nextWalkStart, 'h:mm a')} - ${format(nextEnd, 'h:mm a')}\nNotification time: ${format(nextNotify, 'h:mm a')}`
         );
       } catch (error) {
-        console.error('Failed to cancel walk opportunity:', error);
+        if (__DEV__) console.error('Failed to cancel walk opportunity:', error);
         Alert.alert('Could Not Cancel', toUserFriendlyError(error));
       }
     };
@@ -677,14 +699,6 @@ export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
 
   const closeChangeModal = () => {
     if (savingChange) return;
-    const hasDraftChanges =
-      !!changeInitialState &&
-      (
-        changeHour !== changeInitialState.hour ||
-        changeMinute !== changeInitialState.minute ||
-        changePeriod !== changeInitialState.period ||
-        changeDuration !== changeInitialState.duration
-      );
 
     const closeNow = () => {
       setShowChangeModal(false);
@@ -693,7 +707,7 @@ export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
       setChangeInitialState(null);
     };
 
-    if (!hasDraftChanges) {
+    if (!hasChangeDraft) {
       closeNow();
       return;
     }
@@ -751,18 +765,6 @@ export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
       return;
     }
 
-    if (
-      preferences.preferredWalkingPeriodsEnabled &&
-      preferences.preferredWalkingPeriods.length > 0 &&
-      (
-        !timeUtils.isInPreferredPeriods(nextStart, preferences.preferredWalkingPeriods) ||
-        !timeUtils.isInPreferredPeriods(walkEnd, preferences.preferredWalkingPeriods)
-      )
-    ) {
-      setChangeError('Pick a time inside your preferred walking periods.');
-      return;
-    }
-
     const notifyLeadMinutes = preferences.whenToNotify === 'delay'
       ? Math.max(0, preferences.notifyDelayMinutes ?? 5)
       : 0;
@@ -794,7 +796,7 @@ export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
       setChangeError(null);
       setChangeInitialState(null);
     } catch (error) {
-      console.error('Failed to update walk window:', error);
+      if (__DEV__) console.error('Failed to update walk window:', error);
       Alert.alert('Could Not Update', toUserFriendlyError(error));
     } finally {
       setSavingChange(false);
@@ -802,7 +804,7 @@ export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
   };
 
   const requestSaveWalkChange = () => {
-    if (savingChange) return;
+    if (savingChange || !hasChangeDraft) return;
     const hour = parseInt(changeHour, 10);
     const minute = parseInt(changeMinute, 10);
     const duration = parseInt(changeDuration, 10);
@@ -835,17 +837,6 @@ export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
         setChangeError('Pick a time outside your quiet hours.');
         return;
       }
-      if (
-        preferences?.preferredWalkingPeriodsEnabled &&
-        preferences.preferredWalkingPeriods.length > 0 &&
-        (
-          !timeUtils.isInPreferredPeriods(previewStart, preferences.preferredWalkingPeriods) ||
-          !timeUtils.isInPreferredPeriods(previewEnd, preferences.preferredWalkingPeriods)
-        )
-      ) {
-        setChangeError('Pick a time inside your preferred walking periods.');
-        return;
-      }
     }
 
     setChangeError(null);
@@ -875,17 +866,71 @@ export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
     }).start(() => setMenuVisible(false));
   };
 
-  const openMenu = () => {
+  const openMenu = useCallback(() => {
+    if (menuVisible) return;
+    menuSlide.setValue(0);
     setMenuVisible(true);
-    menuSlide.setValue(1);
-  };
+    requestAnimationFrame(() => {
+      Animated.timing(menuSlide, {
+        toValue: 1,
+        duration: 240,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }).start();
+    });
+  }, [menuSlide, menuVisible]);
 
-  const navigateToManageSchedule = () => { closeMenu(); navigation.navigate('ScheduleOverview'); };
-  const navigateToProfile = () => { closeMenu(); navigation.navigate('Settings'); };
+  useEffect(() => {
+    if (!route.params?.openMenu) return;
+    openMenu();
+    navigation.setParams({ openMenu: undefined });
+  }, [navigation, openMenu, route.params?.openMenu]);
+
+  const navigateToManageSchedule = () => { closeMenu(); navigation.navigate('ManualSchedule', { manageMode: true }); };
+  const navigateToProfile = () => { closeMenu(); navigation.navigate('Profile'); };
   const navigateToPreferences = () => { closeMenu(); navigation.push('Preferences', { manageMode: true }); };
   const navigateToSettings = () => { closeMenu(); navigation.navigate('Settings'); };
   const navigateToWeeklyData = () => { closeMenu(); navigation.navigate('WeeklyData'); };
-  const navigateToHome = () => { closeMenu(); navigation.navigate('Intro'); };
+  const runMenuAction = (action: () => void) => {
+    if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    action();
+  };
+  const menuItems: Array<{
+    key: string;
+    label: string;
+    icon: AppIconName;
+    onPress: () => void;
+    testID: string;
+  }> = [
+    { key: 'profile', label: 'Profile', icon: 'person', onPress: navigateToProfile, testID: 'dashboard-menu-profile' },
+    { key: 'schedule', label: 'Manage schedule', icon: 'calendar', onPress: navigateToManageSchedule, testID: 'dashboard-menu-schedule' },
+    { key: 'preferences', label: 'Preferences', icon: 'adjust', onPress: navigateToPreferences, testID: 'dashboard-menu-preferences' },
+    { key: 'weekly-data', label: 'Weekly Data', icon: 'calendar', onPress: navigateToWeeklyData, testID: 'dashboard-menu-weekly-data' },
+    { key: 'settings', label: 'Settings', icon: 'settings', onPress: navigateToSettings, testID: 'dashboard-menu-settings' },
+  ];
+  const handleLogoutFromMenu = () => {
+    const doLogout = async () => {
+      await authStorage.clearAll();
+      setIsAuthenticated(false);
+      setAuthUser(null);
+      closeMenu();
+      navigation.reset({
+        index: 0,
+        routes: [{ name: 'Intro' }],
+      });
+    };
+
+    if (Platform.OS === 'web' && typeof (globalThis as any).confirm === 'function') {
+      const ok = (globalThis as any).confirm('Are you sure you want to log out?');
+      if (ok) void doLogout();
+      return;
+    }
+
+    Alert.alert('Log out', 'Are you sure you want to log out?', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Log out', style: 'destructive', onPress: () => { void doLogout(); } },
+    ]);
+  };
   const resyncGoogleCalendar = async () => {
     setMenuVisible(false);
     try {
@@ -913,7 +958,7 @@ export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
       await load();
       Alert.alert('Synced', `Updated ${events.length} events from Google Calendar.`);
     } catch (err) {
-      console.error('Re-sync error:', err);
+      if (__DEV__) console.error('Re-sync error:', err);
       Alert.alert('Sync Failed', toUserFriendlyError(err));
     }
   };
@@ -972,7 +1017,6 @@ export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
     if (!preferences || goalReached) return [];
 
     return activeTodayPlans
-      .filter((plan) => plan.reason === 'manual' || isPlanInsidePreferredPeriods(plan, preferences))
       .map((plan) => {
       const walkStart = parseISO(plan.walkStart);
       const walkEnd = getPlanWalkEnd(plan);
@@ -1311,6 +1355,36 @@ export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
           ))
         )}
 
+        {missedPlans.length > 0 && (
+          <View style={styles.missedSection}>
+            <Text variant="bodySmall" color={palette.textMuted} style={styles.missedLabel}>
+              Missed earlier
+            </Text>
+            {missedPlans.map((plan) => {
+              const walkStart = parseISO(plan.walkStart);
+              const gapStart = parseISO(plan.gapStart);
+              const gapEnd = parseISO(plan.gapEnd);
+              return (
+                <View key={plan.id} style={[styles.missedCard, { backgroundColor: palette.bgSurface, borderColor: palette.borderSoft }]}>
+                  <View style={styles.missedCardRow}>
+                    <Text variant="body" style={[styles.missedTime, { color: palette.textMuted }]}>
+                      {format(walkStart, 'h:mm a')}
+                    </Text>
+                    <View style={[styles.missedBadge, { backgroundColor: palette.inputBg }]}>
+                      <Text variant="bodySmall" style={{ color: palette.textMuted, fontWeight: theme.fontWeight.medium, fontSize: theme.fontSize.xs }}>
+                        Missed
+                      </Text>
+                    </View>
+                  </View>
+                  <Text variant="muted" style={{ fontSize: theme.fontSize.xs }}>
+                    {format(gapStart, 'h:mm a')} - {format(gapEnd, 'h:mm a')} ({plan.suggestedDurationMinutes} min)
+                  </Text>
+                </View>
+              );
+            })}
+          </View>
+        )}
+
         <Button
           title="Start Manual Walk"
           onPress={() => navigation.navigate('Walking', {})}
@@ -1427,7 +1501,7 @@ export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
                   onPress={requestSaveWalkChange}
                   style={styles.changeActionBtn}
                   loading={savingChange}
-                  disabled={savingChange}
+                  disabled={savingChange || !hasChangeDraft}
                 />
               </View>
             </View>
@@ -1588,115 +1662,86 @@ export const DashboardScreen: React.FC<Props> = ({ navigation }) => {
             style={[
               styles.menuContent,
               {
+                width: menuPanelWidth,
                 backgroundColor: palette.bgSurface,
                 borderLeftColor: palette.borderSoft,
                 transform: [
                   {
                     translateX: menuSlide.interpolate({
                       inputRange: [0, 1],
-                      outputRange: [300, 0],
+                      outputRange: [menuPanelWidth + 24, 0],
                     }),
                   },
                 ],
               },
             ]}
           >
-            <View style={[styles.profileCard, { borderColor: palette.borderSoft, backgroundColor: palette.bgSurfaceElevated }]}>
-              <View style={[styles.profileAvatar, { backgroundColor: palette.bgSurface }]}>
-                <Ionicons name="person" size={20} color={palette.textPrimary} />
-              </View>
-              <View style={styles.profileMeta}>
-                <Text variant="body" style={styles.profileName}>Your Profile</Text>
-                <Text variant="bodySmall" color={palette.textMuted}>
-                  {hasSetPreferences ? 'Onboarding complete' : 'Complete setup to personalize your account'}
-                </Text>
-              </View>
-            </View>
-            <Text variant="title" style={styles.menuTitle}>Options</Text>
-            <Pressable
-              style={({ pressed }) => [styles.menuItem, { borderBottomColor: palette.borderSoft }, pressed && styles.menuItemPressed]}
-              onPress={() => {
-                if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-                navigateToProfile();
-              }}
-              android_ripple={{ color: 'rgba(46,233,166,0.12)' }}
-              testID="dashboard-menu-profile"
+            <ScrollView
+              style={styles.menuScroll}
+              contentContainerStyle={[
+                styles.menuScrollContent,
+                {
+                  paddingTop: Math.max(insets.top + 14, 28),
+                  paddingBottom: Math.max(insets.bottom + 26, 34),
+                },
+              ]}
+              showsVerticalScrollIndicator={false}
+              bounces={false}
             >
-              <View style={styles.menuItemRow}>
-                <Ionicons name="person-circle-outline" size={18} color={palette.textPrimary} />
-                <Text variant="body" style={styles.menuItemLabel}>Profile</Text>
-                <AppIcon name="chevronRight" size={16} color={palette.textMuted} />
+              <View style={[styles.profileCard, { borderColor: palette.borderSoft, backgroundColor: palette.bgSurfaceElevated }]}>
+                <View style={[styles.profileAvatar, { backgroundColor: palette.accentMuted }]}>
+                  <Ionicons name="person" size={20} color={palette.accentPrimary} />
+                </View>
+                <View style={styles.profileMeta}>
+                  <Text variant="body" style={styles.profileName}>
+                    {authUser?.name || 'GapWalker'}
+                  </Text>
+                  <Text variant="bodySmall" color={palette.textMuted}>
+                    {authUser?.email || (hasSetPreferences ? 'Onboarding complete' : 'Complete setup to personalize')}
+                  </Text>
+                </View>
               </View>
-            </Pressable>
-            <Pressable
-              style={({ pressed }) => [styles.menuItem, { borderBottomColor: palette.borderSoft }, pressed && styles.menuItemPressed]}
-              onPress={() => {
-                if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-                navigateToManageSchedule();
-              }}
-              android_ripple={{ color: 'rgba(46,233,166,0.12)' }}
-              testID="dashboard-menu-schedule"
-            >
-              <View style={styles.menuItemRow}>
-                <AppIcon name="calendar" size={16} color={palette.textPrimary} />
-                <Text variant="body" style={styles.menuItemLabel}>Manage schedule</Text>
-                <AppIcon name="chevronRight" size={16} color={palette.textMuted} />
+
+              <Text variant="bodySmall" style={[styles.menuSectionLabel, { color: palette.textMuted }]}>
+                OPTIONS
+              </Text>
+
+              <View style={[styles.menuListCard, { borderColor: palette.borderSoft, backgroundColor: palette.bgSurfaceElevated }]}>
+                {menuItems.map((item, index) => {
+                  const isLastItem = index === menuItems.length - 1;
+                  return (
+                    <Pressable
+                      key={item.key}
+                      style={({ pressed }) => [
+                        styles.menuItem,
+                        { borderBottomColor: isLastItem ? 'transparent' : palette.borderSoft },
+                        pressed && styles.menuItemPressed,
+                      ]}
+                      onPress={() => runMenuAction(item.onPress)}
+                      android_ripple={{ color: 'rgba(46,233,166,0.12)' }}
+                      testID={item.testID}
+                    >
+                      <View style={styles.menuItemRow}>
+                        <AppIcon name={item.icon} size={17} color={palette.textPrimary} />
+                        <Text variant="body" style={styles.menuItemLabel}>{item.label}</Text>
+                        <AppIcon name="chevronRight" size={16} color={palette.textMuted} />
+                      </View>
+                    </Pressable>
+                  );
+                })}
               </View>
-            </Pressable>
-            <Pressable
-              style={({ pressed }) => [styles.menuItem, { borderBottomColor: palette.borderSoft }, pressed && styles.menuItemPressed]}
-              onPress={() => {
-                if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-                navigateToPreferences();
-              }}
-              android_ripple={{ color: 'rgba(46,233,166,0.12)' }}
-              testID="dashboard-menu-preferences"
-            >
-              <View style={styles.menuItemRow}>
-                <AppIcon name="adjust" size={16} color={palette.textPrimary} />
-                <Text variant="body" style={styles.menuItemLabel}>Edit/View preferences</Text>
-                <AppIcon name="chevronRight" size={16} color={palette.textMuted} />
+
+              <View style={styles.menuFooter}>
+                <Button
+                  title="Log out"
+                  onPress={handleLogoutFromMenu}
+                  variant="outline"
+                  style={[styles.menuLogoutBtn, { borderColor: theme.colors.danger, backgroundColor: 'rgba(239,68,68,0.08)' }]}
+                  textStyle={[styles.menuLogoutText, { color: theme.colors.danger }]}
+                  testID="dashboard-menu-logout"
+                />
               </View>
-            </Pressable>
-            <Pressable
-              style={({ pressed }) => [styles.menuItem, { borderBottomColor: palette.borderSoft }, pressed && styles.menuItemPressed]}
-              onPress={() => {
-                if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-                navigateToWeeklyData();
-              }}
-              android_ripple={{ color: 'rgba(46,233,166,0.12)' }}
-              testID="dashboard-menu-weekly-data"
-            >
-              <View style={styles.menuItemRow}>
-                <AppIcon name="calendar" size={16} color={palette.textPrimary} />
-                <Text variant="body" style={styles.menuItemLabel}>Weekly Data</Text>
-                <AppIcon name="chevronRight" size={16} color={palette.textMuted} />
-              </View>
-            </Pressable>
-            <Pressable
-              style={({ pressed }) => [styles.menuItem, { borderBottomColor: palette.borderSoft }, pressed && styles.menuItemPressed]}
-              onPress={() => {
-                if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-                navigateToSettings();
-              }}
-              android_ripple={{ color: 'rgba(46,233,166,0.12)' }}
-              testID="dashboard-menu-settings"
-            >
-              <View style={styles.menuItemRow}>
-                <AppIcon name="settings" size={16} color={palette.textPrimary} />
-                <Text variant="body" style={styles.menuItemLabel}>Settings</Text>
-                <AppIcon name="chevronRight" size={16} color={palette.textMuted} />
-              </View>
-            </Pressable>
-            <View style={styles.menuFooter}>
-              <Button
-                title="Back to Home"
-                onPress={navigateToHome}
-                variant="outline"
-                style={styles.menuHomeBtn}
-                testID="dashboard-menu-home"
-              />
-            </View>
+            </ScrollView>
           </Animated.View>
         </View>
       </Modal>
@@ -1926,21 +1971,29 @@ const styles = StyleSheet.create({
   menuOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', flexDirection: 'row', justifyContent: 'flex-end' },
   menuBackdrop: { flex: 1 },
   menuContent: {
-    width: '70%',
-    maxWidth: 300,
+    height: '100%',
     backgroundColor: theme.colors.bgApp,
-    paddingTop: 60,
-    paddingHorizontal: 20,
     borderLeftWidth: 1,
     borderLeftColor: 'rgba(255,255,255,0.1)',
+    shadowColor: '#000',
+    shadowOpacity: 0.22,
+    shadowRadius: 12,
+    shadowOffset: { width: -4, height: 0 },
+    elevation: 18,
   },
-  menuTitle: { marginBottom: 30, textAlign: 'center' },
+  menuScroll: {
+    flex: 1,
+  },
+  menuScrollContent: {
+    flexGrow: 1,
+    paddingHorizontal: 16,
+  },
   profileCard: {
     borderWidth: 1,
     borderRadius: 14,
     paddingHorizontal: 12,
     paddingVertical: 10,
-    marginBottom: 16,
+    marginBottom: 18,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
@@ -1958,29 +2011,47 @@ const styles = StyleSheet.create({
   profileName: {
     fontWeight: theme.fontWeight.semibold,
   },
+  menuSectionLabel: {
+    marginBottom: 10,
+    marginLeft: 2,
+    fontWeight: theme.fontWeight.semibold,
+    letterSpacing: 0.8,
+  },
+  menuListCard: {
+    borderWidth: 1,
+    borderRadius: 14,
+    overflow: 'hidden',
+  },
   menuItem: {
-    paddingVertical: 15,
-    paddingHorizontal: 4,
+    paddingVertical: 16,
+    paddingHorizontal: 12,
     borderBottomWidth: 1,
     borderBottomColor: 'rgba(255,255,255,0.05)',
   },
   menuItemPressed: {
-    opacity: 0.7,
-    backgroundColor: 'rgba(46,233,166,0.06)',
+    opacity: 0.8,
+    backgroundColor: 'rgba(46,233,166,0.08)',
   },
   menuItemRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
+    gap: 12,
   },
   menuItemLabel: {
     flex: 1,
+    fontWeight: theme.fontWeight.medium,
+    fontSize: theme.fontSize.md + 1,
   },
   menuFooter: {
     marginTop: 'auto',
-    paddingBottom: 40,
+    paddingTop: 20,
   },
-  menuHomeBtn: {},
+  menuLogoutBtn: {
+    borderWidth: 1.5,
+  },
+  menuLogoutText: {
+    fontWeight: theme.fontWeight.semibold,
+  },
   
   // Celebration
   celebrationOverlay: {
@@ -2158,5 +2229,37 @@ const styles = StyleSheet.create({
   weeklyValueDenominator: {
     fontSize: theme.fontSize.lg,
     fontWeight: theme.fontWeight.semibold,
+  },
+  missedSection: {
+    marginTop: theme.spacing.sm,
+    marginBottom: theme.spacing.md,
+  },
+  missedLabel: {
+    fontWeight: theme.fontWeight.semibold,
+    marginBottom: theme.spacing.sm,
+    letterSpacing: 0.5,
+  },
+  missedCard: {
+    borderRadius: theme.borderRadius.md,
+    borderWidth: 1,
+    paddingVertical: theme.spacing.ms,
+    paddingHorizontal: theme.spacing.md,
+    marginBottom: theme.spacing.sm,
+    opacity: 0.6,
+  },
+  missedCardRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 2,
+  },
+  missedTime: {
+    fontWeight: theme.fontWeight.semibold,
+    textDecorationLine: 'line-through',
+  },
+  missedBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 999,
   },
 });

@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Animated, BackHandler, Platform, StyleSheet, ToastAndroid, View } from 'react-native';
+import { Animated, BackHandler, Platform, StyleSheet, Text, ToastAndroid, TouchableOpacity, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import * as SplashScreen from 'expo-splash-screen';
 import { NavigationContainer, createNavigationContainerRef } from '@react-navigation/native';
@@ -24,9 +24,11 @@ import { notificationPlanActions } from './src/lib/notificationPlanActions';
 import { crashReporting } from './src/lib/crashReporting';
 import { analyticsService } from './src/lib/analytics';
 import { requestAllPermissions } from './src/lib/permissions';
+import { authStorage } from './src/lib/authStorage';
 
 // Screens
 import { IntroScreen } from './src/screens/IntroScreen';
+import { ProfileScreen } from './src/screens/ProfileScreen';
 import { ScheduleSetupScreen } from './src/screens/ScheduleSetupScreen';
 import { ManualScheduleScreen } from './src/screens/ManualScheduleScreen';
 import { PreferencesScreen } from './src/screens/PreferencesScreen';
@@ -61,18 +63,72 @@ export type RootStackParamList = {
       manageMode?: boolean;
     }
     | undefined;
-  Dashboard: undefined;
+  Dashboard: { openMenu?: boolean } | undefined;
   Walking: { planId?: string };
   ScheduleOverview: undefined;
   Settings: undefined;
   WeeklyData: undefined;
+  Profile: undefined;
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 const navigationRef = createNavigationContainerRef<RootStackParamList>();
 const ROOT_BACK_EXIT_WINDOW_MS = 1800;
 
-export default function App() {
+class ErrorBoundary extends React.Component<
+  { children: React.ReactNode },
+  { hasError: boolean }
+> {
+  state = { hasError: false };
+
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error: Error) {
+    crashReporting.logError(error, { kind: 'error_boundary' });
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <SafeAreaProvider>
+          <View style={errorStyles.root}>
+            <Text style={errorStyles.title}>Something went wrong</Text>
+            <Text style={errorStyles.body}>
+              The app ran into an unexpected error. Please restart the app.
+            </Text>
+            <TouchableOpacity
+              style={errorStyles.button}
+              onPress={() => this.setState({ hasError: false })}
+            >
+              <Text style={errorStyles.buttonText}>Try Again</Text>
+            </TouchableOpacity>
+          </View>
+        </SafeAreaProvider>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+const errorStyles = StyleSheet.create({
+  root: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#0b1220', padding: 32 },
+  title: { fontSize: 20, fontWeight: '700', color: '#fff', marginBottom: 12 },
+  body: { fontSize: 15, color: '#8a95a8', textAlign: 'center', marginBottom: 24, lineHeight: 22 },
+  button: { paddingHorizontal: 24, paddingVertical: 12, backgroundColor: '#3b82f6', borderRadius: 10 },
+  buttonText: { color: '#fff', fontSize: 15, fontWeight: '600' },
+});
+
+export default function AppWithErrorBoundary() {
+  return (
+    <ErrorBoundary>
+      <App />
+    </ErrorBoundary>
+  );
+}
+
+function App() {
   const {
     hasCompletedOnboarding,
     setHasCompletedOnboarding,
@@ -88,11 +144,13 @@ export default function App() {
     setHasRequestedPermissions,
     hasRequestedPermissions,
     themeMode,
+    isAuthenticated,
+    setIsAuthenticated,
+    setAuthUser,
   } = useAppStore();
   const pendingWalkPlanIdRef = useRef<string | null>(null);
   const lastHandledResponseRef = useRef<string | null>(null);
   const [isBootstrapDone, setIsBootstrapDone] = useState(false);
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const lastAndroidRootBackPressRef = useRef(0);
@@ -165,7 +223,7 @@ export default function App() {
     try {
       const actionId = response.actionIdentifier;
       if (actionId === WALK_NUDGE_ACTION_SKIP) {
-        await notificationPlanActions.skipGap(data.planId);
+        await notificationPlanActions.skipPlan(data.planId);
         await refreshDashboardSnapshot();
         return;
       }
@@ -187,7 +245,7 @@ export default function App() {
         pendingWalkPlanIdRef.current = data.planId;
       }
     } catch (error) {
-      console.error('Failed to process notification response:', error);
+      if (__DEV__) console.error('Failed to process notification response:', error);
     }
   }, [refreshDashboardSnapshot]);
 
@@ -209,7 +267,7 @@ export default function App() {
         }
       })
       .catch((error) => {
-        console.error('Failed to read last notification response:', error);
+        if (__DEV__) console.error('Failed to read last notification response:', error);
       });
 
     const receivedSubscription = notificationService.addNotificationReceivedListener(async (notification) => {
@@ -220,7 +278,7 @@ export default function App() {
         await notificationPlanActions.markNotifiedIfPlanned(data.planId);
         await refreshDashboardSnapshot();
       } catch (error) {
-        console.error('Failed to process foreground notification:', error);
+        if (__DEV__) console.error('Failed to process foreground notification:', error);
       }
     });
 
@@ -254,6 +312,21 @@ export default function App() {
         if (__DEV__) console.warn('Failed to recover orphaned session:', e);
       }
       
+      // Restore auth session if "remember me" was enabled
+      try {
+        const rememberMe = await authStorage.getRememberMe();
+        if (rememberMe) {
+          const storedToken = await authStorage.getToken();
+          const storedUser = await authStorage.getUser();
+          if (storedToken) {
+            setIsAuthenticated(true);
+            if (storedUser) setAuthUser(storedUser);
+          }
+        }
+      } catch (e) {
+        if (__DEV__) console.warn('Failed to restore auth session:', e);
+      }
+
       // Check if user has completed onboarding (preferences saved).
       // If preferences exist but no schedule source (e.g. old install or edge case),
       // create a default manual source so we open to Dashboard.
@@ -287,13 +360,13 @@ export default function App() {
               setHasActivityPermission(permResults.activityRecognition);
               setHasRequestedPermissions(true);
             } catch (e) {
-              console.warn('Permission request during init failed:', e);
+              if (__DEV__) console.warn('Permission request during init failed:', e);
             }
           })();
         }
       }
     } catch (error) {
-      console.error('Failed to initialize app:', error);
+      if (__DEV__) console.error('Failed to initialize app:', error);
       analyticsService.track('app_init_failed', {
         message: error instanceof Error ? error.message : String(error),
       });
@@ -302,6 +375,7 @@ export default function App() {
 
   const palette = getThemePalette(themeMode);
   const isDark = themeMode === 'dark';
+  const canOpenDashboard = isAuthenticated && hasCompletedOnboarding;
 
   // Fade in main app when bootstrap finishes
   useEffect(() => {
@@ -379,18 +453,14 @@ export default function App() {
           >
             <Stack.Navigator
               key={
-                isAuthenticated
-                  ? hasCompletedOnboarding
-                    ? 'authed-onboarded'
-                    : 'authed-fresh'
-                  : 'guest'
+                canOpenDashboard
+                  ? 'authed-onboarded'
+                  : isAuthenticated
+                    ? 'authed-fresh'
+                    : 'guest'
               }
               initialRouteName={
-                isAuthenticated
-                  ? hasCompletedOnboarding
-                    ? 'Dashboard'
-                    : 'Intro'
-                  : 'Intro'
+                canOpenDashboard ? 'Dashboard' : 'Intro'
               }
               screenOptions={{
                 headerShown: false,
@@ -405,9 +475,7 @@ export default function App() {
                   <IntroScreen
                     {...props}
                     isAuthenticated={isAuthenticated}
-                    onAuthenticated={() => {
-                      setIsAuthenticated(true);
-                    }}
+                    onAuthenticated={() => setIsAuthenticated(true)}
                   />
                 )}
               />
@@ -419,6 +487,7 @@ export default function App() {
               <Stack.Screen name="ScheduleOverview" component={ScheduleOverviewScreen} />
               <Stack.Screen name="Settings" component={SettingsScreen} />
               <Stack.Screen name="WeeklyData" component={WeeklyDataScreen} />
+              <Stack.Screen name="Profile" component={ProfileScreen} />
             </Stack.Navigator>
           </NavigationContainer>
         </Animated.View>

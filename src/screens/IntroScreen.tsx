@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Alert, View, StyleSheet, TouchableOpacity, Animated, Easing, useWindowDimensions } from 'react-native';
+import { Alert, View, StyleSheet, TouchableOpacity, Animated, Easing, Pressable, useWindowDimensions, Image, LayoutChangeEvent } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import * as AuthSession from 'expo-auth-session';
 import * as WebBrowser from 'expo-web-browser';
@@ -13,6 +13,7 @@ import { useThemePalette } from '../theme/palette';
 import Svg, { Path } from 'react-native-svg';
 import { analyticsService } from '../lib/analytics';
 import { getAuth0Discovery, getAuth0RequestConfig, isAuth0Configured } from '../lib/auth0';
+import { authStorage } from '../lib/authStorage';
 
 WebBrowser.maybeCompleteAuthSession();
 
@@ -21,26 +22,47 @@ interface Props extends NativeStackScreenProps<RootStackParamList, 'Intro'> {
   onAuthenticated?: () => void;
 }
 
+const LAUNCH_HERO_IN_DURATION_MS = 450;
+const LAUNCH_HERO_HOLD_MS = 180;
+const LAUNCH_CONTENT_REVEAL_DURATION_MS = 500;
+const LAUNCH_OVERLAY_FADE_DURATION_MS = 220;
+const LAUNCH_EASING = Easing.bezier(0.22, 1, 0.36, 1);
+const AUTH_DIVIDER_MARGIN_Y = 18;
+const AUTH_SECONDARY_BLOCK_GAP = 28;
+const AUTH_GUEST_BLOCK_GAP = 32;
+const AUTH_FOOTER_MARGIN_TOP = 24;
+const HOW_DETAILS_GAP = 18;
+const HOW_DETAILS_EXPAND_MARGIN_TOP = 14;
+const HOW_DETAILS_FALLBACK_HEIGHT = 240;
+
 export const IntroScreen: React.FC<Props> = ({
   navigation,
   isAuthenticated = false,
   onAuthenticated,
 }) => {
-  const { hasSetPreferences } = useAppStore();
+  const { hasSetPreferences, hasCompletedOnboarding, setAuthUser } = useAppStore();
   const palette = useThemePalette();
   const [showHowItWorks, setShowHowItWorks] = useState(false);
-  const [isAuthLoading, setIsAuthLoading] = useState(false);
+  const [authLoadingMode, setAuthLoadingMode] = useState<'login' | 'signup' | null>(null);
+  const [rememberMe, setRememberMe] = useState(false);
+  const [howDetailsMeasuredHeight, setHowDetailsMeasuredHeight] = useState(HOW_DETAILS_FALLBACK_HEIGHT);
+  const [showIntroOverlay, setShowIntroOverlay] = useState(true);
   const howAnim = useRef(new Animated.Value(0)).current;
+  const heroIntroAnim = useRef(new Animated.Value(0)).current;
+  const contentRevealAnim = useRef(new Animated.Value(0)).current;
+  const overlayFadeAnim = useRef(new Animated.Value(1)).current;
   const handledAuthResponseRef = useRef<string | null>(null);
   const { height: viewportHeight } = useWindowDimensions();
   const authConfigured = isAuth0Configured();
   const discovery = getAuth0Discovery();
 
-  const verticalScreenPadding = Math.round(viewportHeight * 0.1);
+  const verticalTopPadding = Math.round(viewportHeight * 0.072);
+  const verticalBottomPadding = Math.round(viewportHeight * 0.09);
+  const overlayOpticalOffset = Math.round(viewportHeight * 0.06);
   const heroVerticalPadding = Math.max(theme.spacing.md, Math.round(viewportHeight * 0.02));
   const heroToWhyGap = Math.max(theme.spacing.xl, Math.round(viewportHeight * 0.055));
   const whyToHowGap = Math.max(theme.spacing.lg, Math.round(viewportHeight * 0.045));
-  const ctaTopGap = Math.max(theme.spacing.md, Math.round(viewportHeight * 0.03));
+  const ctaTopGap = Math.max(28, Math.round(viewportHeight * 0.045));
   const [loginRequest, loginResponse, promptLogin] = AuthSession.useAuthRequest(
     getAuth0RequestConfig('login'),
     discovery ?? null
@@ -60,34 +82,130 @@ export const IntroScreen: React.FC<Props> = ({
   }, [showHowItWorks, howAnim]);
 
   useEffect(() => {
-    const activeResponse = loginResponse ?? signupResponse;
-    if (!activeResponse) return;
+    heroIntroAnim.setValue(0);
+    contentRevealAnim.setValue(0);
+    overlayFadeAnim.setValue(1);
+    setShowIntroOverlay(true);
+
+    const introSequence = Animated.sequence([
+      Animated.timing(heroIntroAnim, {
+        toValue: 1,
+        duration: LAUNCH_HERO_IN_DURATION_MS,
+        easing: LAUNCH_EASING,
+        useNativeDriver: true,
+      }),
+      Animated.delay(LAUNCH_HERO_HOLD_MS),
+      Animated.parallel([
+        Animated.timing(contentRevealAnim, {
+          toValue: 1,
+          duration: LAUNCH_CONTENT_REVEAL_DURATION_MS,
+          easing: LAUNCH_EASING,
+          useNativeDriver: true,
+        }),
+        Animated.timing(overlayFadeAnim, {
+          toValue: 0,
+          duration: LAUNCH_OVERLAY_FADE_DURATION_MS,
+          easing: LAUNCH_EASING,
+          useNativeDriver: true,
+        }),
+      ]),
+    ]);
+
+    introSequence.start(({ finished }) => {
+      if (finished) setShowIntroOverlay(false);
+    });
+
+    return () => {
+      introSequence.stop();
+    };
+  }, [contentRevealAnim, heroIntroAnim, overlayFadeAnim]);
+
+  const exchangeAndStoreToken = async (code: string, request: AuthSession.AuthRequest | null) => {
+    if (!discovery?.tokenEndpoint || !request) return;
+    try {
+      const tokenResponse = await AuthSession.exchangeCodeAsync(
+        {
+          code,
+          clientId: request.clientId,
+          redirectUri: request.redirectUri,
+          extraParams: request.codeVerifier
+            ? { code_verifier: request.codeVerifier }
+            : {},
+        },
+        { tokenEndpoint: discovery.tokenEndpoint }
+      );
+
+      if (tokenResponse.idToken) {
+        try {
+          const parts = tokenResponse.idToken.split('.');
+          const payload = JSON.parse(atob(parts[1]));
+          const user = {
+            email: payload.email as string | undefined,
+            name: payload.name as string | undefined,
+            sub: payload.sub as string | undefined,
+          };
+          setAuthUser(user);
+          if (rememberMe) {
+            await authStorage.saveUser(user);
+          }
+        } catch {
+          // ID token decode failed — non-critical
+        }
+      }
+
+      if (rememberMe) {
+        await authStorage.saveToken(tokenResponse.accessToken);
+        await authStorage.setRememberMe(true);
+      }
+    } catch (e) {
+      if (__DEV__) console.warn('Token exchange failed:', e);
+    }
+  };
+
+  const handleAuthResponse = (
+    response: AuthSession.AuthSessionResult | null,
+    request: AuthSession.AuthRequest | null,
+    key: string,
+  ) => {
+    if (!response) return;
 
     const responseKey =
-      activeResponse.type === 'success'
-        ? `success:${activeResponse.params.code ?? ''}`
-        : `other:${activeResponse.type}`;
+      `${key}:` + (response.type === 'success'
+        ? `success:${response.params.code ?? ''}`
+        : `other:${response.type}`);
     if (handledAuthResponseRef.current === responseKey) return;
     handledAuthResponseRef.current = responseKey;
 
-    if (activeResponse.type === 'success') {
-      setIsAuthLoading(false);
+    if (response.type === 'success') {
+      const code = response.params.code;
+      if (code) {
+        void exchangeAndStoreToken(code, request);
+      }
+      setAuthLoadingMode(null);
       onAuthenticated?.();
       return;
     }
 
-    if (activeResponse.type === 'dismiss' || activeResponse.type === 'cancel') {
-      setIsAuthLoading(false);
+    if (response.type === 'dismiss' || response.type === 'cancel') {
+      setAuthLoadingMode(null);
       return;
     }
 
-    setIsAuthLoading(false);
+    setAuthLoadingMode(null);
     const details =
-      activeResponse.type === 'error'
-        ? activeResponse.error?.message ?? 'Please try again.'
+      response.type === 'error'
+        ? response.error?.message ?? 'Please try again.'
         : 'Please try again.';
     Alert.alert('Login failed', details);
-  }, [loginResponse, onAuthenticated, signupResponse]);
+  };
+
+  useEffect(() => {
+    handleAuthResponse(loginResponse, loginRequest, 'login');
+  }, [loginResponse]);
+
+  useEffect(() => {
+    handleAuthResponse(signupResponse, signupRequest, 'signup');
+  }, [signupResponse]);
 
   const chevronRotate = howAnim.interpolate({
     inputRange: [0, 1],
@@ -96,7 +214,7 @@ export const IntroScreen: React.FC<Props> = ({
 
   const detailsHeight = howAnim.interpolate({
     inputRange: [0, 1],
-    outputRange: [0, 176],
+    outputRange: [0, howDetailsMeasuredHeight],
   });
 
   const detailsOpacity = howAnim.interpolate({
@@ -111,7 +229,41 @@ export const IntroScreen: React.FC<Props> = ({
 
   const detailsMarginTop = howAnim.interpolate({
     inputRange: [0, 1],
-    outputRange: [0, 8],
+    outputRange: [0, HOW_DETAILS_EXPAND_MARGIN_TOP],
+  });
+
+  const handleHowDetailsLayout = (event: LayoutChangeEvent) => {
+    const nextHeight = Math.ceil(event.nativeEvent.layout.height);
+    if (nextHeight <= 0) return;
+    if (Math.abs(nextHeight - howDetailsMeasuredHeight) <= 1) return;
+    setHowDetailsMeasuredHeight(nextHeight);
+  };
+
+  const contentOpacity = contentRevealAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0, 1],
+  });
+
+  const contentTranslateY = contentRevealAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [-20, 0],
+  });
+
+  const overlayOpacity = overlayFadeAnim;
+
+  const overlayHeroOpacity = heroIntroAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0, 1],
+  });
+
+  const overlayHeroScale = heroIntroAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0.96, 1],
+  });
+
+  const overlayHeroTranslateY = heroIntroAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [10, 0],
   });
 
   const handleCta = () => {
@@ -119,6 +271,15 @@ export const IntroScreen: React.FC<Props> = ({
       hasSetPreferences,
     });
     if (hasSetPreferences) {
+      navigation.navigate('Dashboard');
+    } else {
+      navigation.navigate('ScheduleSetup');
+    }
+  };
+
+  const handleContinueAsGuest = () => {
+    analyticsService.track('continue_as_guest');
+    if (hasCompletedOnboarding) {
       navigation.navigate('Dashboard');
     } else {
       navigation.navigate('ScheduleSetup');
@@ -140,206 +301,315 @@ export const IntroScreen: React.FC<Props> = ({
       return;
     }
 
-    setIsAuthLoading(true);
+    setAuthLoadingMode(mode);
     try {
       const prompt = mode === 'login' ? promptLogin : promptSignup;
       await prompt();
     } catch (error) {
-      setIsAuthLoading(false);
+      setAuthLoadingMode(null);
       const message = error instanceof Error ? error.message : 'Please try again.';
       Alert.alert('Login failed', message);
     }
   };
 
   return (
-    <Container scrollable>
-      <View
-        style={[
-          styles.screen,
-          {
-            minHeight: viewportHeight,
-            paddingTop: verticalScreenPadding,
-            paddingBottom: verticalScreenPadding,
-          },
-        ]}
-      >
-        <View style={styles.topContent}>
-          <View style={[styles.headerFrame, { paddingVertical: heroVerticalPadding }]}>
-            <View style={styles.headingRow}>
-              <Text variant="heading" style={[styles.headingGap, { color: palette.textPrimary }]}>Gap</Text>
-              <Text variant="heading" style={[styles.headingWalk, { color: palette.textMuted }]}>Walk</Text>
-            </View>
-            <Text variant="body" style={styles.subtitle}>
-              Busy schedule? No time to exercise? Turn your daily schedule gaps into short, realistic walks.
-            </Text>
-          </View>
-
-          <View style={[styles.section, { marginTop: heroToWhyGap }]}>
-            <Text variant="title" style={styles.sectionTitle}>Why it works</Text>
-
-            <View style={styles.feature}>
-              <View style={[styles.iconCircle, { backgroundColor: palette.bgSurfaceElevated }]}>
-                <Text style={styles.iconEmoji}>{'\uD83D\uDCC5'}</Text>
-              </View>
-              <View style={styles.featureText}>
-                <Text variant="body" style={styles.featureTitle}>Fits real gaps</Text>
-                <Text variant="bodySmall">
-                  GapWalk only sends you notifications during schedule gaps that actually exist between your commitments.
-                </Text>
-              </View>
-            </View>
-
-            <View style={styles.feature}>
-              <View style={[styles.iconCircle, { backgroundColor: palette.bgSurfaceElevated }]}>
-                <Text style={styles.iconEmoji}>{'\uD83D\uDEB6'}</Text>
-              </View>
-              <View style={styles.featureText}>
-                <Text variant="body" style={styles.featureTitle}>Small walks add up</Text>
-                <Text variant="bodySmall">
-                  Micro-walks throughout the day contribute to your health without the pressure of long workouts.
-                </Text>
-              </View>
-            </View>
-
-            <View style={styles.featureLast}>
-              <View style={[styles.iconCircle, { backgroundColor: palette.bgSurfaceElevated }]}>
-                <Text style={styles.iconEmoji}>{'\uD83D\uDD14'}</Text>
-              </View>
-              <View style={styles.featureText}>
-                <Text variant="body" style={styles.featureTitle}>Smart reminders</Text>
-                <Text variant="bodySmall">
-                  Get gentle notifications at the right moments - never during class, meetings, or quiet hours.
-                </Text>
-              </View>
-            </View>
-          </View>
-
-          <View style={[styles.howSection, { marginTop: whyToHowGap }]}>
-            <TouchableOpacity
-              onPress={() => setShowHowItWorks((prev) => !prev)}
-              style={[
-                styles.howCard,
-                {
-                  backgroundColor: palette.bgSurfaceElevated,
-                  borderColor: palette.borderStrong,
-                },
-              ]}
-              activeOpacity={0.8}
-            >
-              <Text variant="body" style={styles.howLabel}>How it works</Text>
-              <Animated.View
-                style={[
-                  styles.chevron,
-                  {
-                    transform: [{ rotate: chevronRotate }],
-                    backgroundColor: palette.bgSurface,
-                    borderColor: palette.borderSoft,
-                    shadowColor: palette.shadow,
-                  },
-                ]}
-              >
-                <Svg width={16} height={16} viewBox="0 0 24 24">
-                  <Path
-                    d="M6 9l6 6 6-6"
-                    stroke={palette.textMuted}
-                    strokeWidth={2}
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    fill="none"
-                  />
-                </Svg>
-              </Animated.View>
-            </TouchableOpacity>
-
+    <Container scrollable entranceAnimated={false}>
+      <View style={[styles.introLayout, { minHeight: viewportHeight }]}>
+        {showIntroOverlay ? (
+          <Animated.View
+            pointerEvents="none"
+            style={[
+              styles.entryOverlay,
+              {
+                height: viewportHeight,
+                opacity: overlayOpacity,
+                transform: [{ translateY: -overlayOpticalOffset }],
+              },
+            ]}
+          >
             <Animated.View
               style={[
-                styles.howDetailsWrap,
+                styles.entryHero,
                 {
-                  height: detailsHeight,
-                  opacity: detailsOpacity,
-                  marginTop: detailsMarginTop,
+                  opacity: overlayHeroOpacity,
+                  transform: [{ scale: overlayHeroScale }, { translateY: overlayHeroTranslateY }],
                 },
               ]}
-              pointerEvents={showHowItWorks ? 'auto' : 'none'}
             >
-              <Animated.View style={[styles.howDetailsInner, { transform: [{ translateY: detailsTranslateY }] }]}>
-                <View
+              <View style={styles.entryLogoRow}>
+                <Image source={require('../../assets/icon.png')} style={styles.entryLogoIcon} resizeMode="contain" />
+              </View>
+              <View style={styles.headingRow}>
+                <Text variant="heading" style={[styles.headingGap, { color: palette.textPrimary }]}>Gap</Text>
+                <Text variant="heading" style={[styles.headingWalk, { color: palette.textMuted }]}>Walk</Text>
+              </View>
+            </Animated.View>
+          </Animated.View>
+        ) : null}
+        <Animated.View
+          style={[
+            styles.screen,
+            {
+              minHeight: viewportHeight,
+              paddingTop: verticalTopPadding,
+              paddingBottom: verticalBottomPadding,
+              opacity: contentOpacity,
+              transform: [{ translateY: contentTranslateY }],
+            },
+          ]}
+        >
+          <View style={styles.topContent}>
+            <View style={[styles.headerFrame, { paddingVertical: heroVerticalPadding }]}>
+              <View style={styles.logoRow}>
+                <Image source={require('../../assets/icon.png')} style={styles.logoIcon} resizeMode="contain" />
+              </View>
+              <View style={styles.headingRow}>
+                <Text variant="heading" style={[styles.headingGap, { color: palette.textPrimary }]}>Gap</Text>
+                <Text variant="heading" style={[styles.headingWalk, { color: palette.textMuted }]}>Walk</Text>
+              </View>
+              <Text variant="body" style={styles.subtitle}>
+                Busy schedule? No time to exercise? Turn your daily schedule gaps into short, realistic walks.
+              </Text>
+            </View>
+
+            <View style={[styles.section, { marginTop: heroToWhyGap }]}>
+              <Text variant="title" style={styles.sectionTitle}>Why it works</Text>
+
+              <View style={styles.feature}>
+                <View style={[styles.iconCircle, { backgroundColor: palette.bgSurfaceElevated }]}>
+                  <Text style={styles.iconEmoji}>{'\uD83D\uDCC5'}</Text>
+                </View>
+                <View style={styles.featureText}>
+                  <Text variant="body" style={styles.featureTitle}>Fits real gaps</Text>
+                  <Text variant="bodySmall">
+                    GapWalk only sends you notifications during schedule gaps that actually exist between your commitments.
+                  </Text>
+                </View>
+              </View>
+
+              <View style={styles.feature}>
+                <View style={[styles.iconCircle, { backgroundColor: palette.bgSurfaceElevated }]}>
+                  <Text style={styles.iconEmoji}>{'\uD83D\uDEB6'}</Text>
+                </View>
+                <View style={styles.featureText}>
+                  <Text variant="body" style={styles.featureTitle}>Small walks add up</Text>
+                  <Text variant="bodySmall">
+                    Micro-walks throughout the day contribute to your health without the pressure of long workouts.
+                  </Text>
+                </View>
+              </View>
+
+              <View style={styles.featureLast}>
+                <View style={[styles.iconCircle, { backgroundColor: palette.bgSurfaceElevated }]}>
+                  <Text style={styles.iconEmoji}>{'\uD83D\uDD14'}</Text>
+                </View>
+                <View style={styles.featureText}>
+                  <Text variant="body" style={styles.featureTitle}>Smart reminders</Text>
+                  <Text variant="bodySmall">
+                    Get gentle notifications at the right moments - never during class, meetings, or quiet hours.
+                  </Text>
+                </View>
+              </View>
+            </View>
+
+            <View style={[styles.howSection, { marginTop: whyToHowGap }]}>
+              <TouchableOpacity
+                onPress={() => setShowHowItWorks((prev) => !prev)}
+                style={[
+                  styles.howCard,
+                  {
+                    backgroundColor: palette.bgSurfaceElevated,
+                    borderColor: palette.borderStrong,
+                  },
+                ]}
+                activeOpacity={0.8}
+              >
+                <Text variant="body" style={styles.howLabel}>How it works</Text>
+                <Animated.View
                   style={[
-                    styles.howDetails,
+                    styles.chevron,
                     {
+                      transform: [{ rotate: chevronRotate }],
                       backgroundColor: palette.bgSurface,
                       borderColor: palette.borderSoft,
+                      shadowColor: palette.shadow,
                     },
                   ]}
                 >
-                  <View style={styles.step}>
-                    <Text variant="body" style={styles.stepNumber}>1</Text>
-                    <Text variant="bodySmall" style={styles.stepText}>
-                      Add your weekly schedule or import a calendar file.
-                    </Text>
-                  </View>
-                  <View style={styles.step}>
-                    <Text variant="body" style={styles.stepNumber}>2</Text>
-                    <Text variant="bodySmall" style={styles.stepText}>
-                      GapWalk finds free gaps between your events.
-                    </Text>
-                  </View>
-                  <View style={styles.step}>
-                    <Text variant="body" style={styles.stepNumber}>3</Text>
-                    <Text variant="bodySmall" style={styles.stepText}>
-                      You get notified at the right moments for a quick walk.
-                    </Text>
-                  </View>
-                </View>
-              </Animated.View>
-            </Animated.View>
-          </View>
-        </View>
+                  <Svg width={16} height={16} viewBox="0 0 24 24">
+                    <Path
+                      d="M6 9l6 6 6-6"
+                      stroke={palette.textMuted}
+                      strokeWidth={2}
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      fill="none"
+                    />
+                  </Svg>
+                </Animated.View>
+              </TouchableOpacity>
 
-        <View style={[styles.bottom, { paddingTop: ctaTopGap }]}>
-          {!isAuthenticated ? (
-            <>
+              <Animated.View
+                style={[
+                  styles.howDetailsWrap,
+                  {
+                    height: detailsHeight,
+                    opacity: detailsOpacity,
+                    marginTop: detailsMarginTop,
+                  },
+                ]}
+                pointerEvents={showHowItWorks ? 'auto' : 'none'}
+              >
+                <Animated.View style={[styles.howDetailsInner, { transform: [{ translateY: detailsTranslateY }] }]}>
+                  <View
+                    style={[
+                      styles.howDetails,
+                      {
+                        backgroundColor: palette.bgSurface,
+                        borderColor: palette.borderSoft,
+                      },
+                    ]}
+                    onLayout={handleHowDetailsLayout}
+                  >
+                    <View style={styles.step}>
+                      <Text variant="body" style={styles.stepNumber}>1</Text>
+                      <Text variant="bodySmall" style={styles.stepText}>
+                        Add your weekly schedule or import a calendar file.
+                      </Text>
+                    </View>
+                    <View style={styles.step}>
+                      <Text variant="body" style={styles.stepNumber}>2</Text>
+                      <Text variant="bodySmall" style={styles.stepText}>
+                        GapWalk finds free gaps between your events.
+                      </Text>
+                    </View>
+                    <View style={styles.step}>
+                      <Text variant="body" style={styles.stepNumber}>3</Text>
+                      <Text variant="bodySmall" style={styles.stepText}>
+                        You get notified at the right moments for a quick walk.
+                      </Text>
+                    </View>
+                  </View>
+                </Animated.View>
+              </Animated.View>
+            </View>
+          </View>
+
+          <View style={[styles.bottom, { paddingTop: ctaTopGap }]}>
+            {!isAuthenticated ? (
+              <>
+                <Button
+                  title="Log in"
+                  onPress={() => void runAuth('login')}
+                  full
+                  loading={authLoadingMode === 'login'}
+                  disabled={!authConfigured || authLoadingMode === 'signup'}
+                  testID="intro-auth-login"
+                />
+                <View style={styles.authDivider}>
+                  <View style={[styles.dividerLine, { backgroundColor: palette.borderStrong }]} />
+                  <Text variant="bodySmall" color={palette.textMuted} style={styles.dividerText}>or</Text>
+                  <View style={[styles.dividerLine, { backgroundColor: palette.borderStrong }]} />
+                </View>
+                <Button
+                  title="Sign up"
+                  onPress={() => void runAuth('signup')}
+                  variant="secondary"
+                  full
+                  loading={authLoadingMode === 'signup'}
+                  disabled={!authConfigured || authLoadingMode === 'login'}
+                  testID="intro-auth-signup"
+                />
+                <Pressable
+                  onPress={() => setRememberMe((prev) => !prev)}
+                  style={styles.rememberRow}
+                  hitSlop={8}
+                >
+                  <View
+                    style={[
+                      styles.checkbox,
+                      { borderColor: palette.borderStrong },
+                      rememberMe && { backgroundColor: palette.accentPrimary, borderColor: palette.accentPrimary },
+                    ]}
+                  >
+                    {rememberMe && (
+                      <Svg width={12} height={12} viewBox="0 0 24 24">
+                        <Path
+                          d="M5 13l4 4L19 7"
+                          stroke="#06261d"
+                          strokeWidth={3}
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          fill="none"
+                        />
+                      </Svg>
+                    )}
+                  </View>
+                  <Text variant="bodySmall" style={styles.rememberLabel}>Remember me</Text>
+                </Pressable>
+                <Button
+                  title="Continue as Guest"
+                  onPress={handleContinueAsGuest}
+                  variant="muted"
+                  full
+                  style={styles.guestBtn}
+                  textStyle={[
+                    styles.guestBtnText,
+                    {
+                      color: palette.accentPrimary,
+                      textShadowColor: 'rgba(46,233,166,0.55)',
+                    },
+                  ]}
+                  testID="intro-guest"
+                />
+              </>
+            ) : (
               <Button
-                title="Log in"
-                onPress={() => {
-                  void runAuth('login');
-                }}
+                title={hasSetPreferences ? 'Go to Dashboard' : 'Get Started'}
+                onPress={handleCta}
                 full
-                loading={isAuthLoading}
-                disabled={!authConfigured}
-                testID="intro-auth-login"
+                testID="intro-get-started"
               />
-              <Button
-                title="Sign up"
-                onPress={() => {
-                  void runAuth('signup');
-                }}
-                variant="secondary"
-                full
-                disabled={!authConfigured || isAuthLoading}
-                testID="intro-auth-signup"
-              />
-            </>
-          ) : (
-            <Button
-              title={hasSetPreferences ? 'Go to Dashboard' : 'Get Started'}
-              onPress={handleCta}
-              full
-              testID="intro-get-started"
-            />
-          )}
-          <Text variant="muted" style={styles.footer}>
-            {isAuthenticated
-              ? 'Welcome back. Continue your setup when you are ready.'
-              : 'Use your account to continue. Login or sign up to get started.'}
-          </Text>
-        </View>
+            )}
+            <Text variant="muted" style={styles.footer}>
+              {isAuthenticated
+                ? 'Welcome back. Continue your setup when you are ready.'
+                : 'Your data stays on your device. Sign in to sync across devices.'}
+            </Text>
+          </View>
+        </Animated.View>
       </View>
     </Container>
   );
 };
 
 const styles = StyleSheet.create({
+  introLayout: {
+    position: 'relative',
+  },
+  entryOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 5,
+  },
+  entryHero: {
+    width: '100%',
+    maxWidth: 370,
+    alignItems: 'center',
+    paddingHorizontal: theme.layout.contentHorizontal,
+  },
+  entryLogoRow: {
+    alignItems: 'center',
+    marginBottom: theme.spacing.md,
+  },
+  entryLogoIcon: {
+    width: 96,
+    height: 96,
+  },
   screen: {
     flexGrow: 1,
     alignSelf: 'center',
@@ -355,6 +625,14 @@ const styles = StyleSheet.create({
     maxWidth: 370,
     alignSelf: 'center',
     paddingHorizontal: theme.spacing.sm,
+  },
+  logoRow: {
+    alignItems: 'center',
+    marginBottom: theme.spacing.md,
+  },
+  logoIcon: {
+    width: 86,
+    height: 86,
   },
   headingRow: {
     flexDirection: 'row',
@@ -442,7 +720,7 @@ const styles = StyleSheet.create({
   howDetails: {
     borderRadius: theme.borderRadius.lg,
     padding: theme.spacing.md,
-    gap: 12,
+    gap: HOW_DETAILS_GAP,
     borderWidth: 1,
   },
   step: {
@@ -464,7 +742,7 @@ const styles = StyleSheet.create({
   },
   stepText: {
     flex: 1,
-    lineHeight: 20,
+    lineHeight: 21,
     paddingTop: 2,
   },
   chevron: {
@@ -482,8 +760,45 @@ const styles = StyleSheet.create({
   bottom: {
     marginTop: 'auto',
   },
+  authDivider: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginVertical: AUTH_DIVIDER_MARGIN_Y,
+  },
+  dividerLine: {
+    flex: 1,
+    height: 1,
+  },
+  dividerText: {
+    marginHorizontal: theme.spacing.md,
+  },
+  rememberRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: AUTH_SECONDARY_BLOCK_GAP,
+  },
+  checkbox: {
+    width: 20,
+    height: 20,
+    borderRadius: 4,
+    borderWidth: 1.5,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  rememberLabel: {
+    marginLeft: 8,
+  },
+  guestBtn: {
+    marginTop: AUTH_GUEST_BLOCK_GAP,
+  },
+  guestBtnText: {
+    letterSpacing: 0.2,
+    textShadowOffset: { width: 0, height: 0 },
+    textShadowRadius: 9,
+  },
   footer: {
     textAlign: 'center',
-    marginTop: 12,
+    marginTop: AUTH_FOOTER_MARGIN_TOP,
   },
 });

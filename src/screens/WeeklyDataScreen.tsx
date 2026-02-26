@@ -12,6 +12,7 @@ import { Text } from '../components/Text';
 import { Button } from '../components/Button';
 import { TwoActionBar } from '../components/TwoActionBar';
 import { theme } from '../theme';
+import { screenChrome } from '../theme/screenChrome';
 import { useThemePalette } from '../theme/palette';
 import { useAppStore } from '../store';
 import { sessionsRepo } from '../lib/repositories/sessionsRepo';
@@ -230,8 +231,10 @@ export const WeeklyDataScreen: React.FC<Props> = ({ navigation }) => {
           })
         )}
 
+      </View>
+
+      <View style={styles.footer}>
         <TwoActionBar
-          style={styles.footer}
           primaryAction={{
             title: 'Done',
             onPress: handleDone,
@@ -250,8 +253,7 @@ const styles = StyleSheet.create({
   content: {
     flex: 1,
     paddingHorizontal: theme.layout.contentHorizontal,
-    paddingTop: theme.spacing.lg,
-    paddingBottom: theme.spacing.xl,
+    paddingTop: screenChrome.TITLE_CONTENT_TOP_PADDING,
     alignSelf: 'center',
     width: '100%',
     maxWidth: theme.layout.contentMaxWidth,
@@ -319,6 +321,11 @@ const styles = StyleSheet.create({
     opacity: 0.18,
   },
   footer: {
-    marginTop: theme.spacing.sm,
+    paddingHorizontal: theme.layout.contentHorizontal,
+    paddingTop: screenChrome.FOOTER_PADDING_TOP,
+    paddingBottom: screenChrome.FOOTER_PADDING_BOTTOM,
+    alignSelf: 'center',
+    width: '100%',
+    maxWidth: theme.layout.contentMaxWidth,
   },
 });

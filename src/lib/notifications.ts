@@ -64,7 +64,7 @@ export const notificationService = {
 
     // iOS simulator does not support local push reliably; Android emulators can.
     if (!Device.isDevice && Platform.OS === 'ios') {
-      console.log('Use a physical iOS device for notifications');
+      if (__DEV__) console.log('Use a physical iOS device for notifications');
       return false;
     }
     
@@ -89,18 +89,18 @@ export const notificationService = {
 
     await Notifications.setNotificationCategoryAsync(WALK_NUDGE_CATEGORY_ID, [
       {
-        identifier: WALK_NUDGE_ACTION_START,
-        buttonTitle: 'Start now',
-        options: {
-          opensAppToForeground: true,
-        },
-      },
-      {
         identifier: WALK_NUDGE_ACTION_SKIP,
-        buttonTitle: 'Maybe later',
+        buttonTitle: 'Not Now',
         options: {
           opensAppToForeground: true,
           isDestructive: true,
+        },
+      },
+      {
+        identifier: WALK_NUDGE_ACTION_START,
+        buttonTitle: 'Yes',
+        options: {
+          opensAppToForeground: true,
         },
       },
     ]);
@@ -121,20 +121,6 @@ export const notificationService = {
 
     try {
       const walkStart = parseISO(plan.walkStart);
-      const gapEnd = parseISO(plan.gapEnd);
-      const plannedWalkEnd = addMinutes(walkStart, Math.max(1, plan.suggestedDurationMinutes));
-      const walkEnd = plannedWalkEnd.getTime() > gapEnd.getTime() ? gapEnd : plannedWalkEnd;
-
-      if (
-        prefs?.preferredWalkingPeriodsEnabled &&
-        prefs.preferredWalkingPeriods.length > 0 &&
-        (
-          !timeUtils.isInPreferredPeriods(walkStart, prefs.preferredWalkingPeriods) ||
-          !timeUtils.isInPreferredPeriods(walkEnd, prefs.preferredWalkingPeriods)
-        )
-      ) {
-        return null;
-      }
 
       // Suppress notifications if daily goal or step goal already reached
       if (prefs) {
@@ -190,7 +176,7 @@ export const notificationService = {
         if (target > 0 && minsWalked > 0) {
           const remaining = Math.max(0, target - minsWalked);
           progressHint = remaining > 0
-            ? ` You've already walked ${minsWalked} of ${target} min today. Only ${remaining} more to go!`
+            ? `\n${minsWalked} of ${target} min done today, only ${remaining} to go!`
             : '';
         }
       } catch { /* ok */ }
@@ -198,17 +184,18 @@ export const notificationService = {
       const titles = isStrict
         ? ['Time to get moving! \uD83D\uDCAA', 'Your walk is waiting for you \uD83D\uDEB6', 'Let\'s go for a walk! \uD83C\uDFC3']
         : ['You have a great walking window \uD83D\uDEB6', 'Perfect time for a walk \u2600\uFE0F', 'How about a quick walk? \uD83D\uDC63'];
-      const title = titles[Math.floor(Date.now() / 60000) % titles.length];
+      const titleHash = plan.id.split('').reduce((acc, c) => acc + c.charCodeAt(0), 0);
+      const title = titles[titleHash % titles.length];
 
       let bodyText: string;
       if (minutesUntilWalk > 0) {
         bodyText = isStrict
-          ? `You have ${dur} free minutes starting in ${minutesUntilWalk} min. Let's make it count!${progressHint}`
-          : `You have about ${dur} free minutes coming up in ${minutesUntilWalk} min. A perfect chance to stretch your legs!${progressHint}`;
+          ? `${dur} free minutes, starts in ${minutesUntilWalk} min. Let's make it count!${progressHint}`
+          : `About ${dur} free minutes, starts in ${minutesUntilWalk} min. A perfect chance to stretch your legs!${progressHint}`;
       } else {
         bodyText = isStrict
-          ? `You have ${dur} free minutes right now. Let's make them count!${progressHint}`
-          : `You have about ${dur} free minutes right now. How about a refreshing walk?${progressHint}`;
+          ? `${dur} free minutes right now. Let's make them count!${progressHint}`
+          : `About ${dur} free minutes right now. How about a refreshing walk?${progressHint}`;
       }
 
       const notificationId = await Notifications.scheduleNotificationAsync({
@@ -232,7 +219,7 @@ export const notificationService = {
       
       return notificationId;
     } catch (error) {
-      console.error('Failed to schedule notification:', error);
+      if (__DEV__) console.error('Failed to schedule notification:', error);
       return null;
     }
   },
@@ -275,7 +262,7 @@ export const notificationService = {
 
       return notificationId;
     } catch (error) {
-      console.error('Failed to schedule manual nudge:', error);
+      if (__DEV__) console.error('Failed to schedule manual nudge:', error);
       return null;
     }
   },

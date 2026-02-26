@@ -25,7 +25,7 @@ export async function requestAllPermissions(): Promise<PermissionResults> {
       results.notifications = granted;
     }
   } catch (e) {
-    console.warn('Notification permission request failed:', e);
+    if (__DEV__) console.warn('Notification permission request failed:', e);
   }
 
   // 2. Activity Recognition (for pedometer / step counting)
@@ -41,7 +41,7 @@ export async function requestAllPermissions(): Promise<PermissionResults> {
       }
     }
   } catch (e) {
-    console.warn('Activity recognition permission request failed:', e);
+    if (__DEV__) console.warn('Activity recognition permission request failed:', e);
   }
 
   return results;

@@ -188,17 +188,7 @@ export const gapEngine = {
       }
     }
 
-    if (!prefs.preferredWalkingPeriodsEnabled || prefs.preferredWalkingPeriods.length === 0) {
-      return gaps;
-    }
-
-    // When preferred periods are enabled, only keep overlaps with those windows.
-    const preferredIntervals = prefs.preferredWalkingPeriods
-      .flatMap((period) => this.expandTimeRangeForDay(dayStart, period.start, period.end))
-      .sort((a, b) => a.start.getTime() - b.start.getTime());
-    const mergedPreferred = this.mergeIntervals(preferredIntervals);
-    const preferredGaps = this.intersectIntervals(gaps, mergedPreferred);
-    return preferredGaps.filter((gap) => this.isValidGap(gap, prefs));
+    return gaps;
   },
 
   /**
@@ -292,15 +282,6 @@ export const gapEngine = {
     if (timeUtils.isInQuietHours(walkEnd, prefs.quietHoursStart, prefs.quietHoursEnd)) {
       return false;
     }
-    if (prefs.preferredWalkingPeriodsEnabled && prefs.preferredWalkingPeriods.length > 0) {
-      if (!timeUtils.isInPreferredPeriods(walkStart, prefs.preferredWalkingPeriods)) {
-        return false;
-      }
-      if (!timeUtils.isInPreferredPeriods(walkEnd, prefs.preferredWalkingPeriods)) {
-        return false;
-      }
-    }
-
     return true;
   },
 
@@ -340,6 +321,12 @@ export const gapEngine = {
     const hourOfDay = gap.start.getHours();
     if (hourOfDay >= 8 && hourOfDay <= 17) score += 20;
     if (hourOfDay >= 11 && hourOfDay <= 14) score += 10;
+
+    if (prefs.preferredWalkingPeriodsEnabled && prefs.preferredWalkingPeriods.length > 0) {
+      if (timeUtils.isInPreferredPeriods(gap.start, prefs.preferredWalkingPeriods)) {
+        score += 50;
+      }
+    }
 
     return {
       id: `${gap.start.toISOString()}__${gap.end.toISOString()}`,

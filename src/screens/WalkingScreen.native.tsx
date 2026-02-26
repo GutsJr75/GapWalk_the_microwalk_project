@@ -344,7 +344,7 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
           }
         }
       } catch (e) {
-        console.warn('Pedometer initialization failed:', e);
+        if (__DEV__) console.warn('Pedometer initialization failed:', e);
         setUsePedometer(false);
         pedometerAvailableRef.current = false;
       }
@@ -469,10 +469,18 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
 
       } else if (nextState === 'background') {
         void queueCheckpointSave();
-        // Going to background: update notification with current time
+        // Going to background: update notification with current time + start time
+        // so the user sees when the walk started even if the timer text goes stale.
         const elapsed = computeElapsedSeconds();
         if (isNotificationsSupported) {
-          void notificationService.showWalkSessionNotification(formatClock(elapsed), pausedRef.current);
+          const st = sessionStartTimeRef.current;
+          const h = st.getHours() % 12 || 12;
+          const m = String(st.getMinutes()).padStart(2, '0');
+          const ampm = st.getHours() >= 12 ? 'PM' : 'AM';
+          void notificationService.showWalkSessionNotification(
+            `${formatClock(elapsed)} (started ${h}:${m} ${ampm})`,
+            pausedRef.current
+          );
         }
       }
     };

@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { View, StyleSheet, Alert, Platform, Pressable } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
@@ -12,6 +12,7 @@ import { ScreenHeader } from '../components/ScreenHeader';
 import { TwoActionBar } from '../components/TwoActionBar';
 import { AppIcon } from '../components/AppIcon';
 import { theme } from '../theme';
+import { screenChrome } from '../theme/screenChrome';
 import { getThemePalette } from '../theme/palette';
 import { useAppStore } from '../store';
 import { translateLiteral } from '../lib/i18n';
@@ -21,15 +22,41 @@ import { analyticsRepo } from '../lib/repositories/analyticsRepo';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Settings'>;
 
+const SETTINGS_BLOCK_GAP = 18;
+const SETTINGS_GROUP_RADIUS = 14;
+const SETTINGS_GROUP_PADDING_X = 14;
+const SETTINGS_ITEM_PADDING_Y = 14;
+const SETTINGS_SEGMENT_GAP = 10;
+const SETTINGS_SECTION_LABEL_MARGIN_BOTTOM = 10;
+
 export const SettingsScreen: React.FC<Props> = ({ navigation }) => {
   const { themeMode, setThemeMode, language, setLanguage } = useAppStore();
   const palette = getThemePalette(themeMode);
+
+  const baselineThemeModeRef = useRef(themeMode);
+  const baselineLanguageRef = useRef(language);
+  const themeModeRef = useRef(themeMode);
+  const languageRef = useRef(language);
+  const allowExitRef = useRef(false);
+  const hasUnsavedChangesRef = useRef(false);
+
+  useEffect(() => {
+    themeModeRef.current = themeMode;
+  }, [themeMode]);
+
+  useEffect(() => {
+    languageRef.current = language;
+  }, [language]);
 
   // Remount content when screen gains focus so theme/language always match the store (fixes stale back chip & pills)
   const [focusKey, setFocusKey] = useState(0);
   useFocusEffect(
     useCallback(() => {
       setFocusKey((k) => k + 1);
+      baselineThemeModeRef.current = themeModeRef.current;
+      baselineLanguageRef.current = languageRef.current;
+      hasUnsavedChangesRef.current = false;
+      allowExitRef.current = false;
       return () => {};
     }, [])
   );
@@ -45,31 +72,58 @@ export const SettingsScreen: React.FC<Props> = ({ navigation }) => {
   const lightLabel = t('Light');
   const englishLabel = t('English');
   const espanolLabel = t('Espa\u00F1ol');
+  const hasUnsavedChanges =
+    themeMode !== baselineThemeModeRef.current || language !== baselineLanguageRef.current;
 
-  const handleDone = () => {
-    navigation.navigate('Dashboard');
+  useEffect(() => {
+    hasUnsavedChangesRef.current = hasUnsavedChanges;
+  }, [hasUnsavedChanges]);
+
+  useEffect(() => {
+    const unsubscribe = navigation.addListener('beforeRemove', (event) => {
+      if (allowExitRef.current || !hasUnsavedChangesRef.current) return;
+      event.preventDefault();
+
+      const activeLanguage = languageRef.current;
+      const title = translateLiteral('Discard changes?', activeLanguage);
+      const message = translateLiteral(
+        'Your unsaved settings changes will be lost. Do you want to go back?',
+        activeLanguage
+      );
+
+      const discardAndLeave = () => {
+        setThemeMode(baselineThemeModeRef.current);
+        setLanguage(baselineLanguageRef.current);
+        hasUnsavedChangesRef.current = false;
+        allowExitRef.current = true;
+        navigation.dispatch(event.data.action);
+      };
+
+      if (Platform.OS === 'web' && typeof (globalThis as any).confirm === 'function') {
+        const ok = (globalThis as any).confirm(`${title}\n\n${message}`);
+        if (ok) discardAndLeave();
+        return;
+      }
+
+      Alert.alert(title, message, [
+        { text: translateLiteral('Keep editing', activeLanguage), style: 'cancel' },
+        { text: translateLiteral('Discard', activeLanguage), style: 'destructive', onPress: discardAndLeave },
+      ]);
+    });
+
+    return unsubscribe;
+  }, [navigation, setLanguage, setThemeMode]);
+
+  const handleBack = () => {
+    navigation.navigate('Dashboard', { openMenu: true });
   };
 
-  const confirmLanguageChange = (next: 'en' | 'es') => {
-    if (next === language) return;
-
-    const targetLabel = next === 'es' ? 'Spanish' : 'English';
-    const title = translateLiteral('Change language?', language);
-    const message = translateLiteral(
-      `Are you sure you want to switch the app language to ${targetLabel}?`,
-      language
-    );
-
-    if (Platform.OS === 'web' && typeof (globalThis as any).confirm === 'function') {
-      const ok = (globalThis as any).confirm(`${title}\n\n${message}`);
-      if (ok) setLanguage(next);
-      return;
-    }
-
-    Alert.alert(title, message, [
-      { text: translateLiteral('Cancel', language), style: 'cancel' },
-      { text: translateLiteral('Yes, change', language), onPress: () => setLanguage(next) },
-    ]);
+  const handleSave = () => {
+    baselineThemeModeRef.current = themeModeRef.current;
+    baselineLanguageRef.current = languageRef.current;
+    hasUnsavedChangesRef.current = false;
+    allowExitRef.current = true;
+    navigation.goBack();
   };
 
   const simulateNotificationStart = async () => {
@@ -148,8 +202,8 @@ export const SettingsScreen: React.FC<Props> = ({ navigation }) => {
     </Pressable>
   );
 
-  // Force remount when theme/language changes or when screen gains focus so back chip and pills never show stale styles
-  const contentKey = `settings-${themeMode}-${language}-${focusKey}`;
+  // Remount the container on focus to keep ScreenHeader back chip and segmented rows in sync.
+  const contentKey = `settings-${focusKey}`;
 
   return (
     <Container scrollable key={contentKey}>
@@ -157,56 +211,69 @@ export const SettingsScreen: React.FC<Props> = ({ navigation }) => {
         <ScreenHeader
           title="Settings"
           subtitle="Choose how GapWalk looks and which language it uses."
+          onBack={handleBack}
+          backTestID="settings-back"
+          align="center"
           themeMode={themeMode}
         />
 
-        <Card elevated style={styles.card}>
-          <View style={styles.cardLabelRow}>
-            <AppIcon name="settings" size={14} color={theme.colors.accentPrimary} />
-            <Text variant="bodySmall" style={[styles.label, { color: palette.textMuted }]}>Appearance</Text>
-          </View>
-          <View style={styles.row}>
-            {renderSegmentPill({
-              selected: themeMode === 'dark',
-              title: darkLabel,
-              onPress: () => setThemeMode('dark'),
-              testID: 'settings-theme-dark',
-            })}
-            {renderSegmentPill({
-              selected: themeMode === 'light',
-              title: lightLabel,
-              onPress: () => setThemeMode('light'),
-              testID: 'settings-theme-light',
-            })}
-          </View>
-        </Card>
+        <Text variant="bodySmall" style={[styles.sectionLabel, { color: palette.textMuted }]}>
+          {t('Viewer Settings')}
+        </Text>
 
-        <Card elevated style={styles.card}>
-          <View style={styles.cardLabelRow}>
-            <AppIcon name="adjust" size={14} color={theme.colors.accentPrimary} />
-            <Text variant="bodySmall" style={[styles.label, { color: palette.textMuted }]}>Language</Text>
+        <Card elevated style={styles.settingsListCard}>
+          <View style={styles.settingGroup}>
+            <View style={styles.settingLabelRow}>
+              <AppIcon name="settings" size={14} color={theme.colors.accentPrimary} />
+              <Text variant="bodySmall" style={[styles.settingTitle, { color: palette.textMuted }]}>Appearance</Text>
+            </View>
+            <View style={styles.segmentRow}>
+              {renderSegmentPill({
+                selected: themeMode === 'dark',
+                title: darkLabel,
+                onPress: () => setThemeMode('dark'),
+                testID: 'settings-theme-dark',
+              })}
+              {renderSegmentPill({
+                selected: themeMode === 'light',
+                title: lightLabel,
+                onPress: () => setThemeMode('light'),
+                testID: 'settings-theme-light',
+              })}
+            </View>
           </View>
-          <View style={styles.row}>
-            {renderSegmentPill({
-              selected: language === 'en',
-              title: englishLabel,
-              onPress: () => confirmLanguageChange('en'),
-              testID: 'settings-lang-en',
-            })}
-            {renderSegmentPill({
-              selected: language === 'es',
-              title: espanolLabel,
-              onPress: () => confirmLanguageChange('es'),
-              testID: 'settings-lang-es',
-            })}
+
+          <View style={[styles.settingDivider, { backgroundColor: palette.borderSoft }]} />
+
+          <View style={styles.settingGroup}>
+            <View style={styles.settingLabelRow}>
+              <AppIcon name="adjust" size={14} color={theme.colors.accentPrimary} />
+              <Text variant="bodySmall" style={[styles.settingTitle, { color: palette.textMuted }]}>Language</Text>
+            </View>
+            <View style={styles.segmentRow}>
+              {renderSegmentPill({
+                selected: language === 'en',
+                title: englishLabel,
+                onPress: () => setLanguage('en'),
+                testID: 'settings-lang-en',
+              })}
+              {renderSegmentPill({
+                selected: language === 'es',
+                title: espanolLabel,
+                onPress: () => setLanguage('es'),
+                testID: 'settings-lang-es',
+              })}
+            </View>
           </View>
         </Card>
 
         {isE2E && (
-          <Card elevated style={styles.card}>
-            <View style={styles.cardLabelRow}>
+          <Card elevated style={styles.e2eCard}>
+            <View style={styles.settingLabelRow}>
               <AppIcon name="sync" size={14} color={theme.colors.accentPrimary} />
-              <Text variant="bodySmall" style={styles.label}>E2E Notification Actions</Text>
+              <Text variant="bodySmall" style={[styles.settingTitle, { color: palette.textMuted }]}>
+                E2E Notification Actions
+              </Text>
             </View>
             <View style={styles.stack}>
               <Button
@@ -236,8 +303,8 @@ export const SettingsScreen: React.FC<Props> = ({ navigation }) => {
         <TwoActionBar
           style={styles.footer}
           primaryAction={{
-            title: 'Done',
-            onPress: handleDone,
+            title: 'Save',
+            onPress: handleSave,
             testID: 'settings-done',
           }}
         />
@@ -250,15 +317,42 @@ const styles = StyleSheet.create({
   content: {
     flex: 1,
     paddingHorizontal: theme.layout.contentHorizontal,
-    paddingTop: theme.spacing.lg,
+    paddingTop: screenChrome.TITLE_CONTENT_TOP_PADDING,
     alignSelf: 'center',
     width: '100%',
     maxWidth: theme.layout.contentMaxWidth,
   },
-  card: { marginBottom: 20 },
-  label: { marginBottom: 10 },
-  cardLabelRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  row: { flexDirection: 'row', gap: 10 },
+  sectionLabel: {
+    marginLeft: 2,
+    marginBottom: SETTINGS_SECTION_LABEL_MARGIN_BOTTOM,
+    fontWeight: theme.fontWeight.semibold,
+    letterSpacing: 0.8,
+  },
+  settingsListCard: {
+    marginBottom: SETTINGS_BLOCK_GAP,
+    borderRadius: SETTINGS_GROUP_RADIUS,
+    paddingHorizontal: SETTINGS_GROUP_PADDING_X,
+    paddingVertical: SETTINGS_ITEM_PADDING_Y,
+    gap: SETTINGS_ITEM_PADDING_Y,
+  },
+  settingGroup: {
+    gap: 10,
+  },
+  settingLabelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  settingTitle: {
+    fontWeight: theme.fontWeight.semibold,
+  },
+  settingDivider: {
+    height: 1,
+  },
+  segmentRow: {
+    flexDirection: 'row',
+    gap: SETTINGS_SEGMENT_GAP,
+  },
   pill: {
     flex: 1,
     minHeight: theme.layout.buttonHeight,
@@ -275,9 +369,16 @@ const styles = StyleSheet.create({
   pillLabel: {
     fontWeight: theme.fontWeight.semibold,
   },
-  stack: { gap: 10 },
+  e2eCard: {
+    marginTop: 0,
+    marginBottom: SETTINGS_BLOCK_GAP,
+  },
+  stack: {
+    gap: 10,
+  },
   footer: {
-    marginTop: theme.spacing.sm,
-    marginBottom: theme.spacing.xl,
+    marginTop: 'auto',
+    paddingTop: screenChrome.FOOTER_PADDING_TOP,
+    paddingBottom: screenChrome.FOOTER_PADDING_BOTTOM,
   },
 });

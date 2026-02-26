@@ -11,6 +11,7 @@ import { Card } from '../components/Card';
 import { AppIcon } from '../components/AppIcon';
 import { ScreenHeader } from '../components/ScreenHeader';
 import { theme } from '../theme';
+import { screenChrome } from '../theme/screenChrome';
 import { useThemePalette } from '../theme/palette';
 import { buildWeeklyTemplateFromIcsEvents, parseICSFile } from '../lib/ics';
 import { ManualScheduleEntry } from '../lib/types';
@@ -82,7 +83,7 @@ export const ScheduleSetupScreen: React.FC<Props> = ({ navigation, route }) => {
       const refreshedUpcoming = await plansRepo.getUpcomingPlans(20);
       setUpcomingPlans(refreshedUpcoming);
     } catch (error) {
-      console.error('Failed to sync opportunities after schedule update:', error);
+      if (__DEV__) console.error('Failed to sync opportunities after schedule update:', error);
     }
   };
 
@@ -202,7 +203,7 @@ export const ScheduleSetupScreen: React.FC<Props> = ({ navigation, route }) => {
         [{ text: manageMode ? 'Done' : 'Continue', onPress: completeFlow }]
       );
     } catch (error) {
-      console.error('Google Calendar sync error:', error);
+      if (__DEV__) console.error('Google Calendar sync error:', error);
       const msg = toUserFriendlyError(error);
       setLoading(false);
       setSyncStatus(null);
@@ -296,7 +297,7 @@ export const ScheduleSetupScreen: React.FC<Props> = ({ navigation, route }) => {
         prefillTemplate: weeklyTemplate,
       });
     } catch (error) {
-      console.error('ICS import failed:', error);
+      if (__DEV__) console.error('ICS import failed:', error);
       setLoading(false);
       setSyncStatus(null);
       const msg = toUserFriendlyError(error);
@@ -347,7 +348,7 @@ export const ScheduleSetupScreen: React.FC<Props> = ({ navigation, route }) => {
         prefillTemplate: weeklyTemplate,
       });
     } catch (error) {
-      console.error('E2E sample import failed:', error);
+      if (__DEV__) console.error('E2E sample import failed:', error);
       setLoading(false);
       setSyncStatus(null);
       showMessage('Import Failed', 'The sample calendar could not be loaded. Please try again.');
@@ -560,7 +561,7 @@ const styles = StyleSheet.create({
   content: {
     flex: 1,
     paddingHorizontal: theme.layout.contentHorizontal,
-    paddingTop: theme.spacing.lg,
+    paddingTop: screenChrome.TITLE_CONTENT_TOP_PADDING,
     alignSelf: 'center',
     width: '100%',
     maxWidth: theme.layout.contentMaxWidth,
@@ -620,17 +621,18 @@ const styles = StyleSheet.create({
   },
   footer: {
     paddingHorizontal: theme.layout.contentHorizontal,
-    paddingVertical: 24,
+    paddingTop: screenChrome.FOOTER_PADDING_TOP,
+    paddingBottom: screenChrome.FOOTER_PADDING_BOTTOM,
     alignSelf: 'center',
     width: '100%',
     maxWidth: theme.layout.contentMaxWidth,
   },
   footerActions: {
     flexDirection: 'row',
-    gap: 10,
+    gap: screenChrome.FOOTER_BUTTON_GAP,
   },
   footerBtn: {
     flex: 1,
   },
-  privacy: { textAlign: 'center', marginTop: 14 },
+  privacy: { textAlign: 'center', marginTop: screenChrome.FOOTER_NOTE_MARGIN_TOP },
 });

@@ -2,25 +2,32 @@
   "expo": {
     "name": "GapWalk",
     "slug": "gapwalk",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "orientation": "portrait",
     "userInterfaceStyle": "dark",
     "scheme": "gapwalk",
-    "assetBundlePatterns": ["**/*"],
-    "icon": "./assets/icon.png",
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "icon": "./assets/icons/app-icon.png",
     "ios": {
       "supportsTablet": true,
+      "buildNumber": "1.0.1",
       "bundleIdentifier": "com.gapwalk.app",
       "infoPlist": {
+        "NSMotionUsageDescription": "GapWalk uses motion data to count your steps during walks.",
         "NSLocationWhenInUseUsageDescription": "GapWalk needs your location to track distance and show your walking route.",
-        "UIBackgroundModes": ["location"]
+        "UIBackgroundModes": [
+          "location"
+        ]
       }
     },
     "android": {
       "package": "com.gapwalk.app",
+      "versionCode": 10101,
       "softwareKeyboardLayoutMode": "pan",
       "adaptiveIcon": {
-        "foregroundImage": "./assets/icon.png",
+        "foregroundImage": "./assets/icons/adaptive-foreground.png",
         "backgroundColor": "#0b1220"
       },
       "permissions": [
@@ -42,7 +49,8 @@
       "expo-web-browser",
       "expo-asset",
       "expo-font",
-      "expo-sensors"
+      "expo-sensors",
+      "expo-secure-store"
     ]
   }
 }

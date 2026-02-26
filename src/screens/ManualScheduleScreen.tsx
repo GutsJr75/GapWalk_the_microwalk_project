@@ -28,6 +28,7 @@ import { ScreenHeader } from '../components/ScreenHeader';
 import { TwoActionBar } from '../components/TwoActionBar';
 import { AppIcon } from '../components/AppIcon';
 import { theme } from '../theme';
+import { screenChrome } from '../theme/screenChrome';
 import { getThemePalette } from '../theme/palette';
 import { ManualScheduleEntry } from '../lib/types';
 import { buildWeeklyTemplateFromIcsEvents, parseICSFile } from '../lib/ics';
@@ -280,6 +281,13 @@ const hhmmToMinutes = (hhmm: string): number => {
   return h * 60 + m;
 };
 
+const getEventTotalDurationMinutes = (startTime: string, endTime: string): number => {
+  const start = hhmmToMinutes(startTime);
+  const end = hhmmToMinutes(endTime);
+  if (end <= start) return Math.max(1, 24 * 60 - start + end);
+  return Math.max(1, end - start);
+};
+
 /** True if [s1,e1) and [s2,e2) overlap (handles overnight: pass end as start+24*60 if needed). */
 const timeRangesOverlap = (s1: number, e1: number, s2: number, e2: number): boolean =>
   s1 < e2 && e1 > s2;
@@ -507,7 +515,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
   const [slotFeedback, setSlotFeedback] = useState<{ dayIndex: number; slotIndex: number } | null>(null);
   const [clearArmedDay, setClearArmedDay] = useState<number | null>(null);
   const [poppingEventKey, setPoppingEventKey] = useState<string | null>(null);
-  const { width: winWidth } = useWindowDimensions();
+  const { width: winWidth, height: winHeight } = useWindowDimensions();
   const allowNextBeforeRemoveRef = useRef(false);
 
   // navigate() reuses existing screens, so keep the base mode in sync with params.
@@ -693,7 +701,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
           setSheetSourceType(resolvedSource.type);
           setSheetImportedFilename(resolvedSource.type === 'import' ? resolvedSource.filename : undefined);
           setSheetImportedTemplate(null);
-          console.error('Failed to load saved manual schedule:', error);
+          if (__DEV__) console.error('Failed to load saved manual schedule:', error);
         }
       };
       void loadSavedTemplate();
@@ -767,7 +775,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
         eventsParsed: parseResult.events.length,
       };
     } catch (error) {
-      console.error('ICS import failed:', error);
+      if (__DEV__) console.error('ICS import failed:', error);
       setImportLoading(false);
       setImportStatus(null);
       const msg = toUserFriendlyError(error);
@@ -888,13 +896,14 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
         : null
     : null;
   const canAdd = hasTitle && isRangeValid && (form.repeatMode === 'weekly' || !oneTimeDateError);
+  const eventFormHasChanges = eventFormInitialSignature.length > 0 &&
+    buildFormSignature(form) !== eventFormInitialSignature;
+  const canSubmitEvent = canAdd && (!editingEventId || eventFormHasChanges);
   const timeError = !hasValidTimes
     ? 'Enter a valid start and end time.'
     : !isRangeValid
       ? 'Start and end time cannot be the same.'
       : '';
-  const eventFormHasChanges = eventFormInitialSignature.length > 0 &&
-    buildFormSignature(form) !== eventFormInitialSignature;
 
   const getPreferredOneTimeDateForDay = useCallback((dayIndex: number): string => {
     return getNextDateForDayOfWeek(dayIndex);
@@ -1088,7 +1097,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
   );
 
   const handleCancelEventModal = useCallback(() => {
-    const shouldWarn = !!editingEventId || eventFormHasChanges;
+    const shouldWarn = eventFormHasChanges;
     if (!shouldWarn) {
       closeEventModal();
       return;
@@ -1187,6 +1196,19 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
     setManageScreenMode('edit');
   };
 
+  const handleManageChangeSource = () => {
+    showBinaryConfirm(
+      'Change schedule source?',
+      'Change lets you switch between manual entry and calendar import. Importing a file can replace your current grid before you save. Continue?',
+      'Yes',
+      handleOpenSourceSheet
+    );
+  };
+
+  const handleManageBackToOptions = () => {
+    navigation.navigate('Dashboard', { openMenu: true });
+  };
+
   const handleManageCancelEdit = () => {
     if (!hasManageChanges) {
       setManageScreenMode('view');
@@ -1250,6 +1272,9 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
   };
 
   const addOrUpdateEntry = () => {
+    if (editingEventId && !eventFormHasChanges) {
+      return;
+    }
     const title = form.title.trim();
     if (title.length === 0) {
       Alert.alert('Title Required', 'Enter an event title.');
@@ -1669,7 +1694,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
         return;
       } catch (err) {
         lastError = err;
-        console.error(`Save schedule attempt ${attempt + 1} failed${failedStep ? ` at step: ${failedStep}` : ''}:`, err);
+        if (__DEV__) console.error(`Save schedule attempt ${attempt + 1} failed${failedStep ? ` at step: ${failedStep}` : ''}:`, err);
         if (attempt === 0) await new Promise((r) => setTimeout(r, 500));
       }
     }
@@ -1899,10 +1924,6 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
     }, 70);
   }, [animateSlotFeedback, eventPopAnim, getSliceSlotBounds, handleSlotClick, isManageViewOnly, openModalFromEvent]);
 
-  const handleManageDone = () => {
-    runAllowedNavigation(() => navigation.navigate('Dashboard'));
-  };
-
   const applyE2ESampleSchedule = () => {
     const newEvent: TemplateEvent = {
       id: `e2e-${Date.now()}`,
@@ -1957,6 +1978,8 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
   const gridLineSoft = isDark ? 'rgba(255,255,255,0.06)' : palette.borderSoft;
   const gridAltBg = isDark ? 'rgba(255,255,255,0.02)' : 'rgba(15,23,42,0.03)';
   const eventBorderColor = isDark ? 'rgba(0,0,0,0.08)' : 'rgba(15,23,42,0.2)';
+  const nowIndicatorColor = isDark ? palette.accentPrimary : '#0a7a5b';
+  const nowIndicatorGlow = isDark ? palette.accentPrimary : 'rgba(10,122,91,0.34)';
   const themedInput = {
     backgroundColor: isDark ? theme.colors.bgApp : palette.bgSurfaceElevated,
     borderColor: isDark ? 'rgba(255,255,255,0.08)' : palette.borderStrong,
@@ -1973,8 +1996,9 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
     outputRange: [8, 0],
   });
   const slotHintText = isManageViewOnly
-    ? 'Review your weekly schedule. Tap Edit Schedule to make changes.'
+    ? 'Review your weekly schedule. Tap Update to edit or Change to switch source.'
     : 'Tap any slot/cell to add an event or tap on an existing event to edit/delete it.';
+  const sourceChoiceLabel = sheetSourceType === 'manual' ? 'Manual Entry' : 'Import (.ics file)';
 
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: palette.bgApp }]}>
@@ -1987,10 +2011,31 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
           },
         ]}
       >
-      <View style={[styles.header, styles.headerCompact]}>
+      <View style={[styles.header, manageMode && styles.manageHeaderViewport]}>
+        {manageMode ? (
+          <View style={styles.manageBackRow}>
+            <Pressable
+              onPress={handleManageBackToOptions}
+              testID="manual-back"
+              accessibilityRole="button"
+              accessibilityLabel="Back to options"
+              hitSlop={6}
+              style={({ pressed }) => [
+                styles.manageBackBtn,
+                {
+                  backgroundColor: palette.bgSurface,
+                  borderColor: palette.borderStrong,
+                },
+                pressed && styles.manageBackBtnPressed,
+              ]}
+            >
+              <AppIcon name="back" size={17} color={palette.textPrimary} />
+            </Pressable>
+          </View>
+        ) : null}
         <ScreenHeader
           title={manageMode ? 'Manage schedule' : 'Set up your schedule'}
-          style={{ marginBottom: 0, paddingTop: 0, paddingBottom: 0 }}
+          style={manageMode ? styles.manageHeaderTitle : undefined}
         />
         {sourceType === 'import' && importedFilename ? (
           <View style={styles.icsBadge}>
@@ -2001,7 +2046,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
         ) : manageMode ? (
           <View style={styles.sourceInfoBar}>
             <AppIcon name="adjust" size={13} color={palette.accentPrimary} />
-            <Text variant="bodySmall" style={{ color: palette.textMuted }}>
+            <Text variant="bodySmall" style={[styles.sourceInfoText, { color: palette.textPrimary }]}>
               Source: Manual entry
             </Text>
           </View>
@@ -2118,6 +2163,47 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
                   ))}
                 </View>
 
+                {todayDayIndex >= 0 && nowColumnFloat >= 0 && nowColumnFloat < NUM_SLOTS && (
+                  <View
+                    style={[
+                      styles.nowLineVertical,
+                      {
+                        left: nowLeft,
+                        top: TIME_ROW_HEIGHT - 4,
+                        height: 8 + 7 * DAY_ROW_HEIGHT,
+                      },
+                    ]}
+                    pointerEvents="none"
+                  >
+                    <View
+                      style={[
+                        styles.nowDot,
+                        {
+                          backgroundColor: nowIndicatorColor,
+                          shadowColor: nowIndicatorGlow,
+                          shadowOffset: { width: 0, height: 0 },
+                          shadowOpacity: isDark ? 0.85 : 0.24,
+                          shadowRadius: isDark ? 6 : 3,
+                          elevation: isDark ? 8 : 0,
+                        },
+                      ]}
+                    />
+                    <View
+                      style={[
+                        styles.nowLineBarVertical,
+                        {
+                          backgroundColor: nowIndicatorColor,
+                          shadowColor: nowIndicatorGlow,
+                          shadowOffset: { width: 0, height: 0 },
+                          shadowOpacity: isDark ? 0.58 : 0.16,
+                          shadowRadius: isDark ? 4 : 2,
+                          elevation: isDark ? 6 : 0,
+                        },
+                      ]}
+                    />
+                  </View>
+                )}
+
                 {[0, 1, 2, 3, 4, 5, 6].map((dayIndex) => {
                   const daySlices = displaySlicesByDay[dayIndex] ?? [];
                   return (
@@ -2177,14 +2263,23 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
                       <View style={StyleSheet.absoluteFill} pointerEvents="none">
                         {daySlices.map((slice) => {
                           const bounds = getSliceSlotBounds(slice);
-                          const durationMinutes = Math.max(1, slice.endMinuteInRow - slice.startMinuteInRow);
+                          const sliceDurationMinutes = Math.max(1, slice.endMinuteInRow - slice.startMinuteInRow);
                           const isCompact = bounds.width < SLOT_WIDTH * 1.6;
                           const isSelectedDay = dayIndex === selectedDay;
-                          const timeStr = slice.isCarryOver
-                            ? `Continues, ends ${formatTime12(slice.event.endTime)}`
+                          const eventStartMinutes = hhmmToMinutes(slice.event.startTime);
+                          const eventEndMinutes = hhmmToMinutes(slice.event.endTime);
+                          const isOvernightEvent = eventEndMinutes <= eventStartMinutes;
+                          const totalDurationMinutes = getEventTotalDurationMinutes(slice.event.startTime, slice.event.endTime);
+                          const displayDurationMinutes = isOvernightEvent ? totalDurationMinutes : sliceDurationMinutes;
+                          const fullEventRange = `${formatTime12(slice.event.startTime)} - ${formatTime12(slice.event.endTime)}`;
+                          const timeStr = isOvernightEvent
+                            ? fullEventRange
                             : isCompact
                               ? `${slice.event.startTime}\n${slice.event.endTime}`
-                              : `${formatTime12(slice.event.startTime)} - ${formatTime12(slice.event.endTime)}`;
+                              : fullEventRange;
+                          const durationLabel = isOvernightEvent
+                            ? `${displayDurationMinutes} min total`
+                            : `${displayDurationMinutes} min`;
                           return (
                             <View
                               key={slice.key}
@@ -2217,7 +2312,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
                               </Text>
                               {!isCompact && (
                                 <Text variant="bodySmall" style={styles.gridEventDurationH} numberOfLines={1}>
-                                  {durationMinutes} min
+                                  {durationLabel}
                                 </Text>
                               )}
                             </View>
@@ -2244,47 +2339,6 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
                     ]}
                   />
                 )}
-
-                {todayDayIndex >= 0 && nowColumnFloat >= 0 && nowColumnFloat < NUM_SLOTS && (
-                  <View
-                    style={[
-                      styles.nowLineVertical,
-                      {
-                        left: nowLeft,
-                        top: TIME_ROW_HEIGHT - 4,
-                        height: 8 + 7 * DAY_ROW_HEIGHT,
-                      },
-                    ]}
-                    pointerEvents="none"
-                  >
-                    <View
-                      style={[
-                        styles.nowDot,
-                        {
-                          backgroundColor: palette.accentPrimary,
-                          shadowColor: palette.accentPrimary,
-                          shadowOffset: { width: 0, height: 0 },
-                          shadowOpacity: 0.9,
-                          shadowRadius: 6,
-                          elevation: 8,
-                        },
-                      ]}
-                    />
-                    <View
-                      style={[
-                        styles.nowLineBarVertical,
-                        {
-                          backgroundColor: palette.accentPrimary,
-                          shadowColor: palette.accentPrimary,
-                          shadowOffset: { width: 0, height: 0 },
-                          shadowOpacity: 0.7,
-                          shadowRadius: 4,
-                          elevation: 6,
-                        },
-                      ]}
-                    />
-                  </View>
-                )}
               </View>
             </ScrollView>
           </View>
@@ -2297,7 +2351,6 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
         style={[
           styles.footer,
           {
-            paddingHorizontal: GRID_PADDING,
             borderTopColor: gridLineSoft,
             backgroundColor: palette.bgApp,
           },
@@ -2318,14 +2371,14 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
           isManageViewOnly ? (
             <TwoActionBar
               secondaryAction={{
-                title: 'Done',
-                onPress: handleManageDone,
+                title: 'Change',
+                onPress: handleManageChangeSource,
                 variant: 'secondary',
                 disabled: savingDone,
-                testID: 'manual-manage-done',
+                testID: 'manual-change-source',
               }}
               primaryAction={{
-                title: 'Edit Schedule',
+                title: 'Update',
                 onPress: handleManageStartEdit,
                 disabled: savingDone,
                 testID: 'manual-edit',
@@ -2380,18 +2433,41 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
 
       <RNModal
         visible={showSourceSheet}
+        transparent
         animationType="slide"
         onRequestClose={handleCloseSourceSheet}
         statusBarTranslucent
       >
-        <SafeAreaView style={[styles.safe, { backgroundColor: palette.bgApp }]}>
-          <View style={styles.switchSourceScreen}>
+        <View style={styles.switchSourceModalRoot}>
+          <Pressable style={styles.switchSourceBackdrop} onPress={handleCloseSourceSheet} />
+
+          <View
+            style={[
+              styles.switchSourceSheet,
+              {
+                backgroundColor: palette.bgApp,
+                borderTopColor: gridLineSoft,
+                maxHeight: Math.max(420, Math.round(winHeight * 0.58)),
+              },
+            ]}
+          >
+            <View style={styles.switchSourceSheetHandleWrap}>
+              <View style={[styles.switchSourceSheetHandle, { backgroundColor: palette.borderStrong }]} />
+            </View>
+
             <View style={styles.switchSourceHeader}>
-              <ScreenHeader
-                title="Switch Source"
-                subtitle="Choose how GapWalk reads your schedule."
-                style={{ marginBottom: 0, paddingTop: 0, paddingBottom: 0 }}
-              />
+              <Text variant="title" style={styles.switchSourceHeading}>Change source</Text>
+              <Text variant="bodySmall" style={styles.switchSourceChoiceLine}>
+                Current Choice:{' '}
+                <Text variant="bodySmall" style={[styles.switchSourceChoiceValue, { color: palette.textPrimary }]}>
+                  {sourceChoiceLabel}
+                </Text>
+                {sheetSourceType === 'import' && sheetResolvedFilename ? (
+                  <Text variant="bodySmall" style={[styles.switchSourceChoiceFile, { color: palette.accentPrimary }]}>
+                    {' '}({sheetResolvedFilename})
+                  </Text>
+                ) : null}
+              </Text>
             </View>
 
             <ScrollView
@@ -2451,7 +2527,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
                       <AppIcon name="calendar" size={13} color={sheetResolvedFilename ? palette.accentPrimary : palette.textMuted} />
                       <Text
                         variant="bodySmall"
-                        style={{ color: sheetResolvedFilename ? palette.accentPrimary : palette.textMuted, flex: 1, fontWeight: theme.fontWeight.medium }}
+                        style={{ color: sheetResolvedFilename ? palette.accentPrimary : palette.textMuted, flex: 1, fontWeight: theme.fontWeight.semibold }}
                         numberOfLines={1}
                       >
                         {sheetResolvedFilename || 'No file selected'}
@@ -2475,7 +2551,6 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
                 )}
               </Card>
 
-              {/* Loading status */}
               {importLoading && importStatus && (
                 <View style={styles.switchSourceStatusRow}>
                   <ActivityIndicator size="small" color={palette.accentPrimary} />
@@ -2484,11 +2559,10 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
               )}
             </ScrollView>
 
-            {/* Footer */}
             <View style={[styles.switchSourceFooter, { borderTopColor: gridLineSoft, backgroundColor: palette.bgApp }]}>
               {sourceSheetNeedsImportFile && sheetSourceType === 'import' && (
                 <Text variant="bodySmall" style={styles.switchSourceWarning}>
-                  Choose a .ics file before continuing.
+                  Choose a .ics file before saving.
                 </Text>
               )}
               <View style={styles.footerActions}>
@@ -2501,7 +2575,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
                   testID="switch-source-cancel"
                 />
                 <Button
-                  title="Continue"
+                  title="Save"
                   onPress={handleSaveSourceSheet}
                   style={styles.footerBtn}
                   disabled={importLoading || !sourceSheetHasChanges || sourceSheetNeedsImportFile}
@@ -2510,7 +2584,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
               </View>
             </View>
           </View>
-        </SafeAreaView>
+        </View>
       </RNModal>
 
       <AppModal
@@ -2783,7 +2857,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
             <Button
               title={editingEventId ? 'Update' : 'Save'}
               onPress={addOrUpdateEntry}
-              disabled={!canAdd}
+              disabled={!canSubmitEvent}
               style={styles.modalActionButton}
             />
           </View>
@@ -2806,20 +2880,40 @@ const styles = StyleSheet.create({
   },
   header: {
     paddingHorizontal: theme.layout.contentHorizontal,
-    paddingTop: theme.spacing.lg + 28,
-    paddingBottom: theme.spacing.sm,
+    paddingTop: screenChrome.TITLE_CONTENT_TOP_PADDING,
+    paddingBottom: 0,
     alignSelf: 'center',
     width: '100%',
     maxWidth: theme.layout.contentMaxWidth,
   },
-  headerCompact: {
-    paddingTop: theme.spacing.xs,
-    paddingBottom: 0,
-    marginBottom: 0,
+  manageHeaderViewport: {
+    maxWidth: '100%',
+  },
+  manageHeaderTitle: {
+    marginBottom: 18,
+    paddingBottom: theme.spacing.xs,
+  },
+  manageBackRow: {
+    alignSelf: 'flex-start',
+    marginLeft: 0,
+    marginBottom: theme.spacing.sm,
+  },
+  manageBackBtn: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  manageBackBtnPressed: {
+    transform: [{ translateX: -2 }, { scale: 0.95 }],
+    opacity: 0.86,
   },
   icsBadge: {
     alignSelf: 'center',
     maxWidth: '100%',
+    marginBottom: 12,
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: theme.borderRadius.sm,
@@ -2933,32 +3027,69 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     alignSelf: 'center',
     gap: 6,
+    marginTop: -2,
+    marginBottom: 12,
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: theme.borderRadius.sm,
   },
-  /* ── Switch Source full-screen ── */
-  switchSourceScreen: {
+  sourceInfoText: {
+    fontWeight: theme.fontWeight.semibold,
+    marginTop: -1,
+    letterSpacing: 0.1,
+  },
+  /* ── Switch Source bottom sheet ── */
+  switchSourceModalRoot: {
     flex: 1,
+    justifyContent: 'flex-end',
+  },
+  switchSourceBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(3, 7, 14, 0.56)',
+  },
+  switchSourceSheet: {
+    width: '100%',
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopLeftRadius: 22,
+    borderTopRightRadius: 22,
+    overflow: 'hidden',
+  },
+  switchSourceSheetHandleWrap: {
+    alignItems: 'center',
+    paddingTop: 10,
+    paddingBottom: 8,
+  },
+  switchSourceSheetHandle: {
+    width: 48,
+    height: 4,
+    borderRadius: 999,
+    opacity: 0.8,
   },
   switchSourceHeader: {
     paddingHorizontal: theme.layout.contentHorizontal,
-    paddingTop: theme.spacing.xs,
-    paddingBottom: 0,
-    alignSelf: 'center',
-    width: '100%',
-    maxWidth: theme.layout.contentMaxWidth,
+    paddingBottom: theme.spacing.sm,
+  },
+  switchSourceHeading: {
+    marginBottom: 6,
+    fontWeight: theme.fontWeight.semibold,
+  },
+  switchSourceChoiceLine: {
+    lineHeight: 18,
+    fontWeight: theme.fontWeight.medium,
+  },
+  switchSourceChoiceValue: {
+    fontWeight: theme.fontWeight.semibold,
+  },
+  switchSourceChoiceFile: {
+    fontWeight: theme.fontWeight.semibold,
   },
   switchSourceScrollArea: {
     flex: 1,
   },
   switchSourceScrollContent: {
     paddingHorizontal: theme.layout.contentHorizontal,
-    paddingTop: theme.spacing.md,
-    paddingBottom: 40,
-    alignSelf: 'center',
-    width: '100%',
-    maxWidth: theme.layout.contentMaxWidth,
+    paddingTop: theme.spacing.sm,
+    paddingBottom: theme.spacing.md,
   },
   switchSourceCard: {
     marginBottom: 16,
@@ -3003,17 +3134,14 @@ const styles = StyleSheet.create({
   },
   switchSourceFooter: {
     paddingHorizontal: theme.layout.contentHorizontal,
-    paddingTop: theme.spacing.sm,
-    paddingBottom: theme.spacing.sm,
+    paddingTop: screenChrome.FOOTER_PADDING_TOP,
+    paddingBottom: screenChrome.FOOTER_PADDING_BOTTOM,
     borderTopWidth: StyleSheet.hairlineWidth,
-    alignSelf: 'center',
-    width: '100%',
-    maxWidth: theme.layout.contentMaxWidth,
   },
   switchSourceWarning: {
     textAlign: 'center',
     color: theme.colors.warning,
-    marginBottom: theme.spacing.sm,
+    marginBottom: screenChrome.FOOTER_NOTE_MARGIN_TOP,
     fontSize: theme.fontSize.xs,
   },
   editorScroll: {
@@ -3304,6 +3432,7 @@ const styles = StyleSheet.create({
   },
   gridEventBlockH: {
     position: 'absolute',
+    zIndex: 12,
     backgroundColor: theme.colors.accentPrimary,
     borderRadius: 10,
     borderWidth: 1,
@@ -3368,7 +3497,8 @@ const styles = StyleSheet.create({
     position: 'absolute',
     flexDirection: 'column',
     alignItems: 'center',
-    zIndex: 20,
+    zIndex: 2,
+    elevation: 0,
   },
   nowLineBarVertical: {
     width: 2,
@@ -3377,6 +3507,7 @@ const styles = StyleSheet.create({
   },
   gridEventBlock: {
     position: 'absolute',
+    zIndex: 12,
     left: 3,
     right: 3,
     marginTop: 2,
@@ -3532,8 +3663,8 @@ const styles = StyleSheet.create({
   },
   footer: {
     paddingHorizontal: theme.layout.contentHorizontal,
-    paddingTop: theme.spacing.sm,
-    paddingBottom: theme.spacing.sm,
+    paddingTop: screenChrome.FOOTER_PADDING_TOP,
+    paddingBottom: screenChrome.FOOTER_PADDING_BOTTOM,
     borderTopWidth: StyleSheet.hairlineWidth,
     alignSelf: 'center',
     width: '100%',
@@ -3541,12 +3672,12 @@ const styles = StyleSheet.create({
   },
   footerActions: {
     flexDirection: 'row',
-    gap: 10,
+    gap: screenChrome.FOOTER_BUTTON_GAP,
   },
   footerBtn: {
     flex: 1,
   },
-  privacy: { textAlign: 'center', marginTop: 12 },
+  privacy: { textAlign: 'center', marginTop: screenChrome.FOOTER_NOTE_MARGIN_TOP },
   mForm: {
     gap: 16,
     paddingBottom: 8,

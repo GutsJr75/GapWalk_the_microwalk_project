@@ -10,6 +10,7 @@ import { ScreenHeader } from '../components/ScreenHeader';
 import { TwoActionBar } from '../components/TwoActionBar';
 import { AppIcon } from '../components/AppIcon';
 import { theme } from '../theme';
+import { screenChrome } from '../theme/screenChrome';
 import { useThemePalette } from '../theme/palette';
 import { useAppStore } from '../store';
 import { scheduleSourceRepo } from '../lib/repositories/scheduleSourceRepo';
@@ -17,9 +18,8 @@ import { scheduleSourceRepo } from '../lib/repositories/scheduleSourceRepo';
 type Props = NativeStackScreenProps<RootStackParamList, 'ScheduleOverview'>;
 
 export const ScheduleOverviewScreen: React.FC<Props> = ({ navigation }) => {
-  const { scheduleSource, setScheduleSource, themeMode } = useAppStore();
+  const { scheduleSource, setScheduleSource } = useAppStore();
   const palette = useThemePalette();
-  const isDark = themeMode === 'dark';
   const mintTextOnTint = palette.accentOnTint;
 
   useFocusEffect(
@@ -78,6 +78,8 @@ export const ScheduleOverviewScreen: React.FC<Props> = ({ navigation }) => {
         <ScreenHeader
           title="Manage your schedule"
           subtitle="Change your schedule source or update your current schedule without repeating onboarding."
+          onBack={() => navigation.navigate('Dashboard', { openMenu: true })}
+          backTestID="schedule-overview-back"
         />
 
         <Card elevated style={styles.card}>
@@ -137,8 +139,10 @@ export const ScheduleOverviewScreen: React.FC<Props> = ({ navigation }) => {
           </Text>
         </Card>
 
+      </View>
+
+      <View style={styles.footer}>
         <TwoActionBar
-          style={styles.actions}
           secondaryAction={{
             title: 'Change source',
             onPress: openSourceSetup,
@@ -160,7 +164,7 @@ const styles = StyleSheet.create({
   content: {
     flex: 1,
     paddingHorizontal: theme.layout.contentHorizontal,
-    paddingTop: theme.spacing.lg,
+    paddingTop: screenChrome.TITLE_CONTENT_TOP_PADDING,
     alignSelf: 'center',
     width: '100%',
     maxWidth: theme.layout.contentMaxWidth,
@@ -195,5 +199,12 @@ const styles = StyleSheet.create({
   guideItemTitle: { fontWeight: theme.fontWeight.semibold, marginBottom: 2 },
   guideItemDesc: { lineHeight: 18 },
   guideNote: { marginTop: 12, fontStyle: 'italic' },
-  actions: { marginTop: 12 },
+  footer: {
+    paddingHorizontal: theme.layout.contentHorizontal,
+    paddingTop: screenChrome.FOOTER_PADDING_TOP,
+    paddingBottom: screenChrome.FOOTER_PADDING_BOTTOM,
+    alignSelf: 'center',
+    width: '100%',
+    maxWidth: theme.layout.contentMaxWidth,
+  },
 });

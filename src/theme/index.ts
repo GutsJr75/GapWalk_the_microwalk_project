@@ -18,7 +18,7 @@ export const theme = {
     black: '#000000',
     error: '#ef4444',
     warning: '#f59e0b',
-    danger: '#b91c1c',
+    danger: '#ef4444',
   },
 
   spacing: {

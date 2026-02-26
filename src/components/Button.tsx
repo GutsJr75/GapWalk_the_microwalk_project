@@ -33,6 +33,7 @@ export const Button: React.FC<ButtonProps> = ({
   const isDark = themeMode === 'dark';
   const palette = useThemePalette();
   const isPrimaryLike = variant === 'primary' || variant === 'danger';
+  const showPressGlow = isPrimaryLike;
   const labelColor = disabled
     ? palette.textMuted
     : variant === 'primary'
@@ -67,7 +68,7 @@ export const Button: React.FC<ButtonProps> = ({
         variant === 'danger' && styles.dangerButton,
         disabled && styles.disabledButton,
         full && styles.fullWidth,
-        (pressed || isTapActive) && !disabled && !loading && {
+        showPressGlow && (pressed || isTapActive) && !disabled && !loading && {
           shadowColor: glowColor,
           shadowOffset: { width: 0, height: 0 },
           shadowOpacity: Platform.OS === 'ios' ? 0.3 : 0.18,

@@ -45,6 +45,14 @@ interface AppState {
   hasRequestedPermissions: boolean;
   setHasRequestedPermissions: (value: boolean) => void;
   
+  // Auth state
+  isAuthenticated: boolean;
+  setIsAuthenticated: (value: boolean) => void;
+  authUser: { email?: string; name?: string; sub?: string } | null;
+  setAuthUser: (user: { email?: string; name?: string; sub?: string } | null) => void;
+  rememberMe: boolean;
+  setRememberMe: (value: boolean) => void;
+
   // UI settings
   themeMode: 'dark' | 'light';
   setThemeMode: (mode: 'dark' | 'light') => void;
@@ -95,6 +103,14 @@ export const useAppStore = create<AppState>((set) => ({
   hasRequestedPermissions: false,
   setHasRequestedPermissions: (value) => set({ hasRequestedPermissions: value }),
   
+  // Auth
+  isAuthenticated: false,
+  setIsAuthenticated: (value) => set({ isAuthenticated: value }),
+  authUser: null,
+  setAuthUser: (user) => set({ authUser: user }),
+  rememberMe: false,
+  setRememberMe: (value) => set({ rememberMe: value }),
+
   // UI settings
   themeMode: 'dark',
   setThemeMode: (mode) => set({ themeMode: mode }),
