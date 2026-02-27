@@ -4,6 +4,9 @@ import { Platform } from 'react-native';
 const AUTH_TOKEN_KEY = 'gapwalk_auth_token';
 const AUTH_USER_KEY = 'gapwalk_auth_user';
 const REMEMBER_ME_KEY = 'gapwalk_remember_me';
+const PROFILE_DISPLAY_NAME_KEY = 'gapwalk_profile_display_name';
+const SETTINGS_THEME_KEY = 'gapwalk_settings_theme';
+const SETTINGS_LANGUAGE_KEY = 'gapwalk_settings_language';
 
 export interface StoredAuthUser {
   email?: string;
@@ -47,6 +50,44 @@ export const authStorage = {
     if (Platform.OS === 'web') return false;
     const val = await SecureStore.getItemAsync(REMEMBER_ME_KEY);
     return val === '1';
+  },
+
+  async saveProfileDisplayName(name: string): Promise<void> {
+    if (Platform.OS === 'web') return;
+    const normalized = name.trim();
+    if (!normalized) return;
+    await SecureStore.setItemAsync(PROFILE_DISPLAY_NAME_KEY, normalized);
+  },
+
+  async getProfileDisplayName(): Promise<string | null> {
+    if (Platform.OS === 'web') return null;
+    const stored = await SecureStore.getItemAsync(PROFILE_DISPLAY_NAME_KEY);
+    const normalized = stored?.trim();
+    return normalized ? normalized : null;
+  },
+
+  async saveThemeMode(mode: string): Promise<void> {
+    if (Platform.OS === 'web') return;
+    await SecureStore.setItemAsync(SETTINGS_THEME_KEY, mode);
+  },
+
+  async getThemeMode(): Promise<'dark' | 'light' | null> {
+    if (Platform.OS === 'web') return null;
+    const val = await SecureStore.getItemAsync(SETTINGS_THEME_KEY);
+    if (val === 'dark' || val === 'light') return val;
+    return null;
+  },
+
+  async saveLanguage(lang: string): Promise<void> {
+    if (Platform.OS === 'web') return;
+    await SecureStore.setItemAsync(SETTINGS_LANGUAGE_KEY, lang);
+  },
+
+  async getLanguage(): Promise<'en' | 'es' | null> {
+    if (Platform.OS === 'web') return null;
+    const val = await SecureStore.getItemAsync(SETTINGS_LANGUAGE_KEY);
+    if (val === 'en' || val === 'es') return val;
+    return null;
   },
 
   async clearAll(): Promise<void> {

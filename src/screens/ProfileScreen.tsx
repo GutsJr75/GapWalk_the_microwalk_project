@@ -1,5 +1,6 @@
-import React from 'react';
-import { View, StyleSheet, Alert, Platform } from 'react-native';
+import React, { useCallback, useMemo, useState } from 'react';
+import { View, StyleSheet, Alert, Platform, Pressable, TextInput } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { Ionicons } from '@expo/vector-icons';
 import { RootStackParamList } from '../../App';
@@ -13,20 +14,150 @@ import { screenChrome } from '../theme/screenChrome';
 import { useThemePalette } from '../theme/palette';
 import { useAppStore } from '../store';
 import { authStorage } from '../lib/authStorage';
+import { sessionsRepo } from '../lib/repositories/sessionsRepo';
+import { achievementsRepo, ACHIEVEMENTS, getAchievementDef, type UnlockedAchievement } from '../lib/repositories/achievementsRepo';
+import { calculateStreak, calculateWeeklyStats } from '../lib/statsUtils';
+import { toUserFriendlyError } from '../lib/errorMessages';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Profile'>;
+
+interface ProgressSnapshot {
+  currentStreak: number;
+  totalWalks: number;
+  totalMinutes: number;
+  activeDaysThisWeek: number;
+}
+
+const EMPTY_PROGRESS: ProgressSnapshot = {
+  currentStreak: 0,
+  totalWalks: 0,
+  totalMinutes: 0,
+  activeDaysThisWeek: 0,
+};
+
+const normalizeDisplayName = (value: string): string => value.trim().replace(/\s+/g, ' ');
+
+const validateDisplayName = (value: string): string | null => {
+  if (!value) return 'Name must be 2 to 32 characters.';
+  if (value.length < 2 || value.length > 32) return 'Name must be 2 to 32 characters.';
+  return null;
+};
 
 export const ProfileScreen: React.FC<Props> = ({ navigation }) => {
   const {
     themeMode,
     authUser,
+    profileDisplayName,
+    setProfileDisplayName,
     isAuthenticated,
     setIsAuthenticated,
     setAuthUser,
-    hasCompletedOnboarding,
-    hasSetPreferences,
   } = useAppStore();
   const palette = useThemePalette();
+  const [progress, setProgress] = useState<ProgressSnapshot>(EMPTY_PROGRESS);
+  const [unlockedAchievements, setUnlockedAchievements] = useState<UnlockedAchievement[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [isEditingName, setIsEditingName] = useState(false);
+  const [draftName, setDraftName] = useState('');
+  const [nameError, setNameError] = useState<string | null>(null);
+  const [savingName, setSavingName] = useState(false);
+
+  const resolvedDisplayName = useMemo(() => {
+    const localName = profileDisplayName?.trim();
+    if (localName) return localName;
+    const authName = authUser?.name?.trim();
+    if (authName) return authName;
+    return 'GapWalker';
+  }, [authUser?.name, profileDisplayName]);
+
+  const normalizedDraftName = normalizeDisplayName(draftName);
+  const draftNameValidationError = validateDisplayName(normalizedDraftName);
+  const hasNameChanged = normalizedDraftName !== resolvedDisplayName;
+  const canSaveName = isEditingName && !savingName && !draftNameValidationError && hasNameChanged;
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setLoadError(null);
+    try {
+      const [sessions, unlocked] = await Promise.all([
+        sessionsRepo.getAll(),
+        achievementsRepo.getAll(),
+      ]);
+
+      const streak = calculateStreak(sessions);
+      const weeklyStats = calculateWeeklyStats(sessions);
+      const totalMinutes = sessions.reduce((sum, session) => sum + Math.floor(session.activeSeconds / 60), 0);
+
+      setProgress({
+        currentStreak: streak.currentStreak,
+        totalWalks: sessions.length,
+        totalMinutes,
+        activeDaysThisWeek: weeklyStats.daysActive,
+      });
+      setUnlockedAchievements(unlocked);
+    } catch (error) {
+      setProgress(EMPTY_PROGRESS);
+      setUnlockedAchievements([]);
+      setLoadError(toUserFriendlyError(error));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (!isEditingName) {
+        setDraftName(resolvedDisplayName);
+        setNameError(null);
+      }
+      void load();
+    }, [isEditingName, load, resolvedDisplayName]),
+  );
+
+  const handleBack = () => {
+    if (navigation.canGoBack()) {
+      navigation.goBack();
+      return;
+    }
+    navigation.navigate('Dashboard');
+  };
+
+  const handleStartEditName = () => {
+    setDraftName(resolvedDisplayName);
+    setNameError(null);
+    setIsEditingName(true);
+  };
+
+  const handleCancelEditName = () => {
+    setDraftName(resolvedDisplayName);
+    setNameError(null);
+    setIsEditingName(false);
+  };
+
+  const handleSaveName = async () => {
+    const validationError = validateDisplayName(normalizedDraftName);
+    if (validationError) {
+      setNameError(validationError);
+      return;
+    }
+    if (!hasNameChanged) {
+      setIsEditingName(false);
+      return;
+    }
+
+    try {
+      setSavingName(true);
+      await authStorage.saveProfileDisplayName(normalizedDraftName);
+      setProfileDisplayName(normalizedDraftName);
+      setIsEditingName(false);
+      setNameError(null);
+    } catch (error) {
+      setNameError(toUserFriendlyError(error));
+    } finally {
+      setSavingName(false);
+    }
+  };
 
   const handleLogout = () => {
     const doLogout = async () => {
@@ -48,97 +179,213 @@ export const ProfileScreen: React.FC<Props> = ({ navigation }) => {
     ]);
   };
 
+  const latestUnlocked = unlockedAchievements
+    .map((item) => ({ ...item, def: getAchievementDef(item.id) }))
+    .filter((item) => !!item.def)
+    .slice(0, 3);
+
   return (
     <Container scrollable>
       <View style={styles.content}>
         <ScreenHeader
           title="Profile"
-          subtitle="Your account details and progress."
-          onBack={() => navigation.navigate('Dashboard')}
+          subtitle="Your progress and profile details in one place."
+          onBack={handleBack}
           themeMode={themeMode}
         />
 
         <Card elevated style={styles.card}>
-          <View style={styles.avatarRow}>
-            <View style={[styles.avatar, { backgroundColor: palette.accentMuted }]}>
-              <Ionicons name="person" size={28} color={palette.accentPrimary} />
+          <View style={styles.heroRow}>
+            <View style={[styles.heroAvatar, { backgroundColor: palette.accentMuted }]}>
+              <Ionicons name="person" size={34} color={palette.accentPrimary} />
             </View>
-            <View style={styles.userInfo}>
-              <Text variant="body" style={styles.userName}>
-                {authUser?.name || 'GapWalker'}
-              </Text>
-              <Text variant="bodySmall" color={palette.textMuted}>
-                {authUser?.email || 'No email linked'}
-              </Text>
+            <View style={styles.heroInfo}>
+              {!isEditingName ? (
+                <>
+                  <Text variant="title" style={styles.heroName}>{resolvedDisplayName}</Text>
+                  <Text variant="bodySmall" color={palette.textMuted}>
+                    {authUser?.email || 'No email linked'}
+                  </Text>
+                </>
+              ) : (
+                <>
+                  <TextInput
+                    value={draftName}
+                    onChangeText={(value) => {
+                      setDraftName(value);
+                      if (nameError) setNameError(null);
+                    }}
+                    maxLength={32}
+                    autoCapitalize="words"
+                    autoCorrect={false}
+                    editable={!savingName}
+                    style={[
+                      styles.nameInput,
+                      {
+                        color: palette.textPrimary,
+                        backgroundColor: palette.inputBg,
+                        borderColor: palette.borderStrong,
+                      },
+                    ]}
+                  />
+                  <Text variant="bodySmall" color={palette.textMuted}>
+                    {authUser?.email || 'No email linked'}
+                  </Text>
+                </>
+              )}
             </View>
           </View>
+
+          {isEditingName ? (
+            <View style={styles.nameEditRow}>
+              <Pressable
+                style={({ pressed }) => [
+                  styles.nameActionBtn,
+                  {
+                    backgroundColor: palette.bgSurface,
+                    borderColor: palette.borderStrong,
+                  },
+                  pressed && styles.nameActionBtnPressed,
+                ]}
+                onPress={handleCancelEditName}
+                disabled={savingName}
+                testID="profile-name-cancel"
+              >
+                <Text variant="bodySmall" style={{ color: palette.textPrimary }}>Cancel</Text>
+              </Pressable>
+              <Pressable
+                style={({ pressed }) => [
+                  styles.nameActionBtn,
+                  {
+                    backgroundColor: canSaveName ? theme.colors.accentPrimary : palette.inputBg,
+                    borderColor: canSaveName ? theme.colors.accentPrimary : palette.borderStrong,
+                  },
+                  pressed && canSaveName && styles.nameActionBtnPressed,
+                ]}
+                onPress={() => { void handleSaveName(); }}
+                disabled={!canSaveName}
+                testID="profile-name-save"
+              >
+                <Text
+                  variant="bodySmall"
+                  style={{ color: canSaveName ? theme.colors.bgApp : palette.textMuted }}
+                >
+                  {savingName ? 'Saving...' : 'Save'}
+                </Text>
+              </Pressable>
+            </View>
+          ) : (
+            <Pressable
+              style={({ pressed }) => [
+                styles.updateNameBtn,
+                {
+                  borderColor: palette.borderStrong,
+                  backgroundColor: palette.bgSurface,
+                },
+                pressed && styles.nameActionBtnPressed,
+              ]}
+              onPress={handleStartEditName}
+              testID="profile-name-update"
+            >
+              <Text variant="bodySmall" style={{ color: palette.textPrimary }}>Change Username</Text>
+            </Pressable>
+          )}
+
+          {(nameError || (isEditingName && draftNameValidationError)) ? (
+            <Text variant="bodySmall" style={styles.nameError}>
+              {nameError || draftNameValidationError}
+            </Text>
+          ) : null}
         </Card>
 
-        <Card elevated style={styles.card}>
-          <View style={styles.cardLabelRow}>
-            <Ionicons name="shield-checkmark-outline" size={14} color={palette.accentPrimary} />
-            <Text variant="bodySmall" style={[styles.label, { color: palette.textMuted }]}>
-              Account Status
-            </Text>
-          </View>
-          <View style={styles.statusRow}>
-            <Text variant="bodySmall">Authentication</Text>
-            <View
-              style={[
-                styles.statusBadge,
-                { backgroundColor: isAuthenticated ? palette.accentMuted : palette.inputBg },
+        {loading ? (
+          <Card elevated style={styles.card}>
+            <Text variant="body">Loading profile...</Text>
+          </Card>
+        ) : loadError ? (
+          <Card elevated style={styles.card}>
+            <Text variant="body" style={styles.errorTitle}>Could not load profile</Text>
+            <Text variant="bodySmall" color={palette.textMuted}>{loadError}</Text>
+            <Pressable
+              style={({ pressed }) => [
+                styles.retryBtn,
+                {
+                  borderColor: palette.borderStrong,
+                  backgroundColor: palette.bgSurface,
+                },
+                pressed && styles.nameActionBtnPressed,
               ]}
+              onPress={() => { void load(); }}
+              testID="profile-retry"
             >
-              <Text
-                variant="bodySmall"
-                style={{
-                  color: isAuthenticated ? palette.accentPrimary : palette.textMuted,
-                  fontWeight: theme.fontWeight.medium,
-                }}
+              <Text variant="bodySmall">Try again</Text>
+            </Pressable>
+          </Card>
+        ) : (
+          <>
+            <Card elevated style={styles.card}>
+              <Text variant="body" style={styles.sectionTitle}>Progress Snapshot</Text>
+              <View style={styles.statsGrid}>
+                <View style={styles.statItem}>
+                  <Text variant="title" style={[styles.statValue, { color: palette.accentPrimary }]}>{progress.currentStreak}</Text>
+                  <Text variant="bodySmall" color={palette.textMuted}>Current Streak</Text>
+                </View>
+                <View style={styles.statItem}>
+                  <Text variant="title" style={[styles.statValue, { color: palette.accentPrimary }]}>{progress.totalWalks}</Text>
+                  <Text variant="bodySmall" color={palette.textMuted}>Total Walks</Text>
+                </View>
+                <View style={styles.statItem}>
+                  <Text variant="title" style={[styles.statValue, { color: palette.accentPrimary }]}>{progress.totalMinutes}</Text>
+                  <Text variant="bodySmall" color={palette.textMuted}>Total Minutes</Text>
+                </View>
+                <View style={styles.statItem}>
+                  <Text variant="title" style={[styles.statValue, { color: palette.accentPrimary }]}>
+                    {progress.activeDaysThisWeek}
+                    <Text style={styles.statDenominator}>/7</Text>
+                  </Text>
+                  <Text variant="bodySmall" color={palette.textMuted}>Active Days This Week</Text>
+                </View>
+              </View>
+            </Card>
+
+            <Card elevated style={styles.card}>
+              <View style={styles.sectionHeadRow}>
+                <Text variant="body" style={styles.sectionTitle}>Achievements</Text>
+                <Text variant="bodySmall" color={palette.textMuted}>
+                  {unlockedAchievements.length}/{ACHIEVEMENTS.length}
+                </Text>
+              </View>
+
+              {latestUnlocked.length === 0 ? (
+                <Text variant="bodySmall" color={palette.textMuted}>No achievements unlocked yet.</Text>
+              ) : (
+                latestUnlocked.map((item) => (
+                  <View key={item.id} style={styles.achievementRow}>
+                    <View style={[styles.achievementIconWrap, { backgroundColor: palette.accentMuted }]}>
+                      <Ionicons name={item.def!.icon as any} size={16} color={item.def!.color} />
+                    </View>
+                    <Text variant="bodySmall" style={styles.achievementTitle}>{item.def!.title}</Text>
+                  </View>
+                ))
+              )}
+
+              <Pressable
+                style={({ pressed }) => [
+                  styles.viewAllBtn,
+                  {
+                    borderColor: palette.borderStrong,
+                    backgroundColor: palette.bgSurface,
+                  },
+                  pressed && styles.nameActionBtnPressed,
+                ]}
+                onPress={() => navigation.navigate('Achievements', { source: 'profile' })}
+                testID="profile-view-all-achievements"
               >
-                {isAuthenticated ? 'Signed in' : 'Guest'}
-              </Text>
-            </View>
-          </View>
-          <View style={styles.statusRow}>
-            <Text variant="bodySmall">Onboarding</Text>
-            <View
-              style={[
-                styles.statusBadge,
-                { backgroundColor: hasCompletedOnboarding ? palette.accentMuted : palette.inputBg },
-              ]}
-            >
-              <Text
-                variant="bodySmall"
-                style={{
-                  color: hasCompletedOnboarding ? palette.accentPrimary : palette.textMuted,
-                  fontWeight: theme.fontWeight.medium,
-                }}
-              >
-                {hasCompletedOnboarding ? 'Complete' : 'In progress'}
-              </Text>
-            </View>
-          </View>
-          <View style={styles.statusRow}>
-            <Text variant="bodySmall">Preferences</Text>
-            <View
-              style={[
-                styles.statusBadge,
-                { backgroundColor: hasSetPreferences ? palette.accentMuted : palette.inputBg },
-              ]}
-            >
-              <Text
-                variant="bodySmall"
-                style={{
-                  color: hasSetPreferences ? palette.accentPrimary : palette.textMuted,
-                  fontWeight: theme.fontWeight.medium,
-                }}
-              >
-                {hasSetPreferences ? 'Configured' : 'Not set'}
-              </Text>
-            </View>
-          </View>
-        </Card>
+                <Text variant="bodySmall">View all</Text>
+              </Pressable>
+            </Card>
+          </>
+        )}
       </View>
 
       {isAuthenticated ? (
@@ -166,33 +413,130 @@ const styles = StyleSheet.create({
     width: '100%',
     maxWidth: theme.layout.contentMaxWidth,
   },
-  card: { marginBottom: 20 },
-  avatarRow: {
+  card: {
+    marginBottom: 16,
+  },
+  heroRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 14,
   },
-  avatar: {
-    width: 52,
-    height: 52,
-    borderRadius: 26,
+  heroAvatar: {
+    width: 66,
+    height: 66,
+    borderRadius: 33,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  userInfo: { flex: 1 },
-  userName: { fontWeight: theme.fontWeight.semibold, marginBottom: 2 },
-  cardLabelRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 },
-  label: { marginBottom: 0 },
-  statusRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 8,
+  heroInfo: {
+    flex: 1,
   },
-  statusBadge: {
+  heroName: {
+    fontWeight: theme.fontWeight.semibold,
+    marginBottom: 4,
+  },
+  nameInput: {
+    borderWidth: 1,
+    borderRadius: theme.borderRadius.md,
+    minHeight: 40,
     paddingHorizontal: 10,
-    paddingVertical: 3,
+    paddingVertical: Platform.OS === 'android' ? 6 : 8,
+    fontSize: theme.fontSize.md,
+    marginBottom: 6,
+  },
+  updateNameBtn: {
+    alignSelf: 'flex-start',
+    borderWidth: 1,
     borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    marginTop: 12,
+  },
+  nameEditRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 12,
+  },
+  nameActionBtn: {
+    borderWidth: 1,
+    borderRadius: theme.borderRadius.md,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    minWidth: 90,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  nameActionBtnPressed: {
+    transform: [{ scale: 0.98 }],
+    opacity: 0.9,
+  },
+  nameError: {
+    color: theme.colors.error,
+    marginTop: 8,
+  },
+  errorTitle: {
+    fontWeight: theme.fontWeight.semibold,
+    marginBottom: 6,
+  },
+  retryBtn: {
+    borderWidth: 1,
+    borderRadius: theme.borderRadius.md,
+    alignSelf: 'flex-start',
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    marginTop: 10,
+  },
+  sectionTitle: {
+    fontWeight: theme.fontWeight.semibold,
+    marginBottom: 12,
+  },
+  statsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    rowGap: 14,
+  },
+  statItem: {
+    width: '50%',
+    paddingRight: 8,
+  },
+  statValue: {
+    fontWeight: theme.fontWeight.bold,
+    marginBottom: 3,
+  },
+  statDenominator: {
+    fontSize: theme.fontSize.sm,
+    fontWeight: theme.fontWeight.semibold,
+    lineHeight: 18,
+  },
+  sectionHeadRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 10,
+  },
+  achievementRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+    gap: 10,
+  },
+  achievementIconWrap: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  achievementTitle: {
+    fontWeight: theme.fontWeight.medium,
+  },
+  viewAllBtn: {
+    borderWidth: 1,
+    borderRadius: theme.borderRadius.md,
+    alignSelf: 'flex-start',
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    marginTop: 6,
   },
   footer: {
     paddingHorizontal: theme.layout.contentHorizontal,

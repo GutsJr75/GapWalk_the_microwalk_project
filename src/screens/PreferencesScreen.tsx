@@ -127,6 +127,25 @@ const formatTime12 = (value: string): string => {
   return `${hour12}:${String(minute).padStart(2, '0')} ${period}`;
 };
 
+const buildPreferencesSignature = (prefs: Preferences): string => JSON.stringify({
+  dailyTargetMinutes: prefs.dailyTargetMinutes,
+  bufferMinutes: prefs.bufferMinutes,
+  notificationCountPerDay: prefs.notificationCountPerDay,
+  notificationMinGapMinutes: prefs.notificationMinGapMinutes,
+  whenToNotify: prefs.whenToNotify,
+  notifyDelayMinutes: prefs.notifyDelayMinutes,
+  quietHoursStart: prefs.quietHoursStart,
+  quietHoursEnd: prefs.quietHoursEnd,
+  strictnessMode: prefs.strictnessMode,
+  stepGoalEnabled: prefs.stepGoalEnabled,
+  stepGoal: prefs.stepGoal,
+  preferredWalkingPeriodsEnabled: prefs.preferredWalkingPeriodsEnabled,
+  preferredWalkingPeriods: (prefs.preferredWalkingPeriods ?? []).map((period) => ({
+    start: period.start,
+    end: period.end,
+  })),
+});
+
 const MAX_PREFERRED_PERIODS = 5;
 const DEFAULT_PREFERRED_PERIOD: PreferredWalkingPeriod = { start: '09:00', end: '11:00' };
 
@@ -288,6 +307,9 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
   const manageMode = !!route.params?.manageMode;
   const [prefs, setPrefs] = useState<Preferences>(DEFAULT_PREFERENCES);
   const [hasChanges, setHasChanges] = useState(false);
+  const [savedPrefsSnapshot, setSavedPrefsSnapshot] = useState<Preferences>(DEFAULT_PREFERENCES);
+  const [initialPrefsSignature, setInitialPrefsSignature] = useState<string>(() => buildPreferencesSignature(DEFAULT_PREFERENCES));
+  const [manageScreenMode, setManageScreenMode] = useState<'view' | 'edit'>(manageMode ? 'view' : 'edit');
   // Onboarding: user must open each section at least once before Continue (can still use recommended).
   const [hasSeenWalkingGoals, setHasSeenWalkingGoals] = useState(false);
   const [hasSeenNotifications, setHasSeenNotifications] = useState(false);
@@ -308,6 +330,7 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
     toPreferredForm(DEFAULT_PREFERRED_PERIOD),
   ]);
   const allowNextBeforeRemoveRef = useRef(false);
+  const isManageViewOnly = manageMode && manageScreenMode === 'view';
   const palette = getThemePalette(themeMode);
   const isDark = themeMode === 'dark';
   const themedInput = {
@@ -355,6 +378,10 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
     };
   }, [activeInfo, viewportHeight, viewportWidth]);
 
+  useEffect(() => {
+    setManageScreenMode(manageMode ? 'view' : 'edit');
+  }, [manageMode]);
+
   useFocusEffect(
     useCallback(() => {
       let active = true;
@@ -364,11 +391,12 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
           if (!active) return;
           const nextPrefs = fromDb ?? storedPreferences ?? DEFAULT_PREFERENCES;
           setPrefs(nextPrefs);
+          setSavedPrefsSnapshot(nextPrefs);
+          setInitialPrefsSignature(buildPreferencesSignature(nextPrefs));
           const periodSeed = nextPrefs.preferredWalkingPeriods.length > 0
             ? nextPrefs.preferredWalkingPeriods
             : [DEFAULT_PREFERRED_PERIOD];
           setPreferredForm(periodSeed.slice(0, MAX_PREFERRED_PERIODS).map((p) => toPreferredForm(p)));
-          setHasChanges(false);
         } catch (e) { console.error('Failed to load preferences:', e); }
       };
       load();
@@ -384,15 +412,19 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
     return unsubscribeBlur;
   }, [closeInfoOverlay, navigation]);
 
+  useEffect(() => {
+    setHasChanges(buildPreferencesSignature(prefs) !== initialPrefsSignature);
+  }, [initialPrefsSignature, prefs]);
+
   const update = <K extends keyof Preferences>(key: K, value: Preferences[K]) => {
+    if (isManageViewOnly) return;
     setPrefs(prev => ({ ...prev, [key]: value }));
-    setHasChanges(true);
   };
 
   /** Helper: update multiple prefs at once */
   const updateMany = (changes: Partial<Preferences>) => {
+    if (isManageViewOnly) return;
     setPrefs(prev => ({ ...prev, ...changes }));
-    setHasChanges(true);
   };
 
   const runAllowedNavigation = useCallback((action: () => void) => {
@@ -449,6 +481,7 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
 
   /* â”€â”€ quiet hours â”€â”€ */
   const openQuietModal = () => {
+    if (isManageViewOnly) return;
     closeInfoOverlay();
     const start = to12HourParts(prefs.quietHoursStart);
     const end = to12HourParts(prefs.quietHoursEnd);
@@ -460,6 +493,7 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
   const quietEnd24 = to24Hour(quietForm.endHourRaw, quietForm.endMinuteRaw, quietForm.endPeriod);
   const canSaveQuiet = !!quietStart24 && !!quietEnd24;
   const applyQuietHours = () => {
+    if (isManageViewOnly) return;
     if (!quietStart24 || !quietEnd24) { setQuietError('Enter valid start and end times.'); return; }
     update('quietHoursStart', quietStart24);
     update('quietHoursEnd', quietEnd24);
@@ -468,6 +502,7 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
   };
 
   const openPreferredModal = () => {
+    if (isManageViewOnly) return;
     closeInfoOverlay();
     const seed = prefs.preferredWalkingPeriods.length > 0
       ? prefs.preferredWalkingPeriods
@@ -645,9 +680,11 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
       try {
         await preferencesRepo.save(normalizedPrefs);
         setPreferences(normalizedPrefs);
+        setPrefs(normalizedPrefs);
+        setSavedPrefsSnapshot(normalizedPrefs);
+        setInitialPrefsSignature(buildPreferencesSignature(normalizedPrefs));
         setHasSetPreferences(true);
         setHasCompletedOnboarding(true);
-        setHasChanges(false);
 
         // Request ALL permissions (location, notifications, activity recognition)
         try {
@@ -674,7 +711,18 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
           preferredWalkingPeriodsCount: normalizedPrefs.preferredWalkingPeriods.length,
         });
         setSavingPrefs(false);
-        runAllowedNavigation(() => navigation.navigate('Dashboard'));
+        if (manageMode) {
+          setManageScreenMode('view');
+          if (Platform.OS === 'web' && typeof (globalThis as any).alert === 'function') {
+            (globalThis as any).alert('Preferences saved.\n\nYour preference changes were updated.');
+          } else {
+            Alert.alert('Preferences saved', 'Your preference changes were updated.');
+          }
+          return;
+        }
+        runAllowedNavigation(() => {
+          navigation.navigate('Dashboard');
+        });
         return;
       } catch (error) {
         lastError = error;
@@ -725,12 +773,44 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
     );
   };
 
-  const handleManageCancel = () => {
+  const handleManageBackToOptions = () => {
     confirmDiscardPreferenceChanges(
-      () => runAllowedNavigation(() => navigation.navigate('Dashboard')),
+      () => runAllowedNavigation(() => {
+        if (navigation.canGoBack()) {
+          navigation.goBack();
+          return;
+        }
+        navigation.navigate('Dashboard');
+      }),
       {
-        title: 'Cancel preference update?',
-        message: 'Your unsaved preference changes will be lost. Do you want to leave this screen?',
+        title: 'Leave preferences?',
+        message: 'Your unsaved preference changes will be lost. Do you want to go back?',
+      }
+    );
+  };
+
+  const handleManageStartEdit = () => {
+    setManageScreenMode('edit');
+  };
+
+  const handleManageCancelEdit = () => {
+    if (!hasChanges) {
+      setManageScreenMode('view');
+      return;
+    }
+    confirmDiscardPreferenceChanges(
+      () => {
+        setPrefs(savedPrefsSnapshot);
+        setInitialPrefsSignature(buildPreferencesSignature(savedPrefsSnapshot));
+        setShowQuietModal(false);
+        setShowPreferredModal(false);
+        setQuietError(null);
+        setPreferredError(null);
+        setManageScreenMode('view');
+      },
+      {
+        title: 'Discard preference changes?',
+        message: 'This will discard your unsaved preference changes.',
       }
     );
   };
@@ -749,11 +829,11 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
   };
 
   const handleManageSave = () => {
-    if (savingPrefs || !canContinue) return;
+    if (savingPrefs || !canContinue || !hasChanges) return;
     confirmAndSavePreferences(prefs, {
-      title: 'Update preferences?',
+      title: 'Save preference changes?',
       message: 'Do you want to update these preference changes?',
-      actionLabel: 'Yes, Update',
+      actionLabel: 'Yes, Save',
     });
   };
 
@@ -792,7 +872,12 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
           <View style={styles.content}>
             <ScreenHeader
               title="Preferences"
-              subtitle={manageMode ? 'Review your choices and save when ready.' : 'Choose what GapWalk should optimize for you.'}
+              subtitle={manageMode
+                ? (isManageViewOnly
+                  ? 'View your preferences. Tap Update to edit.'
+                  : 'Change preferences and tap Save when ready.')
+                : 'Choose what GapWalk should optimize for you.'}
+              onBack={manageMode ? handleManageBackToOptions : undefined}
             />
 
             {!manageMode && !hasSeenAllSections && (
@@ -824,6 +909,7 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
                     style={[styles.input, themedInput]}
                     value={String(prefs.dailyTargetMinutes)}
                     onChangeText={(t) => update('dailyTargetMinutes', parseInt(t, 10) || 0)}
+                    editable={!isManageViewOnly}
                     keyboardType="number-pad"
                     placeholderTextColor={palette.textMuted}
                   />
@@ -847,6 +933,7 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
                     style={[styles.input, themedInput]}
                     value={String(prefs.bufferMinutes)}
                     onChangeText={(t) => update('bufferMinutes', parseInt(t, 10) || 0)}
+                    editable={!isManageViewOnly}
                     keyboardType="number-pad"
                     placeholderTextColor={palette.textMuted}
                   />
@@ -870,6 +957,7 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
                     style={[styles.input, themedInput]}
                     value={String(prefs.notificationCountPerDay)}
                     onChangeText={(t) => update('notificationCountPerDay', parseInt(t, 10) || 0)}
+                    editable={!isManageViewOnly}
                     keyboardType="number-pad"
                     placeholderTextColor={palette.textMuted}
                   />
@@ -928,6 +1016,7 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
                     style={[styles.input, themedInput]}
                     value={String(prefs.notificationMinGapMinutes)}
                     onChangeText={(t) => update('notificationMinGapMinutes', parseInt(t, 10) || 0)}
+                    editable={!isManageViewOnly}
                     keyboardType="number-pad"
                     placeholderTextColor={palette.textMuted}
                   />
@@ -1060,6 +1149,7 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
                         style={[styles.input, themedInput]}
                         value={String(prefs.stepGoal)}
                         onChangeText={(t) => update('stepGoal', Math.max(0, parseInt(t, 10) || 0))}
+                        editable={!isManageViewOnly}
                         keyboardType="number-pad"
                         placeholderTextColor={palette.textMuted}
                       />
@@ -1145,24 +1235,44 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
         <View style={styles.footer}>
           <View style={styles.btnRow}>
             {manageMode ? (
-              <>
-                <Button
-                  title="Cancel"
-                  onPress={handleManageCancel}
-                  variant="danger"
-                  style={styles.btnHalf}
-                  disabled={savingPrefs}
-                  testID="preferences-cancel"
-                />
-                <Button
-                  title="Update"
-                  onPress={handleManageSave}
-                  style={styles.btnHalf}
-                  loading={savingPrefs}
-                  disabled={!canContinue}
-                  testID="preferences-save"
-                />
-              </>
+              isManageViewOnly ? (
+                <>
+                  <Button
+                    title="Back"
+                    onPress={handleManageBackToOptions}
+                    variant="secondary"
+                    style={styles.btnHalf}
+                    disabled={savingPrefs}
+                    testID="preferences-back"
+                  />
+                  <Button
+                    title="Update"
+                    onPress={handleManageStartEdit}
+                    style={styles.btnHalf}
+                    disabled={savingPrefs}
+                    testID="preferences-edit"
+                  />
+                </>
+              ) : (
+                <>
+                  <Button
+                    title="Cancel"
+                    onPress={handleManageCancelEdit}
+                    variant="danger"
+                    style={styles.btnHalf}
+                    disabled={savingPrefs}
+                    testID="preferences-cancel"
+                  />
+                  <Button
+                    title="Save"
+                    onPress={handleManageSave}
+                    style={styles.btnHalf}
+                    loading={savingPrefs}
+                    disabled={!canContinue || !hasChanges}
+                    testID="preferences-save"
+                  />
+                </>
+              )
             ) : (
               <Button
                 title="Continue"

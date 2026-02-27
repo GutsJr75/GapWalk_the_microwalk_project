@@ -17,6 +17,47 @@ import { authStorage } from '../lib/authStorage';
 
 WebBrowser.maybeCompleteAuthSession();
 
+const BRAND_MARK_SOURCE = require('../../assets/icons/brand-mark.png');
+const BRAND_TILE_DARK = '#071a2e';
+const BRAND_TILE_LIGHT = '#edf1f7';
+const BRAND_MARK_DARK = '#2ee9a6';
+const BRAND_MARK_LIGHT = '#047857';
+
+const LogoTile: React.FC<{ size: number; isDark: boolean }> = ({ size, isDark }) => {
+  const markSize = Math.round(size * 0.44);
+  return (
+    <View
+      style={[
+        styles.logoTile,
+        {
+          width: size,
+          height: size,
+          borderRadius: Math.round(size * 0.21),
+          backgroundColor: isDark ? BRAND_TILE_DARK : BRAND_TILE_LIGHT,
+          borderColor: isDark ? 'rgba(46,233,166,0.24)' : 'rgba(15,23,42,0.14)',
+          shadowColor: isDark ? BRAND_MARK_DARK : '#0f172a',
+          shadowOpacity: isDark ? 0.24 : 0.14,
+          shadowRadius: isDark ? 12 : 8,
+          elevation: isDark ? 5 : 3,
+        },
+      ]}
+    >
+      <Image
+        source={BRAND_MARK_SOURCE}
+        style={[
+          styles.logoMark,
+          {
+            width: markSize,
+            height: markSize,
+            tintColor: isDark ? BRAND_MARK_DARK : BRAND_MARK_LIGHT,
+          },
+        ]}
+        resizeMode="contain"
+      />
+    </View>
+  );
+};
+
 interface Props extends NativeStackScreenProps<RootStackParamList, 'Intro'> {
   isAuthenticated?: boolean;
   onAuthenticated?: () => void;
@@ -40,8 +81,9 @@ export const IntroScreen: React.FC<Props> = ({
   isAuthenticated = false,
   onAuthenticated,
 }) => {
-  const { hasSetPreferences, hasCompletedOnboarding, setAuthUser } = useAppStore();
+  const { hasSetPreferences, hasCompletedOnboarding, setAuthUser, themeMode } = useAppStore();
   const palette = useThemePalette();
+  const isDark = themeMode === 'dark';
   const [showHowItWorks, setShowHowItWorks] = useState(false);
   const [authLoadingMode, setAuthLoadingMode] = useState<'login' | 'signup' | null>(null);
   const [rememberMe, setRememberMe] = useState(false);
@@ -337,7 +379,7 @@ export const IntroScreen: React.FC<Props> = ({
               ]}
             >
               <View style={styles.entryLogoRow}>
-                <Image source={require('../../assets/icon.png')} style={styles.entryLogoIcon} resizeMode="contain" />
+                <LogoTile size={85} isDark={isDark} />
               </View>
               <View style={styles.headingRow}>
                 <Text variant="heading" style={[styles.headingGap, { color: palette.textPrimary }]}>Gap</Text>
@@ -361,7 +403,7 @@ export const IntroScreen: React.FC<Props> = ({
           <View style={styles.topContent}>
             <View style={[styles.headerFrame, { paddingVertical: heroVerticalPadding }]}>
               <View style={styles.logoRow}>
-                <Image source={require('../../assets/icon.png')} style={styles.logoIcon} resizeMode="contain" />
+                <LogoTile size={75} isDark={isDark} />
               </View>
               <View style={styles.headingRow}>
                 <Text variant="heading" style={[styles.headingGap, { color: palette.textPrimary }]}>Gap</Text>
@@ -605,10 +647,7 @@ const styles = StyleSheet.create({
   entryLogoRow: {
     alignItems: 'center',
     marginBottom: theme.spacing.md,
-  },
-  entryLogoIcon: {
-    width: 96,
-    height: 96,
+    marginTop: -4,
   },
   screen: {
     flexGrow: 1,
@@ -629,10 +668,16 @@ const styles = StyleSheet.create({
   logoRow: {
     alignItems: 'center',
     marginBottom: theme.spacing.md,
+    marginTop: -4,
   },
-  logoIcon: {
-    width: 86,
-    height: 86,
+  logoTile: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    overflow: 'hidden',
+  },
+  logoMark: {
+    opacity: 1,
   },
   headingRow: {
     flexDirection: 'row',
@@ -648,6 +693,7 @@ const styles = StyleSheet.create({
     letterSpacing: theme.letterSpacing?.heading ?? 0,
     fontSize: theme.fontSize.display,
     lineHeight: theme.fontSize.display + 6,
+    paddingRight: 3,
   },
   subtitle: {
     marginTop: theme.spacing.md,

@@ -54,7 +54,6 @@ interface PathPoint {
 }
 
 const DEFAULT_COORD: Coord = { latitude: 37.7749, longitude: -122.4194 };
-const STRIDE_METERS = 0.78;
 const WALKING_SPEED_THRESHOLD_MPS = 0.65;
 const MIN_SEGMENT_METERS = 0.35;
 const MAX_VALID_JUMP_METERS = 80;
@@ -111,6 +110,7 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
   const [showEndModal, setShowEndModal] = useState(false);
   const [showIdleModal, setShowIdleModal] = useState(false);
   const [showCompletion, setShowCompletion] = useState(false);
+  const [completionKind, setCompletionKind] = useState<'completed' | 'saved_later'>('completed');
   const [sheetExpanded, setSheetExpanded] = useState(true);
   const [permissionDenied, setPermissionDenied] = useState(false);
   const [isTracking, setIsTracking] = useState(false);
@@ -152,7 +152,6 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
   const sheetExpandAnim = useRef(new Animated.Value(1)).current; // 1=expanded, 0=collapsed
 
   // Pedometer state
-  const [usePedometer, setUsePedometer] = useState(false);
   const pedometerSubscriptionRef = useRef<{ remove: () => void } | null>(null);
   const pedometerBaseStepsRef = useRef<number>(0);
   const sessionStartTimeRef = useRef<Date>(new Date());
@@ -169,6 +168,8 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
   const pedometerInitTimeRef = useRef<number>(0);
   // Watchdog: if step events stall, resubscribe.
   const lastPedometerResubscribeAtRef = useRef<number>(0);
+  // Tracks when each pedometer subscription started (to filter phantom first step)
+  const subscriptionStartMsRef = useRef<number>(0);
 
   /** Compute active walking seconds from timestamps (works across background). */
   const computeElapsedSeconds = useCallback(() => {
@@ -212,12 +213,6 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
   useEffect(() => { isTrackingRef.current = isTracking; }, [isTracking]);
   useEffect(() => { permissionDeniedRef.current = permissionDenied; }, [permissionDenied]);
 
-  // With location disabled, estimate distance from steps.
-  useEffect(() => {
-    if (!usePedometer) return;
-    setDistanceMeters(steps * STRIDE_METERS);
-  }, [steps, usePedometer]);
-
   const applyLocationPoint = useCallback((location: Location.LocationObject) => {
     const nextCoord: Coord = {
       latitude: location.coords.latitude,
@@ -260,10 +255,52 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
     lastPointRef.current = { coord: nextCoord, timestampMs: nextTimestamp };
   }, []);
 
-  // Location is not used for now (no map support). Steps come from pedometer only.
   const requestPermissionAndTrack = useCallback(async () => {
-    // No-op: we don't request or use location. Timer and step count work without it.
-  }, []);
+    try {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') {
+        setPermissionDenied(true);
+        return;
+      }
+      setPermissionDenied(false);
+
+      const locationSub = await Location.watchPositionAsync(
+        {
+          accuracy: Location.Accuracy.High,
+          timeInterval: 3000,
+          distanceInterval: 3,
+        },
+        (location) => {
+          if (!isMountedRef.current) return;
+          lastLocationUpdateMsRef.current = Date.now();
+          if (!hasInitialLocationRef.current) {
+            hasInitialLocationRef.current = true;
+            lastPointRef.current = {
+              coord: {
+                latitude: location.coords.latitude,
+                longitude: location.coords.longitude,
+              },
+              timestampMs: typeof location.timestamp === 'number'
+                ? location.timestamp
+                : Date.now(),
+            };
+            setCurrentCoord({
+              latitude: location.coords.latitude,
+              longitude: location.coords.longitude,
+            });
+            return;
+          }
+          applyLocationPoint(location);
+        }
+      );
+
+      watchRef.current = locationSub;
+      setIsTracking(true);
+    } catch (e) {
+      if (__DEV__) console.warn('Location tracking failed:', e);
+      setPermissionDenied(true);
+    }
+  }, [applyLocationPoint]);
 
   const resubscribePedometer = useCallback(() => {
     if (!pedometerAvailableRef.current) return;
@@ -274,8 +311,17 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
       pedometerSubscriptionRef.current.remove();
     }
 
+    subscriptionStartMsRef.current = Date.now();
     const sub = Pedometer.watchStepCount((result) => {
       if (!isMountedRef.current) return;
+      // Filter phantom first step that fires immediately on subscription
+      if (
+        result.steps === 1 &&
+        lastWatchStepsRef.current === 0 &&
+        (Date.now() - subscriptionStartMsRef.current) < 1500
+      ) {
+        return;
+      }
       pedometerHasDeliveredRef.current = true;
       if (!pausedRef.current) {
         const totalSteps = accumulatedStepsRef.current + result.steps;
@@ -322,11 +368,18 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
             pedometerInitTimeRef.current = Date.now();
             lastWatchStepsRef.current = 0;
             accumulatedStepsRef.current = 0;
-            setUsePedometer(true); // Use pedometer for steps so we don't overwrite with 0 from distance
-
             // Use watchStepCount for real-time step counting.
+            subscriptionStartMsRef.current = Date.now();
             const subscription = Pedometer.watchStepCount((result) => {
               if (!isMountedRef.current) return;
+              // Filter phantom first step that fires immediately on subscription
+              if (
+                result.steps === 1 &&
+                lastWatchStepsRef.current === 0 &&
+                (Date.now() - subscriptionStartMsRef.current) < 1500
+              ) {
+                return;
+              }
               pedometerHasDeliveredRef.current = true;
 
               if (!pausedRef.current) {
@@ -345,7 +398,6 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
         }
       } catch (e) {
         if (__DEV__) console.warn('Pedometer initialization failed:', e);
-        setUsePedometer(false);
         pedometerAvailableRef.current = false;
       }
       // Set up walk session notification
@@ -377,6 +429,25 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
       // Auto-save walk checkpoint every 30 seconds (crash/kill recovery)
       if (notifCounter % 30 === 0) {
         void queueCheckpointSave();
+      }
+
+      // Every 5 seconds, poll getStepCountAsync to catch missed watchStepCount events
+      if (notifCounter % 5 === 0 && pedometerAvailableRef.current && !pausedRef.current) {
+        void (async () => {
+          try {
+            const now = new Date();
+            const result = await Pedometer.getStepCountAsync(sessionStartTimeRef.current, now);
+            if (isMountedRef.current && result.steps > stepsRef.current) {
+              setSteps(result.steps);
+              accumulatedStepsRef.current = result.steps;
+              lastWatchStepsRef.current = 0;
+              lastMovementAtRef.current = Date.now();
+              setHadWalkingSignal(true);
+            }
+          } catch {
+            // getStepCountAsync not available on this device (e.g. Android without Health Connect)
+          }
+        })();
       }
 
       // Watchdog: if step events stall mid-session, resubscribe.
@@ -451,8 +522,17 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
               if (pedometerSubscriptionRef.current) {
                 pedometerSubscriptionRef.current.remove();
               }
+              subscriptionStartMsRef.current = Date.now();
               const sub = Pedometer.watchStepCount((result) => {
                 if (!isMountedRef.current) return;
+                // Filter phantom first step that fires immediately on subscription
+                if (
+                  result.steps === 1 &&
+                  lastWatchStepsRef.current === 0 &&
+                  (Date.now() - subscriptionStartMsRef.current) < 1500
+                ) {
+                  return;
+                }
                 if (!pausedRef.current) {
                   const totalSteps = accumulatedStepsRef.current + result.steps;
                   lastWatchStepsRef.current = result.steps;
@@ -515,8 +595,17 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
       accumulatedStepsRef.current = stepsAtPauseRef.current;
       lastWatchStepsRef.current = 0;
       pedometerSubscriptionRef.current.remove();
+      subscriptionStartMsRef.current = Date.now();
       const sub = Pedometer.watchStepCount((result) => {
         if (!isMountedRef.current) return;
+        // Filter phantom first step that fires immediately on subscription
+        if (
+          result.steps === 1 &&
+          lastWatchStepsRef.current === 0 &&
+          (Date.now() - subscriptionStartMsRef.current) < 1500
+        ) {
+          return;
+        }
         if (!pausedRef.current) {
           const totalSteps = accumulatedStepsRef.current + result.steps;
           lastWatchStepsRef.current = result.steps;
@@ -701,6 +790,7 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
         return;
       }
 
+      setCompletionKind(options?.endReason === 'idle_later' ? 'saved_later' : 'completed');
       setShowCompletion(true);
       completionPopAnim.setValue(0);
       completionBurstAnim.setValue(0);
@@ -753,7 +843,7 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
 
   const saveForLater = async () => {
     setShowIdleModal(false);
-    await saveSession({ showCompletion: false, planStatus: 'cancelled', endReason: 'idle_later' });
+    await saveSession({ planStatus: 'cancelled', endReason: 'idle_later' });
   };
 
   useEffect(() => {
@@ -857,7 +947,14 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
             <View style={styles.metricRow}>
               <View style={[styles.metricCard, { backgroundColor: themeMode === 'dark' ? '#1a2a4a' : '#dfe9f9' }]}>
                 <Text variant="body" style={styles.metricTitle}>Distance</Text>
-                <Text variant="heading" style={styles.metricValue}>{formatMiles(distanceMeters)}</Text>
+                {isTracking && !permissionDenied ? (
+                  <Text variant="heading" style={styles.metricValue}>{formatMiles(distanceMeters)}</Text>
+                ) : (
+                  <>
+                    <Text variant="heading" style={styles.metricValue}>--</Text>
+                    <Text variant="bodySmall" style={styles.metricHint}>Enable location to track distance</Text>
+                  </>
+                )}
               </View>
               <View style={[styles.metricCard, { backgroundColor: themeMode === 'dark' ? '#1a2a4a' : '#dfe9f9' }]}>
                 <Text variant="body" style={styles.metricTitle}>Step Counter</Text>
@@ -926,14 +1023,21 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
 
       {showCompletion && (() => {
         const minutes = Math.max(1, Math.floor(activeSeconds / 60));
-        const completionMessages = [
-          'Every step added up. Well done.',
-          'You made time for yourself today.',
-          'Consistent effort builds lasting change.',
-          'Another walk in the books.',
-          'Progress, one walk at a time.',
-          'Your future self will thank you.',
-        ];
+        const completionMessages = completionKind === 'saved_later'
+          ? [
+            'Your progress is safe. Pick it up again soon.',
+            'Nice work so far. You can continue this later.',
+            'Saved for later. Your steps still count.',
+            'Good progress. Come back and finish strong.',
+          ]
+          : [
+            'Every step added up. Well done.',
+            'You made time for yourself today.',
+            'Consistent effort builds lasting change.',
+            'Another walk in the books.',
+            'Progress, one walk at a time.',
+            'Your future self will thank you.',
+          ];
         const completionMessage = completionMessages[Math.floor(Date.now() / 60000) % completionMessages.length];
 
         const confettiIcons: Array<{ name: React.ComponentProps<typeof Ionicons>['name']; color: string }> = [
@@ -1028,7 +1132,9 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
                 </View>
               </View>
 
-              <Text variant="title" style={styles.completionTitle}>Walk complete</Text>
+              <Text variant="title" style={styles.completionTitle}>
+                {completionKind === 'saved_later' ? 'Saved for later' : 'Walk complete'}
+              </Text>
               <Text variant="bodySmall" color={palette.textMuted} style={styles.completionMotivational}>
                 {completionMessage}
               </Text>
@@ -1219,6 +1325,11 @@ const styles = StyleSheet.create({
   metricValue: {
     fontSize: 24,
     lineHeight: 30,
+  },
+  metricHint: {
+    fontSize: 10,
+    opacity: 0.6,
+    marginTop: 2,
   },
   actionRow: {
     flexDirection: 'row',

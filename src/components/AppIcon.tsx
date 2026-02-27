@@ -11,6 +11,7 @@ export type AppIconName =
   | 'sync'
   | 'home'
   | 'person'
+  | 'trophy'
   | 'chevronRight'
   | 'chevronDown';
 
@@ -100,6 +101,16 @@ export const AppIcon: React.FC<AppIconProps> = ({
         <>
           <Circle cx="12" cy="8" r="4" {...common} />
           <Path d="M4 21C4 17.134 7.134 14 12 14C16.866 14 20 17.134 20 21" {...common} />
+        </>
+      )}
+      {name === 'trophy' && (
+        <>
+          <Path d="M8 4H16V7A4 4 0 0 1 12 11A4 4 0 0 1 8 7V4Z" {...common} />
+          <Path d="M8 5H6A2 2 0 0 0 6 9H8" {...common} />
+          <Path d="M16 5H18A2 2 0 0 1 18 9H16" {...common} />
+          <Path d="M12 11V15" {...common} />
+          <Path d="M9 19H15" {...common} />
+          <Path d="M10 15H14" {...common} />
         </>
       )}
       {name === 'chevronRight' && <Path d="M10 6L16 12L10 18" {...common} />}

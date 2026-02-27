@@ -19,6 +19,7 @@ import { translateLiteral } from '../lib/i18n';
 import { plansRepo } from '../lib/repositories/plansRepo';
 import { notificationPlanActions } from '../lib/notificationPlanActions';
 import { analyticsRepo } from '../lib/repositories/analyticsRepo';
+import { authStorage } from '../lib/authStorage';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Settings'>;
 
@@ -118,11 +119,16 @@ export const SettingsScreen: React.FC<Props> = ({ navigation }) => {
     navigation.navigate('Dashboard', { openMenu: true });
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     baselineThemeModeRef.current = themeModeRef.current;
     baselineLanguageRef.current = languageRef.current;
     hasUnsavedChangesRef.current = false;
     allowExitRef.current = true;
+
+    // Persist to SecureStore so they survive app restart
+    await authStorage.saveThemeMode(themeModeRef.current);
+    await authStorage.saveLanguage(languageRef.current);
+
     navigation.goBack();
   };
 

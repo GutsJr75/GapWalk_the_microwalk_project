@@ -54,7 +54,11 @@ export const WeeklyDataScreen: React.FC<Props> = ({ navigation }) => {
     }, [load]),
   );
 
-  const handleDone = () => {
+  const handleBack = () => {
+    if (navigation.canGoBack()) {
+      navigation.goBack();
+      return;
+    }
     navigation.navigate('Dashboard');
   };
 
@@ -78,6 +82,7 @@ export const WeeklyDataScreen: React.FC<Props> = ({ navigation }) => {
         <ScreenHeader
           title="Weekly Data"
           subtitle="Review your weekly walking totals and trends."
+          onBack={handleBack}
         />
 
         {loading ? (
@@ -237,7 +242,7 @@ export const WeeklyDataScreen: React.FC<Props> = ({ navigation }) => {
         <TwoActionBar
           primaryAction={{
             title: 'Done',
-            onPress: handleDone,
+            onPress: handleBack,
             testID: 'weekly-data-done',
           }}
         />

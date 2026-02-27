@@ -57,14 +57,16 @@ const GRID_START_MIN = 0;   // 12:00 AM
 const GRID_END_MIN = 24 * 60;   // next day 12:00 AM (1440)
 const SLOT_MINUTES = 30;
 const NUM_SLOTS = 48;
-// Horizontal layout: days = Y (rows), time = X (columns), scroll horizontally
+const DAY_COLUMNS = 7;
+const SLOT_HEIGHT = 43;
+const TIME_COL_WIDTH = 46;
+const DAY_COLUMN_GUTTER = 2;
+const GRID_PADDING = 16;
+// Legacy (for scroll-to-8am etc.)
 const DAY_ROW_HEIGHT = 80;
 const SLOT_WIDTH = DAY_ROW_HEIGHT;
 const DAY_LABEL_WIDTH = 50;
 const TIME_ROW_HEIGHT = 28;
-const GRID_PADDING = 16;
-// Legacy (for scroll-to-8am etc.)
-const SLOT_HEIGHT = DAY_ROW_HEIGHT;
 const GRID_BODY_HEIGHT = 7 * DAY_ROW_HEIGHT + TIME_ROW_HEIGHT;
 
 const RECURRING_ID_DAY_SEPARATOR = '__d';
@@ -248,6 +250,13 @@ interface GridDisplaySlice {
   isCarryOver: boolean;
 }
 
+interface GridSelectionTarget {
+  dayIndex: number;
+  slotIndex: number;
+  kind: 'empty' | 'event';
+  eventKey?: string;
+}
+
 type ManualRepeatMode = 'weekly' | 'one_time';
 
 interface ManualFormState {
@@ -359,6 +368,25 @@ const resolveDateKeyFromParts = (
 };
 
 const toDateKey = (value: Date): string => format(value, 'yyyy-MM-dd');
+
+const getWeekStart = (value: Date): Date => {
+  const base = startOfDay(value);
+  return addDays(base, -base.getDay());
+};
+
+const getWeekDates = (weekStart: Date): Date[] =>
+  Array.from({ length: 7 }, (_, index) => addDays(weekStart, index));
+
+const isOneTimeEventVisibleInWeek = (event: TemplateEvent, activeWeekStart: Date): boolean => {
+  if (!event.isOneTime) return true;
+  if (!event.oneTimeDate) return true;
+  const weekStartKey = toDateKey(activeWeekStart);
+  const weekEndKey = toDateKey(addDays(activeWeekStart, 6));
+  return event.oneTimeDate >= weekStartKey && event.oneTimeDate <= weekEndKey;
+};
+
+const resolveOneTimeDateForSelectedCell = (activeWeekStart: Date, dayIndex: number): string =>
+  toDateKey(addDays(activeWeekStart, dayIndex));
 
 const getDayOfWeekFromDateKey = (dateKey: string): number => {
   const dt = new Date(`${dateKey}T00:00:00`);
@@ -498,6 +526,8 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
   const [hasSavedSchedule, setHasSavedSchedule] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [selectedDay, setSelectedDay] = useState<number>(todayIndex);
+  const [activeWeekStart, setActiveWeekStart] = useState<Date>(() => getWeekStart(today));
+  const [selectedGridTarget, setSelectedGridTarget] = useState<GridSelectionTarget | null>(null);
   const [form, setForm] = useState<ManualFormState>(() => createDefaultFormState(todayIndex));
   const [eventFormInitialSignature, setEventFormInitialSignature] = useState<string>('');
   const [hoveredSlot, setHoveredSlot] = useState<number | null>(null);
@@ -509,6 +539,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
   const [savedSourceType, setSavedSourceType] = useState<'manual' | 'import'>(initialSourceType);
   const [importedFilename, setImportedFilename] = useState<string | undefined>(routeImportedFilename);
   const [savedImportedFilename, setSavedImportedFilename] = useState<string | undefined>(routeImportedFilename);
+  const [didConfirmImportEditConversion, setDidConfirmImportEditConversion] = useState(false);
   const [sheetSourceType, setSheetSourceType] = useState<'manual' | 'import'>(initialSourceType);
   const [sheetImportedFilename, setSheetImportedFilename] = useState<string | undefined>(routeImportedFilename);
   const [sheetImportedTemplate, setSheetImportedTemplate] = useState<Record<number, TemplateEvent[]> | null>(null);
@@ -533,22 +564,37 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
   const eventPopAnim = useRef(new Animated.Value(0)).current;
   const { scheduleSource, setScheduleSource, setUpcomingPlans, preferences, themeMode } = useAppStore();
 
+  const shiftWeekByDays = useCallback((deltaDays: number) => {
+    setActiveWeekStart((prev) => addDays(prev, deltaDays));
+  }, []);
+
+  const goToPreviousWeek = useCallback(() => {
+    shiftWeekByDays(-7);
+  }, [shiftWeekByDays]);
+
+  const goToNextWeek = useCallback(() => {
+    shiftWeekByDays(7);
+  }, [shiftWeekByDays]);
+
+  useEffect(() => {
+    setSelectedGridTarget(null);
+  }, [activeWeekStart]);
+
   const scrollGridToNow = useCallback((animated = true) => {
     const now = new Date();
     const nowMinutes = now.getHours() * 60 + now.getMinutes();
     const nowInGridMinutes = nowMinutes < GRID_START_MIN ? nowMinutes + 24 * 60 : nowMinutes;
-    const nowX = ((nowInGridMinutes - GRID_START_MIN) / SLOT_MINUTES) * SLOT_WIDTH;
-
-    const visibleTimeWidth = Math.max(160, winWidth - (GRID_PADDING * 2 + DAY_LABEL_WIDTH + 2));
-    const leadOffset = Math.max(24, Math.min(visibleTimeWidth * 0.35, 220));
-    const maxScrollX = Math.max(0, NUM_SLOTS * SLOT_WIDTH - visibleTimeWidth);
-    const targetX = Math.max(0, Math.min(maxScrollX, nowX - leadOffset));
+    const nowY = ((nowInGridMinutes - GRID_START_MIN) / SLOT_MINUTES) * SLOT_HEIGHT;
+    const gridViewportHeight = Math.max(320, Math.min(640, winHeight * 0.64));
+    const leadOffset = Math.max(24, Math.min(gridViewportHeight * 0.35, 220));
+    const maxScrollY = Math.max(0, NUM_SLOTS * SLOT_HEIGHT - gridViewportHeight);
+    const targetY = Math.max(0, Math.min(maxScrollY, nowY - leadOffset));
 
     gridScrollRef.current?.scrollTo({
-      x: targetX,
+      y: targetY,
       animated,
     });
-  }, [winWidth]);
+  }, [winHeight]);
 
   // Hide scrollbar (web) once on mount
   useEffect(() => {
@@ -796,6 +842,10 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
   const hasManageChanges = hasUnsavedChanges || hasSourceChanges;
   const isReadyToContinue = hasSavedSchedule && !hasUnsavedChanges && !hasSourceChanges;
   const isManageViewOnly = manageMode && manageScreenMode === 'view';
+  const shouldConvertImportEditsToManual =
+    sourceType === 'import' &&
+    hasUnsavedChanges &&
+    !hasSourceChanges;
   const sheetResolvedFilename = sheetImportedFilename ?? importedFilename;
   const sourceSheetHasChanges =
     sheetSourceType !== sourceType ||
@@ -805,6 +855,12 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
     ) ||
     sheetImportedTemplate !== null;
   const sourceSheetNeedsImportFile = sheetSourceType === 'import' && !(sheetResolvedFilename?.trim());
+
+  useEffect(() => {
+    if (!shouldConvertImportEditsToManual) {
+      setDidConfirmImportEditConversion(false);
+    }
+  }, [shouldConvertImportEditsToManual]);
 
   const showMessage = (title: string, message: string, onAcknowledge?: () => void) => {
     if (Platform.OS === 'web' && typeof (globalThis as any).alert === 'function') {
@@ -906,8 +962,8 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
       : '';
 
   const getPreferredOneTimeDateForDay = useCallback((dayIndex: number): string => {
-    return getNextDateForDayOfWeek(dayIndex);
-  }, []);
+    return resolveOneTimeDateForSelectedCell(activeWeekStart, dayIndex);
+  }, [activeWeekStart]);
 
   const setOneTimeDateInput = useCallback(
     (field: 'oneTimeMonthRaw' | 'oneTimeDayRaw' | 'oneTimeYearRaw', rawValue: string) => {
@@ -1016,6 +1072,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
     setEditingSeriesId(null);
     setForm(nextForm);
     setEventFormInitialSignature(buildFormSignature(nextForm));
+    setSelectedGridTarget(null);
     setShowAdd(true);
   };
 
@@ -1060,6 +1117,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
     setEditingSeriesId(seriesId);
     setForm(nextForm);
     setEventFormInitialSignature(buildFormSignature(nextForm));
+    setSelectedGridTarget(null);
     setShowAdd(true);
   };
 
@@ -1068,6 +1126,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
     setEditingEventId(null);
     setEditingSeriesId(null);
     setEventFormInitialSignature('');
+    setSelectedGridTarget(null);
     setForm(createDefaultFormState(todayIndex));
   }, [todayIndex]);
 
@@ -1152,7 +1211,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
     const nextSourceType = sheetSourceType;
     const nextFilename = nextSourceType === 'import' ? sheetResolvedFilename : undefined;
     if (nextSourceType === 'import' && !nextFilename) {
-      showMessage('Import needed', 'Choose a .ics file before saving source changes.');
+      showMessage('Import needed', 'Choose a calendar export file (.ics) before saving source changes.');
       return;
     }
 
@@ -1176,7 +1235,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
       return;
     }
     if (sourceSheetNeedsImportFile) {
-      showMessage('Import needed', 'Choose a .ics file before continuing.');
+      showMessage('Import needed', 'Choose a calendar export file (.ics) before continuing.');
       return;
     }
     if (sheetImportedTemplate) {
@@ -1206,7 +1265,11 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
   };
 
   const handleManageBackToOptions = () => {
-    navigation.navigate('Dashboard', { openMenu: true });
+    if (navigation.canGoBack()) {
+      navigation.goBack();
+      return;
+    }
+    navigation.navigate('ScheduleSetup', { manageMode: true });
   };
 
   const handleManageCancelEdit = () => {
@@ -1318,6 +1381,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
       startMinute: number;
       endMinute: number;
       event: TemplateEvent;
+      oneTimeDateKey: string | null;
     }>> = {
       0: [],
       1: [],
@@ -1348,12 +1412,14 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
               startMinute: segment.startMinute,
               endMinute: segment.endMinute,
               event,
+              oneTimeDateKey: event.isOneTime ? event.oneTimeDate ?? null : null,
             },
           ];
         }
       }
     }
     for (const ownerDay of targetDays) {
+      const candidateOneTimeDateKey = newOneTime ? resolvedOneTimeDate : null;
       const candidateSegments = buildDayMinuteSegments(ownerDay, startMin, endMin);
       for (const candidate of candidateSegments) {
         const existingSegments = existingSegmentsByDay[candidate.dayIndex] ?? [];
@@ -1362,7 +1428,18 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
             continue;
           }
           const existingOneTime = !!existing.event.isOneTime;
-          if (newOneTime && !existingOneTime) continue;
+          if (newOneTime) {
+            if (!existingOneTime) continue;
+            if (
+              candidateOneTimeDateKey &&
+              existing.oneTimeDateKey &&
+              existing.oneTimeDateKey !== candidateOneTimeDateKey
+            ) {
+              continue;
+            }
+          } else if (existingOneTime) {
+            continue;
+          }
           const dayName = DAY_FULL_NAMES[candidate.dayIndex];
           Alert.alert(
             'Time conflict',
@@ -1534,10 +1611,13 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
     return `${hour12}:${String(m).padStart(2, '0')} ${period}`;
   };
 
-  const performSave = async () => {
+  const performSave = async (options?: { convertImportEditsToManual?: boolean }) => {
     if (savingDone) return;
-    if (sourceType === 'import' && !importedFilename) {
-      showMessage('Import needed', 'Choose a .ics file before saving this schedule.');
+    const effectiveSourceType: 'manual' | 'import' = options?.convertImportEditsToManual ? 'manual' : sourceType;
+    const effectiveImportedFilename = effectiveSourceType === 'import' ? importedFilename : undefined;
+
+    if (effectiveSourceType === 'import' && !effectiveImportedFilename) {
+      showMessage('Import needed', 'Choose a calendar export file (.ics) before saving this schedule.');
       return;
     }
     setSaveError(null);
@@ -1561,7 +1641,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
       })
     );
 
-    const eventSource: 'ics' | 'manual' = sourceType === 'import' ? 'ics' : 'manual';
+    const eventSource: 'ics' | 'manual' = effectiveSourceType === 'import' ? 'ics' : 'manual';
     const base = startOfDay(new Date());
     const rangeEnd = addDays(base, 14);
     const recurringByDay = weeklyTemplate
@@ -1642,8 +1722,8 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
           failedStep = 'saving calendar events';
           throw e;
         }
-        const src = sourceType === 'import'
-          ? { type: 'ics' as const, filename: importedFilename, lastImportedAt: new Date().toISOString() }
+        const src = effectiveSourceType === 'import'
+          ? { type: 'ics' as const, filename: effectiveImportedFilename, lastImportedAt: new Date().toISOString() }
           : { type: 'manual' as const, lastImportedAt: new Date().toISOString() };
         try {
           await scheduleSourceRepo.save(src);
@@ -1663,7 +1743,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
         }
 
         analyticsService.track('schedule_saved', {
-          source: sourceType === 'import' ? 'ics' : 'manual',
+          source: effectiveSourceType === 'import' ? 'ics' : 'manual',
           weeklyEntries: weeklyTemplate.filter((entry) => !entry.isOneTime).length,
           oneTimeEntries: weeklyTemplate.filter((entry) => entry.isOneTime).length,
           generatedEvents: events.length,
@@ -1672,10 +1752,12 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
 
         setInitialSignature(currentSignature);
         setSavedEntriesByDay(cloneEntriesByDay(entriesByDay));
-        setSavedSourceType(sourceType);
-        setSavedImportedFilename(sourceType === 'import' ? importedFilename : undefined);
-        setSheetSourceType(sourceType);
-        setSheetImportedFilename(sourceType === 'import' ? importedFilename : undefined);
+        setSourceType(effectiveSourceType);
+        setImportedFilename(effectiveImportedFilename);
+        setSavedSourceType(effectiveSourceType);
+        setSavedImportedFilename(effectiveImportedFilename);
+        setSheetSourceType(effectiveSourceType);
+        setSheetImportedFilename(effectiveImportedFilename);
         setSheetImportedTemplate(null);
         setHasSavedSchedule(true);
         setSavingDone(false);
@@ -1722,13 +1804,21 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
       return;
     }
 
+    const convertImportEditsToManual = shouldConvertImportEditsToManual;
     const confirmTitle = manageMode ? 'Save schedule changes?' : SAVE_CONFIRM_TITLE;
-    const confirmMessage = manageMode ? 'Do you want to save these schedule changes?' : SAVE_CONFIRM_MESSAGE;
+    const conversionNotice =
+      convertImportEditsToManual && !didConfirmImportEditConversion
+        ? '\n\nEditing an imported schedule converts it to Manual and stops import sync for this version.'
+        : '';
+    const confirmMessage = `${manageMode ? 'Do you want to save these schedule changes?' : SAVE_CONFIRM_MESSAGE}${conversionNotice}`;
     const confirmAction = manageMode ? 'Yes, Save' : SAVE_CONFIRM_ACTION;
     if (Platform.OS === 'web' && typeof (globalThis as any).confirm === 'function') {
       const ok = (globalThis as any).confirm(`${confirmTitle}\n\n${confirmMessage}`);
       if (ok) {
-        void performSave();
+        if (convertImportEditsToManual) {
+          setDidConfirmImportEditConversion(true);
+        }
+        void performSave({ convertImportEditsToManual });
       }
       return;
     }
@@ -1738,7 +1828,15 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
       confirmMessage,
       [
         { text: SAVE_CONFIRM_DECLINE, style: 'cancel' },
-        { text: confirmAction, onPress: () => { void performSave(); } },
+        {
+          text: confirmAction,
+          onPress: () => {
+            if (convertImportEditsToManual) {
+              setDidConfirmImportEditConversion(true);
+            }
+            void performSave({ convertImportEditsToManual });
+          },
+        },
       ]
     );
   };
@@ -1769,6 +1867,52 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
     return out;
   }, [entriesByDay]);
 
+  const activeWeekDates = useMemo(() => getWeekDates(activeWeekStart), [activeWeekStart]);
+  const activeWeekMonthLabel = useMemo(() => {
+    const weekStart = activeWeekDates[0];
+    if (!weekStart) return '';
+    return format(weekStart, 'MMM').toUpperCase();
+  }, [activeWeekDates]);
+  const activeWeekYearLabel = useMemo(() => {
+    const weekStart = activeWeekDates[0];
+    if (!weekStart) return '';
+    return format(weekStart, 'yyyy');
+  }, [activeWeekDates]);
+  const activeWeekYearStackLabel = useMemo(() => {
+    const padded = activeWeekYearLabel.padStart(4, '0').slice(-4);
+    return `${padded.slice(0, 2)}\n${padded.slice(2)}`;
+  }, [activeWeekYearLabel]);
+
+  const visibleEntriesByDay = useMemo(() => {
+    const out: Record<number, TemplateEvent[]> = createEmptyEntriesByDay();
+    const oneTimeSeenKeys = new Set<string>();
+    for (let d = 0; d <= 6; d++) {
+      const dayEvents = entriesByDaySorted[d] ?? [];
+      for (const event of dayEvents) {
+        if (!event.isOneTime) {
+          out[d] = [...(out[d] ?? []), event];
+          continue;
+        }
+        if (!isOneTimeEventVisibleInWeek(event, activeWeekStart)) {
+          continue;
+        }
+        const targetDayIndex = event.oneTimeDate ? getDayOfWeekFromDateKey(event.oneTimeDate) : d;
+        const oneTimeKey = `${event.id}-${event.oneTimeDate ?? ''}`;
+        if (oneTimeSeenKeys.has(oneTimeKey)) {
+          continue;
+        }
+        oneTimeSeenKeys.add(oneTimeKey);
+        out[targetDayIndex] = [...(out[targetDayIndex] ?? []), event];
+      }
+    }
+    for (let d = 0; d <= 6; d++) {
+      out[d] = [...(out[d] ?? [])].sort((a, b) => a.startTime.localeCompare(b.startTime));
+    }
+    return out;
+  }, [activeWeekStart, entriesByDaySorted]);
+  const activeWeekStartKey = toDateKey(activeWeekStart);
+  const activeWeekEndKey = toDateKey(addDays(activeWeekStart, 6));
+
   const displaySlicesByDay = useMemo(() => {
     const rawByDay: Record<number, GridDisplaySlice[]> = {
       0: [],
@@ -1781,7 +1925,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
     };
 
     for (let sourceDayIndex = 0; sourceDayIndex <= 6; sourceDayIndex++) {
-      const sourceEvents = entriesByDaySorted[sourceDayIndex] ?? [];
+      const sourceEvents = visibleEntriesByDay[sourceDayIndex] ?? [];
       for (const event of sourceEvents) {
         const startMinute = hhmmToMinutes(event.startTime);
         const endMinute = hhmmToMinutes(event.endTime);
@@ -1808,6 +1952,9 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
         }
 
         if (endInRow > GRID_END_MIN) {
+          if (event.isOneTime) {
+            continue;
+          }
           const overflowMinutes = endInRow - GRID_END_MIN;
           const carryEnd = Math.min(GRID_END_MIN, GRID_START_MIN + overflowMinutes);
           if (carryEnd > GRID_START_MIN) {
@@ -1868,13 +2015,32 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
       out[dayIndex] = nonOverlapping;
     }
     return out;
-  }, [entriesByDaySorted]);
+  }, [activeWeekEndKey, activeWeekStartKey, visibleEntriesByDay]);
+
+  const occupiedSlotsByDay = useMemo<Record<number, boolean[]>>(() => {
+    const out: Record<number, boolean[]> = {};
+    for (let dayIndex = 0; dayIndex < 7; dayIndex += 1) {
+      const slots = Array.from({ length: NUM_SLOTS }, () => false);
+      const daySlices = displaySlicesByDay[dayIndex] ?? [];
+      for (const slice of daySlices) {
+        const startSlotRaw = Math.floor((slice.startMinuteInRow - GRID_START_MIN) / SLOT_MINUTES);
+        const endSlotRaw = Math.ceil((slice.endMinuteInRow - GRID_START_MIN) / SLOT_MINUTES);
+        const startSlot = Math.max(0, Math.min(NUM_SLOTS - 1, startSlotRaw));
+        const endSlotExclusive = Math.max(startSlot + 1, Math.min(NUM_SLOTS, endSlotRaw));
+        for (let slot = startSlot; slot < endSlotExclusive; slot += 1) {
+          slots[slot] = true;
+        }
+      }
+      out[dayIndex] = slots;
+    }
+    return out;
+  }, [displaySlicesByDay]);
 
   const getSliceSlotBounds = useCallback((slice: GridDisplaySlice): {
     startSlot: number;
     endSlotExclusive: number;
-    left: number;
-    width: number;
+    top: number;
+    height: number;
   } => {
     const startSlotRaw = Math.floor((slice.startMinuteInRow - GRID_START_MIN) / SLOT_MINUTES);
     const endSlotRaw = Math.ceil((slice.endMinuteInRow - GRID_START_MIN) / SLOT_MINUTES);
@@ -1885,44 +2051,84 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
     return {
       startSlot,
       endSlotExclusive,
-      left: startSlot * SLOT_WIDTH + 1,
-      width: Math.max(spanSlots * SLOT_WIDTH - 2, 44),
+      top: startSlot * SLOT_HEIGHT + 1,
+      height: Math.max(spanSlots * SLOT_HEIGHT - 2, SLOT_HEIGHT - 2),
     };
   }, []);
 
   const handleGridCellPress = useCallback((dayIndex: number, slotIndex: number, daySlices: GridDisplaySlice[]) => {
-    setSelectedDay(dayIndex);
-    setClearArmedDay(null);
-    if (isManageViewOnly) return;
-    animateSlotFeedback(dayIndex, slotIndex);
-
     const eventAtSlot = daySlices.find((slice) => {
       const bounds = getSliceSlotBounds(slice);
       return slotIndex >= bounds.startSlot && slotIndex < bounds.endSlotExclusive;
     });
 
     if (eventAtSlot) {
-      setPoppingEventKey(eventAtSlot.key);
-      eventPopAnim.stopAnimation();
-      eventPopAnim.setValue(0);
-      Animated.timing(eventPopAnim, {
-        toValue: 1,
-        duration: 180,
-        easing: Easing.out(Easing.back(1.5)),
-        useNativeDriver: true,
-      }).start(({ finished }) => {
-        setPoppingEventKey(null);
+      setSelectedDay(dayIndex);
+      setClearArmedDay(null);
+      animateSlotFeedback(dayIndex, slotIndex);
+      const isSecondTapOnSameEvent =
+        selectedGridTarget?.kind === 'event' &&
+        selectedGridTarget.dayIndex === dayIndex &&
+        selectedGridTarget.eventKey === eventAtSlot.key;
+      if (isSecondTapOnSameEvent && !isManageViewOnly) {
+        setPoppingEventKey(eventAtSlot.key);
+        eventPopAnim.stopAnimation();
         eventPopAnim.setValue(0);
-        if (!finished) return;
-        openModalFromEvent(eventAtSlot.event, eventAtSlot.sourceDayIndex);
+        Animated.timing(eventPopAnim, {
+          toValue: 1,
+          duration: 180,
+          easing: Easing.out(Easing.back(1.5)),
+          useNativeDriver: true,
+        }).start(({ finished }) => {
+          setPoppingEventKey(null);
+          eventPopAnim.setValue(0);
+          if (!finished) return;
+          openModalFromEvent(eventAtSlot.event, eventAtSlot.sourceDayIndex);
+        });
+        return;
+      }
+      setSelectedGridTarget({
+        dayIndex,
+        slotIndex,
+        kind: 'event',
+        eventKey: eventAtSlot.key,
       });
       return;
     }
 
-    setTimeout(() => {
-      handleSlotClick(dayIndex, slotIndex);
-    }, 70);
-  }, [animateSlotFeedback, eventPopAnim, getSliceSlotBounds, handleSlotClick, isManageViewOnly, openModalFromEvent]);
+    if (isManageViewOnly) {
+      return;
+    }
+
+    setSelectedDay(dayIndex);
+    setClearArmedDay(null);
+    animateSlotFeedback(dayIndex, slotIndex);
+
+    const isSecondTapOnSameCell =
+      selectedGridTarget?.kind === 'empty' &&
+      selectedGridTarget.dayIndex === dayIndex &&
+      selectedGridTarget.slotIndex === slotIndex;
+    if (isSecondTapOnSameCell && !isManageViewOnly) {
+      setTimeout(() => {
+        handleSlotClick(dayIndex, slotIndex);
+      }, 70);
+      return;
+    }
+
+    setSelectedGridTarget({
+      dayIndex,
+      slotIndex,
+      kind: 'empty',
+    });
+  }, [
+    animateSlotFeedback,
+    eventPopAnim,
+    getSliceSlotBounds,
+    handleSlotClick,
+    isManageViewOnly,
+    openModalFromEvent,
+    selectedGridTarget,
+  ]);
 
   const applyE2ESampleSchedule = () => {
     const newEvent: TemplateEvent = {
@@ -1942,35 +2148,50 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
   const handleClearDay = (dayIndex?: number) => {
     const d = dayIndex ?? selectedDay;
     const dayName = DAY_FULL_NAMES[d];
-    const count = (entriesByDay[d] ?? []).length;
+    const count = (entriesByDay[d] ?? []).filter(
+      (event) => !event.isOneTime || isOneTimeEventVisibleInWeek(event, activeWeekStart)
+    ).length;
     if (count === 0) return;
     const title = `Clear ${dayName}?`;
-    const message = `Remove all ${count} event${count > 1 ? 's' : ''} from ${dayName}.`;
+    const message = `Remove all ${count} visible event${count > 1 ? 's' : ''} from ${dayName}?`;
+    const clearVisibleEvents = () => {
+      setEntriesByDay((prev) => ({
+        ...prev,
+        [d]: (prev[d] ?? []).filter(
+          (event) => event.isOneTime && !isOneTimeEventVisibleInWeek(event, activeWeekStart)
+        ),
+      }));
+      setSelectedGridTarget((prev) => (prev?.dayIndex === d ? null : prev));
+    };
     if (Platform.OS === 'web' && typeof (globalThis as any).confirm === 'function') {
       if ((globalThis as any).confirm(`${title}\n\n${message}`)) {
-        setEntriesByDay((prev) => ({ ...prev, [d]: [] }));
+        clearVisibleEvents();
       }
       return;
     }
     Alert.alert(title, message, [
       { text: 'Cancel', style: 'cancel' },
-      { text: 'Clear', style: 'destructive', onPress: () => setEntriesByDay((prev) => ({ ...prev, [d]: [] })) },
+      { text: 'Clear', style: 'destructive', onPress: clearVisibleEvents },
     ]);
   };
 
-  /* ── Current-time indicator (vertical line in horizontal grid) ── */
+  /* ── Current-time indicator (horizontal line in vertical-time grid) ── */
   const now = new Date();
+  const todayGridDateKey = toDateKey(startOfDay(now));
+  const isTodayInActiveWeek = todayGridDateKey >= activeWeekStartKey && todayGridDateKey <= activeWeekEndKey;
   const nowMinutes = now.getHours() * 60 + now.getMinutes();
   const todayDayIndex = now.getDay();
-  const isSelectedDayToday = selectedDay === todayDayIndex;
   const nowInGridMinutes = nowMinutes < GRID_START_MIN ? nowMinutes + 24 * 60 : nowMinutes;
   const nowOffsetMin = nowInGridMinutes - GRID_START_MIN;
-  const nowColumnFloat = nowOffsetMin / SLOT_MINUTES;
-  const nowLeft = nowColumnFloat * SLOT_WIDTH;
-  const fullWeekGridHeight = TIME_ROW_HEIGHT + 7 * DAY_ROW_HEIGHT;
+  const nowRowFloat = nowOffsetMin / SLOT_MINUTES;
+  const nowTop = nowRowFloat * SLOT_HEIGHT;
+  const gridBodyHeight = NUM_SLOTS * SLOT_HEIGHT;
+  const gridViewportHeight = Math.max(320, Math.min(640, winHeight * 0.64));
+  const availableWeekWidth = Math.max(280, winWidth - GRID_PADDING * 2 - TIME_COL_WIDTH - 2);
+  const dayColumnWidth = Math.max(36, Math.floor(availableWeekWidth / DAY_COLUMNS));
+  const weekGridWidth = dayColumnWidth * DAY_COLUMNS;
+  const gridTrackWidth = TIME_COL_WIDTH + weekGridWidth;
 
-  const gridScrollWidth = NUM_SLOTS * SLOT_WIDTH;
-  const selectedDayEvents = entriesByDaySorted[selectedDay] ?? [];
   const palette = getThemePalette(themeMode);
   const isDark = themeMode === 'dark';
   const mintTextOnTint = palette.accentOnTint;
@@ -1996,9 +2217,13 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
     outputRange: [8, 0],
   });
   const slotHintText = isManageViewOnly
-    ? 'Review your weekly schedule. Tap Update to edit or Change to switch source.'
-    : 'Tap any slot/cell to add an event or tap on an existing event to edit/delete it.';
-  const sourceChoiceLabel = sheetSourceType === 'manual' ? 'Manual Entry' : 'Import (.ics file)';
+    ? 'Review your weekly schedule.'
+    : 'Tap once to select a slot or event. Tap the same spot again to add or edit.';
+  const manageSourceLabel = sourceType === 'import'
+    ? `ICS file: ${importedFilename ?? 'calendar import'}`
+    : 'Source: Manual schedule';
+  const manageSourceIcon = sourceType === 'import' ? 'calendar' : 'adjust';
+  const sourceChoiceLabel = sheetSourceType === 'manual' ? 'Manual Entry' : 'Import calendar file (.ics)';
 
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: palette.bgApp }]}>
@@ -2037,17 +2262,10 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
           title={manageMode ? 'Manage schedule' : 'Set up your schedule'}
           style={manageMode ? styles.manageHeaderTitle : undefined}
         />
-        {sourceType === 'import' && importedFilename ? (
+        {!manageMode && sourceType === 'import' && importedFilename ? (
           <View style={styles.icsBadge}>
             <Text variant="bodySmall" style={[styles.icsBadgeText, { color: mintTextOnTint }]} numberOfLines={1}>
               ICS file: {importedFilename}
-            </Text>
-          </View>
-        ) : manageMode ? (
-          <View style={styles.sourceInfoBar}>
-            <AppIcon name="adjust" size={13} color={palette.accentPrimary} />
-            <Text variant="bodySmall" style={[styles.sourceInfoText, { color: palette.textPrimary }]}>
-              Source: Manual entry
             </Text>
           </View>
         ) : null}
@@ -2058,20 +2276,54 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
         nestedScrollEnabled
+        stickyHeaderIndices={[1]}
       >
       <View style={[styles.gridToolbar, { borderBottomColor: gridLineSoft }]}>
-        <Text variant="bodySmall" style={{ color: palette.textMuted, flex: 1 }}>
+        <Text
+          variant="bodySmall"
+          style={[
+            styles.gridToolbarHintText,
+            {
+              color: palette.textMuted,
+            },
+          ]}
+          numberOfLines={2}
+        >
           {slotHintText}
         </Text>
-        {!isManageViewOnly && (
+        {isManageViewOnly ? (
+          <View
+            style={[
+              styles.gridToolbarSourceBadge,
+              {
+                backgroundColor: isDark ? 'rgba(46,233,166,0.12)' : 'rgba(46,233,166,0.14)',
+                borderColor: isDark ? 'rgba(46,233,166,0.3)' : 'rgba(13,148,113,0.3)',
+              },
+            ]}
+          >
+            <AppIcon name={manageSourceIcon} size={13} color={palette.accentPrimary} />
+            <Text
+              variant="bodySmall"
+              style={[
+                styles.gridToolbarSourceBadgeText,
+                {
+                  color: palette.accentPrimary,
+                },
+              ]}
+              numberOfLines={1}
+            >
+              {manageSourceLabel}
+            </Text>
+          </View>
+        ) : (
           <Pressable
             onPress={() => handleClearDay()}
-            disabled={(entriesByDay[selectedDay] ?? []).length === 0}
+            disabled={(visibleEntriesByDay[selectedDay] ?? []).length === 0}
             style={({ pressed }) => [
               styles.gridToolbarBtn,
               { borderColor: palette.borderStrong },
               pressed && { opacity: 0.6 },
-              (entriesByDay[selectedDay] ?? []).length === 0 && { opacity: 0.35 },
+              (visibleEntriesByDay[selectedDay] ?? []).length === 0 && { opacity: 0.35 },
             ]}
           >
             <Text variant="bodySmall" style={{ color: palette.textMuted }}>Clear {DAY_TAB_LABELS[selectedDay]}</Text>
@@ -2079,7 +2331,154 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
         )}
       </View>
 
-      {/* Grid: fixed day labels + horizontally scrollable time slots */}
+      <View style={[styles.weekHeaderWrap, { borderBottomColor: gridLineSoft, backgroundColor: palette.bgApp }]}>
+        <View style={[styles.weekHeaderTrackRow, { width: gridTrackWidth }]}>
+          <Pressable
+            onPress={goToPreviousWeek}
+            accessibilityRole="button"
+            accessibilityLabel="Previous week"
+            hitSlop={6}
+            style={({ pressed }) => [
+              styles.weekHeaderEdgeNavBtn,
+              styles.weekHeaderEdgeNavBtnLeft,
+              {
+                borderColor: isDark ? 'rgba(255,255,255,0.42)' : palette.borderStrong,
+                backgroundColor: isDark ? 'rgba(255,255,255,0.14)' : palette.bgSurface,
+                shadowColor: isDark ? 'rgba(255,255,255,0.45)' : '#000',
+                shadowOffset: { width: 0, height: 0 },
+                shadowOpacity: isDark ? 0.32 : 0.08,
+                shadowRadius: isDark ? 5 : 2,
+                elevation: isDark ? 4 : 1,
+              },
+              pressed && { opacity: 0.75 },
+            ]}
+          >
+            <AppIcon name="back" size={16} color={palette.textPrimary} strokeWidth={2.3} />
+          </Pressable>
+          <Pressable
+            onPress={goToNextWeek}
+            accessibilityRole="button"
+            accessibilityLabel="Next week"
+            hitSlop={6}
+            style={({ pressed }) => [
+              styles.weekHeaderEdgeNavBtn,
+              styles.weekHeaderEdgeNavBtnRight,
+              {
+                borderColor: isDark ? 'rgba(255,255,255,0.42)' : palette.borderStrong,
+                backgroundColor: isDark ? 'rgba(255,255,255,0.14)' : palette.bgSurface,
+                shadowColor: isDark ? 'rgba(255,255,255,0.45)' : '#000',
+                shadowOffset: { width: 0, height: 0 },
+                shadowOpacity: isDark ? 0.32 : 0.08,
+                shadowRadius: isDark ? 5 : 2,
+                elevation: isDark ? 4 : 1,
+              },
+              pressed && { opacity: 0.75 },
+            ]}
+          >
+            <AppIcon name="chevronRight" size={16} color={palette.textPrimary} strokeWidth={2.3} />
+          </Pressable>
+          <View style={[styles.weekHeaderTimeSpacer, { width: TIME_COL_WIDTH }]}>
+            <View
+              pointerEvents="none"
+              style={[
+                styles.weekHeaderStampParabola,
+                {
+                  borderColor: isDark ? 'rgba(46,233,166,0.38)' : 'rgba(13,148,113,0.34)',
+                  backgroundColor: isDark ? 'rgba(46,233,166,0.08)' : 'rgba(46,233,166,0.12)',
+                },
+              ]}
+            />
+            <View style={styles.weekHeaderStampWrap}>
+              <Text variant="bodySmall" style={[styles.weekHeaderStampMonthText, { color: palette.accentPrimary }]}>
+                {activeWeekMonthLabel}
+              </Text>
+              <Text variant="bodySmall" style={[styles.weekHeaderStampYearText, { color: palette.accentPrimary }]}>
+                {activeWeekYearStackLabel}
+              </Text>
+              <View style={styles.weekHeaderStampSlot} />
+            </View>
+          </View>
+          <View style={[styles.weekHeaderDaysRow, { width: weekGridWidth }]}>
+            {activeWeekDates.map((date, dayIndex) => {
+              const isSelected = selectedDay === dayIndex;
+              const isToday = toDateKey(date) === todayGridDateKey;
+              const visibleCount = (visibleEntriesByDay[dayIndex] ?? []).length;
+              return (
+                <Pressable
+                  key={`week-day-${toDateKey(date)}`}
+                  onPress={() => {
+                    setSelectedDay(dayIndex);
+                    setSelectedGridTarget(null);
+                  }}
+                  style={({ pressed }) => [
+                    styles.weekHeaderDayCell,
+                    {
+                      width: dayColumnWidth,
+                      borderColor: isSelected ? palette.accentPrimary : 'transparent',
+                      backgroundColor: isSelected
+                        ? (isDark ? 'rgba(46,233,166,0.14)' : 'rgba(46,233,166,0.16)')
+                        : 'transparent',
+                    },
+                    pressed && { opacity: 0.82 },
+                  ]}
+                >
+                  <Text
+                    variant="bodySmall"
+                    style={[
+                      styles.weekHeaderDayName,
+                      {
+                        color: isSelected ? palette.accentPrimary : (isToday ? palette.textPrimary : palette.textMuted),
+                        fontWeight: isToday ? '700' as any : theme.fontWeight.medium,
+                      },
+                    ]}
+                  >
+                    {DAY_TAB_LABELS[dayIndex]}
+                  </Text>
+                  <Text
+                    variant="body"
+                    style={[
+                      styles.weekHeaderDayDate,
+                      {
+                        color: isSelected ? palette.accentPrimary : palette.textPrimary,
+                      },
+                    ]}
+                  >
+                    {format(date, 'd')}
+                  </Text>
+                  <View style={styles.weekHeaderBadgeSlot}>
+                    {visibleCount > 0 && (
+                      <View
+                        style={[
+                          styles.weekHeaderBadge,
+                          {
+                            backgroundColor: isSelected ? palette.accentPrimary : palette.bgSurfaceElevated,
+                          },
+                        ]}
+                      >
+                        <Text
+                          variant="bodySmall"
+                          style={[
+                            styles.weekHeaderBadgeText,
+                            {
+                              color: isSelected
+                                ? (isDark ? palette.pillSelectedText : '#ffffff')
+                                : palette.textMuted,
+                            },
+                          ]}
+                        >
+                          {visibleCount}
+                        </Text>
+                      </View>
+                    )}
+                  </View>
+                </Pressable>
+              );
+            })}
+          </View>
+        </View>
+      </View>
+
+      {/* Grid: fixed 7 day columns (X) with vertical time axis (Y) */}
       <View style={[styles.gridContainer, { paddingHorizontal: GRID_PADDING }]}>
         <View
           style={[
@@ -2088,109 +2487,62 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
               backgroundColor: palette.bgSurface,
               borderColor: gridLineStrong,
               borderRadius: 12,
-              height: fullWeekGridHeight,
+              height: gridViewportHeight,
             },
           ]}
         >
-          <View style={styles.gridShell}>
-            <View style={[styles.gridDayRail, { width: DAY_LABEL_WIDTH, borderRightColor: gridLineStrong }]}>
-              <View style={[styles.gridDayRailHeader, { height: TIME_ROW_HEIGHT, borderBottomColor: gridLineStrong }]} />
-              {[0, 1, 2, 3, 4, 5, 6].map((dayIndex) => {
-                const isToday = dayIndex === todayDayIndex;
-                return (
-                  <TouchableOpacity
-                    key={`label-${dayIndex}`}
-                    style={[
-                      styles.dayLabelCell,
-                      {
-                        height: DAY_ROW_HEIGHT,
-                        borderBottomColor: gridLineSoft,
-                        backgroundColor: dayIndex % 2 === 1 ? gridAltBg : palette.bgSurface,
-                      },
-                      selectedDay === dayIndex && { backgroundColor: isDark ? 'rgba(46,233,166,0.16)' : 'rgba(46,233,166,0.14)' },
-                    ]}
-                    onPress={() => setSelectedDay(dayIndex)}
-                    onLongPress={isManageViewOnly ? undefined : () => handleClearDay(dayIndex)}
-                    activeOpacity={0.82}
-                  >
-                    <Text
-                      variant="bodySmall"
-                      style={[
-                        styles.dayLabelText,
-                        { color: selectedDay === dayIndex ? palette.accentPrimary : palette.textPrimary },
-                        isToday && { fontWeight: '700' as any },
-                      ]}
-                    >
-                      {DAY_TAB_LABELS[dayIndex]}
-                    </Text>
-                    {(entriesByDay[dayIndex] ?? []).length > 0 && (
-                      <Text variant="bodySmall" style={{ color: palette.textMuted, fontSize: 10, marginTop: 2 }}>
-                        {(entriesByDay[dayIndex] ?? []).length}
-                      </Text>
-                    )}
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
-
-            <ScrollView
-              ref={gridScrollRef}
-              horizontal
-              showsHorizontalScrollIndicator
-              contentContainerStyle={{ width: gridScrollWidth }}
-              style={styles.gridTimeScroll}
-            >
-              <View style={{ width: gridScrollWidth }}>
-                <View style={[styles.timeRow, { height: TIME_ROW_HEIGHT, borderBottomColor: gridLineStrong }]}>
-                  {SLOT_INDICES.map((slotIndex) => (
-                    <View
-                      key={`time-${slotIndex}`}
-                      style={[
-                        styles.hSlotCell,
-                        {
-                          width: SLOT_WIDTH,
-                          borderRightWidth: slotIndex % 2 === 0 ? 1 : StyleSheet.hairlineWidth,
-                          borderRightColor: slotIndex % 2 === 0 ? gridLineStrong : gridLineSoft,
-                        },
-                      ]}
-                    >
-                      {slotIndex % 2 === 0 ? (
-                        <Text variant="bodySmall" color={palette.textMuted} style={styles.hTimeLabel} numberOfLines={1}>
-                          {FULL_HOUR_LABELS[slotIndex / 2]}
-                        </Text>
-                      ) : null}
-                    </View>
-                  ))}
-                </View>
-
-                {todayDayIndex >= 0 && nowColumnFloat >= 0 && nowColumnFloat < NUM_SLOTS && (
+          <ScrollView
+            ref={gridScrollRef}
+            showsVerticalScrollIndicator
+            contentContainerStyle={{ height: gridBodyHeight }}
+            style={styles.gridWeekScroll}
+          >
+            <View style={[styles.gridVerticalRow, { width: gridTrackWidth, height: gridBodyHeight }]}>
+              <View
+                style={[
+                  styles.gridTimeAxis,
+                  {
+                    width: TIME_COL_WIDTH,
+                    borderRightColor: gridLineStrong,
+                  },
+                ]}
+              >
+                {SLOT_INDICES.map((slotIndex) => (
                   <View
+                    key={`time-y-${slotIndex}`}
                     style={[
-                      styles.nowLineVertical,
+                      styles.gridTimeAxisSlot,
                       {
-                        left: nowLeft,
-                        top: TIME_ROW_HEIGHT - 4,
-                        height: 8 + 7 * DAY_ROW_HEIGHT,
+                        height: SLOT_HEIGHT,
+                        borderBottomColor: gridLineSoft,
                       },
                     ]}
+                  >
+                    {slotIndex % 2 === 0 ? (
+                      <Text variant="bodySmall" style={styles.gridTimeAxisLabel} color={palette.textMuted}>
+                        {FULL_HOUR_LABELS[slotIndex / 2]}
+                      </Text>
+                    ) : null}
+                  </View>
+                ))}
+              </View>
+
+              <View style={[styles.gridWeekBody, { width: weekGridWidth, height: gridBodyHeight }]}>
+                {isTodayInActiveWeek && nowRowFloat >= 0 && nowRowFloat < NUM_SLOTS && (
+                  <View
                     pointerEvents="none"
+                    style={[
+                      styles.nowLineHorizontal,
+                      {
+                        top: nowTop,
+                        left: todayDayIndex * dayColumnWidth,
+                        width: dayColumnWidth,
+                      },
+                    ]}
                   >
                     <View
                       style={[
-                        styles.nowDot,
-                        {
-                          backgroundColor: nowIndicatorColor,
-                          shadowColor: nowIndicatorGlow,
-                          shadowOffset: { width: 0, height: 0 },
-                          shadowOpacity: isDark ? 0.85 : 0.24,
-                          shadowRadius: isDark ? 6 : 3,
-                          elevation: isDark ? 8 : 0,
-                        },
-                      ]}
-                    />
-                    <View
-                      style={[
-                        styles.nowLineBarVertical,
+                        styles.nowLineBarHorizontal,
                         {
                           backgroundColor: nowIndicatorColor,
                           shadowColor: nowIndicatorGlow,
@@ -2201,127 +2553,127 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
                         },
                       ]}
                     />
+                    <View
+                      style={[
+                        styles.nowDotHorizontal,
+                        {
+                          left: -4,
+                          backgroundColor: nowIndicatorColor,
+                          shadowColor: nowIndicatorGlow,
+                          shadowOffset: { width: 0, height: 0 },
+                          shadowOpacity: isDark ? 0.85 : 0.24,
+                          shadowRadius: isDark ? 6 : 3,
+                          elevation: isDark ? 8 : 0,
+                        },
+                      ]}
+                    />
                   </View>
                 )}
 
-                {[0, 1, 2, 3, 4, 5, 6].map((dayIndex) => {
-                  const daySlices = displaySlicesByDay[dayIndex] ?? [];
-                  return (
-                    <View
-                      key={`row-${dayIndex}`}
-                      style={[
-                        styles.gridTimeRow,
-                        {
-                          height: DAY_ROW_HEIGHT,
-                          borderBottomColor: gridLineSoft,
-                          backgroundColor: dayIndex % 2 === 1 ? gridAltBg : undefined,
-                        },
-                      ]}
-                    >
-                      <View style={StyleSheet.absoluteFill} pointerEvents="none">
-                        <View style={styles.gridCellRow}>
-                          {SLOT_INDICES.map((slotIndex) => (
-                            <View
-                              key={`cell-bg-${dayIndex}-${slotIndex}`}
-                              style={[
-                                styles.gridCell,
+                <View style={[styles.gridCellRow, { width: weekGridWidth, height: gridBodyHeight }]}>
+                  {[0, 1, 2, 3, 4, 5, 6].map((dayIndex) => {
+                    const daySlices = displaySlicesByDay[dayIndex] ?? [];
+                    return (
+                      <View
+                        key={`day-col-${dayIndex}`}
+                        style={[
+                          styles.weekDayColumn,
+                          {
+                            width: dayColumnWidth,
+                            borderRightColor: gridLineStrong,
+                            backgroundColor: dayIndex % 2 === 1 ? gridAltBg : undefined,
+                          },
+                        ]}
+                      >
+                        {SLOT_INDICES.map((slotIndex) => {
+                          const isOccupiedSlot = occupiedSlotsByDay[dayIndex]?.[slotIndex] ?? false;
+                          const isLockedEmptySlot = isManageViewOnly && !isOccupiedSlot;
+                          const isSelectedEmptyCell =
+                            !isManageViewOnly &&
+                            selectedGridTarget?.kind === 'empty' &&
+                            selectedGridTarget.dayIndex === dayIndex &&
+                            selectedGridTarget.slotIndex === slotIndex;
+                          return (
+                            <Pressable
+                              key={`cell-touch-v-${dayIndex}-${slotIndex}`}
+                              disabled={isLockedEmptySlot}
+                              onPress={() => handleGridCellPress(dayIndex, slotIndex, daySlices)}
+                              style={({ pressed }) => [
+                                styles.gridCellPressableV,
                                 {
-                                  width: SLOT_WIDTH,
-                                  borderRightWidth: slotIndex % 2 === 0 ? 1 : StyleSheet.hairlineWidth,
-                                  borderRightColor: slotIndex % 2 === 0 ? gridLineStrong : gridLineSoft,
-                                  backgroundColor: slotIndex % 2 === 0
-                                    ? (isDark ? 'rgba(255,255,255,0.025)' : 'rgba(15,23,42,0.03)')
-                                    : (isDark ? 'rgba(255,255,255,0.008)' : 'rgba(15,23,42,0.012)'),
+                                  height: SLOT_HEIGHT,
+                                  borderBottomColor: slotIndex % 2 === 0 ? gridLineStrong : gridLineSoft,
+                                  borderBottomWidth: slotIndex % 2 === 0 ? 1 : StyleSheet.hairlineWidth,
+                                  backgroundColor: isSelectedEmptyCell
+                                    ? (isDark ? 'rgba(46,233,166,0.16)' : 'rgba(46,233,166,0.12)')
+                                    : (pressed && !isLockedEmptySlot)
+                                      ? (isDark ? 'rgba(46,233,166,0.24)' : 'rgba(46,233,166,0.2)')
+                                      : 'transparent',
                                 },
                               ]}
                             />
-                          ))}
-                        </View>
-                      </View>
-
-                      <View style={styles.gridCellRow}>
-                        {SLOT_INDICES.map((slotIndex) => (
-                          <Pressable
-                            key={`cell-touch-${dayIndex}-${slotIndex}`}
-                            onPress={() => handleGridCellPress(dayIndex, slotIndex, daySlices)}
-                            disabled={isManageViewOnly}
-                            style={({ pressed }) => [
-                              styles.gridCellPressable,
-                              {
-                                width: SLOT_WIDTH,
-                                borderRightWidth: slotIndex % 2 === 0 ? 1 : StyleSheet.hairlineWidth,
-                                borderRightColor: slotIndex % 2 === 0 ? gridLineStrong : gridLineSoft,
-                                backgroundColor: !isManageViewOnly && pressed
-                                  ? (isDark ? 'rgba(46,233,166,0.24)' : 'rgba(46,233,166,0.2)')
-                                  : 'transparent',
-                              },
-                            ]}
-                          />
-                        ))}
-                      </View>
-
-                      <View style={StyleSheet.absoluteFill} pointerEvents="none">
-                        {daySlices.map((slice) => {
-                          const bounds = getSliceSlotBounds(slice);
-                          const sliceDurationMinutes = Math.max(1, slice.endMinuteInRow - slice.startMinuteInRow);
-                          const isCompact = bounds.width < SLOT_WIDTH * 1.6;
-                          const isSelectedDay = dayIndex === selectedDay;
-                          const eventStartMinutes = hhmmToMinutes(slice.event.startTime);
-                          const eventEndMinutes = hhmmToMinutes(slice.event.endTime);
-                          const isOvernightEvent = eventEndMinutes <= eventStartMinutes;
-                          const totalDurationMinutes = getEventTotalDurationMinutes(slice.event.startTime, slice.event.endTime);
-                          const displayDurationMinutes = isOvernightEvent ? totalDurationMinutes : sliceDurationMinutes;
-                          const fullEventRange = `${formatTime12(slice.event.startTime)} - ${formatTime12(slice.event.endTime)}`;
-                          const timeStr = isOvernightEvent
-                            ? fullEventRange
-                            : isCompact
-                              ? `${slice.event.startTime}\n${slice.event.endTime}`
-                              : fullEventRange;
-                          const durationLabel = isOvernightEvent
-                            ? `${displayDurationMinutes} min total`
-                            : `${displayDurationMinutes} min`;
-                          return (
-                            <View
-                              key={slice.key}
-                              style={[
-                                styles.gridEventBlockH,
-                                isCompact && styles.gridEventBlockHCompact,
-                                isSelectedDay ? styles.gridEventBlockHSelected : styles.gridEventBlockHFaded,
-                                {
-                                  left: bounds.left,
-                                  width: bounds.width,
-                                  top: 4,
-                                  height: DAY_ROW_HEIGHT - 8,
-                                  borderColor: eventBorderColor,
-                                },
-                              ]}
-                            >
-                              <Text
-                                variant="bodySmall"
-                                style={[styles.gridEventTitleH, isCompact && styles.gridEventTitleHCompact]}
-                                numberOfLines={isCompact ? 1 : 2}
-                              >
-                                {slice.event.title}
-                              </Text>
-                              <Text
-                                variant="bodySmall"
-                                style={[styles.gridEventTimeH, isCompact && styles.gridEventTimeHCompact]}
-                                numberOfLines={isCompact ? 2 : 1}
-                              >
-                                {timeStr}
-                              </Text>
-                              {!isCompact && (
-                                <Text variant="bodySmall" style={styles.gridEventDurationH} numberOfLines={1}>
-                                  {durationLabel}
-                                </Text>
-                              )}
-                            </View>
                           );
                         })}
+
+                        <View style={StyleSheet.absoluteFill} pointerEvents="none">
+                          {daySlices.map((slice) => {
+                            const bounds = getSliceSlotBounds(slice);
+                            const isCompact = bounds.height < SLOT_HEIGHT * 1.8;
+                            const canUseThreeTitleLines = !isCompact && bounds.height >= SLOT_HEIGHT * 3.8;
+                            const isSelectedDay = dayIndex === selectedDay;
+                            const hasFocusedEventOnDay =
+                              selectedGridTarget?.kind === 'event' && selectedGridTarget.dayIndex === dayIndex;
+                            const isSelectedEventTarget =
+                              selectedGridTarget?.kind === 'event' &&
+                              selectedGridTarget.dayIndex === dayIndex &&
+                              selectedGridTarget.eventKey === slice.key;
+                            const fullEventRange = `${formatTime12(slice.event.startTime)}-\n${formatTime12(slice.event.endTime)}`;
+                            const compactEventRange = `${slice.event.startTime}-${slice.event.endTime}`;
+                            const timeStr = isCompact ? compactEventRange : fullEventRange;
+                            return (
+                              <View
+                                key={slice.key}
+                                style={[
+                                  styles.gridEventBlockV,
+                                  isCompact && styles.gridEventBlockVCompact,
+                                  isSelectedEventTarget
+                                    ? styles.gridEventBlockHTargeted
+                                    : (isSelectedDay && !hasFocusedEventOnDay)
+                                      ? styles.gridEventBlockHSelected
+                                      : styles.gridEventBlockHFaded,
+                                  {
+                                    top: bounds.top,
+                                    left: DAY_COLUMN_GUTTER,
+                                    width: dayColumnWidth - DAY_COLUMN_GUTTER * 2,
+                                    height: bounds.height,
+                                    borderColor: eventBorderColor,
+                                  },
+                                ]}
+                              >
+                                <Text
+                                  variant="bodySmall"
+                                  style={[styles.gridEventTitleH, isCompact && styles.gridEventTitleHCompact, !isDark && { color: '#ffffff' }]}
+                                  numberOfLines={isCompact ? 1 : canUseThreeTitleLines ? 3 : 2}
+                                  ellipsizeMode="tail"
+                                >
+                                  {slice.event.title}
+                                </Text>
+                                <Text
+                                  variant="bodySmall"
+                                  style={[styles.gridEventTimeH, isCompact && styles.gridEventTimeHCompact, !isDark && { color: 'rgba(255,255,255,0.85)' }]}
+                                  numberOfLines={isCompact ? 1 : 2}
+                                  ellipsizeMode="tail"
+                                >
+                                  {timeStr}
+                                </Text>
+                              </View>
+                            );
+                          })}
+                        </View>
                       </View>
-                    </View>
-                  );
-                })}
+                    );
+                  })}
+                </View>
 
                 {slotFeedback && (
                   <Animated.View
@@ -2329,19 +2681,45 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
                     style={[
                       styles.slotFeedbackPulse,
                       {
-                        left: slotFeedback.slotIndex * SLOT_WIDTH + 1,
-                        top: TIME_ROW_HEIGHT + slotFeedback.dayIndex * DAY_ROW_HEIGHT + 1,
-                        width: SLOT_WIDTH - 2,
-                        height: DAY_ROW_HEIGHT - 2,
+                        left: slotFeedback.dayIndex * dayColumnWidth + 1,
+                        top: slotFeedback.slotIndex * SLOT_HEIGHT + 1,
+                        width: dayColumnWidth - 2,
+                        height: SLOT_HEIGHT - 2,
                         opacity: slotFeedbackOpacityAnim,
                         transform: [{ scale: slotFeedbackScaleAnim }],
                       },
                     ]}
                   />
                 )}
+                {!isManageViewOnly && selectedGridTarget?.kind === 'empty' && (
+                  <View
+                    pointerEvents="none"
+                    style={[
+                      styles.selectedCellAffordance,
+                      {
+                        left: selectedGridTarget.dayIndex * dayColumnWidth + 1,
+                        top: selectedGridTarget.slotIndex * SLOT_HEIGHT + 1,
+                        width: dayColumnWidth - 2,
+                        height: SLOT_HEIGHT - 2,
+                      },
+                    ]}
+                  >
+                    <View
+                      style={[
+                        styles.selectedCellPlusCircle,
+                        {
+                          backgroundColor: isDark ? 'rgba(255,255,255,0.12)' : 'rgba(255,255,255,0.95)',
+                          borderColor: isDark ? 'rgba(46,233,166,0.56)' : 'rgba(13,148,113,0.45)',
+                        },
+                      ]}
+                    >
+                      <Text variant="body" style={[styles.selectedCellPlusText, { color: palette.accentPrimary }]}>+</Text>
+                    </View>
+                  </View>
+                )}
               </View>
-            </ScrollView>
-          </View>
+            </View>
+          </ScrollView>
         </View>
       </View>
 
@@ -2508,7 +2886,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
               >
                 <View style={styles.switchSourceCardHeader}>
                   <AppIcon name="calendar" size={16} color={palette.accentPrimary} />
-                  <Text variant="body" style={styles.switchSourceCardTitle}>Import (.ics file)</Text>
+                  <Text variant="body" style={styles.switchSourceCardTitle}>Import calendar file (.ics)</Text>
                   {sourceType === 'import' && (
                     <View style={[styles.switchSourceCurrentTag, { backgroundColor: palette.accentMuted }]}>
                       <Text variant="bodySmall" style={{ color: palette.accentPrimary, fontSize: theme.fontSize.xxs, fontWeight: theme.fontWeight.semibold }}>
@@ -2518,7 +2896,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
                   )}
                 </View>
                 <Text variant="bodySmall" style={{ color: palette.textMuted, lineHeight: 20, marginTop: 6 }}>
-                  Import from your calendar app and GapWalk will populate your grid automatically.
+                  Import an exported calendar file from Google Calendar, Apple Calendar, or Outlook (.ics). GapWalk will fill your weekly grid automatically.
                 </Text>
 
                 {sheetSourceType === 'import' && (
@@ -2562,7 +2940,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
             <View style={[styles.switchSourceFooter, { borderTopColor: gridLineSoft, backgroundColor: palette.bgApp }]}>
               {sourceSheetNeedsImportFile && sheetSourceType === 'import' && (
                 <Text variant="bodySmall" style={styles.switchSourceWarning}>
-                  Choose a .ics file before saving.
+                  Choose a calendar export file (.ics) before saving.
                 </Text>
               )}
               <View style={styles.footerActions}>
@@ -3193,23 +3571,110 @@ const styles = StyleSheet.create({
     fontWeight: '700' as any,
   },
   weekHeaderWrap: {
-    flexDirection: 'row',
-    paddingVertical: 10,
-    paddingHorizontal: 0,
+    flexDirection: 'column',
+    alignItems: 'flex-start',
+    paddingVertical: 6,
+    paddingHorizontal: GRID_PADDING,
     borderBottomWidth: 1,
+    gap: 4,
   },
-  weekHeaderTimeCell: {
+  weekHeaderTopRow: {
+    width: '100%',
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 0,
+  },
+  weekHeaderTrackRow: {
+    flexDirection: 'row',
+    alignItems: 'stretch',
+    alignSelf: 'flex-start',
+    position: 'relative',
+  },
+  weekHeaderTimeSpacer: {
     flexShrink: 0,
+    alignItems: 'flex-start',
+    justifyContent: 'center',
+    paddingLeft: 1,
+    overflow: 'visible',
+    position: 'relative',
+  },
+  weekHeaderStampParabola: {
+    position: 'absolute',
+    left: -GRID_PADDING,
+    top: 4,
+    bottom: 4,
+    width: TIME_COL_WIDTH + GRID_PADDING - 16,
+    borderWidth: 1,
+    borderLeftWidth: 0,
+    borderTopLeftRadius: 0,
+    borderBottomLeftRadius: 0,
+    borderTopRightRadius: 26,
+    borderBottomRightRadius: 26,
+    opacity: 0.92,
+  },
+  weekHeaderStampWrap: {
+    position: 'absolute',
+    left: -GRID_PADDING,
+    top: 4,
+    bottom: 4,
+    width: TIME_COL_WIDTH + GRID_PADDING - 16,
+    flexDirection: 'column',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  weekHeaderStampMonthText: {
+    fontSize: 11,
+    textAlign: 'center',
+    fontWeight: theme.fontWeight.semibold,
+    lineHeight: 16,
+    letterSpacing: 0.2,
+    textTransform: 'uppercase',
+  },
+  weekHeaderStampYearText: {
+    marginTop: 8,
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: theme.fontWeight.medium,
+    letterSpacing: 0.1,
+    textAlign: 'center',
+  },
+  weekHeaderStampSlot: {
+    marginTop: 0,
+    minHeight: 0,
+  },
+  weekHeaderEdgeNavBtn: {
+    width: 22,
+    height: 38,
+    borderRadius: 11,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    position: 'absolute',
+    top: 18,
+    zIndex: 14,
+  },
+  weekHeaderEdgeNavBtnLeft: {
+    left: TIME_COL_WIDTH - 10,
+  },
+  weekHeaderEdgeNavBtnRight: {
+    right: -10,
+  },
+  weekHeaderRangeLabel: {
+    textAlign: 'center',
+    letterSpacing: 0.3,
+    fontWeight: theme.fontWeight.semibold,
   },
   weekHeaderDaysRow: {
     flexDirection: 'row',
   },
   weekHeaderDayCell: {
-    paddingVertical: 8,
-    paddingHorizontal: 4,
+    paddingVertical: 6,
+    paddingHorizontal: 2,
     alignItems: 'center',
     justifyContent: 'center',
-    borderLeftWidth: 1,
+    borderRadius: 10,
+    borderWidth: 1,
+    minHeight: 50,
   },
   weekHeaderDayCellActive: {
     borderRadius: 8,
@@ -3217,15 +3682,20 @@ const styles = StyleSheet.create({
   weekHeaderDayName: {
     fontSize: 11,
     textTransform: 'uppercase',
-    letterSpacing: 0.3,
+    letterSpacing: 0.2,
   },
   weekHeaderDayDate: {
-    fontSize: 18,
+    fontSize: 15,
     fontWeight: '600' as any,
-    marginTop: 2,
+    marginTop: 0,
+  },
+  weekHeaderBadgeSlot: {
+    marginTop: 3,
+    minHeight: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   weekHeaderBadge: {
-    marginTop: 4,
     minWidth: 18,
     height: 18,
     borderRadius: 9,
@@ -3241,10 +3711,28 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    gap: 20,
+    gap: 10,
     paddingHorizontal: GRID_PADDING,
     paddingVertical: 8,
     borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  gridToolbarHintText: {
+    flex: 1,
+    marginRight: 8,
+  },
+  gridToolbarSourceBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    maxWidth: '54%',
+    gap: 6,
+    paddingVertical: 5,
+    paddingHorizontal: 9,
+    borderRadius: theme.borderRadius.sm,
+    borderWidth: 1,
+  },
+  gridToolbarSourceBadgeText: {
+    fontWeight: theme.fontWeight.medium,
+    flexShrink: 1,
   },
   gridToolbarActions: {
     flexDirection: 'row',
@@ -3289,7 +3777,8 @@ const styles = StyleSheet.create({
   },
   gridContainer: {
     width: '100%',
-    paddingVertical: GRID_PADDING,
+    paddingTop: 6,
+    paddingBottom: GRID_PADDING,
   },
   gridWrap: {
     flex: 1,
@@ -3303,6 +3792,37 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.25,
     shadowRadius: 10,
     elevation: 6,
+  },
+  gridWeekScroll: {
+    flex: 1,
+  },
+  gridVerticalRow: {
+    flexDirection: 'row',
+  },
+  gridTimeAxis: {
+    borderRightWidth: 1,
+  },
+  gridTimeAxisSlot: {
+    justifyContent: 'flex-start',
+    alignItems: 'flex-end',
+    paddingTop: 2,
+    paddingRight: 4,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  gridTimeAxisLabel: {
+    fontSize: 10,
+    fontWeight: theme.fontWeight.medium,
+    textAlign: 'right',
+  },
+  gridWeekBody: {
+    position: 'relative',
+  },
+  weekDayColumn: {
+    borderRightWidth: StyleSheet.hairlineWidth,
+    position: 'relative',
+  },
+  gridCellPressableV: {
+    width: '100%',
   },
   gridShell: {
     flex: 1,
@@ -3337,6 +3857,44 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(46,233,166,0.52)',
     zIndex: 25,
+  },
+  nowLineHorizontal: {
+    position: 'absolute',
+    left: 0,
+    height: 8,
+    justifyContent: 'center',
+    zIndex: 8,
+  },
+  nowLineBarHorizontal: {
+    height: 2,
+    width: '100%',
+  },
+  nowDotHorizontal: {
+    position: 'absolute',
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    top: 0,
+  },
+  selectedCellAffordance: {
+    position: 'absolute',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 26,
+  },
+  selectedCellPlusCircle: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  selectedCellPlusText: {
+    fontSize: 20,
+    lineHeight: 20,
+    fontWeight: theme.fontWeight.semibold,
+    marginTop: -1,
   },
   gridBodyScroll: {
     flexGrow: 0,
@@ -3453,12 +4011,41 @@ const styles = StyleSheet.create({
     paddingHorizontal: 5,
     paddingVertical: 5,
   },
+  gridEventBlockV: {
+    position: 'absolute',
+    zIndex: 12,
+    backgroundColor: theme.colors.accentPrimary,
+    borderRadius: 9,
+    borderWidth: 1,
+    borderLeftWidth: 3,
+    borderLeftColor: 'rgba(6,38,29,0.38)',
+    paddingHorizontal: 4,
+    paddingVertical: 5,
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.16,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  gridEventBlockVCompact: {
+    paddingHorizontal: 3,
+    paddingVertical: 4,
+  },
   gridEventBlockHSelected: {
     shadowColor: theme.colors.accentPrimary,
     shadowOffset: { width: 0, height: 0 },
     shadowOpacity: 0.6,
     shadowRadius: 8,
     elevation: 6,
+  },
+  gridEventBlockHTargeted: {
+    shadowColor: theme.colors.accentPrimary,
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.74,
+    shadowRadius: 9,
+    elevation: 7,
+    borderColor: 'rgba(255,255,255,0.62)',
   },
   gridEventBlockHFaded: {
     opacity: 0.55,
@@ -3471,25 +4058,28 @@ const styles = StyleSheet.create({
     fontWeight: '600' as any,
     fontSize: 13,
     lineHeight: 16,
+    includeFontPadding: false,
   },
   gridEventTitleHCompact: {
-    fontSize: 12,
-    lineHeight: 14,
+    fontSize: 11,
+    lineHeight: 13,
   },
   gridEventTimeH: {
     color: 'rgba(6,38,29,0.85)',
     fontSize: 11,
     lineHeight: 13,
-    marginTop: 1,
+    marginTop: 2,
+    includeFontPadding: false,
   },
   gridEventTimeHCompact: {
     fontSize: 10,
-    lineHeight: 11,
+    lineHeight: 12,
+    marginTop: 1,
   },
   gridEventDurationH: {
     color: 'rgba(6,38,29,0.72)',
     fontSize: 10,
-    lineHeight: 12,
+    lineHeight: 13,
     marginTop: 2,
     fontWeight: theme.fontWeight.medium,
   },

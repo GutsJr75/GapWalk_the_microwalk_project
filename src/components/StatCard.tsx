@@ -31,11 +31,21 @@ export const StatCard: React.FC<StatCardProps> = ({
   const pct = target > 0 ? Math.min((current / target), 1) : 0;
   const animatedValue = useRef(new Animated.Value(0)).current;
   const scaleAnim = useRef(new Animated.Value(1)).current;
+  const entranceAnim = useRef(new Animated.Value(0)).current;
 
   const size = 100;
   const strokeWidth = 8;
   const radius = (size - strokeWidth) / 2;
   const circumference = radius * 2 * Math.PI;
+
+  useEffect(() => {
+    Animated.timing(entranceAnim, {
+      toValue: 1,
+      duration: 400,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }).start();
+  }, []);
 
   useEffect(() => {
     Animated.timing(animatedValue, {
@@ -127,6 +137,7 @@ export const StatCard: React.FC<StatCardProps> = ({
       : styles.goalValue;
 
   return (
+    <Animated.View style={{ opacity: entranceAnim, transform: [{ translateY: entranceAnim.interpolate({ inputRange: [0, 1], outputRange: [8, 0] }) }] }}>
     <Card style={[styles.card, { backgroundColor: cardTint, borderColor: borderTint }]}>
       <View style={styles.headerRow}>
         <View style={[styles.titleDot, { backgroundColor: toneColor }]} />
@@ -175,6 +186,7 @@ export const StatCard: React.FC<StatCardProps> = ({
         {pct >= 1 ? goalText : `Progress: ${current} of ${target} ${unitLabel}`}
       </Text>
     </Card>
+    </Animated.View>
   );
 };
 

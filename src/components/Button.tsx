@@ -37,7 +37,7 @@ export const Button: React.FC<ButtonProps> = ({
   const labelColor = disabled
     ? palette.textMuted
     : variant === 'primary'
-      ? '#111827'
+      ? (isDark ? '#111827' : '#ffffff')
       : variant === 'danger'
         ? theme.colors.white
         : variant === 'muted'

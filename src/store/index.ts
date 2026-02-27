@@ -50,6 +50,8 @@ interface AppState {
   setIsAuthenticated: (value: boolean) => void;
   authUser: { email?: string; name?: string; sub?: string } | null;
   setAuthUser: (user: { email?: string; name?: string; sub?: string } | null) => void;
+  profileDisplayName: string | null;
+  setProfileDisplayName: (name: string | null) => void;
   rememberMe: boolean;
   setRememberMe: (value: boolean) => void;
 
@@ -108,6 +110,8 @@ export const useAppStore = create<AppState>((set) => ({
   setIsAuthenticated: (value) => set({ isAuthenticated: value }),
   authUser: null,
   setAuthUser: (user) => set({ authUser: user }),
+  profileDisplayName: null,
+  setProfileDisplayName: (name) => set({ profileDisplayName: name }),
   rememberMe: false,
   setRememberMe: (value) => set({ rememberMe: value }),
 

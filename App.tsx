@@ -37,6 +37,7 @@ import { WalkingScreen } from './src/screens/WalkingScreen';
 import { ScheduleOverviewScreen } from './src/screens/ScheduleOverviewScreen';
 import { SettingsScreen } from './src/screens/SettingsScreen';
 import { WeeklyDataScreen } from './src/screens/WeeklyDataScreen';
+import { AchievementsScreen } from './src/screens/AchievementsScreen';
 
 export type RootStackParamList = {
   Intro: undefined;
@@ -68,6 +69,11 @@ export type RootStackParamList = {
   ScheduleOverview: undefined;
   Settings: undefined;
   WeeklyData: undefined;
+  Achievements:
+    | {
+      source?: 'profile' | 'options';
+    }
+    | undefined;
   Profile: undefined;
 };
 
@@ -144,9 +150,12 @@ function App() {
     setHasRequestedPermissions,
     hasRequestedPermissions,
     themeMode,
+    setThemeMode,
+    setLanguage,
     isAuthenticated,
     setIsAuthenticated,
     setAuthUser,
+    setProfileDisplayName,
   } = useAppStore();
   const pendingWalkPlanIdRef = useRef<string | null>(null);
   const lastHandledResponseRef = useRef<string | null>(null);
@@ -327,6 +336,25 @@ function App() {
         if (__DEV__) console.warn('Failed to restore auth session:', e);
       }
 
+      try {
+        const storedDisplayName = await authStorage.getProfileDisplayName();
+        if (storedDisplayName) {
+          setProfileDisplayName(storedDisplayName);
+        }
+      } catch (e) {
+        if (__DEV__) console.warn('Failed to restore profile display name:', e);
+      }
+
+      // Restore UI settings (theme + language)
+      try {
+        const storedTheme = await authStorage.getThemeMode();
+        if (storedTheme) setThemeMode(storedTheme);
+        const storedLang = await authStorage.getLanguage();
+        if (storedLang) setLanguage(storedLang);
+      } catch (e) {
+        if (__DEV__) console.warn('Failed to restore UI settings:', e);
+      }
+
       // Check if user has completed onboarding (preferences saved).
       // If preferences exist but no schedule source (e.g. old install or edge case),
       // create a default manual source so we open to Dashboard.
@@ -482,11 +510,12 @@ function App() {
               <Stack.Screen name="ScheduleSetup" component={ScheduleSetupScreen} />
               <Stack.Screen name="ManualSchedule" component={ManualScheduleScreen} />
               <Stack.Screen name="Preferences" component={PreferencesScreen} />
-              <Stack.Screen name="Dashboard" component={DashboardScreen} />
-              <Stack.Screen name="Walking" component={WalkingScreen} />
+              <Stack.Screen name="Dashboard" component={DashboardScreen} options={{ animation: 'fade_from_bottom' }} />
+              <Stack.Screen name="Walking" component={WalkingScreen} options={{ animation: 'slide_from_bottom' }} />
               <Stack.Screen name="ScheduleOverview" component={ScheduleOverviewScreen} />
               <Stack.Screen name="Settings" component={SettingsScreen} />
               <Stack.Screen name="WeeklyData" component={WeeklyDataScreen} />
+              <Stack.Screen name="Achievements" component={AchievementsScreen} />
               <Stack.Screen name="Profile" component={ProfileScreen} />
             </Stack.Navigator>
           </NavigationContainer>

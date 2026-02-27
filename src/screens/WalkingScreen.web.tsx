@@ -265,9 +265,9 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
 
       <View style={styles.webPlaceholder}>
         <Text variant="title" style={styles.placeholderEmoji}>🗺️</Text>
-        <Text variant="title" style={styles.placeholderTitle}>Map Unavailable</Text>
+        <Text variant="title" style={styles.placeholderTitle}>Map View Coming Soon</Text>
         <Text variant="bodySmall" color={palette.textMuted} style={styles.placeholderBody}>
-          Live map and route tracking are available on mobile.{'\n'}Timer and session data are tracked here.
+          Your walk tracking is active here for time, steps, and distance.{'\n'}Live route map view on web is coming soon.
         </Text>
       </View>
 

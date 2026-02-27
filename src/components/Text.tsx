@@ -115,22 +115,26 @@ const localizeNode = (node: React.ReactNode, language: AppLanguage): React.React
 const styles = StyleSheet.create({
   base: {
     color: theme.colors.textPrimary,
+    fontFamily: theme.fontFamily.regular,
   },
   heading: {
     fontSize: theme.fontSize.heading,
     fontWeight: theme.fontWeight.semibold,
+    fontFamily: theme.fontFamily.semibold,
     letterSpacing: theme.letterSpacing.heading,
     color: theme.colors.textPrimary,
   },
   title: {
     fontSize: theme.fontSize.xl,
     fontWeight: theme.fontWeight.semibold,
+    fontFamily: theme.fontFamily.semibold,
     color: theme.colors.textPrimary,
     letterSpacing: -0.4,
   },
   body: {
     fontSize: theme.fontSize.md,
     fontWeight: theme.fontWeight.regular,
+    fontFamily: theme.fontFamily.regular,
     color: theme.colors.textPrimary,
     lineHeight: 22,
     letterSpacing: 0,
@@ -138,6 +142,7 @@ const styles = StyleSheet.create({
   bodySmall: {
     fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.regular,
+    fontFamily: theme.fontFamily.regular,
     color: theme.colors.textPrimary,
     lineHeight: 18,
     letterSpacing: -0.1,
@@ -145,6 +150,7 @@ const styles = StyleSheet.create({
   muted: {
     fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.regular,
+    fontFamily: theme.fontFamily.regular,
     color: theme.colors.textMuted,
     lineHeight: 18,
     letterSpacing: -0.1,
@@ -152,6 +158,7 @@ const styles = StyleSheet.create({
   nav: {
     fontSize: theme.fontSize.lg,
     fontWeight: theme.fontWeight.semibold,
+    fontFamily: theme.fontFamily.semibold,
     color: theme.colors.textPrimary,
     lineHeight: 22,
     letterSpacing: -0.4,

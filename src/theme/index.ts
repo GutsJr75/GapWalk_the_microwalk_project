@@ -1,3 +1,26 @@
+import { Platform } from 'react-native';
+
+const platformFontFamily = Platform.select({
+  ios: {
+    regular: 'System',
+    medium: 'System',
+    semibold: 'System',
+    bold: 'System',
+  },
+  android: {
+    regular: 'Roboto',
+    medium: 'Roboto',
+    semibold: 'Roboto',
+    bold: 'Roboto',
+  },
+  default: {
+    regular: 'System',
+    medium: 'System',
+    semibold: 'System',
+    bold: 'System',
+  },
+})!;
+
 // GapWalk Theme — exact Figma design tokens
 export const theme = {
   colors: {
@@ -55,6 +78,13 @@ export const theme = {
     medium: '500' as const,
     semibold: '600' as const,
     bold: '700' as const,
+  },
+
+  fontFamily: {
+    regular: platformFontFamily.regular,
+    medium: platformFontFamily.medium,
+    semibold: platformFontFamily.semibold,
+    bold: platformFontFamily.bold,
   },
 
   letterSpacing: {
