@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Alert, Animated, Easing, LayoutChangeEvent, Linking, Platform, Pressable, StyleSheet, View } from 'react-native';
+import { Alert, Animated, Easing, Linking, Platform, Pressable, StyleSheet, View } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { Ionicons } from '@expo/vector-icons';
 import { RootStackParamList } from '../../App';
@@ -59,8 +59,6 @@ const faqItems = [
   },
 ];
 
-const FAQ_DETAILS_FALLBACK_HEIGHT = 110;
-
 const FaqAccordionItem: React.FC<{
   question: string;
   answer: string;
@@ -68,26 +66,29 @@ const FaqAccordionItem: React.FC<{
   palette: ThemePalette;
 }> = ({ question, answer, isLast, palette }) => {
   const [expanded, setExpanded] = useState(false);
-  const [measuredHeight, setMeasuredHeight] = useState(FAQ_DETAILS_FALLBACK_HEIGHT);
+  const [showDetails, setShowDetails] = useState(false);
   const anim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
+    if (expanded) {
+      setShowDetails(true);
+    }
+
     Animated.timing(anim, {
       toValue: expanded ? 1 : 0,
       duration: 220,
       easing: Easing.out(Easing.cubic),
-      useNativeDriver: false,
-    }).start();
+      useNativeDriver: true,
+    }).start(({ finished }) => {
+      if (finished && !expanded) {
+        setShowDetails(false);
+      }
+    });
   }, [anim, expanded]);
 
   const chevronRotate = anim.interpolate({
     inputRange: [0, 1],
     outputRange: ['0deg', '180deg'],
-  });
-
-  const detailsHeight = anim.interpolate({
-    inputRange: [0, 1],
-    outputRange: [0, measuredHeight],
   });
 
   const detailsOpacity = anim.interpolate({
@@ -99,11 +100,6 @@ const FaqAccordionItem: React.FC<{
     inputRange: [0, 1],
     outputRange: [-8, 0],
   });
-
-  const handleDetailsLayout = (event: LayoutChangeEvent) => {
-    const nextHeight = Math.max(1, Math.ceil(event.nativeEvent.layout.height));
-    if (nextHeight !== measuredHeight) setMeasuredHeight(nextHeight);
-  };
 
   return (
     <View style={[styles.faqItem, !isLast && { borderBottomColor: palette.borderSoft, borderBottomWidth: 1 }]}>
@@ -137,24 +133,22 @@ const FaqAccordionItem: React.FC<{
         </Animated.View>
       </Pressable>
 
-      <Animated.View
-        style={[
-          styles.faqDetailsWrap,
-          {
-            height: detailsHeight,
-            opacity: detailsOpacity,
-          },
-        ]}
-        pointerEvents={expanded ? 'auto' : 'none'}
-      >
-        <Animated.View style={[styles.faqDetailsInner, { transform: [{ translateY: detailsTranslateY }] }]}>
-          <View onLayout={handleDetailsLayout}>
-            <Text variant="bodySmall" color={palette.textMuted} style={styles.faqAnswer}>
-              {answer}
-            </Text>
-          </View>
+      {showDetails ? (
+        <Animated.View
+          style={[
+            styles.faqDetailsWrap,
+            {
+              opacity: detailsOpacity,
+              transform: [{ translateY: detailsTranslateY }],
+            },
+          ]}
+          pointerEvents={expanded ? 'auto' : 'none'}
+        >
+          <Text variant="bodySmall" color={palette.textMuted} style={styles.faqAnswer}>
+            {answer}
+          </Text>
         </Animated.View>
-      </Animated.View>
+      ) : null}
     </View>
   );
 };
@@ -300,7 +294,7 @@ export const AboutHelpScreen: React.FC<Props> = ({ navigation }) => {
                       backgroundColor: palette.accentMuted,
                     },
                   ]}
-                  textStyle={{ color: palette.accentPrimary }}
+                  textStyle={[styles.emailButtonText, { color: palette.accentPrimary }]}
                   testID={`about-help-email-${index + 1}`}
                 />
               </View>
@@ -398,9 +392,6 @@ const styles = StyleSheet.create({
   faqDetailsWrap: {
     overflow: 'hidden',
   },
-  faqDetailsInner: {
-    flex: 1,
-  },
   faqChevron: {
     width: 30,
     height: 30,
@@ -447,8 +438,14 @@ const styles = StyleSheet.create({
     fontWeight: theme.fontWeight.semibold,
   },
   emailButton: {
-    alignSelf: 'flex-start',
-    minWidth: 110,
+    alignSelf: 'flex-end',
+    minWidth: 84,
+    height: Math.round(theme.layout.buttonHeight * 0.7),
+    paddingHorizontal: 12,
+    borderRadius: 10,
+  },
+  emailButtonText: {
+    fontSize: 14,
   },
   footerActions: {
     paddingTop: screenChrome.FOOTER_PADDING_TOP,

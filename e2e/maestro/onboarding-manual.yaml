@@ -3,7 +3,56 @@ name: onboarding-manual
 ---
 - launchApp:
     clearState: true
-- runFlow:
-    file: helpers/bootstrap-onboarding-manual.yaml
-- assertVisible:
-    id: dashboard-open-menu
+- extendedWaitUntil:
+    visible:
+      id: intro-get-started
+    timeout: 20000
+- tapOn:
+    id: intro-get-started
+- extendedWaitUntil:
+    visible:
+      id: schedule-option-manual
+    timeout: 20000
+- tapOn:
+    id: schedule-option-manual
+- tapOn:
+    id: schedule-setup-continue
+- extendedWaitUntil:
+    visible:
+      id: manual-week-header-pager
+    timeout: 20000
+- tapOn: TUE
+- swipe:
+    start: 88%, 21%
+    end: 16%, 21%
+    duration: 500
+- assertVisible: Clear day
+- swipe:
+    start: 50%, 56%
+    end: 50%, 84%
+    duration: 700
+- swipe:
+    start: 50%, 56%
+    end: 50%, 84%
+    duration: 700
+- swipe:
+    start: 50%, 56%
+    end: 50%, 84%
+    duration: 700
+- assertVisible: 12 AM
+- tapOn:
+    id: manual-e2e-seed
+- tapOn:
+    id: manual-done
+- tapOn: Save
+- extendedWaitUntil:
+    visible:
+      id: preferences-continue
+    timeout: 20000
+- tapOn:
+    id: preferences-continue
+- tapOn: Save
+- extendedWaitUntil:
+    visible:
+      id: dashboard-open-menu
+    timeout: 30000

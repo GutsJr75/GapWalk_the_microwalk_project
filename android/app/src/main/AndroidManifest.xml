@@ -3,6 +3,8 @@
   <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
   <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
   <uses-permission android:name="android.permission.ACTIVITY_RECOGNITION"/>
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION"/>
   <uses-permission android:name="android.permission.INTERNET"/>
   <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"/>
   <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW"/>
@@ -31,5 +33,14 @@
         <data android:scheme="gapwalk"/>
       </intent-filter>
     </activity>
+    <service
+      android:name=".walk.WalkTrackingService"
+      android:enabled="true"
+      android:exported="false"
+      android:foregroundServiceType="location"/>
+    <receiver
+      android:name=".walk.WalkTrackingNotificationReceiver"
+      android:enabled="true"
+      android:exported="false"/>
   </application>
 </manifest>

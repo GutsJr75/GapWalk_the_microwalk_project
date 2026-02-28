@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Modal as RNModal,
   View,
@@ -10,6 +10,7 @@ import {
   Keyboard,
   Animated,
   Easing,
+  useWindowDimensions,
 } from 'react-native';
 import { theme } from '../theme';
 import { Text } from './Text';
@@ -31,9 +32,28 @@ export const Modal: React.FC<ModalProps> = ({
   children,
 }) => {
   const palette = useThemePalette();
+  const { height: viewportHeight } = useWindowDimensions();
   const scaleAnim = useRef(new Animated.Value(0.94)).current;
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const translateYAnim = useRef(new Animated.Value(18)).current;
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
+
+  useEffect(() => {
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+
+    const showSub = Keyboard.addListener(showEvent, (event) => {
+      setKeyboardHeight(event.endCoordinates?.height ?? 0);
+    });
+    const hideSub = Keyboard.addListener(hideEvent, () => {
+      setKeyboardHeight(0);
+    });
+
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
 
   useEffect(() => {
     if (visible) {
@@ -60,8 +80,16 @@ export const Modal: React.FC<ModalProps> = ({
           useNativeDriver: true,
         }),
       ]).start();
+    } else {
+      setKeyboardHeight(0);
     }
   }, [fadeAnim, scaleAnim, translateYAnim, visible]);
+
+  const keyboardOpen = keyboardHeight > 0;
+  const verticalPadding = keyboardOpen ? theme.spacing.md : theme.spacing.xxl;
+  const modalMaxHeight = keyboardOpen
+    ? Math.max(280, viewportHeight - keyboardHeight - verticalPadding * 2)
+    : Math.round(viewportHeight * 0.9);
 
   return (
     <RNModal
@@ -77,7 +105,17 @@ export const Modal: React.FC<ModalProps> = ({
         keyboardVerticalOffset={Platform.OS === 'ios' ? 10 : 0}
       >
         <TouchableWithoutFeedback onPress={() => { Keyboard.dismiss(); onClose(); }}>
-          <View style={[styles.backdrop, { backgroundColor: palette.overlay }]}>
+          <View
+            style={[
+              styles.backdrop,
+              {
+                backgroundColor: palette.overlay,
+                justifyContent: keyboardOpen ? 'flex-start' : 'center',
+                paddingTop: keyboardOpen ? theme.spacing.lg : theme.spacing.xxl,
+                paddingBottom: verticalPadding,
+              },
+            ]}
+          >
             <TouchableWithoutFeedback onPress={(e) => e.stopPropagation()}>
               <Animated.View
                 style={[
@@ -87,6 +125,7 @@ export const Modal: React.FC<ModalProps> = ({
                     borderColor: palette.borderSoft,
                     transform: [{ translateY: translateYAnim }, { scale: scaleAnim }],
                     opacity: fadeAnim,
+                    maxHeight: modalMaxHeight,
                   },
                 ]}
               >
@@ -102,6 +141,7 @@ export const Modal: React.FC<ModalProps> = ({
                   </View>
                 )}
                 <ScrollView
+                  style={styles.bodyScroll}
                   keyboardShouldPersistTaps="handled"
                   showsVerticalScrollIndicator={false}
                   contentContainerStyle={styles.bodyContent}
@@ -138,6 +178,11 @@ const styles = StyleSheet.create({
     maxHeight: '90%',
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.06)',
+    overflow: 'hidden',
+  },
+  bodyScroll: {
+    flexShrink: 1,
+    minHeight: 0,
   },
   bodyContent: {
     paddingBottom: 2,

@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Animated, BackHandler, Image, Platform, StyleSheet, Text, ToastAndroid, TouchableOpacity, View } from 'react-native';
+import { Animated, AppState, BackHandler, Image, Platform, StyleSheet, Text, ToastAndroid, TouchableOpacity, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import * as Font from 'expo-font';
 import * as SplashScreen from 'expo-splash-screen';
@@ -27,6 +27,7 @@ import { recoverOrphanedSession } from './src/services/walkCheckpoint';
 import { notificationPlanActions } from './src/services/notificationPlanActions';
 import { crashReporting } from './src/services/crashReporting';
 import { analyticsService } from './src/services/analytics';
+import { androidWalkTracking } from './src/services/androidWalkTracking';
 import { requestAllPermissions } from './src/services/permissions';
 import { authStorage } from './src/data/authStorage';
 
@@ -70,7 +71,7 @@ export type RootStackParamList = {
     }
     | undefined;
   Dashboard: { openMenu?: boolean; showPostWalkSummary?: boolean } | undefined;
-  Walking: { planId?: string };
+  Walking: { planId?: string; prompt?: 'end_confirmation' } | undefined;
   ScheduleOverview: undefined;
   Settings: undefined;
   WeeklyData: undefined;
@@ -169,8 +170,11 @@ function App() {
     setIsAuthenticated,
     setAuthUser,
     setProfileDisplayName,
+    setActiveWalkSnapshot,
+    setPendingWalkPrompt,
   } = useAppStore();
   const pendingWalkPlanIdRef = useRef<string | null>(null);
+  const pendingWalkRouteRef = useRef<{ planId?: string; prompt?: 'end_confirmation' } | null>(null);
   const lastHandledResponseRef = useRef<string | null>(null);
   const [isBootstrapDone, setIsBootstrapDone] = useState(false);
   const [isBootGreetingDone, setIsBootGreetingDone] = useState(false);
@@ -271,6 +275,14 @@ function App() {
     setTodayStats(mins, notifiedCount, stepsToday);
     setUpcomingPlans(upcoming);
   }, [setTodayStats, setTodaySteps, setUpcomingPlans]);
+
+  const navigateToActiveWalk = useCallback((params: { planId?: string; prompt?: 'end_confirmation' }) => {
+    if (navigationRef.isReady()) {
+      navigationRef.navigate('Walking', params);
+      return;
+    }
+    pendingWalkRouteRef.current = params;
+  }, []);
 
   const handleNotificationResponse = useCallback(async (response: Notifications.NotificationResponse) => {
     const data = response.notification.request.content.data as { type?: string; planId?: string };
@@ -383,17 +395,32 @@ function App() {
       // Recover any walk session orphaned by a force-kill, and dismiss the
       // stale walk-session notification that would still be in the shade.
       try {
-        const recovered = await recoverOrphanedSession();
-        if (recovered) {
-          analyticsService.track('walk_session_recovered', {
-            activeSeconds: recovered.activeSeconds,
-            distanceMeters: recovered.distanceMeters ?? 0,
-            steps: recovered.steps ?? 0,
-          });
-        }
-        // Always dismiss — in case the app was killed before cleanup ran
-        if (isNotificationsSupported) {
-          void notificationService.dismissWalkSessionNotification();
+        if (androidWalkTracking.isSupported()) {
+          const snapshot = await androidWalkTracking.getSnapshot();
+          if (snapshot) {
+            setActiveWalkSnapshot(snapshot);
+            setPendingWalkPrompt(snapshot.prompt ?? null);
+            pendingWalkRouteRef.current = {
+              planId: snapshot.planId,
+              prompt: snapshot.prompt,
+            };
+          } else {
+            if (isNotificationsSupported) {
+              void notificationService.dismissWalkSessionNotification();
+            }
+          }
+        } else {
+          const recovered = await recoverOrphanedSession();
+          if (recovered) {
+            analyticsService.track('walk_session_recovered', {
+              activeSeconds: recovered.activeSeconds,
+              distanceMeters: recovered.distanceMeters ?? 0,
+              steps: recovered.steps ?? 0,
+            });
+          }
+          if (isNotificationsSupported) {
+            void notificationService.dismissWalkSessionNotification();
+          }
         }
       } catch (e) {
         if (__DEV__) console.warn('Failed to recover orphaned session:', e);
@@ -519,6 +546,25 @@ function App() {
     return () => subscription.remove();
   }, []);
 
+  useEffect(() => {
+    if (!androidWalkTracking.isSupported()) return;
+
+    const subscription = AppState.addEventListener('change', (nextState) => {
+      if (nextState !== 'active') return;
+
+      void (async () => {
+        const snapshot = await androidWalkTracking.getSnapshot();
+        setActiveWalkSnapshot(snapshot);
+        setPendingWalkPrompt(snapshot?.prompt ?? null);
+        if (snapshot) {
+          navigateToActiveWalk({ planId: snapshot.planId, prompt: snapshot.prompt });
+        }
+      })();
+    });
+
+    return () => subscription.remove();
+  }, [navigateToActiveWalk, setActiveWalkSnapshot, setPendingWalkPrompt]);
+
   if (showBootScreen) {
     return (
       <>
@@ -581,6 +627,11 @@ function App() {
           <NavigationContainer
             ref={navigationRef}
             onReady={() => {
+              const pendingWalkRoute = pendingWalkRouteRef.current;
+              if (pendingWalkRoute && navigationRef.isReady()) {
+                navigationRef.navigate('Walking', pendingWalkRoute);
+                pendingWalkRouteRef.current = null;
+              }
               const pendingPlanId = pendingWalkPlanIdRef.current;
               if (pendingPlanId && navigationRef.isReady()) {
                 navigationRef.navigate('Walking', { planId: pendingPlanId });

@@ -45,6 +45,7 @@ export const StreakCard: React.FC<StreakCardProps> = ({ streak }) => {
   return (
     <Card
       elevated
+      shadowed={false}
       style={[
         styles.card,
         {

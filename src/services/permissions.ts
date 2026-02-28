@@ -1,5 +1,6 @@
-import { Alert, Linking, Platform } from 'react-native';
+import { Alert, Linking, PermissionsAndroid, Platform } from 'react-native';
 import * as Notifications from 'expo-notifications';
+import * as Location from 'expo-location';
 import { Pedometer } from 'expo-sensors';
 import { isNotificationsSupported, notificationService } from './notifications';
 
@@ -8,9 +9,15 @@ export interface PermissionResults {
   activityRecognition: boolean;
 }
 
+export interface WalkTrackingPermissionResults extends PermissionResults {
+  locationForeground: boolean;
+  locationBackground: boolean;
+}
+
 /**
  * Request permissions needed for step counting and notifications.
- * Location is not requested for now (no map support).
+ * On Android, activity recognition is requested directly because the active
+ * walk service reads the native step sensor via SensorManager.
  */
 export async function requestAllPermissions(): Promise<PermissionResults> {
   const results: PermissionResults = {
@@ -30,18 +37,75 @@ export async function requestAllPermissions(): Promise<PermissionResults> {
 
   // 2. Activity Recognition (for pedometer / step counting)
   try {
-    const available = await Pedometer.isAvailableAsync();
-    if (available) {
-      const { status: pedExisting } = await Pedometer.getPermissionsAsync();
-      if (pedExisting === 'granted') {
-        results.activityRecognition = true;
-      } else {
-        const { status } = await Pedometer.requestPermissionsAsync();
-        results.activityRecognition = status === 'granted';
+    if (Platform.OS === 'android') {
+      results.activityRecognition = await requestAndroidActivityRecognitionPermission();
+    } else {
+      const available = await Pedometer.isAvailableAsync();
+      if (available) {
+        const { status: pedExisting } = await Pedometer.getPermissionsAsync();
+        if (pedExisting === 'granted') {
+          results.activityRecognition = true;
+        } else {
+          const { status } = await Pedometer.requestPermissionsAsync();
+          results.activityRecognition = status === 'granted';
+        }
       }
     }
   } catch (e) {
     if (__DEV__) console.warn('Activity recognition permission request failed:', e);
+  }
+
+  return results;
+}
+
+async function confirmBackgroundLocationRationale(): Promise<boolean> {
+  return new Promise((resolve) => {
+    Alert.alert(
+      'Allow background location?',
+      'GapWalk uses background location during an active walk so distance keeps updating even when the app is not visible.',
+      [
+        { text: 'Not Now', style: 'cancel', onPress: () => resolve(false) },
+        { text: 'Continue', onPress: () => resolve(true) },
+      ],
+    );
+  });
+}
+
+export async function requestWalkTrackingPermissions(): Promise<WalkTrackingPermissionResults> {
+  const baseResults = await requestAllPermissions();
+  const results: WalkTrackingPermissionResults = {
+    ...baseResults,
+    locationForeground: false,
+    locationBackground: false,
+  };
+
+  try {
+    const foreground = await Location.getForegroundPermissionsAsync();
+    let foregroundGranted = foreground.status === 'granted';
+
+    if (!foregroundGranted) {
+      const response = await Location.requestForegroundPermissionsAsync();
+      foregroundGranted = response.status === 'granted';
+    }
+
+    results.locationForeground = foregroundGranted;
+    if (!foregroundGranted) return results;
+
+    if (Platform.OS === 'android') {
+      const background = await Location.getBackgroundPermissionsAsync();
+      let backgroundGranted = background.status === 'granted';
+
+      if (!backgroundGranted && await confirmBackgroundLocationRationale()) {
+        const response = await Location.requestBackgroundPermissionsAsync();
+        backgroundGranted = response.status === 'granted';
+      }
+
+      results.locationBackground = backgroundGranted;
+    } else {
+      results.locationBackground = foregroundGranted;
+    }
+  } catch (e) {
+    if (__DEV__) console.warn('Walk tracking permission request failed:', e);
   }
 
   return results;
@@ -64,10 +128,14 @@ export async function checkPermissions(): Promise<PermissionResults> {
   } catch { /* ignore */ }
 
   try {
-    const available = await Pedometer.isAvailableAsync();
-    if (available) {
-      const { status } = await Pedometer.getPermissionsAsync();
-      results.activityRecognition = status === 'granted';
+    if (Platform.OS === 'android') {
+      results.activityRecognition = await checkAndroidActivityRecognitionPermission();
+    } else {
+      const available = await Pedometer.isAvailableAsync();
+      if (available) {
+        const { status } = await Pedometer.getPermissionsAsync();
+        results.activityRecognition = status === 'granted';
+      }
     }
   } catch { /* ignore */ }
 
@@ -96,4 +164,28 @@ export function showPermissionSettingsAlert(permissionName: string): void {
       },
     ],
   );
+}
+
+async function requestAndroidActivityRecognitionPermission(): Promise<boolean> {
+  if (Platform.OS !== 'android') return false;
+  if (typeof Platform.Version === 'number' && Platform.Version < 29) return true;
+
+  const permission = PermissionsAndroid.PERMISSIONS.ACTIVITY_RECOGNITION;
+  const alreadyGranted = await PermissionsAndroid.check(permission);
+  if (alreadyGranted) return true;
+
+  const status = await PermissionsAndroid.request(permission, {
+    title: 'Allow step sensor access?',
+    message: 'GapWalk uses your device step sensor during an active walk so step tracking can stay accurate.',
+    buttonPositive: 'Allow',
+    buttonNegative: 'Not now',
+  });
+
+  return status === PermissionsAndroid.RESULTS.GRANTED;
+}
+
+async function checkAndroidActivityRecognitionPermission(): Promise<boolean> {
+  if (Platform.OS !== 'android') return false;
+  if (typeof Platform.Version === 'number' && Platform.Version < 29) return true;
+  return PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.ACTIVITY_RECOGNITION);
 }

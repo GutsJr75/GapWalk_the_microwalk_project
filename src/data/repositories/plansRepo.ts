@@ -1,4 +1,4 @@
-import { getDatabase } from '../db';
+import { getDatabase, withTransaction } from '../db';
 import { NudgePlan, NudgePlanStatus } from '../../types';
 import { format, startOfDay, endOfDay } from 'date-fns';
 
@@ -25,9 +25,19 @@ export const plansRepo = {
   },
   
   async saveMany(plans: NudgePlan[]): Promise<void> {
-    for (const plan of plans) {
-      await this.save(plan);
-    }
+    if (plans.length === 0) return;
+    await withTransaction(async (db) => {
+      for (const plan of plans) {
+        await db.runAsync(
+          `INSERT OR REPLACE INTO nudge_plans
+           (id, date, gap_start, gap_end, walk_start, suggested_duration_minutes,
+            status, reason, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [plan.id, plan.date, plan.gapStart, plan.gapEnd, plan.walkStart,
+           plan.suggestedDurationMinutes, plan.status, plan.reason || null, plan.createdAt]
+        );
+      }
+    });
   },
   
   async getById(id: string): Promise<NudgePlan | null> {

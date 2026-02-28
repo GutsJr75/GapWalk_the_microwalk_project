@@ -1,80 +1,68 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Animated, AppState, AppStateStatus, Easing, Platform, Pressable, StyleSheet, Vibration, View } from 'react-native';
-import * as Haptics from 'expo-haptics';
+import { Animated, AppState, AppStateStatus, Platform, Pressable, StyleSheet, View } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
+import { Ionicons } from '@expo/vector-icons';
 import * as Location from 'expo-location';
-import * as Notifications from 'expo-notifications';
 import { Pedometer } from 'expo-sensors';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { RootStackParamList } from '../../App';
 import { Text } from '../components/Text';
 import { Button } from '../components/Button';
 import { Modal } from '../components/Modal';
-import { Ionicons } from '@expo/vector-icons';
 import { theme } from '../theme';
 import { useThemePalette } from '../theme/palette';
-import { NudgePlan, WalkSession } from '../types';
+import { SensorHealth, ActiveWalkSnapshot, NudgePlan, WalkDisplayState, WalkMotionConfidence, WalkMotionState, WalkSession, WalkStepSource } from '../types';
 import { plansRepo } from '../data/repositories/plansRepo';
 import { sessionsRepo } from '../data/repositories/sessionsRepo';
 import { analyticsService } from '../services/analytics';
-import { isNotificationsSupported, notificationService, WALK_SESSION_ACTION_PAUSE, WALK_SESSION_ACTION_RESUME, WALK_SESSION_ACTION_END } from '../services/notifications';
+import { androidWalkTracking } from '../services/androidWalkTracking';
+import { isNotificationsSupported, notificationService } from '../services/notifications';
+import { requestWalkTrackingPermissions } from '../services/permissions';
 import { saveWalkCheckpoint, clearWalkCheckpoint } from '../services/walkCheckpoint';
 import { useAppStore } from '../store';
 
-/**
- * Error boundary to catch native map crashes (e.g. missing Google Maps API key)
- * and fall back gracefully instead of killing the app.
- */
-class MapErrorBoundary extends React.Component<
-  { children: React.ReactNode; fallback: React.ReactNode },
-  { hasError: boolean }
-> {
-  state = { hasError: false };
-  static getDerivedStateFromError() {
-    return { hasError: true };
-  }
-  componentDidCatch(error: Error) {
-    if (__DEV__) console.warn('Map failed to render:', error.message);
-  }
-  render() {
-    return this.state.hasError ? this.props.fallback : this.props.children;
-  }
-}
-
 type Props = NativeStackScreenProps<RootStackParamList, 'Walking'>;
+
+type CompletionKind = 'completed' | 'saved_later';
+
+interface FallbackState {
+  sessionId: string;
+  startIso: string;
+  activeSeconds: number;
+  totalPausedMs: number;
+  pauseStartedAtMs: number | null;
+  paused: boolean;
+  motionState: WalkMotionState;
+  displayState: WalkDisplayState;
+  pedometerHealth: SensorHealth;
+  locationHealth: SensorHealth;
+  motionConfidence: WalkMotionConfidence;
+  stepSource: WalkStepSource;
+  statusReason: string | null;
+  distanceMeters: number;
+  steps: number;
+  usedLocation: boolean;
+  locationPermissionGranted: boolean;
+  backgroundLocationGranted: boolean;
+  activityPermissionGranted: boolean;
+  hadWalkingSignal: boolean;
+  warning: string | null;
+}
 
 interface Coord {
   latitude: number;
   longitude: number;
 }
 
-interface PathPoint {
-  coord: Coord;
-  timestampMs: number;
-}
-
-const DEFAULT_COORD: Coord = { latitude: 37.7749, longitude: -122.4194 };
-const WALKING_SPEED_THRESHOLD_MPS = 0.65;
+const WALKING_LATCH_MS = 8_000;
+const CALIBRATION_WINDOW_MS = 6_000;
+const AUTO_PAUSE_MS = 30_000;
+const WALKING_SPEED_THRESHOLD_MPS = 0.45;
 const MIN_SEGMENT_METERS = 0.35;
+const GPS_MOTION_SEGMENT_METERS = 1.2;
+const GPS_MOTION_MAX_DT_SECONDS = 3;
 const MAX_VALID_JUMP_METERS = 80;
-const INACTIVITY_PAUSE_SECONDS = 30;
-
-// Map is disabled until a Google Maps API key is configured.
-// Tracking (distance, steps, timer) works without the map.
-let MapViewImpl: any = null;
-let MarkerImpl: any = null;
-let PolylineImpl: any = null;
-let PROVIDER_GOOGLE_IMPL: any = null;
-
-const DARK_MAP_STYLE: Array<Record<string, unknown>> = [
-  { elementType: 'geometry', stylers: [{ color: '#1b2230' }] },
-  { elementType: 'labels.text.fill', stylers: [{ color: '#6f7b93' }] },
-  { elementType: 'labels.text.stroke', stylers: [{ color: '#1b2230' }] },
-  { featureType: 'poi', elementType: 'labels.text.fill', stylers: [{ color: '#5a657d' }] },
-  { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#2a3345' }] },
-  { featureType: 'road', elementType: 'geometry.stroke', stylers: [{ color: '#20293a' }] },
-  { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#0f1728' }] },
-];
+const ESTIMATED_STRIDE_METERS = 0.78;
 
 const formatClock = (seconds: number): string => {
   const clamped = Math.max(0, Math.floor(seconds));
@@ -85,1082 +73,1308 @@ const formatClock = (seconds: number): string => {
 
 const formatMiles = (distanceMeters: number): string => `${(distanceMeters / 1609.34).toFixed(2)} mi`;
 
+const displayLabel = (displayState: WalkDisplayState): string => {
+  switch (displayState) {
+    case 'walking':
+      return 'Walking now';
+    case 'paused':
+      return 'Paused';
+    case 'location_off':
+      return 'Location needed';
+    case 'not_moving':
+      return 'Not moving';
+    case 'sensor_issue':
+      return 'Step sensor not responding';
+    default:
+      return 'Detecting movement...';
+  }
+};
+
+const displayDetail = (
+  displayState: WalkDisplayState,
+  statusReason: string | null | undefined,
+  hasPlan: boolean,
+): string => {
+  if (displayState === 'walking') {
+    if (statusReason === 'Using GPS step backup') {
+      return 'Motion is locked in. GapWalk is using GPS step backup until the device step sensor catches up.';
+    }
+    if (statusReason === 'Step sensor waiting') {
+      return 'Walking is confirmed from movement. The device step sensor is still warming up.';
+    }
+    return hasPlan
+      ? 'Movement is locked in. Keep the pace steady and this window stays on track.'
+      : 'Live steps and distance are flowing in as you move.';
+  }
+  if (displayState === 'paused') {
+    return 'Your walk is paused. Resume whenever you are ready to keep going.';
+  }
+  if (displayState === 'location_off') {
+    return 'Turn on location access so GapWalk can keep distance updates accurate.';
+  }
+  if (displayState === 'not_moving') {
+    return 'Tracking is still active. Start moving again to keep the session alive.';
+  }
+  if (displayState === 'sensor_issue') {
+    return statusReason ?? 'The device step sensor is not responding yet. Keep moving or let GPS backup take over.';
+  }
+  return statusReason ?? 'Take a few steps so GapWalk can calibrate your live movement signal.';
+};
+
+const confidenceLabel = (confidence: WalkMotionConfidence): string => {
+  if (confidence === 'high') return 'High confidence';
+  if (confidence === 'medium') return 'Medium confidence';
+  return 'Calibrating';
+};
+
+const sensorHealthLabel = (prefix: string, health: SensorHealth): string => {
+  if (health === 'active') return `${prefix} live`;
+  if (health === 'stale') return `${prefix} waiting`;
+  if (health === 'unsupported') return `${prefix} unavailable`;
+  return `${prefix} denied`;
+};
+
+const stepSourceLabel = (stepSource: WalkStepSource, health: SensorHealth): string => {
+  if (stepSource === 'gps_fallback') return 'GPS step backup';
+  if (health === 'active') return 'Steps live';
+  if (health === 'stale') return 'Step sensor waiting';
+  if (health === 'unsupported') return 'Step sensor unavailable';
+  return 'Step sensor permission needed';
+};
+
 const haversineMeters = (a: Coord, b: Coord): number => {
-  const R = 6371e3;
-  const p1 = (a.latitude * Math.PI) / 180;
-  const p2 = (b.latitude * Math.PI) / 180;
-  const dPhi = ((b.latitude - a.latitude) * Math.PI) / 180;
-  const dLambda = ((b.longitude - a.longitude) * Math.PI) / 180;
-  const x = Math.sin(dPhi / 2) ** 2 + Math.cos(p1) * Math.cos(p2) * Math.sin(dLambda / 2) ** 2;
-  return R * 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x));
+  const earthRadius = 6371e3;
+  const phi1 = (a.latitude * Math.PI) / 180;
+  const phi2 = (b.latitude * Math.PI) / 180;
+  const deltaPhi = ((b.latitude - a.latitude) * Math.PI) / 180;
+  const deltaLambda = ((b.longitude - a.longitude) * Math.PI) / 180;
+  const x = Math.sin(deltaPhi / 2) ** 2 +
+    Math.cos(phi1) * Math.cos(phi2) * Math.sin(deltaLambda / 2) ** 2;
+  return earthRadius * 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x));
+};
+
+const createFallbackState = (): FallbackState => {
+  const now = Date.now();
+  return {
+    sessionId: `s-${now}`,
+    startIso: new Date(now).toISOString(),
+    activeSeconds: 0,
+    totalPausedMs: 0,
+    pauseStartedAtMs: null,
+    paused: false,
+    motionState: 'starting',
+    displayState: 'calibrating',
+    pedometerHealth: 'stale',
+    locationHealth: 'stale',
+    motionConfidence: 'low',
+    stepSource: 'none',
+    statusReason: 'Detecting movement...',
+    distanceMeters: 0,
+    steps: 0,
+    usedLocation: false,
+    locationPermissionGranted: false,
+    backgroundLocationGranted: false,
+    activityPermissionGranted: false,
+    hadWalkingSignal: false,
+    warning: null,
+  };
 };
 
 export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
   const planId = route.params?.planId;
+  const prompt = route.params?.prompt;
   const insets = useSafeAreaInsets();
   const palette = useThemePalette();
-  const { preferences, themeMode } = useAppStore();
+  const {
+    preferences,
+    themeMode,
+    activeWalkSnapshot,
+    setActiveWalkSnapshot,
+    pendingWalkPrompt,
+    setPendingWalkPrompt,
+  } = useAppStore();
+
+  const isAndroidService = Platform.OS === 'android' && androidWalkTracking.isSupported();
 
   const [plan, setPlan] = useState<NudgePlan | null>(null);
-  const [activeSeconds, setActiveSeconds] = useState(0);
-  const [ticks, setTicks] = useState(0);
-  const [paused, setPaused] = useState(false);
-  const [distanceMeters, setDistanceMeters] = useState(0);
-  const [steps, setSteps] = useState(0);
   const [showEndModal, setShowEndModal] = useState(false);
   const [showIdleModal, setShowIdleModal] = useState(false);
   const [showCompletion, setShowCompletion] = useState(false);
-  const [completionKind, setCompletionKind] = useState<'completed' | 'saved_later'>('completed');
-  const [sheetExpanded, setSheetExpanded] = useState(true);
-  const [permissionDenied, setPermissionDenied] = useState(false);
-  const [isTracking, setIsTracking] = useState(false);
-  const [isWalking, setIsWalking] = useState(false);
-  const [hadWalkingSignal, setHadWalkingSignal] = useState(false);
-  const [currentCoord, setCurrentCoord] = useState<Coord | null>(null);
-  const [mapError, setMapError] = useState(false);
-  const [routeCoords, setRouteCoords] = useState<Coord[]>([]);
+  const [completionKind, setCompletionKind] = useState<CompletionKind>('completed');
+  const [completionStats, setCompletionStats] = useState<{ activeSeconds: number; distanceMeters: number; steps: number }>({
+    activeSeconds: 0,
+    distanceMeters: 0,
+    steps: 0,
+  });
+  const [fallbackState, setFallbackState] = useState<FallbackState>(createFallbackState);
 
-  const startIsoRef = useRef(new Date().toISOString());
-  const sessionIdRef = useRef(`s-${Date.now()}`);
-  const pauseStartedAtRef = useRef<number | null>(null);
-  const pausedRef = useRef(false);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const watchRef = useRef<Location.LocationSubscription | null>(null);
-  const lastPointRef = useRef<PathPoint | null>(null);
-  const lastMovementAtRef = useRef<number>(Date.now());
-  const mapRef = useRef<any>(null);
-  const isMountedRef = useRef(true);
-
-  // Timestamp-based timer tracking (survives background transitions)
-  const sessionStartMsRef = useRef(Date.now());
-  const totalPausedMsRef = useRef(0);
-  const lastLocationUpdateMsRef = useRef(Date.now());
-  const hasInitialLocationRef = useRef(false);
-  const notifActionRef = useRef<(actionId: string) => void>(() => {});
-  // Refs mirroring state so the setInterval checkpoint can read them synchronously
-  const distanceRef = useRef(0);
-  const stepsRef = useRef(0);
-  const isTrackingRef = useRef(false);
-  const permissionDeniedRef = useRef(false);
-  const sessionFinalizedRef = useRef(false);
-  const checkpointWriteChainRef = useRef<Promise<void>>(Promise.resolve());
+  const lastAndroidSnapshotRef = useRef<ActiveWalkSnapshot | null>(activeWalkSnapshot);
   const allowLeaveRef = useRef(false);
-
-  const completionPopAnim = useRef(new Animated.Value(0)).current;
-  const completionBurstAnim = useRef(new Animated.Value(0)).current;
-  const completionConfettiAnim = useRef(new Animated.Value(0)).current;
-  const sheetExpandAnim = useRef(new Animated.Value(1)).current; // 1=expanded, 0=collapsed
-
-  // Pedometer state
+  const fallbackStateRef = useRef<FallbackState>(fallbackState);
+  const lastStepAtRef = useRef<number | null>(null);
+  const lastGpsMotionAtRef = useRef<number | null>(null);
+  const lastAcceptedLocationAtRef = useRef<number | null>(null);
+  const lastMotionAtRef = useRef<number | null>(null);
+  const lastCoordRef = useRef<{ coord: Coord; timestampMs: number } | null>(null);
+  const lastPedometerEventAtRef = useRef<number | null>(null);
+  const pedometerBaseRef = useRef<number | null>(null);
   const pedometerSubscriptionRef = useRef<{ remove: () => void } | null>(null);
-  const pedometerBaseStepsRef = useRef<number>(0);
-  const sessionStartTimeRef = useRef<Date>(new Date());
-  const pedometerAvailableRef = useRef(false);
-  // Tracks the last raw watchStepCount value so we can detect resubscription resets
-  const lastWatchStepsRef = useRef<number>(0);
-  // Steps accumulated from previous watch subscriptions (before resubscription resets counter)
-  const accumulatedStepsRef = useRef<number>(0);
-  // Steps accumulated before a pause (frozen while paused)
-  const stepsAtPauseRef = useRef<number>(0);
-  // Whether pedometer has delivered at least one step event
-  const pedometerHasDeliveredRef = useRef(false);
-  // Time since pedometer was initialized - used to fall back to GPS if no events
-  const pedometerInitTimeRef = useRef<number>(0);
-  // Watchdog: if step events stall, resubscribe.
-  const lastPedometerResubscribeAtRef = useRef<number>(0);
-  // Tracks when each pedometer subscription started (to filter phantom first step)
-  const subscriptionStartMsRef = useRef<number>(0);
+  const locationSubscriptionRef = useRef<Location.LocationSubscription | null>(null);
+  const appStateRef = useRef<AppStateStatus>(AppState.currentState);
+  const statusPulseAnim = useRef(new Animated.Value(0)).current;
+  const completionBackdropAnim = useRef(new Animated.Value(0)).current;
+  const completionCardAnim = useRef(new Animated.Value(0)).current;
+  const completionGlowAnim = useRef(new Animated.Value(0)).current;
+  const completionStatAnims = useRef([
+    new Animated.Value(0),
+    new Animated.Value(0),
+    new Animated.Value(0),
+  ]).current;
+  const completionDismissLockedRef = useRef(false);
 
-  /** Compute active walking seconds from timestamps (works across background). */
-  const computeElapsedSeconds = useCallback(() => {
-    const now = Date.now();
-    const currentPauseMs = pauseStartedAtRef.current ? (now - pauseStartedAtRef.current) : 0;
-    return Math.max(0, Math.floor(
-      (now - sessionStartMsRef.current - totalPausedMsRef.current - currentPauseMs) / 1000
-    ));
-  }, []);
+  useEffect(() => {
+    fallbackStateRef.current = fallbackState;
+  }, [fallbackState]);
 
-  const queueCheckpointSave = useCallback(async () => {
-    if (sessionFinalizedRef.current) return;
+  useEffect(() => {
+    lastAndroidSnapshotRef.current = activeWalkSnapshot;
+  }, [activeWalkSnapshot]);
 
-    const currentPauseMs = pauseStartedAtRef.current
-      ? (Date.now() - pauseStartedAtRef.current)
-      : 0;
-
-    const nextWrite = checkpointWriteChainRef.current
-      .catch(() => undefined)
-      .then(() => saveWalkCheckpoint({
-        sessionId: sessionIdRef.current,
-        planId: planId ?? undefined,
-        startIso: startIsoRef.current,
-        sessionStartMs: sessionStartMsRef.current,
-        totalPausedMs: totalPausedMsRef.current + currentPauseMs,
-        distanceMeters: distanceRef.current,
-        steps: stepsRef.current,
-        paused: pausedRef.current,
-        usedLocation: isTrackingRef.current && !permissionDeniedRef.current,
-      }));
-
-    checkpointWriteChainRef.current = nextWrite;
-    await nextWrite;
+  const loadPlan = useCallback(async () => {
+    if (!planId) return;
+    const found = await plansRepo.getById(planId);
+    if (!found) return;
+    setPlan(found);
+    await plansRepo.updateStatus(planId, 'started');
   }, [planId]);
 
   useEffect(() => {
-    pausedRef.current = paused;
-  }, [paused]);
-  useEffect(() => { distanceRef.current = distanceMeters; }, [distanceMeters]);
-  useEffect(() => { stepsRef.current = steps; }, [steps]);
-  useEffect(() => { isTrackingRef.current = isTracking; }, [isTracking]);
-  useEffect(() => { permissionDeniedRef.current = permissionDenied; }, [permissionDenied]);
+    void loadPlan();
+  }, [loadPlan]);
 
-  const applyLocationPoint = useCallback((location: Location.LocationObject) => {
-    const nextCoord: Coord = {
-      latitude: location.coords.latitude,
-      longitude: location.coords.longitude,
-    };
+  const remainingSeconds = useMemo(() => {
+    const activeSeconds = isAndroidService
+      ? (activeWalkSnapshot?.elapsedSeconds ?? 0)
+      : fallbackState.activeSeconds;
+    if (!plan) return activeSeconds;
+    return Math.max(0, plan.suggestedDurationMinutes * 60 - activeSeconds);
+  }, [activeWalkSnapshot?.elapsedSeconds, fallbackState.activeSeconds, isAndroidService, plan]);
 
-    const nextTimestamp = typeof location.timestamp === 'number' ? location.timestamp : Date.now();
-    const previous = lastPointRef.current;
-
-    setCurrentCoord(nextCoord);
-
-    if (!pausedRef.current) {
-      setRouteCoords((prev) => {
-        const next = [...prev, nextCoord];
-        return next.length > 500 ? next.slice(next.length - 500) : next;
-      });
-    }
-
-    if (previous) {
-      const segmentMeters = haversineMeters(previous.coord, nextCoord);
-      const dtSeconds = Math.max(1, Math.round((nextTimestamp - previous.timestampMs) / 1000));
-      const speedFromSensor = typeof location.coords.speed === 'number' && location.coords.speed >= 0
-        ? location.coords.speed
-        : null;
-      const estimatedSpeed = segmentMeters / dtSeconds;
-      const effectiveSpeed = speedFromSensor ?? estimatedSpeed;
-      const moving = !pausedRef.current && effectiveSpeed >= WALKING_SPEED_THRESHOLD_MPS;
-
-      setIsWalking(moving);
-      if (moving) {
-        setHadWalkingSignal(true);
-        lastMovementAtRef.current = Date.now();
-      }
-
-      if (!pausedRef.current && segmentMeters >= MIN_SEGMENT_METERS && segmentMeters <= MAX_VALID_JUMP_METERS) {
-        setDistanceMeters((prevDistance) => prevDistance + segmentMeters);
-      }
-    }
-
-    lastPointRef.current = { coord: nextCoord, timestampMs: nextTimestamp };
-  }, []);
-
-  const requestPermissionAndTrack = useCallback(async () => {
-    try {
-      const { status } = await Location.requestForegroundPermissionsAsync();
-      if (status !== 'granted') {
-        setPermissionDenied(true);
-        return;
-      }
-      setPermissionDenied(false);
-
-      const locationSub = await Location.watchPositionAsync(
-        {
-          accuracy: Location.Accuracy.High,
-          timeInterval: 3000,
-          distanceInterval: 3,
-        },
-        (location) => {
-          if (!isMountedRef.current) return;
-          lastLocationUpdateMsRef.current = Date.now();
-          if (!hasInitialLocationRef.current) {
-            hasInitialLocationRef.current = true;
-            lastPointRef.current = {
-              coord: {
-                latitude: location.coords.latitude,
-                longitude: location.coords.longitude,
-              },
-              timestampMs: typeof location.timestamp === 'number'
-                ? location.timestamp
-                : Date.now(),
-            };
-            setCurrentCoord({
-              latitude: location.coords.latitude,
-              longitude: location.coords.longitude,
-            });
-            return;
-          }
-          applyLocationPoint(location);
-        }
-      );
-
-      watchRef.current = locationSub;
-      setIsTracking(true);
-    } catch (e) {
-      if (__DEV__) console.warn('Location tracking failed:', e);
-      setPermissionDenied(true);
-    }
-  }, [applyLocationPoint]);
-
-  const resubscribePedometer = useCallback(() => {
-    if (!pedometerAvailableRef.current) return;
-    if (pedometerSubscriptionRef.current) {
-      // Preserve accumulated steps before resetting the watch subscription counter.
-      accumulatedStepsRef.current += lastWatchStepsRef.current;
-      lastWatchStepsRef.current = 0;
-      pedometerSubscriptionRef.current.remove();
-    }
-
-    subscriptionStartMsRef.current = Date.now();
-    const sub = Pedometer.watchStepCount((result) => {
-      if (!isMountedRef.current) return;
-      // Filter phantom first step that fires immediately on subscription
-      if (
-        result.steps === 1 &&
-        lastWatchStepsRef.current === 0 &&
-        (Date.now() - subscriptionStartMsRef.current) < 1500
-      ) {
-        return;
-      }
-      pedometerHasDeliveredRef.current = true;
-      if (!pausedRef.current) {
-        const totalSteps = accumulatedStepsRef.current + result.steps;
-        lastWatchStepsRef.current = result.steps;
-        setSteps(totalSteps);
-        lastMovementAtRef.current = Date.now();
-        setHadWalkingSignal(true);
-      }
-    });
-    pedometerSubscriptionRef.current = sub;
-  }, []);
+  const displayedSnapshot = isAndroidService ? activeWalkSnapshot : null;
+  const displayState: WalkDisplayState = isAndroidService
+    ? (displayedSnapshot?.displayState ?? 'calibrating')
+    : fallbackState.displayState;
+  const pedometerHealth: SensorHealth = isAndroidService
+    ? (displayedSnapshot?.pedometerHealth ?? 'stale')
+    : fallbackState.pedometerHealth;
+  const locationHealth: SensorHealth = isAndroidService
+    ? (displayedSnapshot?.locationHealth ?? 'stale')
+    : fallbackState.locationHealth;
+  const motionConfidence: WalkMotionConfidence = isAndroidService
+    ? (displayedSnapshot?.motionConfidence ?? 'low')
+    : fallbackState.motionConfidence;
+  const stepSource: WalkStepSource = isAndroidService
+    ? (displayedSnapshot?.stepSource ?? 'none')
+    : fallbackState.stepSource;
+  const statusReason = isAndroidService
+    ? (displayedSnapshot?.statusReason ?? null)
+    : fallbackState.statusReason;
+  const paused = isAndroidService
+    ? !!displayedSnapshot?.paused
+    : fallbackState.paused;
+  const activeSeconds = isAndroidService
+    ? (displayedSnapshot?.elapsedSeconds ?? 0)
+    : fallbackState.activeSeconds;
+  const distanceMeters = isAndroidService
+    ? (displayedSnapshot?.distanceMeters ?? 0)
+    : fallbackState.distanceMeters;
+  const steps = isAndroidService
+    ? (displayedSnapshot?.steps ?? 0)
+    : fallbackState.steps;
+  const permissionDenied = isAndroidService
+    ? displayedSnapshot?.displayState === 'location_off'
+    : fallbackState.displayState === 'location_off';
+  const locationWarning = isAndroidService
+    ? (displayedSnapshot?.warning ?? null)
+    : fallbackState.warning;
 
   useEffect(() => {
-    isMountedRef.current = true;
-    sessionFinalizedRef.current = false;
-    checkpointWriteChainRef.current = Promise.resolve();
-    sessionStartTimeRef.current = new Date();
-    sessionStartMsRef.current = Date.now();
-    totalPausedMsRef.current = 0;
-    void queueCheckpointSave();
+    statusPulseAnim.stopAnimation();
+    statusPulseAnim.setValue(0);
+
+    if (displayState !== 'walking' && displayState !== 'calibrating') {
+      return undefined;
+    }
+
+    const animation = Animated.loop(
+      Animated.sequence([
+        Animated.timing(statusPulseAnim, {
+          toValue: 1,
+          duration: displayState === 'walking' ? 900 : 1500,
+          useNativeDriver: true,
+        }),
+        Animated.timing(statusPulseAnim, {
+          toValue: 0,
+          duration: displayState === 'walking' ? 900 : 1500,
+          useNativeDriver: true,
+        }),
+      ]),
+    );
+
+    animation.start();
+    return () => animation.stop();
+  }, [displayState, statusPulseAnim]);
+
+  useEffect(() => {
+    if (!showCompletion) return;
+
+    completionDismissLockedRef.current = true;
+    completionBackdropAnim.setValue(0);
+    completionCardAnim.setValue(0);
+    completionGlowAnim.setValue(0);
+    completionStatAnims.forEach((value) => value.setValue(0));
+
+    Animated.parallel([
+      Animated.timing(completionBackdropAnim, {
+        toValue: 1,
+        duration: 180,
+        useNativeDriver: true,
+      }),
+      Animated.spring(completionCardAnim, {
+        toValue: 1,
+        tension: 60,
+        friction: 9,
+        useNativeDriver: true,
+      }),
+      Animated.timing(completionGlowAnim, {
+        toValue: 1,
+        duration: 450,
+        useNativeDriver: true,
+      }),
+      Animated.stagger(
+        80,
+        completionStatAnims.map((value) => Animated.timing(value, {
+          toValue: 1,
+          duration: 220,
+          useNativeDriver: true,
+        })),
+      ),
+    ]).start(() => {
+      completionDismissLockedRef.current = false;
+    });
+  }, [completionBackdropAnim, completionCardAnim, completionGlowAnim, completionStatAnims, showCompletion]);
+
+  const applyAndroidSnapshot = useCallback((snapshot: ActiveWalkSnapshot | null) => {
+    const previous = lastAndroidSnapshotRef.current;
+    setActiveWalkSnapshot(snapshot);
+    setPendingWalkPrompt(snapshot?.prompt ?? null);
+    lastAndroidSnapshotRef.current = snapshot;
+
+    if (snapshot?.prompt === 'end_confirmation') {
+      setShowIdleModal(false);
+      setShowEndModal(true);
+    }
+
+    const autoPaused = snapshot?.paused &&
+      snapshot.lastActionSource === 'auto_pause' &&
+      (!previous?.paused || previous.lastActionSource !== 'auto_pause');
+    if (autoPaused) {
+      setShowEndModal(false);
+      setShowIdleModal(true);
+      analyticsService.track('walk_inactive_auto_pause', {
+        strictnessMode: preferences?.strictnessMode ?? 'easygoing',
+        stepGoalEnabled: preferences?.stepGoalEnabled ?? false,
+        stepGoal: preferences?.stepGoal ?? null,
+        idleSeconds: 30,
+      });
+    }
+  }, [preferences?.stepGoal, preferences?.stepGoalEnabled, preferences?.strictnessMode, setActiveWalkSnapshot, setPendingWalkPrompt]);
+
+  const refreshAndroidSnapshot = useCallback(async () => {
+    if (!isAndroidService) return;
+    const snapshot = await androidWalkTracking.getSnapshot();
+    applyAndroidSnapshot(snapshot);
+  }, [applyAndroidSnapshot, isAndroidService]);
+
+  useEffect(() => {
+    if (!isAndroidService) return;
+
+    let cancelled = false;
+    const subscription = androidWalkTracking.subscribe((snapshot) => {
+      if (cancelled) return;
+      applyAndroidSnapshot(snapshot);
+    });
+
     void (async () => {
-      if (planId) {
-        const found = await plansRepo.getById(planId);
-        if (found && isMountedRef.current) {
-          setPlan(found);
-          await plansRepo.updateStatus(planId, 'started');
-        }
+      let snapshot = await androidWalkTracking.getSnapshot();
+      if (!snapshot) {
+        await requestWalkTrackingPermissions();
+        snapshot = await androidWalkTracking.startSession({ planId });
       }
-      await requestPermissionAndTrack();
-
-      // Initialize pedometer for real step counting
-      try {
-        const pedometerAvailable = await Pedometer.isAvailableAsync();
-        if (pedometerAvailable && isMountedRef.current) {
-          const { status } = await Pedometer.getPermissionsAsync();
-          let permGranted = status === 'granted';
-          if (!permGranted) {
-            const { status: newStatus } = await Pedometer.requestPermissionsAsync();
-            permGranted = newStatus === 'granted';
-          }
-
-          if (permGranted && isMountedRef.current) {
-            pedometerAvailableRef.current = true;
-            pedometerInitTimeRef.current = Date.now();
-            lastWatchStepsRef.current = 0;
-            accumulatedStepsRef.current = 0;
-            // Use watchStepCount for real-time step counting.
-            subscriptionStartMsRef.current = Date.now();
-            const subscription = Pedometer.watchStepCount((result) => {
-              if (!isMountedRef.current) return;
-              // Filter phantom first step that fires immediately on subscription
-              if (
-                result.steps === 1 &&
-                lastWatchStepsRef.current === 0 &&
-                (Date.now() - subscriptionStartMsRef.current) < 1500
-              ) {
-                return;
-              }
-              pedometerHasDeliveredRef.current = true;
-
-              if (!pausedRef.current) {
-                // result.steps is cumulative since this subscription started.
-                // Track the total = accumulated from prior subs + current sub's value.
-                const totalSteps = accumulatedStepsRef.current + result.steps;
-                lastWatchStepsRef.current = result.steps;
-                setSteps(totalSteps);
-                // If steps are being counted, user is walking
-                lastMovementAtRef.current = Date.now();
-                setHadWalkingSignal(true);
-              }
-            });
-            pedometerSubscriptionRef.current = subscription;
-          }
-        }
-      } catch (e) {
-        if (__DEV__) console.warn('Pedometer initialization failed:', e);
-        pedometerAvailableRef.current = false;
-      }
-      // Set up walk session notification
-      if (isNotificationsSupported) {
-        await notificationService.setupWalkSessionCategories();
-        void notificationService.showWalkSessionNotification(formatClock(0), false);
+      if (!cancelled) {
+        applyAndroidSnapshot(snapshot);
       }
     })();
 
-    // Timestamp-based timer: computes elapsed from session start (works across background)
-    let notifCounter = 0;
-    timerRef.current = setInterval(() => {
-      if (sessionFinalizedRef.current) return;
-
-      setTicks((prev) => prev + 1);
-      const elapsed = computeElapsedSeconds();
-      if (!pausedRef.current) {
-        setActiveSeconds(elapsed);
+    const appStateSubscription = AppState.addEventListener('change', (nextState) => {
+      const previousState = appStateRef.current;
+      appStateRef.current = nextState;
+      if (previousState.match(/background|inactive/) && nextState === 'active') {
+        void refreshAndroidSnapshot();
       }
-      // Derive "walking now" from recent step events.
-      const movingRecently = !pausedRef.current && (Date.now() - lastMovementAtRef.current) < 2500;
-      setIsWalking((prev) => (prev === movingRecently ? prev : movingRecently));
+    });
 
-      // Update walk session notification every second (live timer)
-      notifCounter++;
-      if (isNotificationsSupported) {
-        void notificationService.showWalkSessionNotification(formatClock(elapsed), pausedRef.current);
-      }
-      // Auto-save walk checkpoint every 30 seconds (crash/kill recovery)
-      if (notifCounter % 30 === 0) {
-        void queueCheckpointSave();
-      }
+    return () => {
+      cancelled = true;
+      subscription.remove();
+      appStateSubscription.remove();
+    };
+  }, [applyAndroidSnapshot, isAndroidService, planId, refreshAndroidSnapshot]);
 
-      // Every 5 seconds, poll getStepCountAsync to catch missed watchStepCount events
-      if (notifCounter % 5 === 0 && pedometerAvailableRef.current && !pausedRef.current) {
-        void (async () => {
-          try {
-            const now = new Date();
-            const result = await Pedometer.getStepCountAsync(sessionStartTimeRef.current, now);
-            if (isMountedRef.current && result.steps > stepsRef.current) {
-              setSteps(result.steps);
-              accumulatedStepsRef.current = result.steps;
-              lastWatchStepsRef.current = 0;
-              lastMovementAtRef.current = Date.now();
-              setHadWalkingSignal(true);
+  const resolveFallbackPresentation = useCallback((state: FallbackState, nowMs: number) => {
+    const recentStep = lastStepAtRef.current != null && nowMs - lastStepAtRef.current <= WALKING_LATCH_MS;
+    const recentGpsMotion = lastGpsMotionAtRef.current != null && nowMs - lastGpsMotionAtRef.current <= WALKING_LATCH_MS;
+    const recentAcceptedLocation = lastAcceptedLocationAtRef.current != null &&
+      nowMs - lastAcceptedLocationAtRef.current <= WALKING_LATCH_MS;
+    const isWalkingNow = recentStep || recentGpsMotion;
+    const inCalibration = !state.paused &&
+      !isWalkingNow &&
+      nowMs - new Date(state.startIso).getTime() < CALIBRATION_WINDOW_MS;
+
+    const motionState: WalkMotionState = state.paused
+      ? 'paused'
+      : isWalkingNow
+        ? 'walking'
+        : !state.locationPermissionGranted && !state.hadWalkingSignal
+          ? 'location_off'
+          : state.hadWalkingSignal
+            ? 'not_moving'
+            : 'starting';
+
+    const displayState: WalkDisplayState = state.paused
+      ? 'paused'
+      : isWalkingNow
+        ? 'walking'
+        : !state.locationPermissionGranted && !state.hadWalkingSignal
+          ? 'location_off'
+          : inCalibration
+            ? 'calibrating'
+            : state.hadWalkingSignal
+              ? 'not_moving'
+              : 'sensor_issue';
+
+    const pedometerHealth: SensorHealth = !state.activityPermissionGranted
+      ? 'denied'
+      : recentStep
+        ? 'active'
+        : 'stale';
+
+    const locationHealth: SensorHealth = !state.locationPermissionGranted
+      ? 'denied'
+      : recentAcceptedLocation
+        ? 'active'
+        : 'stale';
+
+    const motionConfidence: WalkMotionConfidence = recentStep && recentGpsMotion
+      ? 'high'
+      : recentStep || recentGpsMotion
+        ? 'medium'
+        : 'low';
+
+    const stepSource: WalkStepSource = recentStep
+      ? 'sensor'
+      : state.stepSource === 'gps_fallback'
+        ? 'gps_fallback'
+        : 'none';
+
+    const statusReason =
+      stepSource === 'gps_fallback'
+        ? 'Using GPS step backup'
+        : displayState === 'walking' && recentGpsMotion && !recentStep && state.activityPermissionGranted
+          ? 'Step sensor waiting'
+          : displayState === 'sensor_issue' && state.activityPermissionGranted
+            ? 'Step sensor not responding'
+            : displayState === 'location_off'
+              ? 'Location needed'
+              : displayState === 'calibrating'
+                ? 'Detecting movement...'
+                : (!state.backgroundLocationGranted && state.locationPermissionGranted)
+                  ? 'Background tracking limited'
+                  : null;
+
+    return {
+      motionState,
+      displayState,
+      pedometerHealth,
+      locationHealth,
+      motionConfidence,
+      stepSource,
+      statusReason,
+    };
+  }, []);
+
+  const hydrateFallbackState = useCallback((state: FallbackState, nowMs: number): FallbackState => ({
+    ...state,
+    ...resolveFallbackPresentation(state, nowMs),
+  }), [resolveFallbackPresentation]);
+
+  const updateFallbackState = useCallback((updater: (current: FallbackState) => FallbackState) => {
+    setFallbackState((current) => {
+      const next = updater(current);
+      fallbackStateRef.current = next;
+      return next;
+    });
+  }, []);
+
+  const computeFallbackElapsedSeconds = useCallback((state: FallbackState, nowMs: number): number => {
+    const currentPauseMs = state.pauseStartedAtMs ? nowMs - state.pauseStartedAtMs : 0;
+    return Math.max(0, Math.floor((nowMs - new Date(state.startIso).getTime() - state.totalPausedMs - currentPauseMs) / 1000));
+  }, []);
+
+  const updateFallbackCheckpoint = useCallback(async () => {
+    const state = fallbackStateRef.current;
+    const currentPauseMs = state.pauseStartedAtMs ? (Date.now() - state.pauseStartedAtMs) : 0;
+    await saveWalkCheckpoint({
+      sessionId: state.sessionId,
+      planId: planId ?? undefined,
+      startIso: state.startIso,
+      sessionStartMs: new Date(state.startIso).getTime(),
+      totalPausedMs: state.totalPausedMs + currentPauseMs,
+      distanceMeters: state.distanceMeters,
+      steps: state.steps,
+      paused: state.paused,
+      usedLocation: state.usedLocation,
+    });
+  }, [planId]);
+
+  const unsubscribeFallbackSensors = useCallback(() => {
+    locationSubscriptionRef.current?.remove();
+    locationSubscriptionRef.current = null;
+    pedometerSubscriptionRef.current?.remove();
+    pedometerSubscriptionRef.current = null;
+  }, []);
+
+  const subscribeFallbackPedometer = useCallback(() => {
+    pedometerSubscriptionRef.current?.remove();
+    pedometerBaseRef.current = null;
+
+    const subscription = Pedometer.watchStepCount((result) => {
+      const nowMs = Date.now();
+      lastPedometerEventAtRef.current = nowMs;
+
+      updateFallbackState((current) => {
+        if (current.paused) return current;
+
+        if (pedometerBaseRef.current == null) {
+          pedometerBaseRef.current = result.steps - current.steps;
+        }
+
+        const totalSteps = Math.max(0, result.steps - (pedometerBaseRef.current ?? 0));
+        lastStepAtRef.current = nowMs;
+        lastMotionAtRef.current = nowMs;
+        const nextState = {
+          ...current,
+          steps: Math.max(current.steps, totalSteps),
+          stepSource: 'sensor' as WalkStepSource,
+          hadWalkingSignal: totalSteps > 0 || current.hadWalkingSignal,
+        };
+        return hydrateFallbackState(nextState, nowMs);
+      });
+    });
+
+    pedometerSubscriptionRef.current = subscription;
+  }, [hydrateFallbackState, updateFallbackState]);
+
+  const startFallbackTracking = useCallback(async () => {
+    const permissionResults = await requestWalkTrackingPermissions();
+    updateFallbackState((current) => {
+      const nextState = {
+        ...current,
+        locationPermissionGranted: permissionResults.locationForeground,
+        backgroundLocationGranted: permissionResults.locationBackground,
+        activityPermissionGranted: permissionResults.activityRecognition,
+        warning: permissionResults.locationForeground && !permissionResults.locationBackground
+          ? 'Background location is off. Distance updates may pause when the app is not visible.'
+          : null,
+      };
+      return hydrateFallbackState(nextState, Date.now());
+    });
+
+    if (permissionResults.locationForeground) {
+      locationSubscriptionRef.current = await Location.watchPositionAsync(
+        {
+          accuracy: Location.Accuracy.High,
+          timeInterval: 1000,
+          distanceInterval: 1,
+        },
+        (location) => {
+          const nextCoord: Coord = {
+            latitude: location.coords.latitude,
+            longitude: location.coords.longitude,
+          };
+          const timestampMs = typeof location.timestamp === 'number' ? location.timestamp : Date.now();
+          const previous = lastCoordRef.current;
+          lastCoordRef.current = { coord: nextCoord, timestampMs };
+
+          updateFallbackState((current) => {
+            let nextState = current;
+
+            if (previous) {
+              const segmentMeters = haversineMeters(previous.coord, nextCoord);
+              const dtSeconds = Math.max(1, (timestampMs - previous.timestampMs) / 1000);
+              const speedFromSensor = typeof location.coords.speed === 'number' && location.coords.speed >= 0
+                ? location.coords.speed
+                : null;
+              const effectiveSpeed = speedFromSensor ?? segmentMeters / dtSeconds;
+              const moving = !current.paused &&
+                segmentMeters <= MAX_VALID_JUMP_METERS &&
+                (
+                  effectiveSpeed >= WALKING_SPEED_THRESHOLD_MPS ||
+                  (segmentMeters >= GPS_MOTION_SEGMENT_METERS && dtSeconds <= GPS_MOTION_MAX_DT_SECONDS)
+                );
+
+              if (!current.paused && segmentMeters >= MIN_SEGMENT_METERS && segmentMeters <= MAX_VALID_JUMP_METERS) {
+                const nextDistance = current.distanceMeters + segmentMeters;
+                const pedometerStalled = lastPedometerEventAtRef.current == null ||
+                  Date.now() - lastPedometerEventAtRef.current > WALKING_LATCH_MS;
+                const usingGpsFallback = !current.activityPermissionGranted || pedometerStalled;
+                const estimatedSteps = usingGpsFallback
+                  ? Math.max(current.steps, Math.round(nextDistance / ESTIMATED_STRIDE_METERS))
+                  : current.steps;
+                nextState = {
+                  ...current,
+                  distanceMeters: nextDistance,
+                  steps: estimatedSteps,
+                  stepSource: usingGpsFallback ? 'gps_fallback' : current.stepSource,
+                  usedLocation: true,
+                };
+                lastAcceptedLocationAtRef.current = timestampMs;
+              }
+
+              if (moving) {
+                lastGpsMotionAtRef.current = timestampMs;
+                lastMotionAtRef.current = timestampMs;
+                nextState = {
+                  ...nextState,
+                  hadWalkingSignal: true,
+                };
+              }
             }
-          } catch {
-            // getStepCountAsync not available on this device (e.g. Android without Health Connect)
-          }
-        })();
-      }
 
-      // Watchdog: if step events stall mid-session, resubscribe.
-      if (
-        pedometerAvailableRef.current &&
-        !pausedRef.current &&
-        pedometerHasDeliveredRef.current &&
-        (Date.now() - lastMovementAtRef.current) > 12000 &&
-        (Date.now() - lastPedometerResubscribeAtRef.current) > 15000
-      ) {
-        lastPedometerResubscribeAtRef.current = Date.now();
-        resubscribePedometer();
+            return hydrateFallbackState(nextState, Date.now());
+          });
+        },
+      );
+    }
+
+    if (permissionResults.activityRecognition) {
+      subscribeFallbackPedometer();
+    }
+
+    if (isNotificationsSupported && Platform.OS !== 'android') {
+      await notificationService.setupWalkSessionCategories();
+      await notificationService.showWalkSessionNotification(formatClock(0), false);
+    }
+  }, [hydrateFallbackState, subscribeFallbackPedometer, updateFallbackState]);
+
+  useEffect(() => {
+    if (isAndroidService) return;
+
+    let timer: ReturnType<typeof setInterval> | null = null;
+    void startFallbackTracking();
+
+    timer = setInterval(() => {
+      const nowMs = Date.now();
+      updateFallbackState((current) => {
+        const nextState = {
+          ...current,
+          activeSeconds: computeFallbackElapsedSeconds(current, nowMs),
+        };
+        return hydrateFallbackState(nextState, nowMs);
+      });
+
+      if (isNotificationsSupported && Platform.OS !== 'android') {
+        void notificationService.showWalkSessionNotification(
+          formatClock(fallbackStateRef.current.activeSeconds),
+          fallbackStateRef.current.paused,
+        );
       }
     }, 1000);
 
     return () => {
-      isMountedRef.current = false;
-      if (timerRef.current) clearInterval(timerRef.current);
-      const sub = watchRef.current;
-      watchRef.current = null;
-      sub?.remove();
-      // Clean up pedometer subscription
-      if (pedometerSubscriptionRef.current) {
-        pedometerSubscriptionRef.current.remove();
-        pedometerSubscriptionRef.current = null;
-      }
-      // Dismiss walk session notification
-      if (isNotificationsSupported) {
+      if (timer) clearInterval(timer);
+      unsubscribeFallbackSensors();
+      if (isNotificationsSupported && Platform.OS !== 'android') {
         void notificationService.dismissWalkSessionNotification();
       }
     };
-  }, [planId, requestPermissionAndTrack, computeElapsedSeconds, queueCheckpointSave]);
-
-  // AppState listener: recalculate timer when returning from background,
-  // reconcile pedometer steps, and re-check location permission.
-  useEffect(() => {
-    const handleAppStateChange = (nextState: AppStateStatus) => {
-      if (nextState === 'active') {
-        // App returned to foreground: immediately recalculate elapsed time
-        const elapsed = computeElapsedSeconds();
-        if (!pausedRef.current) {
-          setActiveSeconds(elapsed);
-        }
-        setTicks((prev) => prev + 1);
-        if (isNotificationsSupported) {
-          void notificationService.showWalkSessionNotification(formatClock(elapsed), pausedRef.current);
-        }
-
-        // Reconcile pedometer steps from background: try getStepCountAsync
-        // (works on iOS, and Android with Health Connect / Google Fit).
-        // If it fails, resubscribe watchStepCount to pick up fresh events.
-        if (pedometerAvailableRef.current) {
-          void (async () => {
-            try {
-              const now = new Date();
-              const result = await Pedometer.getStepCountAsync(sessionStartTimeRef.current, now);
-              if (isMountedRef.current && result.steps > stepsRef.current) {
-                // getStepCountAsync returned a higher count — adopt it
-                setSteps(result.steps);
-                accumulatedStepsRef.current = result.steps;
-                lastWatchStepsRef.current = 0;
-                lastMovementAtRef.current = Date.now();
-                setIsWalking(true);
-                setHadWalkingSignal(true);
-              }
-            } catch {
-              // getStepCountAsync not available (common on Android without Health Connect).
-              // Resubscribe watchStepCount so we pick up steps going forward.
-              // Preserve accumulated steps from the old subscription.
-              accumulatedStepsRef.current += lastWatchStepsRef.current;
-              lastWatchStepsRef.current = 0;
-              if (pedometerSubscriptionRef.current) {
-                pedometerSubscriptionRef.current.remove();
-              }
-              subscriptionStartMsRef.current = Date.now();
-              const sub = Pedometer.watchStepCount((result) => {
-                if (!isMountedRef.current) return;
-                // Filter phantom first step that fires immediately on subscription
-                if (
-                  result.steps === 1 &&
-                  lastWatchStepsRef.current === 0 &&
-                  (Date.now() - subscriptionStartMsRef.current) < 1500
-                ) {
-                  return;
-                }
-                if (!pausedRef.current) {
-                  const totalSteps = accumulatedStepsRef.current + result.steps;
-                  lastWatchStepsRef.current = result.steps;
-                  setSteps(totalSteps);
-                  lastMovementAtRef.current = Date.now();
-                  setIsWalking(true);
-                  setHadWalkingSignal(true);
-                }
-              });
-              pedometerSubscriptionRef.current = sub;
-            }
-          })();
-        }
-
-      } else if (nextState === 'background') {
-        void queueCheckpointSave();
-        // Going to background: update notification with current time + start time
-        // so the user sees when the walk started even if the timer text goes stale.
-        const elapsed = computeElapsedSeconds();
-        if (isNotificationsSupported) {
-          const st = sessionStartTimeRef.current;
-          const h = st.getHours() % 12 || 12;
-          const m = String(st.getMinutes()).padStart(2, '0');
-          const ampm = st.getHours() >= 12 ? 'PM' : 'AM';
-          void notificationService.showWalkSessionNotification(
-            `${formatClock(elapsed)} (started ${h}:${m} ${ampm})`,
-            pausedRef.current
-          );
-        }
-      }
-    };
-
-    const subscription = AppState.addEventListener('change', handleAppStateChange);
-    return () => subscription.remove();
-  }, [computeElapsedSeconds, queueCheckpointSave]);
-
-  // Notification action handler: Pause / Resume / End from notification shade
-  useEffect(() => {
-    if (!isNotificationsSupported) return;
-
-    const sub = Notifications.addNotificationResponseReceivedListener((response) => {
-      const data = response.notification.request.content.data as Record<string, unknown> | undefined;
-      if (data?.type !== 'walk_session') return;
-      notifActionRef.current(response.actionIdentifier);
-    });
-
-    return () => sub.remove();
-  }, []);
-
-  const resumeSession = useCallback(() => {
-    const pauseStarted = pauseStartedAtRef.current;
-    if (pauseStarted) {
-      totalPausedMsRef.current += (Date.now() - pauseStarted);
-    }
-    pauseStartedAtRef.current = null;
-
-    // Resubscribe the pedometer so that steps taken during the pause
-    // are not counted. The new subscription starts its counter from 0.
-    if (pedometerAvailableRef.current && pedometerSubscriptionRef.current) {
-      accumulatedStepsRef.current = stepsAtPauseRef.current;
-      lastWatchStepsRef.current = 0;
-      pedometerSubscriptionRef.current.remove();
-      subscriptionStartMsRef.current = Date.now();
-      const sub = Pedometer.watchStepCount((result) => {
-        if (!isMountedRef.current) return;
-        // Filter phantom first step that fires immediately on subscription
-        if (
-          result.steps === 1 &&
-          lastWatchStepsRef.current === 0 &&
-          (Date.now() - subscriptionStartMsRef.current) < 1500
-        ) {
-          return;
-        }
-        if (!pausedRef.current) {
-          const totalSteps = accumulatedStepsRef.current + result.steps;
-          lastWatchStepsRef.current = result.steps;
-          setSteps(totalSteps);
-          lastMovementAtRef.current = Date.now();
-          setIsWalking(true);
-          setHadWalkingSignal(true);
-        }
-      });
-      pedometerSubscriptionRef.current = sub;
-    }
-
-    setPaused(false);
-    void queueCheckpointSave();
-    // Update notification to show Walking state
-    if (isNotificationsSupported) {
-      const elapsed = computeElapsedSeconds();
-      void notificationService.showWalkSessionNotification(formatClock(elapsed), false);
-    }
-  }, [computeElapsedSeconds, queueCheckpointSave]);
-
-  const pauseSession = useCallback(() => {
-    pauseStartedAtRef.current = Date.now();
-    setPaused(true);
-    setIsWalking(false);
-    // Snapshot pedometer state at pause: remember total steps so we can
-    // discard any steps the hardware counts during the paused period.
-    stepsAtPauseRef.current = stepsRef.current;
-    void queueCheckpointSave();
-    // Update notification to show Paused state
-    if (isNotificationsSupported) {
-      const elapsed = computeElapsedSeconds();
-      void notificationService.showWalkSessionNotification(formatClock(elapsed), true);
-    }
-  }, [computeElapsedSeconds, queueCheckpointSave]);
-
-  const togglePause = () => {
-    if (Platform.OS !== 'web') {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
-    }
-    if (paused) {
-      resumeSession();
-      return;
-    }
-    pauseSession();
-  };
+  }, [computeFallbackElapsedSeconds, hydrateFallbackState, isAndroidService, startFallbackTracking, unsubscribeFallbackSensors, updateFallbackState]);
 
   useEffect(() => {
-    if (paused || showEndModal || showCompletion || showIdleModal) return;
-    // Arm autopause only after we have at least one real walking signal.
-    if (!hadWalkingSignal) return;
+    if (isAndroidService) return;
+    if (fallbackState.paused || showEndModal || showCompletion || showIdleModal) return;
+    if (!fallbackState.hadWalkingSignal || lastMotionAtRef.current == null) return;
 
-    const idleSeconds = Math.floor((Date.now() - lastMovementAtRef.current) / 1000);
-    if (idleSeconds < INACTIVITY_PAUSE_SECONDS) return;
+    const idleMs = Date.now() - lastMotionAtRef.current;
+    if (idleMs < AUTO_PAUSE_MS) return;
 
-    pauseSession();
+    updateFallbackState((current) => ({
+      ...hydrateFallbackState({
+        ...current,
+        paused: true,
+        pauseStartedAtMs: Date.now(),
+      }, Date.now()),
+    }));
+    setShowEndModal(false);
     setShowIdleModal(true);
-    Vibration.vibrate(380);
     analyticsService.track('walk_inactive_auto_pause', {
       strictnessMode: preferences?.strictnessMode ?? 'easygoing',
       stepGoalEnabled: preferences?.stepGoalEnabled ?? false,
       stepGoal: preferences?.stepGoal ?? null,
-      idleSeconds,
+      idleSeconds: Math.floor(idleMs / 1000),
     });
   }, [
-    hadWalkingSignal,
-    paused,
-    pauseSession,
+    fallbackState.hadWalkingSignal,
+    fallbackState.paused,
+    isAndroidService,
     preferences?.stepGoal,
     preferences?.stepGoalEnabled,
     preferences?.strictnessMode,
     showCompletion,
     showEndModal,
     showIdleModal,
-    ticks,
+    updateFallbackState,
   ]);
 
-  // Autopause modal should only close via user choice.
-
-  const remainingSeconds = useMemo(() => {
-    if (!plan) return activeSeconds;
-    // Count down from the suggested walk duration based on how long the user
-    // has actually been walking, instead of using the calendar end time.
-    // This ensures the timer works even if the user opens the notification
-    // after the originally-planned window has elapsed.
-    const suggestedSeconds = plan.suggestedDurationMinutes * 60;
-    return Math.max(0, suggestedSeconds - activeSeconds);
-  }, [activeSeconds, plan]);
-
-  const statusLabel = paused
-    ? 'Paused'
-    : isTracking
-      ? (permissionDenied ? 'Location off' : (isWalking ? 'Walking now' : 'Not moving yet'))
-      : (isWalking || hadWalkingSignal ? 'Walking now' : 'Not moving yet');
-
-  const statusColor = paused
-    ? '#f59e0b'
-    : isWalking
-      ? theme.colors.accentPrimary
-      : permissionDenied
-        ? '#ef4444'
-        : palette.textMuted;
-
-  const zoomBy = async (delta: number) => {
-    const map = mapRef.current;
-    if (!map?.getCamera || !map?.animateCamera) return;
-
-    try {
-      const camera = await map.getCamera();
-      const currentZoom = typeof camera?.zoom === 'number' ? camera.zoom : 16;
-      const nextZoom = Math.max(13, Math.min(20, currentZoom + delta));
-      map.animateCamera({ zoom: nextZoom, center: currentCoord || DEFAULT_COORD }, { duration: 180 });
-    } catch {
-      // no-op
+  useEffect(() => {
+    if (prompt === 'end_confirmation' || pendingWalkPrompt === 'end_confirmation') {
+      setShowIdleModal(false);
+      setShowEndModal(true);
     }
-  };
-
-  const recenterMap = () => {
-    const map = mapRef.current;
-    if (!map?.animateCamera || !currentCoord) return;
-    map.animateCamera({ center: currentCoord, zoom: 17 }, { duration: 220 });
-  };
-
-  const saveSession = async (options?: {
-    showCompletion?: boolean;
-    planStatus?: 'completed' | 'cancelled' | 'skipped';
-    endReason?: 'manual' | 'idle_later';
-  }) => {
-    if (sessionFinalizedRef.current) return;
-    sessionFinalizedRef.current = true;
-
-    // Dismiss walk session notification
-    if (isNotificationsSupported) {
-      void notificationService.dismissWalkSessionNotification();
-    }
-    try {
-      const finalPausedMs = totalPausedMsRef.current +
-        (pauseStartedAtRef.current ? (Date.now() - pauseStartedAtRef.current) : 0);
-      const finalPausedSeconds = Math.floor(finalPausedMs / 1000);
-      const finalActiveSeconds = computeElapsedSeconds();
-      setActiveSeconds(finalActiveSeconds);
-
-      const session: WalkSession = {
-        id: sessionIdRef.current,
-        nudgePlanId: planId,
-        start: startIsoRef.current,
-        end: new Date().toISOString(),
-        activeSeconds: finalActiveSeconds,
-        pausedSeconds: finalPausedSeconds,
-        distanceMeters,
-        steps,
-        usedLocation: isTracking && !permissionDenied,
-        createdAt: new Date().toISOString(),
-      };
-
-      await sessionsRepo.save(session);
-      // Ensure older queued writes cannot re-create checkpoint after successful save.
-      await checkpointWriteChainRef.current.catch(() => undefined);
-      await clearWalkCheckpoint();
-      if (planId) {
-        await plansRepo.updateStatus(planId, options?.planStatus ?? 'completed');
-      }
-
-      analyticsService.track('walk_completed', {
-        planId: planId || null,
-        activeSeconds: finalActiveSeconds,
-        pausedSeconds: finalPausedSeconds,
-        distanceMeters: Math.round(distanceMeters),
-        steps,
-        usedLocation: isTracking && !permissionDenied,
-        hadWalkingSignal,
-        endReason: options?.endReason ?? 'manual',
-      });
-      if (timerRef.current) {
-        clearInterval(timerRef.current);
-        timerRef.current = null;
-      }
-
-      if (options?.showCompletion === false) {
-        allowLeaveRef.current = true;
-        navigation.navigate('Dashboard');
-        return;
-      }
-
-      setCompletionKind(options?.endReason === 'idle_later' ? 'saved_later' : 'completed');
-      setShowCompletion(true);
-      completionPopAnim.setValue(0);
-      completionBurstAnim.setValue(0);
-      completionConfettiAnim.setValue(0);
-
-      Vibration.vibrate([0, 120, 80, 120, 80, 200]);
-
-      Animated.parallel([
-        Animated.spring(completionPopAnim, {
-          toValue: 1,
-          tension: 65,
-          friction: 7,
-          useNativeDriver: true,
-        }),
-        Animated.timing(completionBurstAnim, {
-          toValue: 1,
-          duration: 1200,
-          easing: Easing.out(Easing.quad),
-          useNativeDriver: true,
-        }),
-        Animated.timing(completionConfettiAnim, {
-          toValue: 1,
-          duration: 2000,
-          easing: Easing.out(Easing.cubic),
-          useNativeDriver: true,
-        }),
-      ]).start();
-
-      setTimeout(() => {
-        setShowCompletion(false);
-        allowLeaveRef.current = true;
-        navigation.navigate('Dashboard', { showPostWalkSummary: true });
-      }, 3500);
-    } catch (e) {
-      sessionFinalizedRef.current = false;
-      if (__DEV__) console.warn('Failed to save walk session:', e);
-    }
-  };
-
-  const confirmEnd = async () => {
-    setShowEndModal(false);
-    await saveSession();
-  };
-
-  const continueAfterIdlePause = () => {
-    setShowIdleModal(false);
-    lastMovementAtRef.current = Date.now();
-    resumeSession();
-  };
-
-  const saveForLater = async () => {
-    setShowIdleModal(false);
-    await saveSession({ planStatus: 'cancelled', endReason: 'idle_later' });
-  };
+  }, [pendingWalkPrompt, prompt]);
 
   useEffect(() => {
-    const unsubscribe = navigation.addListener('beforeRemove', (e) => {
+    const unsubscribe = navigation.addListener('beforeRemove', (event) => {
       if (allowLeaveRef.current) return;
-      e.preventDefault();
+      event.preventDefault();
+      setShowIdleModal(false);
       setShowEndModal(true);
     });
     return unsubscribe;
   }, [navigation]);
 
-  // Keep notifActionRef in sync with latest closures so notification actions work correctly
-  notifActionRef.current = (actionId: string) => {
-    if (actionId === WALK_SESSION_ACTION_PAUSE) {
-      pauseSession();
-    } else if (actionId === WALK_SESSION_ACTION_RESUME) {
-      resumeSession();
-    } else if (actionId === WALK_SESSION_ACTION_END) {
-      void saveSession();
-    }
-  };
+  const dismissCompletion = useCallback(() => {
+    if (!showCompletion || completionDismissLockedRef.current) return;
+    completionDismissLockedRef.current = true;
 
-  const toggleSheet = useCallback(() => {
-    if (Platform.OS !== 'web') {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-    }
-    setSheetExpanded((prev) => {
-      const next = !prev;
-      Animated.spring(sheetExpandAnim, {
-        toValue: next ? 1 : 0,
-        tension: 100,
-        friction: 14,
-        useNativeDriver: false,
-      }).start();
-      return next;
+    Animated.parallel([
+      Animated.timing(completionBackdropAnim, {
+        toValue: 0,
+        duration: 220,
+        useNativeDriver: true,
+      }),
+      Animated.timing(completionCardAnim, {
+        toValue: 0,
+        duration: 220,
+        useNativeDriver: true,
+      }),
+      Animated.timing(completionGlowAnim, {
+        toValue: 0,
+        duration: 220,
+        useNativeDriver: true,
+      }),
+      ...completionStatAnims.map((value) => Animated.timing(value, {
+        toValue: 0,
+        duration: 180,
+        useNativeDriver: true,
+      })),
+    ]).start(() => {
+      setShowCompletion(false);
+      allowLeaveRef.current = true;
+      navigation.navigate('Dashboard', { showPostWalkSummary: true });
     });
-  }, [sheetExpandAnim]);
+  }, [completionBackdropAnim, completionCardAnim, completionGlowAnim, completionStatAnims, navigation, showCompletion]);
 
-  const sheetBg = themeMode === 'dark' ? 'rgba(6, 18, 43, 0.95)' : 'rgba(247, 251, 255, 0.97)';
-  const topBarBg = themeMode === 'dark' ? '#061633' : '#f1f6ff';
-  const sheetBorder = themeMode === 'dark' ? 'rgba(255,255,255,0.08)' : 'rgba(15,23,42,0.14)';
-  const handleColor = themeMode === 'dark' ? 'rgba(235,243,255,0.56)' : 'rgba(147, 161, 181, 0.95)';
+  const persistCompletedSession = useCallback(async (
+    session: WalkSession,
+    options?: {
+      planStatus?: 'completed' | 'cancelled' | 'skipped';
+      endReason?: 'manual' | 'idle_later';
+      hadWalkingSignal?: boolean;
+      showCompletion?: boolean;
+    },
+  ) => {
+    await sessionsRepo.save(session);
+    if (session.nudgePlanId) {
+      await plansRepo.updateStatus(session.nudgePlanId, options?.planStatus ?? 'completed');
+    }
 
-  const completionOverlayBg = themeMode === 'dark' ? 'rgba(2, 8, 20, 0.88)' : 'rgba(236, 245, 255, 0.88)';
-  const completionCardBg = themeMode === 'dark' ? '#0d1a35' : '#f7fbff';
-  const completionCardBorder = themeMode === 'dark' ? 'rgba(46, 233, 166, 0.25)' : 'rgba(46, 233, 166, 0.3)';
-  const statPillBg = themeMode === 'dark' ? 'rgba(46, 233, 166, 0.12)' : 'rgba(46, 233, 166, 0.1)';
-  const statPillColor = themeMode === 'dark' ? '#2ee9a6' : '#0d7a50';
-  const mapShadeColor = themeMode === 'dark' ? 'rgba(2, 8, 16, 0.04)' : 'rgba(141, 162, 186, 0.04)';
-  const zoomBtnBg = themeMode === 'dark' ? 'rgba(12, 20, 36, 0.78)' : 'rgba(248, 252, 255, 0.95)';
-  const zoomTextColor = themeMode === 'dark' ? '#eaf0ff' : '#10233e';
+    analyticsService.track('walk_completed', {
+      planId: session.nudgePlanId || null,
+      activeSeconds: session.activeSeconds,
+      pausedSeconds: session.pausedSeconds,
+      distanceMeters: Math.round(session.distanceMeters ?? 0),
+      steps: session.steps ?? 0,
+      usedLocation: session.usedLocation,
+      hadWalkingSignal: options?.hadWalkingSignal ?? false,
+      endReason: options?.endReason ?? 'manual',
+    });
+
+    if (!isAndroidService) {
+      await clearWalkCheckpoint();
+      if (isNotificationsSupported && Platform.OS !== 'android') {
+        await notificationService.dismissWalkSessionNotification();
+      }
+    }
+
+    setCompletionKind(options?.endReason === 'idle_later' ? 'saved_later' : 'completed');
+    setCompletionStats({
+      activeSeconds: session.activeSeconds,
+      distanceMeters: session.distanceMeters ?? 0,
+      steps: session.steps ?? 0,
+    });
+
+    if (options?.showCompletion === false) {
+      allowLeaveRef.current = true;
+      navigation.navigate('Dashboard');
+      return;
+    }
+
+    setShowCompletion(true);
+  }, [isAndroidService, navigation]);
+
+  const saveAndroidSession = useCallback(async (
+    snapshot: ActiveWalkSnapshot | null,
+    options?: {
+      planStatus?: 'completed' | 'cancelled' | 'skipped';
+      endReason?: 'manual' | 'idle_later';
+      showCompletion?: boolean;
+    },
+  ) => {
+    if (!snapshot) return;
+    const pauseDelta = snapshot.pauseStartedAtMs ? Date.now() - snapshot.pauseStartedAtMs : 0;
+    const session: WalkSession = {
+      id: snapshot.sessionId,
+      nudgePlanId: snapshot.planId || planId,
+      start: snapshot.startIso,
+      end: new Date().toISOString(),
+      activeSeconds: snapshot.elapsedSeconds,
+      pausedSeconds: Math.floor((snapshot.totalPausedMs + pauseDelta) / 1000),
+      distanceMeters: snapshot.distanceMeters,
+      steps: snapshot.steps,
+      usedLocation: snapshot.usedLocation,
+      createdAt: new Date().toISOString(),
+    };
+
+    setActiveWalkSnapshot(null);
+    setPendingWalkPrompt(null);
+    await persistCompletedSession(session, {
+      ...options,
+      hadWalkingSignal: snapshot.hadWalkingSignal,
+    });
+  }, [persistCompletedSession, planId, setActiveWalkSnapshot, setPendingWalkPrompt]);
+
+  const saveFallbackSession = useCallback(async (
+    options?: {
+      planStatus?: 'completed' | 'cancelled' | 'skipped';
+      endReason?: 'manual' | 'idle_later';
+      showCompletion?: boolean;
+    },
+  ) => {
+    const current = fallbackStateRef.current;
+    const pauseDelta = current.pauseStartedAtMs ? Date.now() - current.pauseStartedAtMs : 0;
+    const session: WalkSession = {
+      id: current.sessionId,
+      nudgePlanId: planId,
+      start: current.startIso,
+      end: new Date().toISOString(),
+      activeSeconds: computeFallbackElapsedSeconds(current, Date.now()),
+      pausedSeconds: Math.floor((current.totalPausedMs + pauseDelta) / 1000),
+      distanceMeters: current.distanceMeters,
+      steps: current.steps,
+      usedLocation: current.usedLocation,
+      createdAt: new Date().toISOString(),
+    };
+
+    unsubscribeFallbackSensors();
+    await persistCompletedSession(session, {
+      ...options,
+      hadWalkingSignal: current.hadWalkingSignal,
+    });
+  }, [computeFallbackElapsedSeconds, persistCompletedSession, planId, unsubscribeFallbackSensors]);
+
+  const togglePause = useCallback(async () => {
+    setShowIdleModal(false);
+
+    if (isAndroidService) {
+      const snapshot = paused
+        ? await androidWalkTracking.resumeSession('screen')
+        : await androidWalkTracking.pauseSession('screen');
+      applyAndroidSnapshot(snapshot);
+      return;
+    }
+
+    const current = fallbackStateRef.current;
+    updateFallbackState((current) => {
+      const nowMs = Date.now();
+      if (current.paused) {
+        const pauseStartedAtMs = current.pauseStartedAtMs ?? nowMs;
+        lastMotionAtRef.current = null;
+        lastStepAtRef.current = null;
+        lastGpsMotionAtRef.current = null;
+        const nextState = {
+          ...current,
+          paused: false,
+          pauseStartedAtMs: null,
+          totalPausedMs: current.totalPausedMs + Math.max(0, nowMs - pauseStartedAtMs),
+          stepSource: 'none' as WalkStepSource,
+        };
+        return hydrateFallbackState(nextState, nowMs);
+      }
+
+      return hydrateFallbackState({
+        ...current,
+        paused: true,
+        pauseStartedAtMs: nowMs,
+      }, nowMs);
+    });
+
+    if (!current.paused && current.activityPermissionGranted) {
+      pedometerSubscriptionRef.current?.remove();
+      pedometerSubscriptionRef.current = null;
+    } else if (current.paused && current.activityPermissionGranted) {
+      subscribeFallbackPedometer();
+    }
+    await updateFallbackCheckpoint();
+  }, [applyAndroidSnapshot, hydrateFallbackState, isAndroidService, paused, subscribeFallbackPedometer, updateFallbackCheckpoint, updateFallbackState]);
+
+  const continueAfterIdlePause = useCallback(async () => {
+    setShowIdleModal(false);
+    if (isAndroidService) {
+      const snapshot = await androidWalkTracking.resumeSession('screen');
+      applyAndroidSnapshot(snapshot);
+      return;
+    }
+    await togglePause();
+  }, [applyAndroidSnapshot, isAndroidService, togglePause]);
+
+  const saveForLater = useCallback(async () => {
+    setShowIdleModal(false);
+    if (isAndroidService) {
+      const snapshot = await androidWalkTracking.confirmEndSession();
+      await saveAndroidSession(snapshot, {
+        planStatus: 'cancelled',
+        endReason: 'idle_later',
+      });
+      return;
+    }
+    await saveFallbackSession({
+      planStatus: 'cancelled',
+      endReason: 'idle_later',
+    });
+  }, [isAndroidService, saveAndroidSession, saveFallbackSession]);
+
+  const confirmEnd = useCallback(async () => {
+    setShowEndModal(false);
+    if (isAndroidService) {
+      const snapshot = await androidWalkTracking.confirmEndSession();
+      await saveAndroidSession(snapshot);
+      return;
+    }
+    await saveFallbackSession();
+  }, [isAndroidService, saveAndroidSession, saveFallbackSession]);
+
+  const closeEndModal = useCallback(async () => {
+    if (isAndroidService && activeWalkSnapshot?.prompt === 'end_confirmation') {
+      const snapshot = await androidWalkTracking.cancelEndConfirmation();
+      applyAndroidSnapshot(snapshot);
+    }
+    setShowEndModal(false);
+  }, [activeWalkSnapshot?.prompt, applyAndroidSnapshot, isAndroidService]);
+
+  const statusColor = useMemo(() => {
+    if (displayState === 'paused') return '#f59e0b';
+    if (displayState === 'walking') return palette.accentPrimary;
+    if (displayState === 'location_off' || displayState === 'sensor_issue') return '#ef4444';
+    if (displayState === 'not_moving') return themeMode === 'dark' ? '#94a3b8' : '#475569';
+    return themeMode === 'dark' ? '#8b9bbd' : '#64748b';
+  }, [displayState, palette.accentPrimary, themeMode]);
+
+  const statusTint = useMemo(() => {
+    if (displayState === 'paused') return 'rgba(245,158,11,0.14)';
+    if (displayState === 'walking') return themeMode === 'dark' ? 'rgba(46,233,166,0.14)' : 'rgba(5,150,105,0.12)';
+    if (displayState === 'location_off' || displayState === 'sensor_issue') return 'rgba(239,68,68,0.12)';
+    return themeMode === 'dark' ? 'rgba(139,155,189,0.12)' : 'rgba(71,85,105,0.10)';
+  }, [displayState, themeMode]);
+
+  const statusBorderColor = useMemo(() => {
+    if (displayState === 'walking') return themeMode === 'dark' ? 'rgba(46,233,166,0.30)' : 'rgba(5,150,105,0.24)';
+    if (displayState === 'paused') return 'rgba(245,158,11,0.28)';
+    if (displayState === 'location_off' || displayState === 'sensor_issue') return 'rgba(239,68,68,0.24)';
+    return palette.borderSoft;
+  }, [displayState, palette.borderSoft, themeMode]);
+
+  const heroTime = formatClock(plan ? remainingSeconds : activeSeconds);
+  const heroSubLabel = plan ? 'Remaining time in this walk window' : 'Active session time';
+  const heroStatusLabel = displayLabel(displayState);
+  const heroStatusDetail = displayDetail(displayState, statusReason, !!plan);
+  const pulseScale = statusPulseAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [1, displayState === 'walking' ? 1.9 : 1.45],
+  });
+  const pulseOpacity = statusPulseAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [displayState === 'walking' ? 0.28 : 0.18, 0],
+  });
+  const cardLift = statusPulseAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0, displayState === 'walking' ? -4 : -2],
+  });
+  const completionSavedForLater = completionKind === 'saved_later';
+  const completionAccent = completionSavedForLater ? '#38bdf8' : palette.accentPrimary;
+  const completionTitle = completionSavedForLater ? 'Progress saved for later' : 'Walk recorded';
+  const completionSubtitle = completionSavedForLater
+    ? 'Your progress is tucked away. Pick it back up whenever you are ready for the next stretch.'
+    : 'Nice work. That session is safely logged and ready to count toward today.';
+  const completionStatsItems = [
+    {
+      icon: completionSavedForLater ? 'time-outline' : 'timer-outline',
+      label: 'Active time',
+      value: formatClock(completionStats.activeSeconds),
+    },
+    {
+      icon: completionSavedForLater ? 'walk' : 'navigate-outline',
+      label: 'Distance',
+      value: formatMiles(completionStats.distanceMeters),
+    },
+    {
+      icon: completionSavedForLater ? 'bookmark' : 'footsteps',
+      label: 'Steps',
+      value: completionStats.steps.toLocaleString(),
+    },
+  ] as const;
 
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: palette.bgApp }]} edges={['top', 'left', 'right']}>
-      <View style={[styles.topBar, { backgroundColor: topBarBg, borderBottomColor: sheetBorder }]}>
-        <Text variant="title" style={styles.topTitle}>Walking</Text>
+      <View style={[styles.topBar, { backgroundColor: palette.bgSurface, borderBottomColor: palette.borderSoft }]}>
+        <Text variant="title">Walking</Text>
       </View>
 
-      <View style={styles.mapArea}>
-        <View style={styles.mapFallback}>
-          <View style={styles.mapFallbackIcon}>
-            <Text variant="title" style={styles.mapFallbackEmoji}>🗺️</Text>
-          </View>
-          <Text variant="body" style={styles.mapFallbackTitle}>
-            Maps Coming Soon
-          </Text>
-          <Text variant="bodySmall" color={palette.textMuted} style={styles.mapFallbackSub}>
-            Map view will be available in a future update.{' '}
-            Your walk is still being tracked — distance, steps, and time update in real time below.
-          </Text>
-        </View>
-
-        <View style={[styles.statusPill, { backgroundColor: sheetBg, borderColor: sheetBorder }]}>
-          <View style={[styles.statusDot, { backgroundColor: statusColor }]} />
-          <Text variant="bodySmall" color={palette.textPrimary}>{statusLabel}</Text>
-        </View>
-
-      </View>
-
-      <View style={[styles.sheet, { backgroundColor: sheetBg, borderTopColor: sheetBorder, paddingBottom: Math.max(insets.bottom + 8, 18) }]}>
-        <Pressable
-          onPress={toggleSheet}
-          accessibilityRole="button"
-          accessibilityLabel="walking-sheet-handle"
-          style={styles.sheetHandleTouch}
-        >
-          <View style={[styles.sheetHandle, { backgroundColor: handleColor }]} />
-        </Pressable>
-
-        <Text variant="body" style={styles.timerLabel}>{plan ? 'Remaining Time' : 'Session Time'}</Text>
-        <Text variant="heading" style={[styles.timerValue, !sheetExpanded && styles.timerValueCollapsed]}>
-          {formatClock(remainingSeconds)}
-        </Text>
-
-        {sheetExpanded && (
-          <Animated.View style={{
-            opacity: sheetExpandAnim,
-            maxHeight: sheetExpandAnim.interpolate({ inputRange: [0, 1], outputRange: [0, 300] }),
-            overflow: 'hidden',
-          }}>
-            <View style={styles.metricRow}>
-              <View style={[styles.metricCard, { backgroundColor: themeMode === 'dark' ? '#1a2a4a' : '#dfe9f9' }]}>
-                <Text variant="body" style={styles.metricTitle}>Distance</Text>
-                {isTracking && !permissionDenied ? (
-                  <Text variant="heading" style={styles.metricValue}>{formatMiles(distanceMeters)}</Text>
-                ) : (
-                  <>
-                    <Text variant="heading" style={styles.metricValue}>--</Text>
-                    <Text variant="bodySmall" style={styles.metricHint}>Enable location to track distance</Text>
-                  </>
+      <View style={styles.body}>
+        <View style={styles.heroCluster}>
+          <View style={styles.heroStatusRow}>
+            <View
+              style={[
+                styles.statusPill,
+                {
+                  backgroundColor: statusTint,
+                  borderColor: statusBorderColor,
+                },
+              ]}
+            >
+              <View style={styles.statusDotWrap}>
+                {(displayState === 'walking' || displayState === 'calibrating') && (
+                  <Animated.View
+                    style={[
+                      styles.statusDotPulse,
+                      {
+                        backgroundColor: statusColor,
+                        opacity: pulseOpacity,
+                        transform: [{ scale: pulseScale }],
+                      },
+                    ]}
+                  />
                 )}
+                <View style={[styles.statusDot, { backgroundColor: statusColor }]} />
               </View>
-              <View style={[styles.metricCard, { backgroundColor: themeMode === 'dark' ? '#1a2a4a' : '#dfe9f9' }]}>
-                <Text variant="body" style={styles.metricTitle}>Step Counter</Text>
-                <Text variant="heading" style={styles.metricValue}>{steps.toLocaleString()}</Text>
-              </View>
+              <Text variant="bodySmall" style={styles.statusPillText}>{heroStatusLabel}</Text>
             </View>
 
-            <View style={styles.actionRow}>
-              <Button
-                title={paused ? 'Resume' : 'Pause'}
-                onPress={togglePause}
-                variant="secondary"
-                style={styles.actionBtn}
-                testID="walking-pause-resume"
-              />
-              <Button
-                title="End"
-                onPress={() => setShowEndModal(true)}
-                variant="danger"
-                style={styles.actionBtn}
-                testID="walking-end"
-              />
+            <View style={[styles.confidencePill, { backgroundColor: palette.bgSurfaceElevated, borderColor: palette.borderSoft }]}>
+              <Ionicons name="pulse-outline" size={14} color={statusColor} />
+              <Text variant="bodySmall" color={palette.textMuted}>{confidenceLabel(motionConfidence)}</Text>
+            </View>
+          </View>
+
+          <Animated.View
+            style={[
+              styles.heroCard,
+              {
+                backgroundColor: palette.bgSurface,
+                borderColor: statusBorderColor,
+                shadowColor: statusColor,
+                transform: [{ translateY: cardLift }],
+              },
+            ]}
+          >
+            <Text variant="body" style={styles.heroLabel}>Live walk tracking</Text>
+            <Text variant="heading" style={styles.heroTime}>
+              {heroTime}
+            </Text>
+            <Text variant="bodySmall" color={palette.textMuted} style={styles.heroSub}>
+              {heroSubLabel}
+            </Text>
+            <Text variant="body" style={styles.heroDetail}>
+              {heroStatusDetail}
+            </Text>
+
+            <View style={styles.heroMetaRow}>
+              <View style={[styles.metaPill, { backgroundColor: palette.bgSurfaceElevated, borderColor: palette.borderSoft }]}>
+                <Ionicons name="footsteps-outline" size={15} color={statusColor} />
+                <Text variant="bodySmall" color={palette.textMuted}>{stepSourceLabel(stepSource, pedometerHealth)}</Text>
+              </View>
+              <View style={[styles.metaPill, { backgroundColor: palette.bgSurfaceElevated, borderColor: palette.borderSoft }]}>
+                <Ionicons name="navigate-outline" size={15} color={statusColor} />
+                <Text variant="bodySmall" color={palette.textMuted}>{sensorHealthLabel('GPS', locationHealth)}</Text>
+              </View>
             </View>
           </Animated.View>
-        )}
+
+          {(permissionDenied || locationWarning) && (
+            <View
+              style={[
+                styles.warningCard,
+                {
+                  backgroundColor: themeMode === 'dark' ? 'rgba(239,68,68,0.10)' : 'rgba(239,68,68,0.08)',
+                  borderColor: themeMode === 'dark' ? 'rgba(239,68,68,0.26)' : 'rgba(239,68,68,0.22)',
+                },
+              ]}
+              testID="walking-location-deny"
+            >
+              <Ionicons name={permissionDenied ? 'location-outline' : 'alert-circle-outline'} size={18} color="#ef4444" />
+              <View style={styles.warningCopy}>
+                <Text variant="body" style={styles.warningTitle}>
+                  {permissionDenied ? 'Location access is off' : 'Background tracking is limited'}
+                </Text>
+                <Text variant="bodySmall" color={palette.textMuted}>
+                  {permissionDenied
+                    ? 'Distance updates need location permission to stay accurate.'
+                    : locationWarning}
+                </Text>
+              </View>
+            </View>
+          )}
+        </View>
+
+        <View
+          style={[
+            styles.dock,
+            {
+              backgroundColor: palette.bgSurfaceElevated,
+              borderColor: palette.borderSoft,
+              paddingBottom: Math.max(insets.bottom + 10, 22),
+            },
+          ]}
+        >
+          <View style={[styles.dockGrip, { backgroundColor: palette.borderStrong }]} />
+
+          <View style={styles.metricRow}>
+            <View style={[styles.metricCard, { backgroundColor: palette.bgSurface, borderColor: palette.borderSoft }]}>
+              <Text variant="body">Distance</Text>
+              <Text variant="heading" style={styles.metricValue}>{formatMiles(distanceMeters)}</Text>
+            </View>
+            <View style={[styles.metricCard, { backgroundColor: palette.bgSurface, borderColor: palette.borderSoft }]}>
+              <Text variant="body">Steps</Text>
+              <Text variant="heading" style={styles.metricValue}>{steps.toLocaleString()}</Text>
+            </View>
+          </View>
+
+          <View style={styles.actionRow}>
+            <Button
+              title={paused ? 'Resume' : 'Pause'}
+              onPress={() => { void togglePause(); }}
+              variant="secondary"
+              style={styles.actionButton}
+              testID="walking-pause-resume"
+            />
+            <Button
+              title="End"
+              onPress={() => setShowEndModal(true)}
+              variant="danger"
+              style={styles.actionButton}
+              testID="walking-end"
+            />
+          </View>
+        </View>
       </View>
 
-      <Modal visible={showEndModal} onClose={() => setShowEndModal(false)} title="End this walk?">
-        <Text variant="body" style={styles.modalText}>Your walk progress will be saved to today stats.</Text>
+      <Modal visible={showEndModal} onClose={() => { void closeEndModal(); }} title="End this walk?">
+        <Text variant="body" style={styles.modalText}>
+          Your walk progress will be saved to today&apos;s stats.
+        </Text>
         <View style={styles.modalRow}>
           <Button
             title="Keep Walking"
-            onPress={() => setShowEndModal(false)}
+            onPress={() => { void closeEndModal(); }}
             variant="outline"
-            style={styles.modalBtn}
+            style={styles.modalButton}
             testID="walking-end-cancel"
           />
-          <Button title="Yes, End" onPress={() => { void confirmEnd(); }} style={styles.modalBtn} testID="walking-end-confirm" />
+          <Button
+            title="Yes, End"
+            onPress={() => { void confirmEnd(); }}
+            style={styles.modalButton}
+            testID="walking-end-confirm"
+          />
         </View>
       </Modal>
 
-      <Modal
-        visible={showIdleModal}
-        onClose={() => {}}
-        title="No walking detected"
-      >
+      <Modal visible={showIdleModal} onClose={() => {}} title="No walking detected">
         <Text variant="body" style={styles.modalText}>
           You are not walking right now. You can continue this session later.
         </Text>
         <View style={styles.modalRow}>
           <Button
             title="No, Continue"
-            onPress={continueAfterIdlePause}
+            onPress={() => { void continueAfterIdlePause(); }}
             variant="outline"
-            style={styles.modalBtn}
+            style={styles.modalButton}
             testID="walking-idle-continue"
           />
           <Button
             title="Yes, later"
             onPress={() => { void saveForLater(); }}
-            style={styles.modalBtn}
+            style={styles.modalButton}
             testID="walking-idle-later"
           />
         </View>
       </Modal>
 
-      {showCompletion && (() => {
-        const minutes = Math.max(1, Math.floor(activeSeconds / 60));
-        const completionMessages = completionKind === 'saved_later'
-          ? [
-            'Your progress is safe. Pick it up again soon.',
-            'Nice work so far. You can continue this later.',
-            'Saved for later. Your steps still count.',
-            'Good progress. Come back and finish strong.',
-          ]
-          : [
-            'Every step added up. Well done.',
-            'You made time for yourself today.',
-            'Consistent effort builds lasting change.',
-            'Another walk in the books.',
-            'Progress, one walk at a time.',
-            'Your future self will thank you.',
-          ];
-        const completionMessage = completionMessages[Math.floor(Date.now() / 60000) % completionMessages.length];
-
-        const confettiIcons: Array<{ name: React.ComponentProps<typeof Ionicons>['name']; color: string }> = [
-          { name: 'star', color: '#fbbf24' },
-          { name: 'heart', color: '#f472b6' },
-          { name: 'trophy', color: '#fbbf24' },
-          { name: 'ribbon', color: '#2ee9a6' },
-          { name: 'sparkles', color: '#a78bfa' },
-          { name: 'medal', color: '#fb923c' },
-        ];
-
-        return (
-          <Animated.View style={[styles.completionOverlay, { backgroundColor: completionOverlayBg, opacity: completionPopAnim }]} pointerEvents="none">
-            {/* Confetti particles */}
-            {confettiIcons.map((icon, i) => (
-              <Animated.View
-                key={i}
-                style={[
-                  styles.confettiParticle,
+      {showCompletion && (
+        <Animated.View
+          style={[
+            styles.completionOverlay,
+            {
+              backgroundColor: palette.overlay,
+              opacity: completionBackdropAnim,
+            },
+          ]}
+        >
+          <Pressable style={StyleSheet.absoluteFillObject} onPress={dismissCompletion} />
+          <Animated.View
+            style={[
+              styles.completionCard,
+              {
+                backgroundColor: palette.bgSurfaceElevated,
+                borderColor: themeMode === 'dark'
+                  ? 'rgba(255,255,255,0.08)'
+                  : 'rgba(15,23,42,0.10)',
+                transform: [
                   {
-                    left: `${15 + i * 14}%` as any,
-                    opacity: completionConfettiAnim.interpolate({
-                      inputRange: [0, 0.3, 0.7, 1],
-                      outputRange: [0, 1, 1, 0],
+                    translateY: completionCardAnim.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: [26, 0],
                     }),
+                  },
+                  {
+                    scale: completionCardAnim.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: [0.94, 1],
+                    }),
+                  },
+                ],
+                opacity: completionCardAnim,
+              },
+            ]}
+          >
+            <View style={styles.completionHeroWrap}>
+              <Animated.View
+                style={[
+                  styles.completionGlow,
+                  {
+                    backgroundColor: completionSavedForLater
+                      ? (themeMode === 'dark' ? 'rgba(56,189,248,0.24)' : 'rgba(56,189,248,0.18)')
+                      : (themeMode === 'dark' ? 'rgba(46,233,166,0.22)' : 'rgba(5,150,105,0.18)'),
+                    opacity: completionGlowAnim,
                     transform: [
                       {
-                        translateY: completionConfettiAnim.interpolate({
+                        scale: completionGlowAnim.interpolate({
                           inputRange: [0, 1],
-                          outputRange: [-40, 250 + (i % 3) * 60],
-                        }),
-                      },
-                      {
-                        rotate: completionConfettiAnim.interpolate({
-                          inputRange: [0, 1],
-                          outputRange: ['0deg', `${(i % 2 === 0 ? 1 : -1) * (180 + i * 30)}deg`],
-                        }),
-                      },
-                      {
-                        scale: completionConfettiAnim.interpolate({
-                          inputRange: [0, 0.5, 1],
-                          outputRange: [0.3, 1.2, 0.8],
+                          outputRange: [0.65, 1.18],
                         }),
                       },
                     ],
                   },
                 ]}
+              />
+              <View
+                style={[
+                  styles.completionHeroBadge,
+                  {
+                    backgroundColor: themeMode === 'dark'
+                      ? 'rgba(255,255,255,0.03)'
+                      : 'rgba(255,255,255,0.75)',
+                    borderColor: completionSavedForLater
+                      ? 'rgba(56,189,248,0.28)'
+                      : (themeMode === 'dark' ? 'rgba(46,233,166,0.28)' : 'rgba(5,150,105,0.24)'),
+                  },
+                ]}
               >
-                <Ionicons name={icon.name} size={22} color={icon.color} />
-              </Animated.View>
-            ))}
-
-            {/* Glow rings */}
-            <Animated.View
-              style={[
-                styles.completionGlowRing,
-                {
-                  borderColor: '#2ee9a6',
-                  opacity: completionBurstAnim.interpolate({ inputRange: [0, 1], outputRange: [0.5, 0] }),
-                  transform: [{ scale: completionBurstAnim.interpolate({ inputRange: [0, 1], outputRange: [0.3, 2.5] }) }],
-                },
-              ]}
-            />
-            <Animated.View
-              style={[
-                styles.completionGlowRing,
-                {
-                  borderColor: '#6366f1',
-                  opacity: completionBurstAnim.interpolate({ inputRange: [0, 0.5, 1], outputRange: [0, 0.4, 0] }),
-                  transform: [{ scale: completionBurstAnim.interpolate({ inputRange: [0, 1], outputRange: [0.5, 3.0] }) }],
-                },
-              ]}
-            />
-
-            {/* Main completion card */}
-            <Animated.View
-              style={[
-                styles.completionCard,
-                {
-                  backgroundColor: completionCardBg,
-                  borderColor: completionCardBorder,
-                  opacity: completionPopAnim,
-                  transform: [{ scale: completionPopAnim.interpolate({ inputRange: [0, 1], outputRange: [0.7, 1] }) }],
-                },
-              ]}
-            >
-              {/* Glowing badge */}
-              <View style={styles.completionBadgeOuter}>
-                <View style={[styles.completionBadgeGlow, { shadowColor: '#2ee9a6' }]} />
-                <View style={styles.completionBadge}>
-                  <Ionicons name="checkmark-circle" size={38} color="#2ee9a6" />
+                <Ionicons
+                  name={completionSavedForLater ? 'bookmark' : 'footsteps'}
+                  size={38}
+                  color={completionAccent}
+                />
+                <View style={[styles.completionSatellite, styles.completionSatelliteLeft]}>
+                  <Ionicons
+                    name={completionSavedForLater ? 'walk' : 'sparkles'}
+                    size={18}
+                    color={completionAccent}
+                  />
+                </View>
+                <View style={[styles.completionSatellite, styles.completionSatelliteRight]}>
+                  <Ionicons
+                    name={completionSavedForLater ? 'time-outline' : 'checkmark-circle'}
+                    size={18}
+                    color={completionAccent}
+                  />
                 </View>
               </View>
+            </View>
 
-              <Text variant="title" style={styles.completionTitle}>
-                {completionKind === 'saved_later' ? 'Saved for later' : 'Walk complete'}
-              </Text>
-              <Text variant="bodySmall" color={palette.textMuted} style={styles.completionMotivational}>
-                {completionMessage}
-              </Text>
+            <Text variant="title" style={styles.completionTitle}>
+              {completionTitle}
+            </Text>
+            <Text variant="body" color={palette.textMuted} style={styles.completionBody}>
+              {completionSubtitle}
+            </Text>
 
-              {/* Stats pills */}
-              <View style={styles.completionStatsRow}>
-                <View style={[styles.completionStatPill, { backgroundColor: statPillBg }]}>
-                  <Ionicons name="time-outline" size={18} color={statPillColor} style={styles.completionStatIcon} />
-                  <Text style={[styles.completionStatValue, { color: statPillColor }]}>{minutes}</Text>
-                  <Text variant="bodySmall" color={palette.textMuted} style={styles.completionStatLabel}>min</Text>
-                </View>
-                <View style={[styles.completionStatPill, { backgroundColor: statPillBg }]}>
-                  <Ionicons name="footsteps-outline" size={18} color={statPillColor} style={styles.completionStatIcon} />
-                  <Text style={[styles.completionStatValue, { color: statPillColor }]}>{steps.toLocaleString()}</Text>
-                  <Text variant="bodySmall" color={palette.textMuted} style={styles.completionStatLabel}>steps</Text>
-                </View>
-                <View style={[styles.completionStatPill, { backgroundColor: statPillBg }]}>
-                  <Ionicons name="navigate-outline" size={18} color={statPillColor} style={styles.completionStatIcon} />
-                  <Text style={[styles.completionStatValue, { color: statPillColor }]}>{formatMiles(distanceMeters)}</Text>
-                  <Text variant="bodySmall" color={palette.textMuted} style={styles.completionStatLabel}>dist</Text>
-                </View>
-              </View>
-            </Animated.View>
+            <View style={styles.completionStatsRow}>
+              {completionStatsItems.map((item, index) => (
+                <Animated.View
+                  key={item.label}
+                  style={[
+                    styles.completionStatChip,
+                    {
+                      backgroundColor: palette.bgSurface,
+                      borderColor: palette.borderSoft,
+                      opacity: completionStatAnims[index],
+                      transform: [
+                        {
+                          translateY: completionStatAnims[index].interpolate({
+                            inputRange: [0, 1],
+                            outputRange: [14, 0],
+                          }),
+                        },
+                      ],
+                    },
+                  ]}
+                >
+                  <Ionicons name={item.icon} size={16} color={completionAccent} />
+                  <Text variant="bodySmall" color={palette.textMuted}>{item.label}</Text>
+                  <Text variant="body" style={styles.completionStatValue}>{item.value}</Text>
+                </Animated.View>
+              ))}
+            </View>
+
+            <Button
+              title="Back to dashboard"
+              onPress={dismissCompletion}
+              style={styles.completionButton}
+            />
           </Animated.View>
-        );
-      })()}
+        </Animated.View>
+      )}
     </SafeAreaView>
   );
 };
@@ -1170,281 +1384,252 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   topBar: {
-    minHeight: 96,
+    paddingHorizontal: 20,
+    paddingVertical: 16,
     borderBottomWidth: 1,
+  },
+  body: {
+    flex: 1,
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingTop: 18,
+    paddingBottom: 8,
+  },
+  heroCluster: {
+    flex: 1,
+    justifyContent: 'center',
+    gap: 16,
+    paddingBottom: 18,
+  },
+  heroStatusRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    paddingTop: 14,
-    paddingBottom: 14,
-    paddingHorizontal: 16,
-  },
-  topTitle: {
-    fontSize: 30,
-    fontWeight: theme.fontWeight.semibold,
-  },
-  mapArea: {
-    flex: 1,
-    position: 'relative',
-  },
-  mapFallback: {
-    ...StyleSheet.absoluteFillObject,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 32,
-  },
-  mapFallbackIcon: {
-    marginBottom: 12,
-  },
-  mapFallbackEmoji: {
-    fontSize: 40,
-  },
-  mapFallbackTitle: {
-    fontWeight: theme.fontWeight.semibold,
-    fontSize: 18,
-    marginBottom: 8,
-    textAlign: 'center',
-  },
-  mapFallbackSub: {
-    textAlign: 'center',
-    lineHeight: 20,
-  },
-  mapShade: {
-    ...StyleSheet.absoluteFillObject,
-  },
-  zoomStack: {
-    position: 'absolute',
-    right: 16,
-    top: 16,
-    gap: 8,
-  },
-  zoomBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
-    borderWidth: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  zoomBtnPressed: {
-    transform: [{ scale: 0.9 }],
-    opacity: 0.7,
-  },
-  zoomText: {
-    fontWeight: theme.fontWeight.bold,
+    justifyContent: 'space-between',
+    gap: 12,
   },
   statusPill: {
-    position: 'absolute',
-    left: 16,
-    top: 16,
-    borderWidth: 1,
-    borderRadius: 999,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
+    borderWidth: 1,
+    borderRadius: 999,
     paddingHorizontal: 12,
     paddingVertical: 8,
   },
-  statusDot: {
-    width: 9,
-    height: 9,
-    borderRadius: 5,
-  },
-  permissionCard: {
-    position: 'absolute',
-    left: 16,
-    right: 16,
-    top: 68,
-    borderRadius: 14,
-    borderWidth: 1,
-    padding: 14,
-  },
-  permissionTitle: {
-    marginBottom: 12,
-  },
-  permissionActions: {
-    flexDirection: 'row',
-    gap: 10,
-  },
-  permissionBtn: {
-    flex: 1,
-  },
-  sheet: {
-    borderTopLeftRadius: 22,
-    borderTopRightRadius: 22,
-    borderTopWidth: 1,
-    paddingHorizontal: 24,
-    paddingTop: 18,
-  },
-  sheetHandleTouch: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingTop: 2,
-    paddingBottom: 18,
-  },
-  sheetHandle: {
-    width: 56,
-    height: 4,
-    borderRadius: 4,
-  },
-  timerLabel: {
-    textAlign: 'center',
-    marginBottom: 10,
-    fontSize: 16,
+  statusPillText: {
     fontWeight: theme.fontWeight.semibold,
   },
-  timerValue: {
-    textAlign: 'center',
-    fontSize: 34,
-    letterSpacing: 0.1,
-    marginBottom: 24,
+  statusDotWrap: {
+    width: 14,
+    height: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  timerValueCollapsed: {
-    marginBottom: 10,
+  statusDotPulse: {
+    position: 'absolute',
+    width: 14,
+    height: 14,
+    borderRadius: 999,
+  },
+  statusDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+  },
+  confidencePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    borderRadius: 999,
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  heroCard: {
+    borderRadius: 24,
+    borderWidth: 1,
+    paddingHorizontal: 22,
+    paddingVertical: 24,
+    gap: 10,
+    shadowOffset: { width: 0, height: 16 },
+    shadowOpacity: 0.18,
+    shadowRadius: 28,
+    elevation: 10,
+  },
+  heroLabel: {
+    opacity: 0.9,
+  },
+  heroTime: {
+    fontSize: 36,
+    lineHeight: 42,
+  },
+  heroSub: {
+    opacity: 0.9,
+  },
+  heroDetail: {
+    lineHeight: 24,
+  },
+  heroMetaRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+    marginTop: 8,
+  },
+  metaPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    borderRadius: 16,
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  warningCard: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 12,
+    borderRadius: 18,
+    borderWidth: 1,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+  },
+  warningCopy: {
+    flex: 1,
+    gap: 4,
+  },
+  warningTitle: {
+    fontWeight: theme.fontWeight.semibold,
+  },
+  dock: {
+    borderRadius: 28,
+    borderWidth: 1,
+    paddingHorizontal: 20,
+    paddingTop: 14,
+    marginBottom: 8,
+  },
+  dockGrip: {
+    alignSelf: 'center',
+    width: 62,
+    height: 5,
+    borderRadius: 999,
+    marginBottom: 16,
   },
   metricRow: {
     flexDirection: 'row',
-    gap: 16,
-    marginBottom: 24,
+    gap: 12,
   },
   metricCard: {
     flex: 1,
-    borderRadius: 16,
-    paddingVertical: 16,
+    borderRadius: 20,
+    borderWidth: 1,
     paddingHorizontal: 16,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.08,
-    shadowRadius: 6,
-    elevation: 2,
-  },
-  metricTitle: {
-    fontWeight: theme.fontWeight.semibold,
-    marginBottom: 10,
+    paddingVertical: 18,
+    gap: 10,
   },
   metricValue: {
     fontSize: 24,
     lineHeight: 30,
   },
-  metricHint: {
-    fontSize: 10,
-    opacity: 0.6,
-    marginTop: 2,
-  },
   actionRow: {
     flexDirection: 'row',
-    gap: 16,
+    gap: 12,
+    marginTop: 18,
   },
-  actionBtn: {
+  actionButton: {
     flex: 1,
-    minWidth: 0,
   },
   modalText: {
-    textAlign: 'center',
-    marginBottom: 14,
+    marginBottom: 18,
+    lineHeight: 22,
   },
   modalRow: {
     flexDirection: 'row',
-    gap: 10,
+    gap: 12,
   },
-  modalBtn: {
+  modalButton: {
     flex: 1,
-    minWidth: 0,
   },
   completionOverlay: {
     ...StyleSheet.absoluteFillObject,
     alignItems: 'center',
     justifyContent: 'center',
-    zIndex: 99,
-  },
-  confettiParticle: {
-    position: 'absolute',
-    top: '10%',
-    zIndex: 100,
-  },
-  completionGlowRing: {
-    position: 'absolute',
-    width: 200,
-    height: 200,
-    borderRadius: 100,
-    borderWidth: 4,
+    paddingHorizontal: 24,
   },
   completionCard: {
-    minWidth: 280,
-    maxWidth: 340,
-    borderRadius: 24,
-    borderWidth: 1.5,
-    paddingVertical: 32,
-    paddingHorizontal: 28,
+    width: '100%',
+    maxWidth: 380,
+    borderRadius: 28,
+    borderWidth: 1,
+    paddingHorizontal: 22,
+    paddingVertical: 24,
+    gap: 16,
     alignItems: 'center',
-    shadowColor: '#2ee9a6',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.15,
-    shadowRadius: 20,
-    elevation: 12,
+    shadowOffset: { width: 0, height: 22 },
+    shadowOpacity: 0.22,
+    shadowRadius: 32,
+    elevation: 14,
   },
-  completionBadgeOuter: {
-    marginBottom: 16,
+  completionHeroWrap: {
+    width: 120,
+    height: 120,
     alignItems: 'center',
     justifyContent: 'center',
+    marginBottom: 4,
   },
-  completionBadgeGlow: {
+  completionGlow: {
     position: 'absolute',
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.6,
-    shadowRadius: 24,
-    elevation: 15,
+    width: 112,
+    height: 112,
+    borderRadius: 999,
   },
-  completionBadge: {
-    width: 72,
-    height: 72,
-    borderRadius: 36,
+  completionHeroBadge: {
+    width: 84,
+    height: 84,
+    borderRadius: 999,
+    borderWidth: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(46, 233, 166, 0.15)',
   },
-  completionBadgeEmoji: {
-    // Legacy – icon now rendered via Ionicons
+  completionSatellite: {
+    position: 'absolute',
+    width: 34,
+    height: 34,
+    borderRadius: 999,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.06)',
+  },
+  completionSatelliteLeft: {
+    left: -4,
+    top: 8,
+  },
+  completionSatelliteRight: {
+    right: -6,
+    bottom: 10,
   },
   completionTitle: {
-    fontWeight: theme.fontWeight.bold,
-    fontSize: 26,
-    marginBottom: 8,
-    letterSpacing: -0.3,
-  },
-  completionMotivational: {
     textAlign: 'center',
-    marginBottom: 24,
-    lineHeight: 20,
-    paddingHorizontal: 8,
-    fontStyle: 'italic',
+  },
+  completionBody: {
+    textAlign: 'center',
+    lineHeight: 24,
   },
   completionStatsRow: {
-    flexDirection: 'row',
-    gap: 12,
+    width: '100%',
+    gap: 10,
   },
-  completionStatPill: {
-    flex: 1,
-    alignItems: 'center',
+  completionStatChip: {
+    borderRadius: 18,
+    borderWidth: 1,
+    paddingHorizontal: 14,
     paddingVertical: 14,
-    paddingHorizontal: 8,
-    borderRadius: 16,
     gap: 4,
   },
-  completionStatIcon: {
-    marginBottom: 2,
-  },
   completionStatValue: {
-    fontSize: 18,
-    fontWeight: theme.fontWeight.bold,
-    letterSpacing: -0.2,
+    fontWeight: theme.fontWeight.semibold,
   },
-  completionStatLabel: {
-    fontSize: 11,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
+  completionButton: {
+    alignSelf: 'stretch',
+    marginTop: 4,
   },
 });

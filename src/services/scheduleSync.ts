@@ -36,9 +36,20 @@ export async function syncNudgePlansForCurrentSchedule(
   }
 
   if (isNotificationsSupported) {
-    await notificationService.cancelWalkNudges();
-    if (rebuiltPlans.length > 0) {
-      await notificationService.scheduleMultipleNudges(rebuiltPlans, prefs);
+    try {
+      await notificationService.cancelWalkNudges();
+      if (rebuiltPlans.length > 0) {
+        await notificationService.scheduleMultipleNudges(rebuiltPlans, prefs);
+      }
+    } catch (error) {
+      // If scheduling failed after cancellation, retry once
+      try {
+        if (rebuiltPlans.length > 0) {
+          await notificationService.scheduleMultipleNudges(rebuiltPlans, prefs);
+        }
+      } catch {
+        if (__DEV__) console.error('Failed to reschedule nudges after sync:', error);
+      }
     }
   }
 

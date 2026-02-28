@@ -138,7 +138,7 @@ export const StatCard: React.FC<StatCardProps> = ({
 
   return (
     <Animated.View style={{ opacity: entranceAnim, transform: [{ translateY: entranceAnim.interpolate({ inputRange: [0, 1], outputRange: [8, 0] }) }] }}>
-    <Card style={[styles.card, { backgroundColor: cardTint, borderColor: borderTint }]}>
+    <Card shadowed={false} style={[styles.card, { backgroundColor: cardTint, borderColor: borderTint }]}>
       <View style={styles.headerRow}>
         <View style={[styles.titleDot, { backgroundColor: toneColor }]} />
         <Text variant="body" style={styles.title}>{title}</Text>

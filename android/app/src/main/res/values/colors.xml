@@ -3,4 +3,5 @@
   <color name="iconBackground">#0b1220</color>
   <color name="colorPrimary">#023c69</color>
   <color name="colorPrimaryDark">#ffffff</color>
+  <color name="gapwalk_accent">#2ee9a6</color>
 </resources>

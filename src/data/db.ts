@@ -266,6 +266,21 @@ const runMigrations = async () => {
   `);
 };
 
+/**
+ * Run a callback inside an exclusive SQLite transaction.
+ * If the callback throws, the transaction is rolled back and the error re-thrown.
+ */
+export const withTransaction = async <T>(
+  fn: (db: SQLite.SQLiteDatabase) => Promise<T>
+): Promise<T> => {
+  const instance = await getDatabase();
+  let result: T;
+  await instance.withExclusiveTransactionAsync(async () => {
+    result = await fn(instance);
+  });
+  return result!;
+};
+
 export const isDatabaseAvailable = async (): Promise<boolean> => {
   try {
     const instance = await getDatabase();

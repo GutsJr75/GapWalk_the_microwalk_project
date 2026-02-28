@@ -1,5 +1,5 @@
-import React from 'react';
-import { Pressable, StyleSheet, ActivityIndicator, ViewStyle, TextStyle, StyleProp, Platform } from 'react-native';
+import React, { useRef, useCallback } from 'react';
+import { Pressable, StyleSheet, ActivityIndicator, ViewStyle, TextStyle, StyleProp, Platform, Animated } from 'react-native';
 import { theme } from '../theme';
 import { useAppStore } from '../store';
 import { useThemePalette } from '../theme/palette';
@@ -18,6 +18,8 @@ interface ButtonProps {
   testID?: string;
 }
 
+const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
+
 export const Button: React.FC<ButtonProps> = ({
   title,
   onPress,
@@ -32,6 +34,7 @@ export const Button: React.FC<ButtonProps> = ({
   const { themeMode } = useAppStore();
   const isDark = themeMode === 'dark';
   const palette = useThemePalette();
+  const scaleAnim = useRef(new Animated.Value(1)).current;
   const isPrimaryLike = variant === 'primary' || variant === 'danger';
   const showPressGlow = isPrimaryLike;
   const labelColor = disabled
@@ -50,9 +53,31 @@ export const Button: React.FC<ButtonProps> = ({
     enabled: !(disabled || loading),
   });
 
+  const onPressIn = useCallback(() => {
+    handlePressIn();
+    if (!disabled && !loading) {
+      Animated.spring(scaleAnim, {
+        toValue: 0.95,
+        tension: 150,
+        friction: 8,
+        useNativeDriver: true,
+      }).start();
+    }
+  }, [scaleAnim, disabled, loading, handlePressIn]);
+
+  const onPressOut = useCallback(() => {
+    handlePressOut();
+    Animated.spring(scaleAnim, {
+      toValue: 1,
+      tension: 120,
+      friction: 8,
+      useNativeDriver: true,
+    }).start();
+  }, [scaleAnim, handlePressOut]);
+
   return (
-    <Pressable
-      style={({ pressed }) => [
+    <AnimatedPressable
+      style={[
         styles.button,
         variant === 'primary' && styles.primaryButton,
         variant === 'secondary' && {
@@ -68,19 +93,19 @@ export const Button: React.FC<ButtonProps> = ({
         variant === 'danger' && styles.dangerButton,
         disabled && styles.disabledButton,
         full && styles.fullWidth,
-        showPressGlow && (pressed || isTapActive) && !disabled && !loading && {
+        showPressGlow && isTapActive && !disabled && !loading && {
           shadowColor: glowColor,
           shadowOffset: { width: 0, height: 0 },
           shadowOpacity: Platform.OS === 'ios' ? 0.3 : 0.18,
           shadowRadius: 10,
           elevation: 5,
         },
-        pressed && !disabled && !loading && styles.pressedButton,
+        { transform: [{ scale: scaleAnim }] },
         style,
       ]}
       onPress={handlePress}
-      onPressIn={handlePressIn}
-      onPressOut={handlePressOut}
+      onPressIn={onPressIn}
+      onPressOut={onPressOut}
       disabled={disabled || loading}
       accessibilityRole="button"
       testID={testID}
@@ -103,7 +128,7 @@ export const Button: React.FC<ButtonProps> = ({
           {title}
         </Text>
       )}
-    </Pressable>
+    </AnimatedPressable>
   );
 };
 
@@ -134,10 +159,6 @@ const styles = StyleSheet.create({
   },
   disabledButton: {
     opacity: 0.55,
-  },
-  pressedButton: {
-    transform: [{ scale: 0.97 }],
-    opacity: 0.85,
   },
   buttonText: {
     fontSize: theme.fontSize.md,

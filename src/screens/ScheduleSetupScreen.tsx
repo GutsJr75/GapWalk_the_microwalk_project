@@ -182,9 +182,8 @@ export const ScheduleSetupScreen: React.FC<Props> = ({ navigation, route }) => {
 
       setSyncStatus(`Saving ${events.length} events...`);
 
-      // Keep one active schedule source by replacing all existing busy events.
-      await eventsRepo.deleteAll();
-      await eventsRepo.saveMany(events);
+      // Atomically replace all existing busy events (rolls back on failure).
+      await eventsRepo.replaceAll(events);
 
       // Save schedule source with token
       const source = {
@@ -474,7 +473,7 @@ export const ScheduleSetupScreen: React.FC<Props> = ({ navigation, route }) => {
           <Card
             selected={selectedOption === 'import'}
             onPress={() => toggle('import')}
-            style={styles.halfCard}
+            style={[styles.halfCard, selectedOption === 'import' && styles.selectedHalfCard]}
             testID="schedule-option-import"
           >
             <View style={styles.cardTitleRow}>
@@ -489,7 +488,7 @@ export const ScheduleSetupScreen: React.FC<Props> = ({ navigation, route }) => {
           <Card
             selected={selectedOption === 'manual'}
             onPress={() => toggle('manual')}
-            style={styles.halfCard}
+            style={[styles.halfCard, selectedOption === 'manual' && styles.selectedHalfCard]}
             testID="schedule-option-manual"
           >
             <View style={styles.cardTitleRow}>
@@ -573,6 +572,10 @@ const styles = StyleSheet.create({
   googleCard: { marginBottom: 12 },
   row: { flexDirection: 'row', gap: 12 },
   halfCard: { flex: 1 },
+  selectedHalfCard: {
+    paddingHorizontal: theme.spacing.md - 1,
+    paddingVertical: theme.spacing.md - 1,
+  },
   cardHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',

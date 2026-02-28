@@ -61,6 +61,71 @@ export interface WalkSession {
   createdAt: string;
 }
 
+export type WalkMotionState =
+  | 'starting'
+  | 'walking'
+  | 'not_moving'
+  | 'paused'
+  | 'location_off';
+
+export type WalkDisplayState =
+  | 'calibrating'
+  | 'walking'
+  | 'not_moving'
+  | 'paused'
+  | 'location_off'
+  | 'sensor_issue';
+
+export type SensorHealth =
+  | 'active'
+  | 'stale'
+  | 'unsupported'
+  | 'denied';
+
+export type WalkMotionConfidence = 'low' | 'medium' | 'high';
+
+export type WalkStepSource = 'sensor' | 'gps_fallback' | 'none';
+
+export type WalkActionSource =
+  | 'screen'
+  | 'notification'
+  | 'auto_pause'
+  | 'restore';
+
+export type WalkPrompt = 'end_confirmation';
+
+export interface ActiveWalkSnapshot {
+  sessionId: string;
+  planId?: string;
+  startIso: string;
+  sessionStartMs: number;
+  totalPausedMs: number;
+  pauseStartedAtMs?: number | null;
+  elapsedSeconds: number;
+  paused: boolean;
+  motionState: WalkMotionState;
+  displayState: WalkDisplayState;
+  pedometerHealth: SensorHealth;
+  locationHealth: SensorHealth;
+  motionConfidence: WalkMotionConfidence;
+  stepSource: WalkStepSource;
+  statusReason?: string | null;
+  prompt?: WalkPrompt;
+  distanceMeters: number;
+  steps: number;
+  usedLocation: boolean;
+  locationPermissionGranted: boolean;
+  backgroundLocationGranted: boolean;
+  activityPermissionGranted: boolean;
+  hadWalkingSignal: boolean;
+  lastActionSource?: WalkActionSource | null;
+  warning?: string | null;
+  lastMotionAtMs?: number | null;
+  lastStepAtMs?: number | null;
+  lastGpsMotionAtMs?: number | null;
+  lastAcceptedLocationAtMs?: number | null;
+}
+
 export type NudgePlanStatus = 
   | 'planned' 
   | 'notified' 

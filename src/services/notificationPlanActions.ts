@@ -13,9 +13,18 @@ const terminalStatuses = new Set(['cancelled', 'completed', 'skipped']);
 const rescheduleFutureNudges = async () => {
   const prefs = await preferencesRepo.get();
   if (!prefs || !isNotificationsSupported) return;
-  await notificationService.cancelWalkNudges();
   const futurePlans = await plansRepo.getUpcomingPlans(100);
-  await notificationService.scheduleMultipleNudges(futurePlans, prefs);
+  try {
+    await notificationService.cancelWalkNudges();
+    await notificationService.scheduleMultipleNudges(futurePlans, prefs);
+  } catch (error) {
+    // If scheduling failed after cancellation, retry once
+    try {
+      await notificationService.scheduleMultipleNudges(futurePlans, prefs);
+    } catch {
+      if (__DEV__) console.error('Failed to reschedule nudges:', error);
+    }
+  }
 };
 
 export const notificationPlanActions = {
@@ -37,7 +46,7 @@ export const notificationPlanActions = {
     }
 
     if (expired > 0 && lastExpiredId) {
-      void this.findAndSuggestAlternativeGap(lastExpiredId).catch(() => {});
+      void this.findAndSuggestAlternativeGap(lastExpiredId).catch((e) => { if (__DEV__) console.warn('Alt gap suggestion failed:', e); });
     }
 
     return expired;
@@ -67,7 +76,7 @@ export const notificationPlanActions = {
       skippedGapEnd: plan.gapEnd,
     });
 
-    void this.findAndSuggestAlternativeGap(planId).catch(() => {});
+    void this.findAndSuggestAlternativeGap(planId).catch((e) => { if (__DEV__) console.warn('Alt gap suggestion failed:', e); });
 
     return true;
   },
@@ -101,7 +110,7 @@ export const notificationPlanActions = {
       skippedGapEnd: plan.gapEnd,
     });
 
-    void this.findAndSuggestAlternativeGap(planId).catch(() => {});
+    void this.findAndSuggestAlternativeGap(planId).catch((e) => { if (__DEV__) console.warn('Alt gap suggestion failed:', e); });
 
     return true;
   },

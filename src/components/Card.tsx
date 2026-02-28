@@ -1,5 +1,5 @@
-import React from 'react';
-import { View, StyleSheet, ViewStyle, Pressable, StyleProp, Platform } from 'react-native';
+import React, { useRef, useCallback } from 'react';
+import { View, StyleSheet, ViewStyle, Pressable, StyleProp, Platform, Animated } from 'react-native';
 import { theme } from '../theme';
 import { useThemePalette } from '../theme/palette';
 import { useAppStore } from '../store';
@@ -12,8 +12,11 @@ interface CardProps {
   onPress?: () => void;
   disabled?: boolean;
   elevated?: boolean;
+  shadowed?: boolean;
   testID?: string;
 }
+
+const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 
 export const Card: React.FC<CardProps> = ({
   children,
@@ -22,11 +25,13 @@ export const Card: React.FC<CardProps> = ({
   onPress,
   disabled = false,
   elevated = false,
+  shadowed = true,
   testID,
 }) => {
   const palette = useThemePalette();
   const { themeMode } = useAppStore();
   const isDark = themeMode === 'dark';
+  const scaleAnim = useRef(new Animated.Value(1)).current;
   const cardBaseStyle = [
     styles.card,
     {
@@ -54,38 +59,62 @@ export const Card: React.FC<CardProps> = ({
         shadowRadius: isDark ? 4 : 3,
         elevation: isDark ? 2 : 1,
       };
-  const cardBaseStyleWithShadow = [
-    ...cardBaseStyle,
-    shadowStyle,
-  ];
+  const cardBaseStyleWithShadow = shadowed
+    ? [
+        ...cardBaseStyle,
+        shadowStyle,
+      ]
+    : cardBaseStyle;
   const { isTapActive, handlePress, handlePressIn, handlePressOut } = useTapFeedbackAction({
     onPress: onPress ?? (() => {}),
     enabled: !!onPress && !disabled,
   });
 
+  const onPressIn = useCallback(() => {
+    handlePressIn();
+    if (!disabled) {
+      Animated.spring(scaleAnim, {
+        toValue: 0.97,
+        tension: 150,
+        friction: 8,
+        useNativeDriver: true,
+      }).start();
+    }
+  }, [scaleAnim, disabled, handlePressIn]);
+
+  const onPressOut = useCallback(() => {
+    handlePressOut();
+    Animated.spring(scaleAnim, {
+      toValue: 1,
+      tension: 120,
+      friction: 8,
+      useNativeDriver: true,
+    }).start();
+  }, [scaleAnim, handlePressOut]);
+
   if (onPress) {
     return (
-      <Pressable
-        style={({ pressed }) => [
+      <AnimatedPressable
+        style={[
           cardBaseStyleWithShadow,
-          (pressed || isTapActive) && !disabled && {
+          shadowed && isTapActive && !disabled && {
             shadowColor: palette.accentPrimary,
             shadowOpacity: isDark ? 0.3 : 0.2,
             shadowRadius: isDark ? 14 : 10,
             elevation: isDark ? 8 : 6,
           },
-          pressed && !disabled && styles.pressedCard,
+          { transform: [{ scale: scaleAnim }] },
         ]}
         onPress={handlePress}
-        onPressIn={handlePressIn}
-        onPressOut={handlePressOut}
+        onPressIn={onPressIn}
+        onPressOut={onPressOut}
         disabled={disabled}
         android_ripple={{ color: rippleColor }}
         testID={testID}
         accessibilityLabel={testID}
       >
         {children}
-      </Pressable>
+      </AnimatedPressable>
     );
   }
 
@@ -112,9 +141,5 @@ const styles = StyleSheet.create({
   },
   disabledCard: {
     opacity: 0.4,
-  },
-  pressedCard: {
-    transform: [{ scale: 0.97 }],
-    opacity: 0.85,
   },
 });

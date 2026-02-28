@@ -288,7 +288,9 @@ export const DashboardScreen: React.FC<Props> = ({ navigation, route }) => {
       Animated.spring(badgeAnim, { toValue: 1, tension: 50, friction: 7, useNativeDriver: true }).start();
     }
     if (prefsFromDb && isNotificationsSupported) {
-      notificationService.scheduleDailySummary(prefsFromDb).catch(() => {});
+      notificationService.scheduleDailySummary(prefsFromDb).catch((e) => {
+        if (__DEV__) console.warn('Daily summary scheduling failed:', e);
+      });
     }
     return refreshedUpcoming;
   }, [reconcileTodayPlans, setHasSetPreferences, setPreferences, setTodayStats, setUpcomingPlans]);
@@ -301,16 +303,18 @@ export const DashboardScreen: React.FC<Props> = ({ navigation, route }) => {
           setHasNotificationPermission(results.notifications);
           setHasActivityPermission(results.activityRecognition);
           setHasRequestedPermissions(true);
-        }).catch(() => {});
+        }).catch((e) => {
+          if (__DEV__) console.warn('Permission request failed:', e);
+        });
       }
       // Stagger card entrance animations
       cardAnims.forEach((a) => a.setValue(0));
       Animated.stagger(
-        60,
+        80,
         cardAnims.map((a) =>
           Animated.timing(a, {
             toValue: 1,
-            duration: 300,
+            duration: 420,
             easing: Easing.out(Easing.cubic),
             useNativeDriver: true,
           })
@@ -629,7 +633,7 @@ export const DashboardScreen: React.FC<Props> = ({ navigation, route }) => {
 
   // ── Menu handlers ──
   const closeMenu = () => {
-    Animated.timing(menuSlide, { toValue: 0, duration: 220, easing: Easing.in(Easing.cubic), useNativeDriver: true })
+    Animated.timing(menuSlide, { toValue: 0, duration: 320, easing: Easing.bezier(0.25, 0.1, 0.25, 1), useNativeDriver: true })
       .start(() => setMenuVisible(false));
   };
 
@@ -637,7 +641,7 @@ export const DashboardScreen: React.FC<Props> = ({ navigation, route }) => {
     if (menuVisible) return;
     menuSlide.setValue(0); setMenuVisible(true);
     requestAnimationFrame(() => {
-      Animated.timing(menuSlide, { toValue: 1, duration: 240, easing: Easing.out(Easing.cubic), useNativeDriver: true }).start();
+      Animated.spring(menuSlide, { toValue: 1, tension: 65, friction: 11, useNativeDriver: true }).start();
     });
   }, [menuSlide, menuVisible]);
 
@@ -671,7 +675,7 @@ export const DashboardScreen: React.FC<Props> = ({ navigation, route }) => {
     return () => clearTimeout(timer);
   }, [route.params?.showPostWalkSummary, navigation, postWalkGlowAnim]);
 
-  const navigateToManageSchedule = () => { closeMenu(); navigation.navigate('ManualSchedule', { manageMode: true }); };
+  const navigateToManageSchedule = () => { closeMenu(); navigation.navigate('ScheduleOverview'); };
   const navigateToProfile = () => { closeMenu(); navigation.navigate('Profile'); };
   const navigateToPreferences = () => { closeMenu(); navigation.push('Preferences', { manageMode: true }); };
   const navigateToSettings = () => { closeMenu(); navigation.navigate('Settings'); };

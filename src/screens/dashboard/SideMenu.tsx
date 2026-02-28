@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useRef, useCallback } from 'react';
 import {
   Animated,
   Modal,
@@ -36,6 +36,58 @@ interface SideMenuProps {
   slideAnim: Animated.Value;
 }
 
+const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
+
+const AnimatedMenuItem: React.FC<{
+  item: SideMenuItem;
+  isLast: boolean;
+  palette: ReturnType<typeof useThemePalette>;
+  onAction: (action: () => void) => void;
+}> = ({ item, isLast, palette, onAction }) => {
+  const scaleAnim = useRef(new Animated.Value(1)).current;
+
+  const onPressIn = useCallback(() => {
+    Animated.spring(scaleAnim, {
+      toValue: 0.96,
+      tension: 150,
+      friction: 8,
+      useNativeDriver: true,
+    }).start();
+  }, [scaleAnim]);
+
+  const onPressOut = useCallback(() => {
+    Animated.spring(scaleAnim, {
+      toValue: 1,
+      tension: 120,
+      friction: 8,
+      useNativeDriver: true,
+    }).start();
+  }, [scaleAnim]);
+
+  return (
+    <AnimatedPressable
+      style={[
+        styles.menuItem,
+        { borderBottomColor: isLast ? 'transparent' : palette.borderSoft },
+        { transform: [{ scale: scaleAnim }] },
+      ]}
+      onPress={() => onAction(item.onPress)}
+      onPressIn={onPressIn}
+      onPressOut={onPressOut}
+      android_ripple={{ color: 'rgba(46,233,166,0.12)' }}
+      testID={item.testID}
+    >
+      <View style={styles.menuItemRow}>
+        <AppIcon name={item.icon} size={17} color={palette.textPrimary} />
+        <Text variant="body" style={styles.menuItemLabel}>
+          {item.label}
+        </Text>
+        <AppIcon name="chevronRight" size={16} color={palette.textMuted} />
+      </View>
+    </AnimatedPressable>
+  );
+};
+
 export const SideMenu: React.FC<SideMenuProps> = ({
   visible,
   onClose,
@@ -57,7 +109,14 @@ export const SideMenu: React.FC<SideMenuProps> = ({
   };
 
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+    <Modal
+      visible={visible}
+      transparent
+      animationType="fade"
+      onRequestClose={onClose}
+      statusBarTranslucent={false}
+      navigationBarTranslucent={false}
+    >
       <View style={[styles.overlay, { backgroundColor: palette.overlay }]}>
         <Pressable style={styles.backdrop} onPress={onClose} />
         <Animated.View
@@ -65,6 +124,8 @@ export const SideMenu: React.FC<SideMenuProps> = ({
             styles.content,
             {
               width: menuPanelWidth,
+              marginTop: insets.top,
+              marginBottom: insets.bottom,
               backgroundColor: palette.bgSurface,
               borderLeftColor: palette.borderSoft,
               transform: [
@@ -83,8 +144,8 @@ export const SideMenu: React.FC<SideMenuProps> = ({
             contentContainerStyle={[
               styles.scrollContent,
               {
-                paddingTop: Math.max(insets.top + 14, 28),
-                paddingBottom: Math.max(insets.bottom + 26, 34),
+                paddingTop: 28,
+                paddingBottom: 34,
               },
             ]}
             showsVerticalScrollIndicator={false}
@@ -125,25 +186,13 @@ export const SideMenu: React.FC<SideMenuProps> = ({
               {menuItems.map((item, index) => {
                 const isLast = index === menuItems.length - 1;
                 return (
-                  <Pressable
+                  <AnimatedMenuItem
                     key={item.key}
-                    style={({ pressed }) => [
-                      styles.menuItem,
-                      { borderBottomColor: isLast ? 'transparent' : palette.borderSoft },
-                      pressed && styles.menuItemPressed,
-                    ]}
-                    onPress={() => runMenuAction(item.onPress)}
-                    android_ripple={{ color: 'rgba(46,233,166,0.12)' }}
-                    testID={item.testID}
-                  >
-                    <View style={styles.menuItemRow}>
-                      <AppIcon name={item.icon} size={17} color={palette.textPrimary} />
-                      <Text variant="body" style={styles.menuItemLabel}>
-                        {item.label}
-                      </Text>
-                      <AppIcon name="chevronRight" size={16} color={palette.textMuted} />
-                    </View>
-                  </Pressable>
+                    item={item}
+                    isLast={isLast}
+                    palette={palette}
+                    onAction={runMenuAction}
+                  />
                 );
               })}
             </View>
@@ -179,7 +228,6 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   content: {
-    height: '100%',
     borderLeftWidth: 1,
     borderLeftColor: 'rgba(255,255,255,0.1)',
     shadowColor: '#000',
@@ -234,10 +282,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     borderBottomWidth: 1,
     borderBottomColor: 'rgba(255,255,255,0.05)',
-  },
-  menuItemPressed: {
-    opacity: 0.8,
-    backgroundColor: 'rgba(46,233,166,0.08)',
   },
   menuItemRow: {
     flexDirection: 'row',

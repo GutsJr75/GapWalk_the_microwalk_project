@@ -1,4 +1,4 @@
-import { getDatabase } from '../db';
+import { getDatabase, withTransaction } from '../db';
 import { BusyEvent, ScheduleSourceType } from '../../types';
 
 export const eventsRepo = {
@@ -82,6 +82,24 @@ export const eventsRepo = {
     await db.runAsync('DELETE FROM busy_events WHERE source = ?', [source]);
   },
   
+  /**
+   * Atomically replace all busy events within a transaction.
+   * If any insert fails, the entire operation rolls back and old data is preserved.
+   */
+  async replaceAll(events: BusyEvent[]): Promise<void> {
+    await withTransaction(async (db) => {
+      await db.runAsync('DELETE FROM busy_events');
+      for (const event of events) {
+        await db.runAsync(
+          `INSERT OR REPLACE INTO busy_events
+           (id, title, start, end, source, is_all_day, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          [event.id, event.title, event.start, event.end, event.source, event.isAllDay ? 1 : 0, event.createdAt]
+        );
+      }
+    });
+  },
+
   async deleteAll(): Promise<void> {
     const db = await getDatabase();
     await db.runAsync('DELETE FROM busy_events');

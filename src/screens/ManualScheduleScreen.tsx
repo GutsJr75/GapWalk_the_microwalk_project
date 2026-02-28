@@ -15,6 +15,9 @@ import {
   useWindowDimensions,
   Platform,
   Modal as RNModal,
+  NativeSyntheticEvent,
+  NativeScrollEvent,
+  AccessibilityActionEvent,
 } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useFocusEffect } from '@react-navigation/native';
@@ -502,6 +505,40 @@ const cloneEntriesByDay = (entriesByDay: Record<number, TemplateEvent[]>): Recor
   return clone;
 };
 
+const getVisibleEntriesByDayForWeek = (
+  entriesByDaySorted: Record<number, TemplateEvent[]>,
+  weekStart: Date,
+): Record<number, TemplateEvent[]> => {
+  const out = createEmptyEntriesByDay();
+  const oneTimeSeenKeys = new Set<string>();
+
+  for (let dayIndex = 0; dayIndex <= 6; dayIndex += 1) {
+    const dayEvents = entriesByDaySorted[dayIndex] ?? [];
+    for (const event of dayEvents) {
+      if (!event.isOneTime) {
+        out[dayIndex] = [...(out[dayIndex] ?? []), event];
+        continue;
+      }
+      if (!isOneTimeEventVisibleInWeek(event, weekStart)) {
+        continue;
+      }
+      const targetDayIndex = event.oneTimeDate ? getDayOfWeekFromDateKey(event.oneTimeDate) : dayIndex;
+      const oneTimeKey = `${event.id}-${event.oneTimeDate ?? ''}`;
+      if (oneTimeSeenKeys.has(oneTimeKey)) {
+        continue;
+      }
+      oneTimeSeenKeys.add(oneTimeKey);
+      out[targetDayIndex] = [...(out[targetDayIndex] ?? []), event];
+    }
+  }
+
+  for (let dayIndex = 0; dayIndex <= 6; dayIndex += 1) {
+    out[dayIndex] = [...(out[dayIndex] ?? [])].sort((a, b) => a.startTime.localeCompare(b.startTime));
+  }
+
+  return out;
+};
+
 export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => {
   const today = new Date();
   const todayIndex = Number.isFinite(today.getDay()) ? today.getDay() : 1;
@@ -522,7 +559,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
   const [savingDone, setSavingDone] = useState(false);
   const [hasSavedSchedule, setHasSavedSchedule] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
-  const [selectedDay, setSelectedDay] = useState<number>(todayIndex);
+  const [selectedDay, setSelectedDay] = useState<number | null>(todayIndex);
   const [activeWeekStart, setActiveWeekStart] = useState<Date>(() => getWeekStart(today));
   const [selectedGridTarget, setSelectedGridTarget] = useState<GridSelectionTarget | null>(null);
   const [form, setForm] = useState<ManualFormState>(() => createDefaultFormState(todayIndex));
@@ -543,6 +580,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
   const [slotFeedback, setSlotFeedback] = useState<{ dayIndex: number; slotIndex: number } | null>(null);
   const [clearArmedDay, setClearArmedDay] = useState<number | null>(null);
   const [poppingEventKey, setPoppingEventKey] = useState<string | null>(null);
+  const [editorScrollEnabled, setEditorScrollEnabled] = useState(true);
   const { width: winWidth, height: winHeight } = useWindowDimensions();
   const allowNextBeforeRemoveRef = useRef(false);
 
@@ -552,6 +590,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
     setShowSourceSheet(false);
   }, [manageMode]);
   const gridScrollRef = useRef<ScrollView>(null);
+  const weekHeaderPagerRef = useRef<ScrollView>(null);
   const oneTimeMonthRef = useRef<TextInput>(null);
   const oneTimeDayRef = useRef<TextInput>(null);
   const oneTimeYearRef = useRef<TextInput>(null);
@@ -559,23 +598,8 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
   const slotFeedbackScaleAnim = useRef(new Animated.Value(0.92)).current;
   const slotFeedbackOpacityAnim = useRef(new Animated.Value(0)).current;
   const eventPopAnim = useRef(new Animated.Value(0)).current;
+  const weekHeaderReleaseHandledRef = useRef(false);
   const { scheduleSource, setScheduleSource, setUpcomingPlans, preferences, themeMode } = useAppStore();
-
-  const shiftWeekByDays = useCallback((deltaDays: number) => {
-    setActiveWeekStart((prev) => addDays(prev, deltaDays));
-  }, []);
-
-  const goToPreviousWeek = useCallback(() => {
-    shiftWeekByDays(-7);
-  }, [shiftWeekByDays]);
-
-  const goToNextWeek = useCallback(() => {
-    shiftWeekByDays(7);
-  }, [shiftWeekByDays]);
-
-  useEffect(() => {
-    setSelectedGridTarget(null);
-  }, [activeWeekStart]);
 
   const scrollGridToNow = useCallback((animated = true) => {
     const now = new Date();
@@ -710,8 +734,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
             (entry) => !(entry.isOneTime && entry.oneTimeDate && entry.oneTimeDate < todayKey)
           );
           if (cleaned.length !== saved.length) {
-            await manualScheduleRepo.deleteAll();
-            await manualScheduleRepo.saveMany(cleaned);
+            await manualScheduleRepo.replaceAll(cleaned);
           }
           const grouped = groupTemplateEntries(cleaned);
           if (!active) return;
@@ -1257,11 +1280,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
   };
 
   const handleManageBackToOptions = () => {
-    if (navigation.canGoBack()) {
-      navigation.goBack();
-      return;
-    }
-    navigation.navigate('ScheduleSetup', { manageMode: true });
+    navigation.navigate('ScheduleOverview');
   };
 
   const handleManageCancelEdit = () => {
@@ -1701,15 +1720,13 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
         try {
-          await manualScheduleRepo.deleteAll();
-          await manualScheduleRepo.saveMany(weeklyTemplate);
+          await manualScheduleRepo.replaceAll(weeklyTemplate);
         } catch (e) {
           failedStep = 'saving your schedule to storage';
           throw e;
         }
         try {
-          await eventsRepo.deleteAll();
-          await eventsRepo.saveMany(events);
+          await eventsRepo.replaceAll(events);
         } catch (e) {
           failedStep = 'saving calendar events';
           throw e;
@@ -1860,48 +1877,12 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
   }, [entriesByDay]);
 
   const activeWeekDates = useMemo(() => getWeekDates(activeWeekStart), [activeWeekStart]);
-  const activeWeekMonthLabel = useMemo(() => {
-    const weekStart = activeWeekDates[0];
-    if (!weekStart) return '';
-    return format(weekStart, 'MMM').toUpperCase();
-  }, [activeWeekDates]);
-  const activeWeekYearLabel = useMemo(() => {
-    const weekStart = activeWeekDates[0];
-    if (!weekStart) return '';
-    return format(weekStart, 'yyyy');
-  }, [activeWeekDates]);
-  const activeWeekYearStackLabel = useMemo(() => {
-    const padded = activeWeekYearLabel.padStart(4, '0').slice(-4);
-    return `${padded.slice(0, 2)}\n${padded.slice(2)}`;
-  }, [activeWeekYearLabel]);
-
-  const visibleEntriesByDay = useMemo(() => {
-    const out: Record<number, TemplateEvent[]> = createEmptyEntriesByDay();
-    const oneTimeSeenKeys = new Set<string>();
-    for (let d = 0; d <= 6; d++) {
-      const dayEvents = entriesByDaySorted[d] ?? [];
-      for (const event of dayEvents) {
-        if (!event.isOneTime) {
-          out[d] = [...(out[d] ?? []), event];
-          continue;
-        }
-        if (!isOneTimeEventVisibleInWeek(event, activeWeekStart)) {
-          continue;
-        }
-        const targetDayIndex = event.oneTimeDate ? getDayOfWeekFromDateKey(event.oneTimeDate) : d;
-        const oneTimeKey = `${event.id}-${event.oneTimeDate ?? ''}`;
-        if (oneTimeSeenKeys.has(oneTimeKey)) {
-          continue;
-        }
-        oneTimeSeenKeys.add(oneTimeKey);
-        out[targetDayIndex] = [...(out[targetDayIndex] ?? []), event];
-      }
-    }
-    for (let d = 0; d <= 6; d++) {
-      out[d] = [...(out[d] ?? [])].sort((a, b) => a.startTime.localeCompare(b.startTime));
-    }
-    return out;
-  }, [activeWeekStart, entriesByDaySorted]);
+  const activeWeekMonthLabel = useMemo(() => format(activeWeekStart, 'MMM').toUpperCase(), [activeWeekStart]);
+  const activeWeekYearLabel = useMemo(() => format(activeWeekStart, 'yyyy'), [activeWeekStart]);
+  const visibleEntriesByDay = useMemo(
+    () => getVisibleEntriesByDayForWeek(entriesByDaySorted, activeWeekStart),
+    [activeWeekStart, entriesByDaySorted]
+  );
   const activeWeekStartKey = toDateKey(activeWeekStart);
   const activeWeekEndKey = toDateKey(addDays(activeWeekStart, 6));
 
@@ -2139,6 +2120,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
   };
 
   const applyE2ESampleSchedule = () => {
+    const targetDayIndex = selectedDay ?? todayIndex;
     const newEvent: TemplateEvent = {
       id: `e2e-${Date.now()}`,
       title: 'E2E Sample Block',
@@ -2147,14 +2129,15 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
     };
     setEntriesByDay((prev) => ({
       ...prev,
-      [selectedDay]: [...(prev[selectedDay] ?? []), newEvent],
+      [targetDayIndex]: [...(prev[targetDayIndex] ?? []), newEvent],
     }));
-    analyticsService.track('e2e_sample_manual_schedule_seeded', { dayOfWeek: selectedDay });
+    analyticsService.track('e2e_sample_manual_schedule_seeded', { dayOfWeek: targetDayIndex });
   };
 
   /* ── Clear day ── */
   const handleClearDay = (dayIndex?: number) => {
     const d = dayIndex ?? selectedDay;
+    if (d === null || d === undefined) return;
     const dayName = DAY_FULL_NAMES[d];
     const count = (entriesByDay[d] ?? []).filter(
       (event) => !event.isOneTime || isOneTimeEventVisibleInWeek(event, activeWeekStart)
@@ -2199,6 +2182,8 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
   const dayColumnWidth = Math.max(36, Math.floor(availableWeekWidth / DAY_COLUMNS));
   const weekGridWidth = dayColumnWidth * DAY_COLUMNS;
   const gridTrackWidth = TIME_COL_WIDTH + weekGridWidth;
+  const weekHeaderPagerWidth = weekGridWidth;
+  const weekHeaderSnapThreshold = weekHeaderPagerWidth * 0.28;
 
   const palette = getThemePalette(themeMode);
   const isDark = themeMode === 'dark';
@@ -2232,6 +2217,88 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
     : 'Source: Manual schedule';
   const manageSourceIcon = sourceType === 'import' ? 'calendar' : 'adjust';
   const sourceChoiceLabel = sheetSourceType === 'manual' ? 'Manual Entry' : 'Import calendar file (.ics)';
+  const selectedDayVisibleCount = selectedDay !== null ? (visibleEntriesByDay[selectedDay] ?? []).length : 0;
+  const clearDayLabel = selectedDay === null ? 'Clear day' : `Clear ${DAY_TAB_LABELS[selectedDay]}`;
+  const headerWeekPages = useMemo(() => {
+    const offsets = [-7, 0, 7] as const;
+    return offsets.map((offsetDays) => {
+      const weekStart = addDays(activeWeekStart, offsetDays);
+      return {
+        key: `${toDateKey(weekStart)}-${offsetDays}`,
+        dates: getWeekDates(weekStart),
+        visibleEntriesByDay: getVisibleEntriesByDayForWeek(entriesByDaySorted, weekStart),
+      };
+    });
+  }, [activeWeekStart, entriesByDaySorted]);
+
+  const centerWeekHeaderPager = useCallback((animated: boolean) => {
+    weekHeaderPagerRef.current?.scrollTo({ x: weekHeaderPagerWidth, y: 0, animated });
+  }, [weekHeaderPagerWidth]);
+
+  const commitWeekShift = useCallback((direction: -1 | 1) => {
+    setSelectedDay(null);
+    setSelectedGridTarget(null);
+    setClearArmedDay(null);
+    setActiveWeekStart((prev) => addDays(prev, direction * 7));
+    requestAnimationFrame(() => {
+      centerWeekHeaderPager(false);
+    });
+  }, [centerWeekHeaderPager]);
+
+  const finalizeWeekHeaderSwipe = useCallback((offsetX: number) => {
+    const delta = offsetX - weekHeaderPagerWidth;
+    if (Math.abs(delta) < weekHeaderSnapThreshold) {
+      centerWeekHeaderPager(true);
+      return;
+    }
+    commitWeekShift(delta > 0 ? 1 : -1);
+  }, [centerWeekHeaderPager, commitWeekShift, weekHeaderPagerWidth, weekHeaderSnapThreshold]);
+
+  const handleWeekHeaderScrollBeginDrag = useCallback(() => {
+    weekHeaderReleaseHandledRef.current = false;
+  }, []);
+
+  const handleWeekHeaderScrollEndDrag = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    const velocityX = event.nativeEvent.velocity?.x ?? 0;
+    if (Math.abs(velocityX) > 0.05 || weekHeaderReleaseHandledRef.current) {
+      return;
+    }
+    weekHeaderReleaseHandledRef.current = true;
+    finalizeWeekHeaderSwipe(event.nativeEvent.contentOffset.x);
+  }, [finalizeWeekHeaderSwipe]);
+
+  const handleWeekHeaderMomentumScrollEnd = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    if (weekHeaderReleaseHandledRef.current) {
+      return;
+    }
+    weekHeaderReleaseHandledRef.current = true;
+    finalizeWeekHeaderSwipe(event.nativeEvent.contentOffset.x);
+  }, [finalizeWeekHeaderSwipe]);
+
+  const handleWeekHeaderAccessibilityAction = useCallback((event: AccessibilityActionEvent) => {
+    if (event.nativeEvent.actionName === 'increment') {
+      commitWeekShift(1);
+      return;
+    }
+    if (event.nativeEvent.actionName === 'decrement') {
+      commitWeekShift(-1);
+    }
+  }, [commitWeekShift]);
+
+  const lockEditorScroll = useCallback(() => {
+    setEditorScrollEnabled(false);
+  }, []);
+
+  const unlockEditorScroll = useCallback(() => {
+    setEditorScrollEnabled(true);
+  }, []);
+
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => {
+      centerWeekHeaderPager(false);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [centerWeekHeaderPager]);
 
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: palette.bgApp }]}>
@@ -2268,7 +2335,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
         ) : null}
         <ScreenHeader
           title={manageMode ? 'Manage schedule' : 'Set up your schedule'}
-          style={manageMode ? styles.manageHeaderTitle : undefined}
+          style={[styles.compactScreenHeader, manageMode && styles.manageHeaderTitle]}
         />
         {!manageMode && sourceType === 'import' && importedFilename ? (
           <View style={styles.icsBadge}>
@@ -2280,6 +2347,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
       </View>
       <ScrollView
         style={styles.editorScroll}
+        scrollEnabled={editorScrollEnabled}
         contentContainerStyle={styles.editorScrollContent}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
@@ -2326,163 +2394,156 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
         ) : (
           <Pressable
             onPress={() => handleClearDay()}
-            disabled={(visibleEntriesByDay[selectedDay] ?? []).length === 0}
+            disabled={selectedDay === null || selectedDayVisibleCount === 0}
+            testID="manual-clear-day"
+            accessibilityState={{ disabled: selectedDay === null || selectedDayVisibleCount === 0 }}
             style={({ pressed }) => [
               styles.gridToolbarBtn,
               { borderColor: palette.borderStrong },
               pressed && { opacity: 0.6 },
-              (visibleEntriesByDay[selectedDay] ?? []).length === 0 && { opacity: 0.35 },
+              (selectedDay === null || selectedDayVisibleCount === 0) && { opacity: 0.35 },
             ]}
           >
-            <Text variant="bodySmall" style={{ color: palette.textMuted }}>Clear {DAY_TAB_LABELS[selectedDay]}</Text>
+            <Text variant="bodySmall" style={{ color: palette.textMuted }}>{clearDayLabel}</Text>
           </Pressable>
         )}
       </View>
 
       <View style={[styles.weekHeaderWrap, { borderBottomColor: gridLineSoft, backgroundColor: palette.bgApp }]}>
-        <View style={[styles.weekHeaderTrackRow, { width: gridTrackWidth }]}>
-          <Pressable
-            onPress={goToPreviousWeek}
-            accessibilityRole="button"
-            accessibilityLabel="Previous week"
-            hitSlop={6}
-            style={({ pressed }) => [
-              styles.weekHeaderEdgeNavBtn,
-              styles.weekHeaderEdgeNavBtnLeft,
+        <View style={styles.weekHeaderTrackRow}>
+          <View
+            pointerEvents="none"
+            style={[
+              styles.weekHeaderMonthRail,
               {
-                borderColor: isDark ? 'rgba(255,255,255,0.42)' : palette.borderStrong,
-                backgroundColor: isDark ? 'rgba(255,255,255,0.14)' : palette.bgSurface,
-                shadowColor: isDark ? 'rgba(255,255,255,0.45)' : '#000',
-                shadowOffset: { width: 0, height: 0 },
-                shadowOpacity: isDark ? 0.32 : 0.08,
-                shadowRadius: isDark ? 5 : 2,
-                elevation: isDark ? 4 : 1,
+                width: TIME_COL_WIDTH + GRID_PADDING,
+                borderColor: isDark ? 'rgba(46,233,166,0.32)' : 'rgba(13,148,113,0.28)',
+                backgroundColor: isDark ? 'rgba(46,233,166,0.08)' : 'rgba(46,233,166,0.12)',
               },
-              pressed && { opacity: 0.75 },
             ]}
           >
-            <AppIcon name="back" size={16} color={palette.textPrimary} strokeWidth={2.3} />
-          </Pressable>
-          <Pressable
-            onPress={goToNextWeek}
-            accessibilityRole="button"
-            accessibilityLabel="Next week"
-            hitSlop={6}
-            style={({ pressed }) => [
-              styles.weekHeaderEdgeNavBtn,
-              styles.weekHeaderEdgeNavBtnRight,
-              {
-                borderColor: isDark ? 'rgba(255,255,255,0.42)' : palette.borderStrong,
-                backgroundColor: isDark ? 'rgba(255,255,255,0.14)' : palette.bgSurface,
-                shadowColor: isDark ? 'rgba(255,255,255,0.45)' : '#000',
-                shadowOffset: { width: 0, height: 0 },
-                shadowOpacity: isDark ? 0.32 : 0.08,
-                shadowRadius: isDark ? 5 : 2,
-                elevation: isDark ? 4 : 1,
-              },
-              pressed && { opacity: 0.75 },
-            ]}
-          >
-            <AppIcon name="chevronRight" size={16} color={palette.textPrimary} strokeWidth={2.3} />
-          </Pressable>
-          <View style={[styles.weekHeaderTimeSpacer, { width: TIME_COL_WIDTH }]}>
-            <View
-              pointerEvents="none"
-              style={[
-                styles.weekHeaderStampParabola,
-                {
-                  borderColor: isDark ? 'rgba(46,233,166,0.38)' : 'rgba(13,148,113,0.34)',
-                  backgroundColor: isDark ? 'rgba(46,233,166,0.08)' : 'rgba(46,233,166,0.12)',
-                },
-              ]}
-            />
-            <View style={styles.weekHeaderStampWrap}>
-              <Text variant="bodySmall" style={[styles.weekHeaderStampMonthText, { color: palette.accentPrimary }]}>
-                {activeWeekMonthLabel}
-              </Text>
-              <Text variant="bodySmall" style={[styles.weekHeaderStampYearText, { color: palette.accentPrimary }]}>
-                {activeWeekYearStackLabel}
-              </Text>
-              <View style={styles.weekHeaderStampSlot} />
-            </View>
+            <Text variant="bodySmall" style={[styles.weekHeaderMonthRailMonthText, { color: palette.accentPrimary }]}>
+              {activeWeekMonthLabel}
+            </Text>
+            <Text variant="bodySmall" style={[styles.weekHeaderMonthRailYearText, { color: palette.accentPrimary }]}>
+              {activeWeekYearLabel}
+            </Text>
           </View>
-          <View style={[styles.weekHeaderDaysRow, { width: weekGridWidth }]}>
-            {activeWeekDates.map((date, dayIndex) => {
-              const isSelected = selectedDay === dayIndex;
-              const isToday = toDateKey(date) === todayGridDateKey;
-              const visibleCount = (visibleEntriesByDay[dayIndex] ?? []).length;
+          <ScrollView
+            ref={weekHeaderPagerRef}
+            horizontal
+            bounces={false}
+            directionalLockEnabled
+            disableIntervalMomentum
+            decelerationRate="fast"
+            showsHorizontalScrollIndicator={false}
+            scrollEventThrottle={16}
+            contentOffset={{ x: weekHeaderPagerWidth, y: 0 }}
+            style={[styles.weekHeaderPager, { width: weekHeaderPagerWidth }]}
+            contentContainerStyle={styles.weekHeaderPagerContent}
+            onScrollBeginDrag={handleWeekHeaderScrollBeginDrag}
+            onScrollEndDrag={handleWeekHeaderScrollEndDrag}
+            onMomentumScrollEnd={handleWeekHeaderMomentumScrollEnd}
+            accessibilityRole="adjustable"
+            accessibilityLabel="Weekly schedule header"
+            accessibilityValue={{ text: `Week of ${format(activeWeekDates[0], 'MMMM d, yyyy')}` }}
+            accessibilityActions={[
+              { name: 'decrement', label: 'Previous week' },
+              { name: 'increment', label: 'Next week' },
+            ]}
+            onAccessibilityAction={handleWeekHeaderAccessibilityAction}
+            testID="manual-week-header-pager"
+          >
+            {headerWeekPages.map((page, pageIndex) => {
+              const isCenteredPage = pageIndex === 1;
               return (
-                <Pressable
-                  key={`week-day-${toDateKey(date)}`}
-                  onPress={() => {
-                    setSelectedDay(dayIndex);
-                    setSelectedGridTarget(null);
-                  }}
-                  style={({ pressed }) => [
-                    styles.weekHeaderDayCell,
-                    {
-                      width: dayColumnWidth,
-                      borderColor: isSelected ? palette.accentPrimary : 'transparent',
-                      backgroundColor: isSelected
-                        ? (isDark ? 'rgba(46,233,166,0.14)' : 'rgba(46,233,166,0.16)')
-                        : 'transparent',
-                    },
-                    pressed && { opacity: 0.82 },
-                  ]}
-                >
-                  <Text
-                    variant="bodySmall"
-                    style={[
-                      styles.weekHeaderDayName,
-                      {
-                        color: isSelected ? palette.accentPrimary : (isToday ? palette.textPrimary : palette.textMuted),
-                        fontWeight: isToday ? '700' as any : theme.fontWeight.medium,
-                      },
-                    ]}
-                  >
-                    {DAY_TAB_LABELS[dayIndex]}
-                  </Text>
-                  <Text
-                    variant="body"
-                    style={[
-                      styles.weekHeaderDayDate,
-                      {
-                        color: isSelected ? palette.accentPrimary : palette.textPrimary,
-                      },
-                    ]}
-                  >
-                    {format(date, 'd')}
-                  </Text>
-                  <View style={styles.weekHeaderBadgeSlot}>
-                    {visibleCount > 0 && (
-                      <View
-                        style={[
-                          styles.weekHeaderBadge,
+                <View key={page.key} style={[styles.weekHeaderDaysRow, { width: weekGridWidth }]}>
+                  {page.dates.map((date, dayIndex) => {
+                    const dateKey = toDateKey(date);
+                    const isSelected = isCenteredPage && selectedDay === dayIndex;
+                    const isToday = dateKey === todayGridDateKey;
+                    const visibleCount = (page.visibleEntriesByDay[dayIndex] ?? []).length;
+                    return (
+                      <Pressable
+                        key={`week-day-${dateKey}`}
+                        disabled={!isCenteredPage}
+                        onPress={() => {
+                          setSelectedDay(dayIndex);
+                          setSelectedGridTarget(null);
+                          setClearArmedDay(null);
+                        }}
+                        accessibilityRole="button"
+                        accessibilityLabel={format(date, 'EEEE, MMMM d, yyyy')}
+                        accessibilityState={isCenteredPage ? { selected: isSelected } : undefined}
+                        testID={`manual-week-day-${dateKey}`}
+                        style={({ pressed }) => [
+                          styles.weekHeaderDayCell,
                           {
-                            backgroundColor: isSelected ? palette.accentPrimary : palette.bgSurfaceElevated,
+                            width: dayColumnWidth,
+                            borderColor: isSelected ? palette.accentPrimary : 'transparent',
+                            backgroundColor: isSelected
+                              ? (isDark ? 'rgba(46,233,166,0.14)' : 'rgba(46,233,166,0.16)')
+                              : 'transparent',
                           },
+                          pressed && isCenteredPage && { opacity: 0.82 },
                         ]}
                       >
                         <Text
                           variant="bodySmall"
                           style={[
-                            styles.weekHeaderBadgeText,
+                            styles.weekHeaderDayName,
                             {
-                              color: isSelected
-                                ? (isDark ? palette.pillSelectedText : '#ffffff')
-                                : palette.textMuted,
+                              color: isSelected ? palette.accentPrimary : (isToday ? palette.textPrimary : palette.textMuted),
+                              fontWeight: isToday ? '700' as any : theme.fontWeight.medium,
                             },
                           ]}
                         >
-                          {visibleCount}
+                          {DAY_TAB_LABELS[dayIndex]}
                         </Text>
-                      </View>
-                    )}
-                  </View>
-                </Pressable>
+                        <Text
+                          variant="body"
+                          style={[
+                            styles.weekHeaderDayDate,
+                            {
+                              color: isSelected ? palette.accentPrimary : palette.textPrimary,
+                            },
+                          ]}
+                        >
+                          {format(date, 'd')}
+                        </Text>
+                        <View style={styles.weekHeaderBadgeSlot}>
+                          {visibleCount > 0 && (
+                            <View
+                              style={[
+                                styles.weekHeaderBadge,
+                                {
+                                  backgroundColor: isSelected ? palette.accentPrimary : palette.bgSurfaceElevated,
+                                },
+                              ]}
+                            >
+                              <Text
+                                variant="bodySmall"
+                                style={[
+                                  styles.weekHeaderBadgeText,
+                                  {
+                                    color: isSelected
+                                      ? (isDark ? palette.pillSelectedText : '#ffffff')
+                                      : palette.textMuted,
+                                  },
+                                ]}
+                              >
+                                {visibleCount}
+                              </Text>
+                            </View>
+                          )}
+                        </View>
+                      </Pressable>
+                    );
+                  })}
+                </View>
               );
             })}
-          </View>
+          </ScrollView>
         </View>
       </View>
 
@@ -2501,9 +2562,17 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
         >
           <ScrollView
             ref={gridScrollRef}
+            nestedScrollEnabled
             showsVerticalScrollIndicator
             contentContainerStyle={{ height: gridBodyHeight }}
             style={styles.gridWeekScroll}
+            onTouchStart={lockEditorScroll}
+            onTouchEnd={unlockEditorScroll}
+            onTouchCancel={unlockEditorScroll}
+            onScrollBeginDrag={lockEditorScroll}
+            onScrollEndDrag={unlockEditorScroll}
+            onMomentumScrollEnd={unlockEditorScroll}
+            testID="manual-grid-scroll"
           >
             <View style={[styles.gridVerticalRow, { width: gridTrackWidth, height: gridBodyHeight }]}>
               <View
@@ -2628,7 +2697,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
                             const bounds = getSliceSlotBounds(slice);
                             const isCompact = bounds.height < SLOT_HEIGHT * 1.8;
                             const canUseThreeTitleLines = !isCompact && bounds.height >= SLOT_HEIGHT * 3.8;
-                            const isSelectedDay = dayIndex === selectedDay;
+                            const isSelectedDay = selectedDay !== null && dayIndex === selectedDay;
                             const hasFocusedEventOnDay =
                               selectedGridTarget?.kind === 'event' && selectedGridTarget.dayIndex === dayIndex;
                             const isSelectedEventTarget =
@@ -3265,7 +3334,7 @@ const styles = StyleSheet.create({
   },
   header: {
     paddingHorizontal: theme.layout.contentHorizontal,
-    paddingTop: screenChrome.TITLE_CONTENT_TOP_PADDING,
+    paddingTop: 12,
     paddingBottom: 0,
     alignSelf: 'center',
     width: '100%',
@@ -3274,9 +3343,13 @@ const styles = StyleSheet.create({
   manageHeaderViewport: {
     maxWidth: '100%',
   },
+  compactScreenHeader: {
+    paddingTop: 8,
+    paddingBottom: 4,
+    marginBottom: 12,
+  },
   manageHeaderTitle: {
-    marginBottom: 18,
-    paddingBottom: theme.spacing.xs,
+    marginBottom: 10,
   },
   manageBackRow: {
     alignSelf: 'flex-start',
@@ -3298,7 +3371,7 @@ const styles = StyleSheet.create({
   icsBadge: {
     alignSelf: 'center',
     maxWidth: '100%',
-    marginBottom: 12,
+    marginBottom: 8,
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: theme.borderRadius.sm,
@@ -3580,10 +3653,10 @@ const styles = StyleSheet.create({
   weekHeaderWrap: {
     flexDirection: 'column',
     alignItems: 'flex-start',
-    paddingVertical: 6,
+    paddingVertical: 4,
     paddingHorizontal: GRID_PADDING,
     borderBottomWidth: 1,
-    gap: 4,
+    gap: 2,
   },
   weekHeaderTopRow: {
     width: '100%',
@@ -3595,76 +3668,37 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'stretch',
     alignSelf: 'flex-start',
-    position: 'relative',
+    width: '100%',
   },
-  weekHeaderTimeSpacer: {
+  weekHeaderPager: {
+    overflow: 'hidden',
+  },
+  weekHeaderPagerContent: {
+    alignItems: 'stretch',
+  },
+  weekHeaderMonthRail: {
     flexShrink: 0,
-    alignItems: 'flex-start',
-    justifyContent: 'center',
-    paddingLeft: 1,
-    overflow: 'visible',
-    position: 'relative',
-  },
-  weekHeaderStampParabola: {
-    position: 'absolute',
-    left: -GRID_PADDING,
-    top: 4,
-    bottom: 4,
-    width: TIME_COL_WIDTH + GRID_PADDING - 16,
-    borderWidth: 1,
-    borderLeftWidth: 0,
-    borderTopLeftRadius: 0,
-    borderBottomLeftRadius: 0,
-    borderTopRightRadius: 26,
-    borderBottomRightRadius: 26,
-    opacity: 0.92,
-  },
-  weekHeaderStampWrap: {
-    position: 'absolute',
-    left: -GRID_PADDING,
-    top: 4,
-    bottom: 4,
-    width: TIME_COL_WIDTH + GRID_PADDING - 16,
-    flexDirection: 'column',
     alignItems: 'center',
     justifyContent: 'center',
+    borderWidth: 1,
+    borderRadius: 0,
+    marginLeft: -GRID_PADDING,
   },
-  weekHeaderStampMonthText: {
+  weekHeaderMonthRailMonthText: {
     fontSize: 11,
     textAlign: 'center',
-    fontWeight: theme.fontWeight.semibold,
+    fontWeight: theme.fontWeight.bold,
     lineHeight: 16,
     letterSpacing: 0.2,
     textTransform: 'uppercase',
   },
-  weekHeaderStampYearText: {
-    marginTop: 8,
+  weekHeaderMonthRailYearText: {
+    marginTop: 2,
     fontSize: 12,
     lineHeight: 16,
-    fontWeight: theme.fontWeight.medium,
+    fontWeight: theme.fontWeight.semibold,
     letterSpacing: 0.1,
     textAlign: 'center',
-  },
-  weekHeaderStampSlot: {
-    marginTop: 0,
-    minHeight: 0,
-  },
-  weekHeaderEdgeNavBtn: {
-    width: 22,
-    height: 38,
-    borderRadius: 11,
-    borderWidth: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    position: 'absolute',
-    top: 18,
-    zIndex: 14,
-  },
-  weekHeaderEdgeNavBtnLeft: {
-    left: TIME_COL_WIDTH - 10,
-  },
-  weekHeaderEdgeNavBtnRight: {
-    right: -10,
   },
   weekHeaderRangeLabel: {
     textAlign: 'center',
@@ -3675,13 +3709,13 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
   },
   weekHeaderDayCell: {
-    paddingVertical: 6,
+    paddingVertical: 4,
     paddingHorizontal: 2,
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: 10,
     borderWidth: 1,
-    minHeight: 50,
+    minHeight: 44,
   },
   weekHeaderDayCellActive: {
     borderRadius: 8,
@@ -3697,18 +3731,18 @@ const styles = StyleSheet.create({
     marginTop: 0,
   },
   weekHeaderBadgeSlot: {
-    marginTop: 3,
-    minHeight: 18,
+    marginTop: 2,
+    minHeight: 16,
     alignItems: 'center',
     justifyContent: 'center',
   },
   weekHeaderBadge: {
-    minWidth: 18,
-    height: 18,
-    borderRadius: 9,
+    minWidth: 16,
+    height: 16,
+    borderRadius: 8,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 5,
+    paddingHorizontal: 4,
   },
   weekHeaderBadgeText: {
     fontSize: 10,

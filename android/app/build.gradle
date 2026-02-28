@@ -163,6 +163,7 @@ android {
 dependencies {
     // The version of react-native is set by the React Native Gradle Plugin
     implementation("com.facebook.react:react-android")
+    implementation("com.google.android.gms:play-services-location:21.3.0")
 
     // Required for Theme.SplashScreen → AppCompat theme transition in MainActivity
     implementation("androidx.core:core-splashscreen:1.2.0-alpha02")
@@ -190,4 +191,6 @@ dependencies {
     } else {
         implementation jscFlavor
     }
+
+    testImplementation("junit:junit:4.13.2")
 }

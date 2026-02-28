@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { Preferences, ScheduleSource, NudgePlan, WalkSession } from '../types';
+import { ActiveWalkSnapshot, Preferences, ScheduleSource, NudgePlan, WalkPrompt, WalkSession } from '../types';
 
 interface AppState {
   // Onboarding state
@@ -28,6 +28,10 @@ interface AppState {
   // Active walk session
   activeWalkSession: WalkSession | null;
   setActiveWalkSession: (session: WalkSession | null) => void;
+  activeWalkSnapshot: ActiveWalkSnapshot | null;
+  setActiveWalkSnapshot: (snapshot: ActiveWalkSnapshot | null) => void;
+  pendingWalkPrompt: WalkPrompt | null;
+  setPendingWalkPrompt: (prompt: WalkPrompt | null) => void;
   
   // Location permission
   hasLocationPermission: boolean;
@@ -94,6 +98,10 @@ export const useAppStore = create<AppState>((set) => ({
   // Active walk
   activeWalkSession: null,
   setActiveWalkSession: (session) => set({ activeWalkSession: session }),
+  activeWalkSnapshot: null,
+  setActiveWalkSnapshot: (snapshot) => set({ activeWalkSnapshot: snapshot }),
+  pendingWalkPrompt: null,
+  setPendingWalkPrompt: (prompt) => set({ pendingWalkPrompt: prompt }),
   
   // Permissions
   hasLocationPermission: false,

@@ -1,4 +1,4 @@
-import { getDatabase } from '../db';
+import { getDatabase, withTransaction } from '../db';
 import { ManualScheduleEntry } from '../../types';
 
 export const manualScheduleRepo = {
@@ -53,6 +53,24 @@ export const manualScheduleRepo = {
     }));
   },
   
+  /**
+   * Atomically replace all manual schedule entries within a transaction.
+   * If any insert fails, the entire operation rolls back and old data is preserved.
+   */
+  async replaceAll(entries: ManualScheduleEntry[]): Promise<void> {
+    await withTransaction(async (db) => {
+      await db.runAsync('DELETE FROM manual_schedule_entries');
+      for (const entry of entries) {
+        await db.runAsync(
+          `INSERT OR REPLACE INTO manual_schedule_entries
+           (id, title, day_of_week, start_time, end_time, is_one_time, one_time_date, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          [entry.id, entry.title, entry.dayOfWeek, entry.startTime, entry.endTime, entry.isOneTime ? 1 : 0, entry.oneTimeDate ?? null, new Date().toISOString()]
+        );
+      }
+    });
+  },
+
   async deleteAll(): Promise<void> {
     const db = await getDatabase();
     await db.runAsync('DELETE FROM manual_schedule_entries');
