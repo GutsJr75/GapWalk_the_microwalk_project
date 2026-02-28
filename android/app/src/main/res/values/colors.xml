@@ -1,7 +1,6 @@
 <resources>
-  <!-- Same as app home screen (theme.colors.bgApp) so splash feels in sync -->
   <color name="splashscreen_background">#e6ebf2</color>
-  <color name="iconBackground">#071a2e</color>
+  <color name="iconBackground">#0b1220</color>
   <color name="colorPrimary">#023c69</color>
   <color name="colorPrimaryDark">#ffffff</color>
 </resources>

@@ -20,6 +20,8 @@ import {
   notificationService,
   WALK_NUDGE_ACTION_SKIP,
   WALK_NUDGE_ACTION_START,
+  ALT_GAP_ACTION_ACCEPT,
+  ALT_GAP_ACTION_DECLINE,
 } from './src/services/notifications';
 import { recoverOrphanedSession } from './src/services/walkCheckpoint';
 import { notificationPlanActions } from './src/services/notificationPlanActions';
@@ -270,15 +272,36 @@ function App() {
     setUpcomingPlans(upcoming);
   }, [setTodayStats, setTodaySteps, setUpcomingPlans]);
 
-  const handleWalkNudgeResponse = useCallback(async (response: Notifications.NotificationResponse) => {
+  const handleNotificationResponse = useCallback(async (response: Notifications.NotificationResponse) => {
     const data = response.notification.request.content.data as { type?: string; planId?: string };
-    if (data.type !== 'walk_nudge' || !data.planId) return;
+    if (!data.planId) return;
 
     const responseKey = `${response.notification.request.identifier}:${response.actionIdentifier}`;
     if (lastHandledResponseRef.current === responseKey) return;
     lastHandledResponseRef.current = responseKey;
 
+    // Dismiss the notification from the tray on any action
     try {
+      await Notifications.dismissNotificationAsync(response.notification.request.identifier);
+    } catch { /* already dismissed */ }
+
+    try {
+      // Handle alternative gap suggestion responses
+      if (data.type === 'alt_gap_suggestion') {
+        const actionId = response.actionIdentifier;
+        if (actionId === ALT_GAP_ACTION_ACCEPT) {
+          await notificationPlanActions.acceptAlternativeGap(data.planId);
+          await refreshDashboardSnapshot();
+        } else {
+          // "No" button, or tapping notification body — decline
+          await notificationPlanActions.declineAlternativeGap(data.planId);
+        }
+        return;
+      }
+
+      // Handle walk nudge responses
+      if (data.type !== 'walk_nudge') return;
+
       const actionId = response.actionIdentifier;
       if (actionId === WALK_NUDGE_ACTION_SKIP) {
         await notificationPlanActions.skipPlan(data.planId);
@@ -311,13 +334,13 @@ function App() {
     if (!isNotificationsSupported) return;
 
     const responseSubscription = notificationService.addNotificationResponseListener((response) => {
-      void handleWalkNudgeResponse(response);
+      void handleNotificationResponse(response);
     });
 
     void Notifications.getLastNotificationResponseAsync()
       .then((response) => {
         if (response) {
-          void handleWalkNudgeResponse(response);
+          void handleNotificationResponse(response);
           const clearLastResponse = (Notifications as any).clearLastNotificationResponseAsync;
           if (typeof clearLastResponse === 'function') {
             void clearLastResponse();
@@ -344,7 +367,7 @@ function App() {
       responseSubscription.remove();
       receivedSubscription.remove();
     };
-  }, [handleWalkNudgeResponse, refreshDashboardSnapshot]);
+  }, [handleNotificationResponse, refreshDashboardSnapshot]);
 
   const initializeApp = async () => {
     try {

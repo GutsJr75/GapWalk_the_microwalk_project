@@ -3,13 +3,18 @@ import * as Device from 'expo-device';
 import Constants from 'expo-constants';
 import { Platform } from 'react-native';
 import { NudgePlan, Preferences } from '../types';
-import { addMinutes, parseISO, subMinutes, isBefore } from 'date-fns';
+import { addMinutes, format, parseISO, subMinutes, isBefore } from 'date-fns';
 import { timeUtils } from '../utils/time';
 import { sessionsRepo } from '../data/repositories/sessionsRepo';
 
 export const WALK_NUDGE_CATEGORY_ID = 'walk_nudge_actions';
 export const WALK_NUDGE_ACTION_START = 'START_WALK';
 export const WALK_NUDGE_ACTION_SKIP = 'SKIP_GAP';
+
+// Alternative gap suggestion notification
+export const ALT_GAP_CATEGORY_ID = 'alt_gap_suggestion';
+export const ALT_GAP_ACTION_ACCEPT = 'ACCEPT_ALT_GAP';
+export const ALT_GAP_ACTION_DECLINE = 'DECLINE_ALT_GAP';
 
 // Walk session ongoing notification
 export const WALK_SESSION_NOTIFICATION_ID = 'walk-session-timer';
@@ -108,7 +113,25 @@ export const notificationService = {
         },
       },
     ]);
-    
+
+    await Notifications.setNotificationCategoryAsync(ALT_GAP_CATEGORY_ID, [
+      {
+        identifier: ALT_GAP_ACTION_ACCEPT,
+        buttonTitle: 'Yes',
+        options: {
+          opensAppToForeground: false,
+        },
+      },
+      {
+        identifier: ALT_GAP_ACTION_DECLINE,
+        buttonTitle: 'No',
+        options: {
+          opensAppToForeground: false,
+          isDestructive: true,
+        },
+      },
+    ]);
+
     return true;
   },
   
@@ -212,9 +235,9 @@ export const notificationService = {
             type: 'walk_nudge',
           },
           sound: true,
-          ...(Platform.OS === 'android' ? { channelId: ANDROID_CHANNEL_DEFAULT } : {}),
+          ...(Platform.OS === 'android' ? { channelId: ANDROID_CHANNEL_DEFAULT, priority: Notifications.AndroidNotificationPriority.MAX } : {}),
         },
-        trigger: { 
+        trigger: {
           type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
           seconds: Math.max(1, Math.ceil((notifyTime.getTime() - Date.now()) / 1000)),
           repeats: false,
@@ -255,7 +278,7 @@ export const notificationService = {
             type: 'walk_nudge',
           },
           sound: true,
-          ...(Platform.OS === 'android' ? { channelId: ANDROID_CHANNEL_DEFAULT } : {}),
+          ...(Platform.OS === 'android' ? { channelId: ANDROID_CHANNEL_DEFAULT, priority: Notifications.AndroidNotificationPriority.MAX } : {}),
         },
         trigger: {
           type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
@@ -346,7 +369,7 @@ export const notificationService = {
         title,
         body,
         sound: true,
-        ...(Platform.OS === 'android' ? { channelId: ANDROID_CHANNEL_DEFAULT } : {}),
+        ...(Platform.OS === 'android' ? { channelId: ANDROID_CHANNEL_DEFAULT, priority: Notifications.AndroidNotificationPriority.MAX } : {}),
       },
       trigger: null,
     });
@@ -365,7 +388,7 @@ export const notificationService = {
         categoryIdentifier: WALK_NUDGE_CATEGORY_ID,
         data: { planId, type: 'walk_nudge' },
         sound: true,
-        ...(Platform.OS === 'android' ? { channelId: ANDROID_CHANNEL_DEFAULT } : {}),
+        ...(Platform.OS === 'android' ? { channelId: ANDROID_CHANNEL_DEFAULT, priority: Notifications.AndroidNotificationPriority.MAX } : {}),
       },
       trigger: null,
     });
@@ -545,6 +568,42 @@ export const notificationService = {
       });
     } catch (e) {
       if (__DEV__) console.warn('Walk session notification failed:', e);
+    }
+  },
+
+  /**
+   * Show an immediate notification suggesting an alternative gap after a skip/miss.
+   * Actions (Yes/No) do not open the app — acceptance is handled in the background.
+   */
+  async scheduleAlternativeGapNotification(
+    planId: string,
+    gapStartTime: Date,
+    gapEndTime: Date,
+    suggestedDurationMinutes: number
+  ): Promise<string | null> {
+    if (!isNotificationsSupported) return null;
+
+    try {
+      const timeStr = format(gapStartTime, 'h:mm a');
+      const notificationId = await Notifications.scheduleNotificationAsync({
+        content: {
+          title: "Don't worry! We found another gap",
+          body: `There's a suitable ${suggestedDurationMinutes}-min gap at ${timeStr}. Would you like to add this?`,
+          categoryIdentifier: ALT_GAP_CATEGORY_ID,
+          data: {
+            planId,
+            type: 'alt_gap_suggestion',
+          },
+          sound: true,
+          ...(Platform.OS === 'android' ? { channelId: ANDROID_CHANNEL_DEFAULT, priority: Notifications.AndroidNotificationPriority.MAX } : {}),
+        },
+        trigger: null,
+      });
+
+      return notificationId;
+    } catch (error) {
+      if (__DEV__) console.error('Failed to schedule alt gap notification:', error);
+      return null;
     }
   },
 

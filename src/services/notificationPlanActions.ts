@@ -1,9 +1,12 @@
-import { isAfter, parseISO } from 'date-fns';
+import { addMinutes, endOfDay, format, isAfter, parseISO, startOfDay } from 'date-fns';
 import { analyticsService } from './analytics';
 import { isNotificationsSupported, notificationService } from './notifications';
+import { gapEngine } from './gapEngine';
 import { plansRepo } from '../data/repositories/plansRepo';
+import { eventsRepo } from '../data/repositories/eventsRepo';
 import { preferencesRepo } from '../data/repositories/preferencesRepo';
 import { sessionsRepo } from '../data/repositories/sessionsRepo';
+import { NudgePlan } from '../types';
 
 const terminalStatuses = new Set(['cancelled', 'completed', 'skipped']);
 
@@ -20,6 +23,7 @@ export const notificationPlanActions = {
     const todayPlans = await plansRepo.getTodayPlans();
     const now = new Date();
     let expired = 0;
+    let lastExpiredId: string | null = null;
     for (const plan of todayPlans) {
       if (
         (plan.status === 'notified' || plan.status === 'planned') &&
@@ -27,9 +31,15 @@ export const notificationPlanActions = {
       ) {
         await plansRepo.updateStatusWithReason(plan.id, 'cancelled', 'missed');
         analyticsService.track('plan_expired', { planId: plan.id, previousStatus: plan.status });
+        lastExpiredId = plan.id;
         expired++;
       }
     }
+
+    if (expired > 0 && lastExpiredId) {
+      void this.findAndSuggestAlternativeGap(lastExpiredId).catch(() => {});
+    }
+
     return expired;
   },
 
@@ -56,6 +66,9 @@ export const notificationPlanActions = {
       skippedGapStart: plan.gapStart,
       skippedGapEnd: plan.gapEnd,
     });
+
+    void this.findAndSuggestAlternativeGap(planId).catch(() => {});
+
     return true;
   },
 
@@ -87,6 +100,9 @@ export const notificationPlanActions = {
       skippedGapStart: plan.gapStart,
       skippedGapEnd: plan.gapEnd,
     });
+
+    void this.findAndSuggestAlternativeGap(planId).catch(() => {});
+
     return true;
   },
 
@@ -130,5 +146,125 @@ export const notificationPlanActions = {
 
     analyticsService.track('notification_opened', { planId: plan.id });
     return { allowed: true, planExists: true };
+  },
+
+  /**
+   * Find the next available gap after a skip/miss and suggest it to the user
+   * via a notification with Yes/No actions.
+   */
+  async findAndSuggestAlternativeGap(skippedPlanId: string): Promise<boolean> {
+    const prefs = await preferencesRepo.get();
+    if (!prefs || !isNotificationsSupported) return false;
+
+    // Guard: don't suggest if there's already a pending alt-gap suggestion for today
+    const todayPlans = await plansRepo.getTodayPlans();
+    const hasPendingAltGap = todayPlans.some(
+      (p) => p.reason === 'alt_gap_suggestion' && p.status === 'planned'
+    );
+    if (hasPendingAltGap) return false;
+
+    const events = await eventsRepo.getAll();
+    const now = new Date();
+    const dayStart = startOfDay(now);
+    const dayEnd = endOfDay(now);
+
+    const rawGaps = gapEngine.findGaps(dayStart, dayEnd, events, prefs);
+
+    // Get the skipped plan to avoid suggesting the same gap
+    const skippedPlan = await plansRepo.getById(skippedPlanId);
+
+    const bufferMinutes = prefs.bufferMinutes ?? 2;
+    const gracePeriod = prefs.gracePeriodMinutes ?? 2;
+    const minWalkMinutes = prefs.minWalkMinutes ?? 6;
+    const minRequired = bufferMinutes + gracePeriod + minWalkMinutes;
+
+    const nextGap = rawGaps.find((gap) => {
+      // Gap must end in the future
+      if (gap.end <= now) return false;
+
+      // Don't suggest the same gap the user just skipped
+      if (
+        skippedPlan &&
+        gap.start.toISOString() === skippedPlan.gapStart &&
+        gap.end.toISOString() === skippedPlan.gapEnd
+      ) {
+        return false;
+      }
+
+      // Gap must have enough remaining time
+      const effectiveStart = gap.start > now ? gap.start : now;
+      const remainingMinutes = (gap.end.getTime() - effectiveStart.getTime()) / 60000;
+      return remainingMinutes >= minRequired;
+    });
+
+    if (!nextGap) return false;
+
+    const effectiveGapStart = nextGap.start > now ? nextGap.start : now;
+    const walkStart = addMinutes(effectiveGapStart, bufferMinutes + gracePeriod);
+    const availableMinutes = Math.floor(
+      (nextGap.end.getTime() - walkStart.getTime()) / 60000
+    );
+    const suggestedDuration = Math.max(
+      minWalkMinutes,
+      Math.min(availableMinutes, prefs.dailyTargetMinutes)
+    );
+
+    const altPlan: NudgePlan = {
+      id: `plan-alt-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`,
+      date: format(now, 'yyyy-MM-dd'),
+      gapStart: nextGap.start.toISOString(),
+      gapEnd: nextGap.end.toISOString(),
+      walkStart: walkStart.toISOString(),
+      suggestedDurationMinutes: suggestedDuration,
+      status: 'planned',
+      reason: 'alt_gap_suggestion',
+      createdAt: new Date().toISOString(),
+    };
+
+    await plansRepo.save(altPlan);
+
+    await notificationService.scheduleAlternativeGapNotification(
+      altPlan.id,
+      effectiveGapStart,
+      nextGap.end,
+      altPlan.suggestedDurationMinutes
+    );
+
+    analyticsService.track('alt_gap_suggested', {
+      originalPlanId: skippedPlanId,
+      altPlanId: altPlan.id,
+      altGapStart: altPlan.gapStart,
+      altGapEnd: altPlan.gapEnd,
+    });
+
+    return true;
+  },
+
+  /**
+   * Accept an alternative gap suggestion — schedule a walk nudge for it.
+   */
+  async acceptAlternativeGap(planId: string): Promise<boolean> {
+    const plan = await plansRepo.getById(planId);
+    if (!plan || plan.status !== 'planned') return false;
+
+    await plansRepo.updateStatus(plan.id, 'notified');
+
+    const prefs = await preferencesRepo.get();
+    await notificationService.scheduleNudge(plan, prefs ?? undefined);
+
+    analyticsService.track('alt_gap_accepted', { planId: plan.id });
+    return true;
+  },
+
+  /**
+   * Decline an alternative gap suggestion — cancel the plan.
+   */
+  async declineAlternativeGap(planId: string): Promise<boolean> {
+    const plan = await plansRepo.getById(planId);
+    if (!plan || plan.status !== 'planned') return false;
+
+    await plansRepo.updateStatusWithReason(plan.id, 'cancelled', 'declined_alt_gap');
+    analyticsService.track('alt_gap_declined', { planId: plan.id });
+    return true;
   },
 };

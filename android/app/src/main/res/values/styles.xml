@@ -3,14 +3,12 @@
     <item name="android:enforceNavigationBarContrast" tools:targetApi="29">true</item>
     <item name="android:editTextBackground">@drawable/rn_edit_text_material</item>
     <item name="colorPrimary">@color/colorPrimary</item>
-    <item name="android:statusBarColor">#0b1220</item>
-    <item name="android:windowBackground">#0b1220</item>
+    <item name="android:statusBarColor">#ffffff</item>
   </style>
-  <!-- Launch splash: matches app home screen (same bg + brand icon), smooth icon animation -->
   <style name="Theme.App.SplashScreen" parent="Theme.SplashScreen">
     <item name="windowSplashScreenBackground">@color/splashscreen_background</item>
     <item name="windowSplashScreenAnimatedIcon">@drawable/splashscreen_logo</item>
-    <item name="windowSplashScreenAnimationDuration">400</item>
     <item name="postSplashScreenTheme">@style/AppTheme</item>
+    <item name="android:windowSplashScreenBehavior">icon_preferred</item>
   </style>
 </resources>

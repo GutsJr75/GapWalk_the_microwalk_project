@@ -92,8 +92,8 @@ android {
         applicationId 'com.gapwalk.app'
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 1
-        versionName "1.0.0"
+        versionCode 10102
+        versionName "1.0.2"
 
         buildConfigField "String", "REACT_NATIVE_RELEASE_LEVEL", "\"${findProperty('reactNativeReleaseLevel') ?: 'stable'}\""
     }
@@ -134,7 +134,7 @@ android {
     applicationVariants.all { variant ->
         variant.outputs.all { output ->
             if (output.outputFileName != null && output.outputFileName.toString().endsWith(".apk")) {
-                output.outputFileName = "GapWalk_v1.0.1.apk"
+                output.outputFileName = "GapWalk_v1.0.2.apk"
             }
         }
     }
