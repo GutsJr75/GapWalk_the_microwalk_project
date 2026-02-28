@@ -30,21 +30,21 @@ import { AppIcon } from '../components/AppIcon';
 import { theme } from '../theme';
 import { screenChrome } from '../theme/screenChrome';
 import { getThemePalette } from '../theme/palette';
-import { ManualScheduleEntry } from '../lib/types';
-import { buildWeeklyTemplateFromIcsEvents, parseICSFile } from '../lib/ics';
-import { manualScheduleRepo } from '../lib/repositories/manualScheduleRepo';
-import { eventsRepo } from '../lib/repositories/eventsRepo';
-import { plansRepo } from '../lib/repositories/plansRepo';
-import { scheduleSourceRepo } from '../lib/repositories/scheduleSourceRepo';
-import { syncNudgePlansForCurrentSchedule } from '../lib/scheduleSync';
-import { toUserFriendlyError } from '../lib/errorMessages';
+import { ManualScheduleEntry } from '../types';
+import { buildWeeklyTemplateFromIcsEvents, parseICSFile } from '../utils/ics';
+import { manualScheduleRepo } from '../data/repositories/manualScheduleRepo';
+import { eventsRepo } from '../data/repositories/eventsRepo';
+import { plansRepo } from '../data/repositories/plansRepo';
+import { scheduleSourceRepo } from '../data/repositories/scheduleSourceRepo';
+import { syncNudgePlansForCurrentSchedule } from '../services/scheduleSync';
+import { toUserFriendlyError } from '../utils/errorMessages';
 import {
   SAVE_CONFIRM_ACTION,
   SAVE_CONFIRM_DECLINE,
   SAVE_CONFIRM_MESSAGE,
   SAVE_CONFIRM_TITLE,
-} from '../lib/confirmMessages';
-import { analyticsService } from '../lib/analytics';
+} from '../utils/confirmMessages';
+import { analyticsService } from '../services/analytics';
 import { useAppStore } from '../store';
 import { addDays, format, setHours, setMinutes, startOfDay } from 'date-fns';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -274,7 +274,6 @@ interface ManualFormState {
   endHourRaw: string;
   endMinuteRaw: string;
   endPeriod: 'AM' | 'PM';
-  description: string;
 }
 
 const minutesToHHmm = (totalMinutes: number): string => {
@@ -418,7 +417,6 @@ const createDefaultFormState = (dayIndex: number): ManualFormState => {
     endHourRaw: '10',
     endMinuteRaw: '00',
     endPeriod: 'AM',
-    description: '',
   };
 };
 
@@ -438,7 +436,6 @@ const buildFormSignature = (form: ManualFormState): string => {
     endHourRaw: form.endHourRaw,
     endMinuteRaw: form.endMinuteRaw,
     endPeriod: form.endPeriod,
-    description: form.description,
   });
 };
 
@@ -1111,7 +1108,6 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
       endHourRaw: String(eh).padStart(2, '0'),
       endMinuteRaw: String(endMin % 60).padStart(2, '0'),
       endPeriod: endMin >= 12 * 60 ? 'PM' : 'AM',
-      description: '',
     };
     setEditingEventId(event.id);
     setEditingSeriesId(seriesId);
@@ -1249,10 +1245,6 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
       return;
     }
     applySourceSheetChanges();
-  };
-
-  const handleManageStartEdit = () => {
-    setManageScreenMode('edit');
   };
 
   const handleManageChangeSource = () => {
@@ -2130,6 +2122,22 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
     selectedGridTarget,
   ]);
 
+  const selectedEventSlice = useMemo(() => {
+    if (selectedGridTarget?.kind !== 'event') return null;
+    const daySlices = displaySlicesByDay[selectedGridTarget.dayIndex] ?? [];
+    return daySlices.find((slice) => slice.key === selectedGridTarget.eventKey) ?? null;
+  }, [displaySlicesByDay, selectedGridTarget]);
+
+  const handleManageStartEdit = () => {
+    setClearArmedDay(null);
+    setManageScreenMode('edit');
+    if (selectedGridTarget?.kind === 'event' && selectedEventSlice) {
+      openModalFromEvent(selectedEventSlice.event, selectedEventSlice.sourceDayIndex);
+      return;
+    }
+    setSelectedGridTarget(null);
+  };
+
   const applyE2ESampleSchedule = () => {
     const newEvent: TemplateEvent = {
       id: `e2e-${Date.now()}`,
@@ -2969,6 +2977,24 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
         visible={showAdd}
         onClose={handleCancelEventModal}
         title={editingEventId ? 'Edit Event' : 'Add Event'}
+        rightAccessory={editingEventId ? (
+          <TouchableOpacity
+            style={[
+              styles.modalHeaderIconBtn,
+              {
+                backgroundColor: palette.bgSurface,
+                borderColor: palette.borderSoft,
+              },
+            ]}
+            onPress={confirmDelete}
+            activeOpacity={0.8}
+            accessibilityRole="button"
+            accessibilityLabel="Delete event"
+            testID="manual-schedule-delete-event"
+          >
+            <AppIcon name="trash" size={17} color={theme.colors.error} />
+          </TouchableOpacity>
+        ) : null}
       >
         <View style={styles.mForm}>
           <View style={styles.modalSection}>
@@ -3211,20 +3237,6 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
             {!!timeError && <Text variant="muted" style={styles.timeError}>{timeError}</Text>}
           </View>
 
-          <View style={styles.modalSection}>
-            <Text variant="bodySmall" style={[styles.modalLabel, { color: palette.textMuted }]}>Description (optional)</Text>
-            <TextInput
-              style={[styles.input, styles.inputMultiline, themedInput]}
-              value={form.description}
-              onChangeText={(t) => setForm((prev) => ({ ...prev, description: t }))}
-              placeholder="Add a description"
-              placeholderTextColor={palette.textMuted}
-              multiline
-              numberOfLines={2}
-              underlineColorAndroid="transparent"
-            />
-          </View>
-
           <View style={styles.modalActionsRow}>
             <Button
               title="Cancel"
@@ -3239,11 +3251,6 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
               style={styles.modalActionButton}
             />
           </View>
-          {editingEventId ? (
-            <TouchableOpacity style={styles.deleteBtn} onPress={confirmDelete} activeOpacity={0.8}>
-              <Text variant="bodySmall" color={theme.colors.error} style={styles.deleteBtnText}>Delete event</Text>
-            </TouchableOpacity>
-          ) : null}
         </View>
       </AppModal>
 
@@ -4237,20 +4244,6 @@ const styles = StyleSheet.create({
     fontWeight: theme.fontWeight.semibold,
     marginHorizontal: -2,
   },
-  inputMultiline: {
-    minHeight: 86,
-    paddingTop: 10,
-    paddingBottom: 10,
-    textAlignVertical: 'top',
-  },
-  deleteBtn: {
-    alignSelf: 'center',
-    paddingVertical: 6,
-    marginTop: 4,
-  },
-  deleteBtnText: {
-    fontWeight: theme.fontWeight.semibold,
-  },
   footer: {
     paddingHorizontal: theme.layout.contentHorizontal,
     paddingTop: screenChrome.FOOTER_PADDING_TOP,
@@ -4370,6 +4363,14 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: 10,
     marginTop: 4,
+  },
+  modalHeaderIconBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   modalActionButton: {
     flex: 1,

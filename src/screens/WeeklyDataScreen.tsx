@@ -15,12 +15,12 @@ import { theme } from '../theme';
 import { screenChrome } from '../theme/screenChrome';
 import { useThemePalette } from '../theme/palette';
 import { useAppStore } from '../store';
-import { sessionsRepo } from '../lib/repositories/sessionsRepo';
+import { sessionsRepo } from '../data/repositories/sessionsRepo';
 import {
   calculateWeeklyHistory,
   WeeklyHistoryEntry,
-} from '../lib/statsUtils';
-import { toUserFriendlyError } from '../lib/errorMessages';
+} from '../utils/statsUtils';
+import { toUserFriendlyError } from '../utils/errorMessages';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'WeeklyData'>;
 

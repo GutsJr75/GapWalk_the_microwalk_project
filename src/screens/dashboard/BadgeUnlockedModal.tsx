@@ -5,7 +5,7 @@ import { Text } from '../../components/Text';
 import { theme } from '../../theme';
 import { useThemePalette } from '../../theme/palette';
 import { useAppStore } from '../../store';
-import { AchievementId, getAchievementDef } from '../../lib/repositories/achievementsRepo';
+import { AchievementId, getAchievementDef } from '../../data/repositories/achievementsRepo';
 
 interface BadgeUnlockedModalProps {
   visible: boolean;

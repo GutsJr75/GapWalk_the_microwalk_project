@@ -13,26 +13,26 @@ import { ScreenHeader } from '../components/ScreenHeader';
 import { theme } from '../theme';
 import { screenChrome } from '../theme/screenChrome';
 import { useThemePalette } from '../theme/palette';
-import { buildWeeklyTemplateFromIcsEvents, parseICSFile } from '../lib/ics';
-import { ManualScheduleEntry } from '../lib/types';
-import { eventsRepo } from '../lib/repositories/eventsRepo';
-import { plansRepo } from '../lib/repositories/plansRepo';
-import { scheduleSourceRepo } from '../lib/repositories/scheduleSourceRepo';
-import { syncNudgePlansForCurrentSchedule } from '../lib/scheduleSync';
+import { buildWeeklyTemplateFromIcsEvents, parseICSFile } from '../utils/ics';
+import { ManualScheduleEntry } from '../types';
+import { eventsRepo } from '../data/repositories/eventsRepo';
+import { plansRepo } from '../data/repositories/plansRepo';
+import { scheduleSourceRepo } from '../data/repositories/scheduleSourceRepo';
+import { syncNudgePlansForCurrentSchedule } from '../services/scheduleSync';
 import {
   SAVE_CONFIRM_DECLINE,
   SAVE_CONFIRM_MESSAGE,
-} from '../lib/confirmMessages';
-import { analyticsService } from '../lib/analytics';
+} from '../utils/confirmMessages';
+import { analyticsService } from '../services/analytics';
 import { useAppStore } from '../store';
 import {
   googleCalendarService,
   getGoogleAuthConfig,
   getGoogleRedirectUri,
   isGoogleConfigured,
-} from '../lib/googleCalendar';
-import { toUserFriendlyError } from '../lib/errorMessages';
-import { useUnsavedChangesGuard } from '../lib/useUnsavedChangesGuard';
+} from '../services/googleCalendar';
+import { toUserFriendlyError } from '../utils/errorMessages';
+import { useUnsavedChangesGuard } from '../hooks/useUnsavedChangesGuard';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'ScheduleSetup'>;
 type ScheduleOption = 'google' | 'import' | 'manual' | null;
@@ -66,9 +66,12 @@ export const ScheduleSetupScreen: React.FC<Props> = ({ navigation, route }) => {
     navigation.navigate(manageMode ? 'ScheduleOverview' : 'Dashboard');
   };
 
-  const navigateToManualSchedule = () => {
+  const navigateToManualSchedule = async () => {
     if (manageMode) {
-      navigation.navigate('ManualSchedule', { manageMode: true });
+      // Clear imported events when switching to manual
+      await eventsRepo.deleteBySource('ics');
+      await eventsRepo.deleteBySource('google');
+      navigation.navigate('ManualSchedule', { manageMode: true, startWithEmpty: true });
       return;
     }
     navigation.navigate('ManualSchedule', {

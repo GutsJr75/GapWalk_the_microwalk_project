@@ -14,23 +14,23 @@ import { type AppIconName } from '../components/AppIcon';
 import { theme } from '../theme';
 import { getThemePalette } from '../theme/palette';
 import { useAppStore } from '../store';
-import { preferencesRepo } from '../lib/repositories/preferencesRepo';
-import { plansRepo } from '../lib/repositories/plansRepo';
-import { sessionsRepo } from '../lib/repositories/sessionsRepo';
-import { scheduleSourceRepo } from '../lib/repositories/scheduleSourceRepo';
-import { eventsRepo } from '../lib/repositories/eventsRepo';
-import { achievementsRepo, type UnlockedAchievement, type AchievementId } from '../lib/repositories/achievementsRepo';
-import { gapEngine } from '../lib/gapEngine';
-import { isNotificationsSupported, notificationService } from '../lib/notifications';
-import { notificationPlanActions } from '../lib/notificationPlanActions';
-import { googleCalendarService } from '../lib/googleCalendar';
-import { NudgePlan } from '../lib/types';
-import { calculateStreak, calculateWeeklyStats, getMotivationalMessage, StreakData, WeeklyStats } from '../lib/statsUtils';
+import { preferencesRepo } from '../data/repositories/preferencesRepo';
+import { plansRepo } from '../data/repositories/plansRepo';
+import { sessionsRepo } from '../data/repositories/sessionsRepo';
+import { scheduleSourceRepo } from '../data/repositories/scheduleSourceRepo';
+import { eventsRepo } from '../data/repositories/eventsRepo';
+import { achievementsRepo, type UnlockedAchievement, type AchievementId } from '../data/repositories/achievementsRepo';
+import { gapEngine } from '../services/gapEngine';
+import { isNotificationsSupported, notificationService } from '../services/notifications';
+import { notificationPlanActions } from '../services/notificationPlanActions';
+import { googleCalendarService } from '../services/googleCalendar';
+import { NudgePlan } from '../types';
+import { calculateStreak, calculateWeeklyStats, getMotivationalMessage, StreakData, WeeklyStats } from '../utils/statsUtils';
 import { addMinutes, format, isAfter, isBefore, parseISO, subMinutes, subDays } from 'date-fns';
-import { timeUtils } from '../lib/time';
-import { requestAllPermissions } from '../lib/permissions';
-import { toUserFriendlyError } from '../lib/errorMessages';
-import { authStorage } from '../lib/authStorage';
+import { timeUtils } from '../utils/time';
+import { requestAllPermissions } from '../services/permissions';
+import { toUserFriendlyError } from '../utils/errorMessages';
+import { authStorage } from '../data/authStorage';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 // Extracted dashboard components
@@ -122,6 +122,7 @@ export const DashboardScreen: React.FC<Props> = ({ navigation, route }) => {
     setHasLocationPermission, setHasNotificationPermission, setHasActivityPermission,
     themeMode, language,
     authUser,
+    profileDisplayName,
     isAuthenticated,
     hasCompletedOnboarding,
     setIsAuthenticated,
@@ -150,11 +151,14 @@ export const DashboardScreen: React.FC<Props> = ({ navigation, route }) => {
   const badgeAnim = useRef(new Animated.Value(0)).current;
   const [yesterdayMinutes, setYesterdayMinutes] = useState<number | null>(null);
   const [missedPlans, setMissedPlans] = useState<NudgePlan[]>([]);
-
   // Staggered card entrance animations
   const cardAnims = useRef(
     Array.from({ length: 6 }, () => new Animated.Value(0))
   ).current;
+
+  // Post-walk summary highlight glow
+  const postWalkGlowAnim = useRef(new Animated.Value(0)).current;
+  const quickStatusRef = useRef<View>(null);
 
   // ── Change walk modal state ──
   const [showChangeModal, setShowChangeModal] = useState(false);
@@ -190,6 +194,14 @@ export const DashboardScreen: React.FC<Props> = ({ navigation, route }) => {
     if (isAuthenticated || hasCompletedOnboarding) return;
     navigation.reset({ index: 0, routes: [{ name: 'Intro' }] });
   }, [hasCompletedOnboarding, isAuthenticated, navigation]);
+
+  const resolvedDisplayName = useMemo(() => {
+    const localName = profileDisplayName?.trim();
+    if (localName) return localName;
+    const authName = authUser?.name?.trim();
+    if (authName) return authName;
+    return 'GapWalker';
+  }, [authUser?.name, profileDisplayName]);
 
   // ── Data loading ──
   const reconcileTodayPlans = useCallback(async (prefs: NonNullable<typeof preferences>, minutesWalked: number) => {
@@ -635,12 +647,37 @@ export const DashboardScreen: React.FC<Props> = ({ navigation, route }) => {
     navigation.setParams({ openMenu: undefined });
   }, [navigation, openMenu, route.params?.openMenu]);
 
+  // Post-walk summary: scroll to Quick Status and pulse a highlight glow
+  useEffect(() => {
+    if (!route.params?.showPostWalkSummary) return;
+    navigation.setParams({ showPostWalkSummary: undefined });
+
+    // Wait for entrance animations to settle, then scroll and glow
+    const timer = setTimeout(() => {
+      quickStatusRef.current?.measureInWindow((_x, y) => {
+        dashboardScrollRef.current?.scrollTo({ y: Math.max(0, y - 80), animated: true });
+      });
+
+      // Pulse glow: fade in then fade out
+      postWalkGlowAnim.setValue(0);
+      Animated.sequence([
+        Animated.timing(postWalkGlowAnim, { toValue: 1, duration: 400, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
+        Animated.timing(postWalkGlowAnim, { toValue: 0.3, duration: 300, useNativeDriver: true }),
+        Animated.timing(postWalkGlowAnim, { toValue: 0.8, duration: 300, useNativeDriver: true }),
+        Animated.timing(postWalkGlowAnim, { toValue: 0, duration: 800, easing: Easing.in(Easing.cubic), useNativeDriver: true }),
+      ]).start();
+    }, 500);
+
+    return () => clearTimeout(timer);
+  }, [route.params?.showPostWalkSummary, navigation, postWalkGlowAnim]);
+
   const navigateToManageSchedule = () => { closeMenu(); navigation.navigate('ManualSchedule', { manageMode: true }); };
   const navigateToProfile = () => { closeMenu(); navigation.navigate('Profile'); };
   const navigateToPreferences = () => { closeMenu(); navigation.push('Preferences', { manageMode: true }); };
   const navigateToSettings = () => { closeMenu(); navigation.navigate('Settings'); };
   const navigateToWeeklyData = () => { closeMenu(); navigation.navigate('WeeklyData'); };
   const navigateToAchievements = () => { closeMenu(); navigation.navigate('Achievements', { source: 'options' }); };
+  const navigateToAboutHelp = () => { closeMenu(); navigation.navigate('AboutHelp'); };
 
   const menuItems: SideMenuItem[] = [
     { key: 'profile', label: 'Profile', icon: 'person', onPress: navigateToProfile, testID: 'dashboard-menu-profile' },
@@ -649,6 +686,7 @@ export const DashboardScreen: React.FC<Props> = ({ navigation, route }) => {
     { key: 'weekly-data', label: 'Weekly Data', icon: 'calendar', onPress: navigateToWeeklyData, testID: 'dashboard-menu-weekly-data' },
     { key: 'achievements', label: 'Achievements', icon: 'trophy', onPress: navigateToAchievements, testID: 'dashboard-menu-achievements' },
     { key: 'settings', label: 'Settings', icon: 'settings', onPress: navigateToSettings, testID: 'dashboard-menu-settings' },
+    { key: 'about-help', label: 'About & Help', icon: 'info', onPress: navigateToAboutHelp, testID: 'dashboard-menu-about-help' },
   ];
 
   const handleLogoutFromMenu = () => {
@@ -677,7 +715,13 @@ export const DashboardScreen: React.FC<Props> = ({ navigation, route }) => {
   const todayKey = format(today, 'yyyy-MM-dd');
   const goalReached = !!preferences && todayMinutesWalked >= preferences.dailyTargetMinutes;
   const showStepGoalCard = !!preferences && (preferences.strictnessMode === 'no_excuses' || preferences.stepGoalEnabled);
-  const readyPrompt = getMotivationalMessage(todayMinutesWalked, preferences?.dailyTargetMinutes ?? 0, streak.currentStreak);
+  const readyPrompt = getMotivationalMessage({
+    currentMinutes: todayMinutesWalked,
+    targetMinutes: preferences?.dailyTargetMinutes ?? 0,
+    streak: streak.currentStreak,
+    strictnessMode: preferences?.strictnessMode,
+    now: today,
+  });
 
   const yesterdayTarget = preferences?.dailyTargetMinutes ?? 0;
   const missedYesterday = yesterdayMinutes !== null && yesterdayTarget > 0 && yesterdayMinutes < yesterdayTarget && yesterdayMinutes > 0;
@@ -732,6 +776,8 @@ export const DashboardScreen: React.FC<Props> = ({ navigation, route }) => {
       <View style={[styles.glow, styles.glowBottom, { backgroundColor: bottomGlowColor }]} />
     </View>
   );
+  const resolvedDashboardHeading = `Welcome, ${resolvedDisplayName}`;
+  const dashboardHeadingStyle = resolvedDashboardHeading.length > 14 ? styles.headingCompact : styles.heading;
 
   // ── Variant A: no preferences ──
   if (!hasSetPreferences || !preferences) {
@@ -742,7 +788,7 @@ export const DashboardScreen: React.FC<Props> = ({ navigation, route }) => {
           contentContainerStyle={[styles.scroll, { paddingHorizontal: horizontalPadding, paddingTop: verticalPadding, paddingBottom: verticalPadding }]}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.colors.accentPrimary} />}
         >
-          <Text variant="title" style={styles.heading}>Today</Text>
+          <Text variant="title" style={dashboardHeadingStyle}>{resolvedDashboardHeading}</Text>
           <Text variant="body" color={palette.textMuted} style={styles.headingSub}>{dayName}, {monthDay}</Text>
           <Card elevated style={styles.promptCard}>
             <Text variant="body" style={styles.promptTitle}>Get started</Text>
@@ -761,7 +807,7 @@ export const DashboardScreen: React.FC<Props> = ({ navigation, route }) => {
       <View style={[styles.headerFrame, { backgroundColor: palette.bgSurfaceElevated, paddingHorizontal: Math.max(width * 0.075, 16) }]}>
         <View style={styles.header}>
           <View style={styles.headerCenter}>
-            <Text variant="title" style={styles.heading}>Today</Text>
+            <Text variant="title" style={dashboardHeadingStyle}>{resolvedDashboardHeading}</Text>
             <Text variant="bodySmall" color={palette.textMuted} style={styles.headingDate}>{dayName}, {monthDay}</Text>
           </View>
           <View style={styles.headerRight}>
@@ -790,16 +836,22 @@ export const DashboardScreen: React.FC<Props> = ({ navigation, route }) => {
           <AchievementsSection unlockedAchievements={unlockedAchievements} />
         </Animated.View>
 
-        <Animated.View style={{ opacity: cardAnims[3], transform: [{ translateY: cardAnims[3].interpolate({ inputRange: [0, 1], outputRange: [12, 0] }) }] }}>
-          <Text variant="body" style={styles.qsTitle}>Quick Status</Text>
-          <StatCard title="Daily Target" current={todayMinutesWalked} target={preferences.dailyTargetMinutes} unitLabel="minutes" tone="target" />
-          <StatCard title="Notification Count" current={todayNotificationCount} target={preferences.notificationCountPerDay} unitLabel="times" tone="notifications" />
-          {showStepGoalCard && <StatCard title="Step Goal" current={todaySteps} target={preferences.stepGoal} unitLabel="steps" tone="steps" />}
-        </Animated.View>
+        <View ref={quickStatusRef} collapsable={false}>
+          <Animated.View style={[
+            { opacity: cardAnims[3], transform: [{ translateY: cardAnims[3].interpolate({ inputRange: [0, 1], outputRange: [12, 0] }) }] },
+            { borderRadius: 16, overflow: 'hidden' },
+          ]}>
+            <Animated.View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, borderRadius: 16, borderWidth: 2, borderColor: palette.accentPrimary, opacity: postWalkGlowAnim }} pointerEvents="none" />
+            <Text variant="body" style={styles.qsTitle}>Quick Status</Text>
+            <StatCard title="Daily Target" current={todayMinutesWalked} target={preferences.dailyTargetMinutes} unitLabel="minutes" tone="target" />
+            <StatCard title="Notification Count" current={todayNotificationCount} target={preferences.notificationCountPerDay} unitLabel="times" tone="notifications" />
+            {showStepGoalCard && <StatCard title="Step Goal" current={todaySteps} target={preferences.stepGoal} unitLabel="steps" tone="steps" />}
+          </Animated.View>
 
-        <Animated.View style={{ opacity: cardAnims[4], transform: [{ translateY: cardAnims[4].interpolate({ inputRange: [0, 1], outputRange: [12, 0] }) }] }}>
-          <WeeklyStatsCard weeklyStats={weeklyStats} prevWeeklyStats={prevWeeklyStats} />
-        </Animated.View>
+          <Animated.View style={{ opacity: cardAnims[4], transform: [{ translateY: cardAnims[4].interpolate({ inputRange: [0, 1], outputRange: [12, 0] }) }] }}>
+            <WeeklyStatsCard weeklyStats={weeklyStats} prevWeeklyStats={prevWeeklyStats} />
+          </Animated.View>
+        </View>
 
         <Animated.View style={{ opacity: cardAnims[5], transform: [{ translateY: cardAnims[5].interpolate({ inputRange: [0, 1], outputRange: [12, 0] }) }] }}>
         <View style={styles.gapHeaderRow}>
@@ -845,6 +897,7 @@ export const DashboardScreen: React.FC<Props> = ({ navigation, route }) => {
         <MissedPlansSection missedPlans={missedPlans} />
 
         <Button title="Start Manual Walk" onPress={() => navigation.navigate('Walking', {})} style={styles.walkBtn} testID="dashboard-start-manual-walk" />
+        <Text variant="muted" style={styles.dashboardFooter}>Your privacy matters. So does your health.</Text>
         </Animated.View>
       </ScrollView>
 
@@ -922,6 +975,7 @@ const styles = StyleSheet.create({
   headerCenter: { flex: 1, alignItems: 'flex-start' },
   headerRight: { width: 32, alignItems: 'flex-end' },
   heading: { textAlign: 'left', fontSize: theme.fontSize.xl + 2 },
+  headingCompact: { textAlign: 'left', fontSize: theme.fontSize.lg + 3, lineHeight: theme.fontSize.lg + 8 },
   headingSub: { textAlign: 'left', marginBottom: 20, marginTop: 4 },
   headingDate: { textAlign: 'left', marginTop: 2 },
   burgerBtn: { padding: 3, transform: [{ scale: 0.8 }] },
@@ -940,5 +994,6 @@ const styles = StyleSheet.create({
   promptTitle: { fontWeight: theme.fontWeight.semibold },
   promptText: { lineHeight: 18 },
   walkBtn: { marginBottom: 20 },
+  dashboardFooter: { textAlign: 'center', marginBottom: 8, lineHeight: 20 },
   readyText: { marginTop: 16, marginBottom: 16, textAlign: 'center', fontSize: theme.fontSize.lg, fontWeight: theme.fontWeight.semibold },
 });

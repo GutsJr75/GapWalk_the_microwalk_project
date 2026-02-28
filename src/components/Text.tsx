@@ -1,9 +1,9 @@
 ﻿import React from 'react';
 import { Text as RNText, StyleSheet, TextStyle, Platform, StyleProp } from 'react-native';
-import { theme } from '../theme';
+import { resolveAppFontFamily, theme } from '../theme';
 import { useAppStore } from '../store';
 import { getThemePalette } from '../theme/palette';
-import { AppLanguage, translateLiteral } from '../lib/i18n';
+import { AppLanguage, translateLiteral } from '../i18n';
 
 interface TextProps {
   children: React.ReactNode;
@@ -11,6 +11,7 @@ interface TextProps {
   color?: string;
   style?: StyleProp<TextStyle>;
   numberOfLines?: number;
+  ellipsizeMode?: React.ComponentProps<typeof RNText>['ellipsizeMode'];
 }
 
 const mapThemeTokenColor = (candidate: string | undefined, mode: 'dark' | 'light'): string | undefined => {
@@ -27,6 +28,7 @@ export const Text: React.FC<TextProps> = ({
   color,
   style,
   numberOfLines,
+  ellipsizeMode,
 }) => {
   const { themeMode, language } = useAppStore();
   const palette = getThemePalette(themeMode);
@@ -69,6 +71,16 @@ export const Text: React.FC<TextProps> = ({
     return { lineHeight: minLineHeight };
   }, [resolvedStyle, variantStyle]);
 
+  const fontFamilyOverride = React.useMemo(() => {
+    const flattened = StyleSheet.flatten([styles.base, variantStyle, resolvedStyle]) as TextStyle | undefined;
+    return {
+      fontFamily: resolveAppFontFamily(flattened?.fontWeight, flattened?.fontStyle),
+      // Use the matching Sofia Pro face directly instead of synthetic weight/style.
+      fontWeight: '400' as const,
+      fontStyle: 'normal' as const,
+    };
+  }, [resolvedStyle, variantStyle]);
+
   const localizedChildren = React.useMemo(
     () => localizeNode(children, language),
     [children, language]
@@ -81,9 +93,11 @@ export const Text: React.FC<TextProps> = ({
         variantStyle,
         { color: resolvedColor },
         resolvedStyle,
+        fontFamilyOverride,
         clippingFixStyle,
       ]}
       numberOfLines={numberOfLines}
+      ellipsizeMode={ellipsizeMode}
     >
       {localizedChildren}
     </RNText>

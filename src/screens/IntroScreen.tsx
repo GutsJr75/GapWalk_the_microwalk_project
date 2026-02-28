@@ -11,9 +11,9 @@ import { theme } from '../theme';
 import { useAppStore } from '../store';
 import { useThemePalette } from '../theme/palette';
 import Svg, { Path } from 'react-native-svg';
-import { analyticsService } from '../lib/analytics';
-import { getAuth0Discovery, getAuth0RequestConfig, isAuth0Configured } from '../lib/auth0';
-import { authStorage } from '../lib/authStorage';
+import { analyticsService } from '../services/analytics';
+import { getAuth0Discovery, getAuth0RequestConfig, isAuth0Configured } from '../services/auth0';
+import { authStorage } from '../data/authStorage';
 
 WebBrowser.maybeCompleteAuthSession();
 
@@ -63,11 +63,6 @@ interface Props extends NativeStackScreenProps<RootStackParamList, 'Intro'> {
   onAuthenticated?: () => void;
 }
 
-const LAUNCH_HERO_IN_DURATION_MS = 450;
-const LAUNCH_HERO_HOLD_MS = 180;
-const LAUNCH_CONTENT_REVEAL_DURATION_MS = 500;
-const LAUNCH_OVERLAY_FADE_DURATION_MS = 220;
-const LAUNCH_EASING = Easing.bezier(0.22, 1, 0.36, 1);
 const AUTH_DIVIDER_MARGIN_Y = 18;
 const AUTH_SECONDARY_BLOCK_GAP = 28;
 const AUTH_GUEST_BLOCK_GAP = 32;
@@ -88,11 +83,7 @@ export const IntroScreen: React.FC<Props> = ({
   const [authLoadingMode, setAuthLoadingMode] = useState<'login' | 'signup' | null>(null);
   const [rememberMe, setRememberMe] = useState(false);
   const [howDetailsMeasuredHeight, setHowDetailsMeasuredHeight] = useState(HOW_DETAILS_FALLBACK_HEIGHT);
-  const [showIntroOverlay, setShowIntroOverlay] = useState(true);
   const howAnim = useRef(new Animated.Value(0)).current;
-  const heroIntroAnim = useRef(new Animated.Value(0)).current;
-  const contentRevealAnim = useRef(new Animated.Value(0)).current;
-  const overlayFadeAnim = useRef(new Animated.Value(1)).current;
   const handledAuthResponseRef = useRef<string | null>(null);
   const { height: viewportHeight } = useWindowDimensions();
   const authConfigured = isAuth0Configured();
@@ -100,7 +91,6 @@ export const IntroScreen: React.FC<Props> = ({
 
   const verticalTopPadding = Math.round(viewportHeight * 0.072);
   const verticalBottomPadding = Math.round(viewportHeight * 0.09);
-  const overlayOpticalOffset = Math.round(viewportHeight * 0.06);
   const heroVerticalPadding = Math.max(theme.spacing.md, Math.round(viewportHeight * 0.02));
   const heroToWhyGap = Math.max(theme.spacing.xl, Math.round(viewportHeight * 0.055));
   const whyToHowGap = Math.max(theme.spacing.lg, Math.round(viewportHeight * 0.045));
@@ -122,45 +112,6 @@ export const IntroScreen: React.FC<Props> = ({
       useNativeDriver: false,
     }).start();
   }, [showHowItWorks, howAnim]);
-
-  useEffect(() => {
-    heroIntroAnim.setValue(0);
-    contentRevealAnim.setValue(0);
-    overlayFadeAnim.setValue(1);
-    setShowIntroOverlay(true);
-
-    const introSequence = Animated.sequence([
-      Animated.timing(heroIntroAnim, {
-        toValue: 1,
-        duration: LAUNCH_HERO_IN_DURATION_MS,
-        easing: LAUNCH_EASING,
-        useNativeDriver: true,
-      }),
-      Animated.delay(LAUNCH_HERO_HOLD_MS),
-      Animated.parallel([
-        Animated.timing(contentRevealAnim, {
-          toValue: 1,
-          duration: LAUNCH_CONTENT_REVEAL_DURATION_MS,
-          easing: LAUNCH_EASING,
-          useNativeDriver: true,
-        }),
-        Animated.timing(overlayFadeAnim, {
-          toValue: 0,
-          duration: LAUNCH_OVERLAY_FADE_DURATION_MS,
-          easing: LAUNCH_EASING,
-          useNativeDriver: true,
-        }),
-      ]),
-    ]);
-
-    introSequence.start(({ finished }) => {
-      if (finished) setShowIntroOverlay(false);
-    });
-
-    return () => {
-      introSequence.stop();
-    };
-  }, [contentRevealAnim, heroIntroAnim, overlayFadeAnim]);
 
   const exchangeAndStoreToken = async (code: string, request: AuthSession.AuthRequest | null) => {
     if (!discovery?.tokenEndpoint || !request) return;
@@ -281,33 +232,6 @@ export const IntroScreen: React.FC<Props> = ({
     setHowDetailsMeasuredHeight(nextHeight);
   };
 
-  const contentOpacity = contentRevealAnim.interpolate({
-    inputRange: [0, 1],
-    outputRange: [0, 1],
-  });
-
-  const contentTranslateY = contentRevealAnim.interpolate({
-    inputRange: [0, 1],
-    outputRange: [-20, 0],
-  });
-
-  const overlayOpacity = overlayFadeAnim;
-
-  const overlayHeroOpacity = heroIntroAnim.interpolate({
-    inputRange: [0, 1],
-    outputRange: [0, 1],
-  });
-
-  const overlayHeroScale = heroIntroAnim.interpolate({
-    inputRange: [0, 1],
-    outputRange: [0.96, 1],
-  });
-
-  const overlayHeroTranslateY = heroIntroAnim.interpolate({
-    inputRange: [0, 1],
-    outputRange: [10, 0],
-  });
-
   const handleCta = () => {
     analyticsService.track('onboarding_cta_pressed', {
       hasSetPreferences,
@@ -355,48 +279,15 @@ export const IntroScreen: React.FC<Props> = ({
   };
 
   return (
-    <Container scrollable entranceAnimated={false}>
+    <Container scrollable entranceAnimated={false} resetScrollOnMount>
       <View style={[styles.introLayout, { minHeight: viewportHeight }]}>
-        {showIntroOverlay ? (
-          <Animated.View
-            pointerEvents="none"
-            style={[
-              styles.entryOverlay,
-              {
-                height: viewportHeight,
-                opacity: overlayOpacity,
-                transform: [{ translateY: -overlayOpticalOffset }],
-              },
-            ]}
-          >
-            <Animated.View
-              style={[
-                styles.entryHero,
-                {
-                  opacity: overlayHeroOpacity,
-                  transform: [{ scale: overlayHeroScale }, { translateY: overlayHeroTranslateY }],
-                },
-              ]}
-            >
-              <View style={styles.entryLogoRow}>
-                <LogoTile size={85} isDark={isDark} />
-              </View>
-              <View style={styles.headingRow}>
-                <Text variant="heading" style={[styles.headingGap, { color: palette.textPrimary }]}>Gap</Text>
-                <Text variant="heading" style={[styles.headingWalk, { color: palette.textMuted }]}>Walk</Text>
-              </View>
-            </Animated.View>
-          </Animated.View>
-        ) : null}
-        <Animated.View
+        <View
           style={[
             styles.screen,
             {
               minHeight: viewportHeight,
               paddingTop: verticalTopPadding,
               paddingBottom: verticalBottomPadding,
-              opacity: contentOpacity,
-              transform: [{ translateY: contentTranslateY }],
             },
           ]}
         >
@@ -616,10 +507,10 @@ export const IntroScreen: React.FC<Props> = ({
             <Text variant="muted" style={styles.footer}>
               {isAuthenticated
                 ? 'Welcome back. Continue your setup when you are ready.'
-                : 'Your data stays on your device. Sign in to sync across devices.'}
+                : 'Your health and privacy are our utmost priority.'}
             </Text>
           </View>
-        </Animated.View>
+        </View>
       </View>
     </Container>
   );
@@ -628,26 +519,6 @@ export const IntroScreen: React.FC<Props> = ({
 const styles = StyleSheet.create({
   introLayout: {
     position: 'relative',
-  },
-  entryOverlay: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    alignItems: 'center',
-    justifyContent: 'center',
-    zIndex: 5,
-  },
-  entryHero: {
-    width: '100%',
-    maxWidth: 370,
-    alignItems: 'center',
-    paddingHorizontal: theme.layout.contentHorizontal,
-  },
-  entryLogoRow: {
-    alignItems: 'center',
-    marginBottom: theme.spacing.md,
-    marginTop: -4,
   },
   screen: {
     flexGrow: 1,

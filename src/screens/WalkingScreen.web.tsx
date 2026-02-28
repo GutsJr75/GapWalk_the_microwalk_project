@@ -8,10 +8,10 @@ import { Button } from '../components/Button';
 import { Modal } from '../components/Modal';
 import { theme } from '../theme';
 import { useThemePalette } from '../theme/palette';
-import { NudgePlan, WalkSession } from '../lib/types';
-import { plansRepo } from '../lib/repositories/plansRepo';
-import { sessionsRepo } from '../lib/repositories/sessionsRepo';
-import { analyticsService } from '../lib/analytics';
+import { NudgePlan, WalkSession } from '../types';
+import { plansRepo } from '../data/repositories/plansRepo';
+import { sessionsRepo } from '../data/repositories/sessionsRepo';
+import { analyticsService } from '../services/analytics';
 import { useAppStore } from '../store';
 import { addMinutes } from 'date-fns';
 

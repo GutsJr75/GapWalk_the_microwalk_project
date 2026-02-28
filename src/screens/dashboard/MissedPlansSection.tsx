@@ -3,7 +3,7 @@ import { View, StyleSheet } from 'react-native';
 import { Text } from '../../components/Text';
 import { theme } from '../../theme';
 import { useThemePalette } from '../../theme/palette';
-import { NudgePlan } from '../../lib/types';
+import { NudgePlan } from '../../types';
 import { parseISO, format } from 'date-fns';
 
 interface MissedPlansSectionProps {

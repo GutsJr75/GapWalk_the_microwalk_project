@@ -6,7 +6,7 @@ import { Text } from '../../components/Text';
 import { theme } from '../../theme';
 import { useThemePalette } from '../../theme/palette';
 import { useAppStore } from '../../store';
-import { StreakData } from '../../lib/statsUtils';
+import { StreakData } from '../../utils/statsUtils';
 
 interface StreakCardProps {
   streak: StreakData;

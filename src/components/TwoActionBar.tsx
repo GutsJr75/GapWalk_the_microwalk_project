@@ -81,7 +81,7 @@ const styles = StyleSheet.create({
   },
   row: {
     flexDirection: 'row',
-    gap: 10,
+    gap: 50,
   },
   halfBtn: {
     flex: 1,

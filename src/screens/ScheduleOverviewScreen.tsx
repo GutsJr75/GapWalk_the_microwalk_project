@@ -13,7 +13,7 @@ import { theme } from '../theme';
 import { screenChrome } from '../theme/screenChrome';
 import { useThemePalette } from '../theme/palette';
 import { useAppStore } from '../store';
-import { scheduleSourceRepo } from '../lib/repositories/scheduleSourceRepo';
+import { scheduleSourceRepo } from '../data/repositories/scheduleSourceRepo';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'ScheduleOverview'>;
 

@@ -5,7 +5,7 @@ import { getThemePalette } from '../theme/palette';
 import { useAppStore } from '../store';
 import { Text } from './Text';
 import { AppIcon } from './AppIcon';
-import { useTapFeedbackAction } from '../lib/useTapFeedbackAction';
+import { useTapFeedbackAction } from '../hooks/useTapFeedbackAction';
 
 interface ScreenHeaderProps {
   title: string;

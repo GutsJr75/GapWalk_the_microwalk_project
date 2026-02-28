@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { Preferences, ScheduleSource, NudgePlan, WalkSession } from '../lib/types';
+import { Preferences, ScheduleSource, NudgePlan, WalkSession } from '../types';
 
 interface AppState {
   // Onboarding state

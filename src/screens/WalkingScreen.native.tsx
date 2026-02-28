@@ -13,12 +13,12 @@ import { Modal } from '../components/Modal';
 import { Ionicons } from '@expo/vector-icons';
 import { theme } from '../theme';
 import { useThemePalette } from '../theme/palette';
-import { NudgePlan, WalkSession } from '../lib/types';
-import { plansRepo } from '../lib/repositories/plansRepo';
-import { sessionsRepo } from '../lib/repositories/sessionsRepo';
-import { analyticsService } from '../lib/analytics';
-import { isNotificationsSupported, notificationService, WALK_SESSION_ACTION_PAUSE, WALK_SESSION_ACTION_RESUME, WALK_SESSION_ACTION_END } from '../lib/notifications';
-import { saveWalkCheckpoint, clearWalkCheckpoint } from '../lib/walkCheckpoint';
+import { NudgePlan, WalkSession } from '../types';
+import { plansRepo } from '../data/repositories/plansRepo';
+import { sessionsRepo } from '../data/repositories/sessionsRepo';
+import { analyticsService } from '../services/analytics';
+import { isNotificationsSupported, notificationService, WALK_SESSION_ACTION_PAUSE, WALK_SESSION_ACTION_RESUME, WALK_SESSION_ACTION_END } from '../services/notifications';
+import { saveWalkCheckpoint, clearWalkCheckpoint } from '../services/walkCheckpoint';
 import { useAppStore } from '../store';
 
 /**
@@ -822,7 +822,7 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
       setTimeout(() => {
         setShowCompletion(false);
         allowLeaveRef.current = true;
-        navigation.navigate('Dashboard');
+        navigation.navigate('Dashboard', { showPostWalkSummary: true });
       }, 3500);
     } catch (e) {
       sessionFinalizedRef.current = false;

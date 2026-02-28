@@ -29,20 +29,20 @@ import { AppIcon, AppIconName } from '../components/AppIcon';
 import { theme } from '../theme';
 import { screenChrome } from '../theme/screenChrome';
 import { getThemePalette } from '../theme/palette';
-import { Preferences, DEFAULT_PREFERENCES, PreferredWalkingPeriod } from '../lib/types';
-import { preferencesRepo } from '../lib/repositories/preferencesRepo';
-import { syncNudgePlansForCurrentSchedule } from '../lib/scheduleSync';
+import { Preferences, DEFAULT_PREFERENCES, PreferredWalkingPeriod } from '../types';
+import { preferencesRepo } from '../data/repositories/preferencesRepo';
+import { syncNudgePlansForCurrentSchedule } from '../services/scheduleSync';
 import {
   SAVE_CONFIRM_ACTION,
   SAVE_CONFIRM_DECLINE,
   SAVE_CONFIRM_MESSAGE,
   SAVE_CONFIRM_TITLE,
-} from '../lib/confirmMessages';
-import { analyticsService } from '../lib/analytics';
-import { translateLiteral } from '../lib/i18n';
+} from '../utils/confirmMessages';
+import { analyticsService } from '../services/analytics';
+import { translateLiteral } from '../i18n';
 import { useAppStore } from '../store';
-import { requestAllPermissions } from '../lib/permissions';
-import { toUserFriendlyError } from '../lib/errorMessages';
+import { requestAllPermissions } from '../services/permissions';
+import { toUserFriendlyError } from '../utils/errorMessages';
 
 const isFabric = !!(globalThis as any).nativeFabricUIManager;
 

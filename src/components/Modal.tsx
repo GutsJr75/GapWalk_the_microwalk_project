@@ -19,6 +19,7 @@ interface ModalProps {
   visible: boolean;
   onClose: () => void;
   title?: string;
+  rightAccessory?: React.ReactNode;
   children?: React.ReactNode;
 }
 
@@ -26,6 +27,7 @@ export const Modal: React.FC<ModalProps> = ({
   visible,
   onClose,
   title,
+  rightAccessory,
   children,
 }) => {
   const palette = useThemePalette();
@@ -88,10 +90,16 @@ export const Modal: React.FC<ModalProps> = ({
                   },
                 ]}
               >
-                {title && (
-                  <Text variant="body" style={styles.title}>
-                    {title}
-                  </Text>
+                {(title || rightAccessory) && (
+                  <View style={styles.headerRow}>
+                    <View style={styles.headerAccessorySlot} />
+                    <Text variant="body" style={styles.title}>
+                      {title}
+                    </Text>
+                    <View style={styles.headerAccessorySlot}>
+                      {rightAccessory}
+                    </View>
+                  </View>
                 )}
                 <ScrollView
                   keyboardShouldPersistTaps="handled"
@@ -134,10 +142,22 @@ const styles = StyleSheet.create({
   bodyContent: {
     paddingBottom: 2,
   },
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    minHeight: 40,
+    marginBottom: theme.spacing.md,
+  },
+  headerAccessorySlot: {
+    width: 40,
+    height: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   title: {
+    flex: 1,
     textAlign: 'center',
     fontWeight: theme.fontWeight.bold,
     fontSize: theme.fontSize.lg,
-    marginBottom: theme.spacing.md,
   },
 });

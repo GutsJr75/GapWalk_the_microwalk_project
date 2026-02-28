@@ -13,11 +13,11 @@ import { theme } from '../theme';
 import { screenChrome } from '../theme/screenChrome';
 import { useThemePalette } from '../theme/palette';
 import { useAppStore } from '../store';
-import { authStorage } from '../lib/authStorage';
-import { sessionsRepo } from '../lib/repositories/sessionsRepo';
-import { achievementsRepo, ACHIEVEMENTS, getAchievementDef, type UnlockedAchievement } from '../lib/repositories/achievementsRepo';
-import { calculateStreak, calculateWeeklyStats } from '../lib/statsUtils';
-import { toUserFriendlyError } from '../lib/errorMessages';
+import { authStorage } from '../data/authStorage';
+import { sessionsRepo } from '../data/repositories/sessionsRepo';
+import { achievementsRepo, ACHIEVEMENTS, getAchievementDef, type UnlockedAchievement } from '../data/repositories/achievementsRepo';
+import { calculateStreak, calculateWeeklyStats } from '../utils/statsUtils';
+import { toUserFriendlyError } from '../utils/errorMessages';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Profile'>;
 

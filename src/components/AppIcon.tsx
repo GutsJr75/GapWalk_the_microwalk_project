@@ -7,11 +7,13 @@ export type AppIconName =
   | 'bell'
   | 'calendar'
   | 'adjust'
+  | 'info'
   | 'settings'
   | 'sync'
   | 'home'
   | 'person'
   | 'trophy'
+  | 'trash'
   | 'chevronRight'
   | 'chevronDown';
 
@@ -70,6 +72,13 @@ export const AppIcon: React.FC<AppIconProps> = ({
           <Circle cx="11" cy="18" r="2" fill={stroke} />
         </>
       )}
+      {name === 'info' && (
+        <>
+          <Circle cx="12" cy="12" r="9" {...common} />
+          <Path d="M12 10V16" {...common} />
+          <Circle cx="12" cy="7.2" r="1" fill={stroke} />
+        </>
+      )}
       {name === 'settings' && (
         <>
           <Circle cx="12" cy="12" r="3.2" {...common} />
@@ -111,6 +120,15 @@ export const AppIcon: React.FC<AppIconProps> = ({
           <Path d="M12 11V15" {...common} />
           <Path d="M9 19H15" {...common} />
           <Path d="M10 15H14" {...common} />
+        </>
+      )}
+      {name === 'trash' && (
+        <>
+          <Path d="M4 7H20" {...common} />
+          <Path d="M9 4H15" {...common} />
+          <Path d="M7 7L8 19H16L17 7" {...common} />
+          <Path d="M10 11V16" {...common} />
+          <Path d="M14 11V16" {...common} />
         </>
       )}
       {name === 'chevronRight' && <Path d="M10 6L16 12L10 18" {...common} />}

@@ -4,7 +4,7 @@ import { theme } from '../theme';
 import { useAppStore } from '../store';
 import { useThemePalette } from '../theme/palette';
 import { Text } from './Text';
-import { useTapFeedbackAction } from '../lib/useTapFeedbackAction';
+import { useTapFeedbackAction } from '../hooks/useTapFeedbackAction';
 
 interface ButtonProps {
   title: string;

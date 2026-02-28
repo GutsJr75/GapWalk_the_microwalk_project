@@ -22,6 +22,7 @@ interface ContainerProps {
   safeArea?: boolean;
   keyboardAware?: boolean;
   entranceAnimated?: boolean;
+  resetScrollOnMount?: boolean;
 }
 
 export const Container: React.FC<ContainerProps> = ({
@@ -31,11 +32,12 @@ export const Container: React.FC<ContainerProps> = ({
   safeArea = true,
   keyboardAware = true,
   entranceAnimated = true,
+  resetScrollOnMount = false,
 }) => {
-  const Wrapper = safeArea ? SafeAreaView : View;
   const palette = useThemePalette();
   const { themeMode } = useAppStore();
   const appearAnim = useRef(new Animated.Value(entranceAnimated ? 0 : 1)).current;
+  const scrollViewRef = useRef<ScrollView>(null);
   const keyboardAvoidEnabled = keyboardAware && scrollable;
 
   useEffect(() => {
@@ -50,6 +52,44 @@ export const Container: React.FC<ContainerProps> = ({
       useNativeDriver: true,
     }).start();
   }, [appearAnim, entranceAnimated]);
+
+  useEffect(() => {
+    if (!scrollable || !resetScrollOnMount) return;
+
+    const resetScroll = () => {
+      scrollViewRef.current?.scrollTo?.({ y: 0, animated: false });
+
+      if (Platform.OS === 'web') {
+        const webWindow = (globalThis as {
+          window?: {
+            history?: { scrollRestoration?: 'auto' | 'manual' };
+            scrollTo?: (x: number, y: number) => void;
+          };
+        }).window;
+        const webDocument = (globalThis as {
+          document?: {
+            documentElement?: { scrollTop: number };
+            body?: { scrollTop: number };
+          };
+        }).document;
+        const history = webWindow?.history;
+        if (history && 'scrollRestoration' in history) {
+          history.scrollRestoration = 'manual';
+        }
+        webWindow?.scrollTo?.(0, 0);
+        if (webDocument?.documentElement) webDocument.documentElement.scrollTop = 0;
+        if (webDocument?.body) webDocument.body.scrollTop = 0;
+      }
+    };
+
+    const frameId = requestAnimationFrame(resetScroll);
+    const timeoutId = setTimeout(resetScroll, 0);
+
+    return () => {
+      cancelAnimationFrame(frameId);
+      clearTimeout(timeoutId);
+    };
+  }, [resetScrollOnMount, scrollable]);
 
   const topGlowColor = themeMode === 'dark' ? 'rgba(46,233,166,0.05)' : 'rgba(46,233,166,0.14)';
   const bottomGlowColor = themeMode === 'dark' ? 'rgba(56,189,248,0.06)' : 'rgba(56,189,248,0.11)';
@@ -73,8 +113,11 @@ export const Container: React.FC<ContainerProps> = ({
     }
     : null;
 
+  const ContentWrapper = safeArea ? SafeAreaView : View;
+
   return (
-    <Wrapper style={[styles.safeArea, { backgroundColor: palette.bgApp }, style]}>
+    <View style={[styles.root, { backgroundColor: palette.bgApp }]}>
+      {/* Backdrop fills edge-to-edge (behind status bar and nav bar) */}
       <View style={styles.backdrop} pointerEvents="none">
         <LinearGradient
           colors={baseGradientColors}
@@ -88,48 +131,58 @@ export const Container: React.FC<ContainerProps> = ({
           end={{ x: 0, y: 1 }}
           style={styles.ambientGradient}
         />
-        <View style={[styles.meshArc, styles.meshArcTop, { borderColor: meshLineColor }]} />
-        <View style={[styles.meshArc, styles.meshArcBottom, { borderColor: meshLineColor }]} />
+        {/* Trail-like horizon arcs */}
+        <View style={[styles.meshArc, styles.meshTrailTop, { borderColor: meshLineColor }]} />
+        <View style={[styles.meshArc, styles.meshTrailMid, { borderColor: meshLineColor, opacity: 0.6 }]} />
+        <View style={[styles.meshArc, styles.meshTrailBottom, { borderColor: meshLineColor }]} />
+        {/* Organic glow orbs */}
         <View style={[styles.glow, styles.glowTop, { backgroundColor: topGlowColor }]} />
         <View style={[styles.glow, styles.glowCenter, { backgroundColor: centerGlowColor }]} />
         <View style={[styles.glow, styles.glowBottom, { backgroundColor: bottomGlowColor }]} />
       </View>
 
-      <Animated.View
-        style={[
-          styles.contentWrap,
-          contentMotionStyle,
-        ]}
-      >
-        <KeyboardAvoidingView
-          style={styles.keyboardWrap}
-          behavior={keyboardAvoidEnabled && Platform.OS === 'ios' ? 'padding' : undefined}
-          enabled={keyboardAvoidEnabled}
+      {/* Content respects safe area insets */}
+      <ContentWrapper style={[styles.contentSafeArea, style]}>
+        <Animated.View
+          style={[
+            styles.contentWrap,
+            contentMotionStyle,
+          ]}
         >
-          {scrollable ? (
-            <ScrollView
-              style={styles.scrollView}
-              contentContainerStyle={styles.scrollContent}
-              showsVerticalScrollIndicator={false}
-              keyboardShouldPersistTaps="handled"
-              keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
-            >
-              {children}
-            </ScrollView>
-          ) : (
-            <View style={styles.view}>{children}</View>
-          )}
-        </KeyboardAvoidingView>
-      </Animated.View>
-    </Wrapper>
+          <KeyboardAvoidingView
+            style={styles.keyboardWrap}
+            behavior={keyboardAvoidEnabled && Platform.OS === 'ios' ? 'padding' : undefined}
+            enabled={keyboardAvoidEnabled}
+          >
+            {scrollable ? (
+              <ScrollView
+                ref={scrollViewRef}
+                style={styles.scrollView}
+                contentContainerStyle={styles.scrollContent}
+                showsVerticalScrollIndicator={false}
+                keyboardShouldPersistTaps="handled"
+                keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+              >
+                {children}
+              </ScrollView>
+            ) : (
+              <View style={styles.view}>{children}</View>
+            )}
+          </KeyboardAvoidingView>
+        </Animated.View>
+      </ContentWrapper>
+    </View>
   );
 };
 
 const styles = StyleSheet.create({
-  safeArea: {
+  root: {
     flex: 1,
-    backgroundColor: theme.colors.bgApp,
     overflow: 'hidden',
+  },
+  contentSafeArea: {
+    flex: 1,
+    backgroundColor: 'transparent',
   },
   backdrop: {
     ...StyleSheet.absoluteFillObject,
@@ -142,43 +195,56 @@ const styles = StyleSheet.create({
   },
   glow: {
     position: 'absolute',
-    width: 260,
-    height: 260,
-    borderRadius: 130,
   },
   glowTop: {
-    top: -120,
-    right: -80,
+    top: -100,
+    right: -60,
+    width: 300,
+    height: 180,
+    borderRadius: 90,
   },
   glowCenter: {
-    top: '32%',
-    right: '20%',
-    width: 210,
-    height: 210,
-    borderRadius: 105,
+    top: '38%',
+    right: '15%',
+    width: 240,
+    height: 140,
+    borderRadius: 70,
   },
   glowBottom: {
-    bottom: -130,
-    left: -70,
+    bottom: -100,
+    left: -50,
+    width: 320,
+    height: 180,
+    borderRadius: 90,
   },
   meshArc: {
     position: 'absolute',
     borderWidth: 1,
+  },
+  // Wide, flat arcs evoking rolling terrain / walking trail horizon
+  meshTrailTop: {
+    width: 700,
+    height: 160,
     borderRadius: 999,
+    top: -110,
+    left: -250,
+    transform: [{ rotate: '-4deg' }],
   },
-  meshArcTop: {
-    width: 520,
-    height: 240,
-    top: -155,
-    left: -210,
-    transform: [{ rotate: '-8deg' }],
+  meshTrailMid: {
+    width: 600,
+    height: 120,
+    borderRadius: 999,
+    top: '48%',
+    right: -280,
+    transform: [{ rotate: '3deg' }],
   },
-  meshArcBottom: {
-    width: 620,
-    height: 300,
-    bottom: -210,
-    right: -320,
-    transform: [{ rotate: '9deg' }],
+  meshTrailBottom: {
+    width: 750,
+    height: 180,
+    borderRadius: 999,
+    bottom: -140,
+    right: -350,
+    transform: [{ rotate: '5deg' }],
   },
   contentWrap: {
     flex: 1,

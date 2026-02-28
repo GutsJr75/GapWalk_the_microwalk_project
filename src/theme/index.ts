@@ -1,25 +1,53 @@
-import { Platform } from 'react-native';
+export const appFontFamily = {
+  regular: 'SofiaPro-Regular',
+  regularItalic: 'SofiaPro-RegularItalic',
+  medium: 'SofiaPro-Medium',
+  mediumItalic: 'SofiaPro-MediumItalic',
+  semibold: 'SofiaPro-SemiBold',
+  semiboldItalic: 'SofiaPro-SemiBoldItalic',
+  bold: 'SofiaPro-Bold',
+  boldItalic: 'SofiaPro-BoldItalic',
+} as const;
 
-const platformFontFamily = Platform.select({
-  ios: {
-    regular: 'System',
-    medium: 'System',
-    semibold: 'System',
-    bold: 'System',
-  },
-  android: {
-    regular: 'Roboto',
-    medium: 'Roboto',
-    semibold: 'Roboto',
-    bold: 'Roboto',
-  },
-  default: {
-    regular: 'System',
-    medium: 'System',
-    semibold: 'System',
-    bold: 'System',
-  },
-})!;
+export const appFontAssets = {
+  [appFontFamily.regular]: require('../../assets/fonts/sofia-pro-clean/regular.otf'),
+  [appFontFamily.regularItalic]: require('../../assets/fonts/sofia-pro-clean/regular-italic.otf'),
+  [appFontFamily.medium]: require('../../assets/fonts/sofia-pro-clean/medium.otf'),
+  [appFontFamily.mediumItalic]: require('../../assets/fonts/sofia-pro-clean/medium-italic.otf'),
+  [appFontFamily.semibold]: require('../../assets/fonts/sofia-pro-clean/semibold.otf'),
+  [appFontFamily.semiboldItalic]: require('../../assets/fonts/sofia-pro-clean/semibold-italic.otf'),
+  [appFontFamily.bold]: require('../../assets/fonts/sofia-pro-clean/bold.otf'),
+  [appFontFamily.boldItalic]: require('../../assets/fonts/sofia-pro-clean/bold-italic.otf'),
+} as const;
+
+const normalizeFontWeight = (fontWeight?: string | number | null): '400' | '500' | '600' | '700' => {
+  if (fontWeight === 500 || fontWeight === '500') return '500';
+  if (fontWeight === 600 || fontWeight === '600') return '600';
+  if (fontWeight === 700 || fontWeight === '700' || fontWeight === '800' || fontWeight === 800) return '700';
+  if (fontWeight === 'bold') return '700';
+  if (fontWeight === 'semibold') return '600';
+  if (fontWeight === 'medium') return '500';
+  return '400';
+};
+
+export const resolveAppFontFamily = (
+  fontWeight?: string | number | null,
+  fontStyle?: string | null,
+): string => {
+  const normalizedWeight = normalizeFontWeight(fontWeight);
+  const isItalic = fontStyle === 'italic';
+
+  if (normalizedWeight === '700') {
+    return isItalic ? appFontFamily.boldItalic : appFontFamily.bold;
+  }
+  if (normalizedWeight === '600') {
+    return isItalic ? appFontFamily.semiboldItalic : appFontFamily.semibold;
+  }
+  if (normalizedWeight === '500') {
+    return isItalic ? appFontFamily.mediumItalic : appFontFamily.medium;
+  }
+  return isItalic ? appFontFamily.regularItalic : appFontFamily.regular;
+};
 
 // GapWalk Theme — exact Figma design tokens
 export const theme = {
@@ -67,10 +95,10 @@ export const theme = {
     xs: 12,
     sm: 14,
     md: 16,
-    lg: 17,
-    xl: 24,
-    heading: 36,
-    display: 38,
+    lg: 19,
+    xl: 27,
+    heading: 40,
+    display: 42,
   },
 
   fontWeight: {
@@ -81,10 +109,10 @@ export const theme = {
   },
 
   fontFamily: {
-    regular: platformFontFamily.regular,
-    medium: platformFontFamily.medium,
-    semibold: platformFontFamily.semibold,
-    bold: platformFontFamily.bold,
+    regular: appFontFamily.regular,
+    medium: appFontFamily.medium,
+    semibold: appFontFamily.semibold,
+    bold: appFontFamily.bold,
   },
 
   letterSpacing: {

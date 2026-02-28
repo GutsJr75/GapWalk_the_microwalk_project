@@ -8,7 +8,7 @@ import { useThemePalette } from '../../theme/palette';
 import {
   ACHIEVEMENTS,
   UnlockedAchievement,
-} from '../../lib/repositories/achievementsRepo';
+} from '../../data/repositories/achievementsRepo';
 
 interface AchievementsSectionProps {
   unlockedAchievements: UnlockedAchievement[];

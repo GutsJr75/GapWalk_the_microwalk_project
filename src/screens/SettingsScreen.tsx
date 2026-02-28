@@ -15,11 +15,11 @@ import { theme } from '../theme';
 import { screenChrome } from '../theme/screenChrome';
 import { getThemePalette } from '../theme/palette';
 import { useAppStore } from '../store';
-import { translateLiteral } from '../lib/i18n';
-import { plansRepo } from '../lib/repositories/plansRepo';
-import { notificationPlanActions } from '../lib/notificationPlanActions';
-import { analyticsRepo } from '../lib/repositories/analyticsRepo';
-import { authStorage } from '../lib/authStorage';
+import { translateLiteral } from '../i18n';
+import { plansRepo } from '../data/repositories/plansRepo';
+import { notificationPlanActions } from '../services/notificationPlanActions';
+import { analyticsRepo } from '../data/repositories/analyticsRepo';
+import { authStorage } from '../data/authStorage';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Settings'>;
 

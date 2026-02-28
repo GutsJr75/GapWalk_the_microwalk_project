@@ -4,7 +4,7 @@ import { Text } from './Text';
 import { theme } from '../theme';
 import { useAppStore } from '../store';
 import { useThemePalette } from '../theme/palette';
-import { useTapFeedbackAction } from '../lib/useTapFeedbackAction';
+import { useTapFeedbackAction } from '../hooks/useTapFeedbackAction';
 
 interface GapItemProps {
   /** Time range when gap is available (e.g. "3:00 PM - 7:00 PM") */

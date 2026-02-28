@@ -14,15 +14,15 @@ import { theme } from '../theme';
 import { screenChrome } from '../theme/screenChrome';
 import { useThemePalette } from '../theme/palette';
 import { useAppStore } from '../store';
-import { translateLiteral } from '../lib/i18n';
-import { toUserFriendlyError } from '../lib/errorMessages';
+import { translateLiteral } from '../i18n';
+import { toUserFriendlyError } from '../utils/errorMessages';
 import {
   ACHIEVEMENTS,
   achievementsRepo,
   type AchievementDef,
   type AchievementId,
   type UnlockedAchievement,
-} from '../lib/repositories/achievementsRepo';
+} from '../data/repositories/achievementsRepo';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Achievements'>;
 

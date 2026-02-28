@@ -5,7 +5,7 @@ import { Card } from '../../components/Card';
 import { Text } from '../../components/Text';
 import { theme } from '../../theme';
 import { useThemePalette } from '../../theme/palette';
-import { WeeklyStats } from '../../lib/statsUtils';
+import { WeeklyStats } from '../../utils/statsUtils';
 
 interface WeeklyStatsCardProps {
   weeklyStats: WeeklyStats;
@@ -90,7 +90,7 @@ export const WeeklyStatsCard: React.FC<WeeklyStatsCardProps> = ({ weeklyStats, p
         <View style={styles.item}>
           <Ionicons name="time-outline" size={16} color={palette.accentPrimary} style={{ marginBottom: 4 }} />
           <View style={styles.valueRow}>
-            <Text variant="title" style={[styles.value, { color: palette.accentPrimary }]}>
+            <Text variant="title" style={[styles.value, { color: palette.textPrimary }]}>
               {displayMinutes}
             </Text>
             <DeltaBadge delta={deltaMinutes} color={palette.accentPrimary} />
@@ -100,7 +100,7 @@ export const WeeklyStatsCard: React.FC<WeeklyStatsCardProps> = ({ weeklyStats, p
         <View style={styles.item}>
           <Ionicons name="footsteps-outline" size={16} color={palette.accentPrimary} style={{ marginBottom: 4 }} />
           <View style={styles.valueRow}>
-            <Text variant="title" style={[styles.value, { color: palette.accentPrimary }]}>
+            <Text variant="title" style={[styles.value, { color: palette.textPrimary }]}>
               {displaySteps.toLocaleString()}
             </Text>
             <DeltaBadge delta={deltaSteps} color={palette.accentPrimary} format={(n) => n.toLocaleString()} />
@@ -110,9 +110,9 @@ export const WeeklyStatsCard: React.FC<WeeklyStatsCardProps> = ({ weeklyStats, p
         <View style={styles.item}>
           <Ionicons name="calendar-outline" size={16} color={palette.accentPrimary} style={{ marginBottom: 4 }} />
           <View style={styles.valueRow}>
-            <Text variant="title" style={[styles.value, { color: palette.accentPrimary }]}>
+            <Text variant="title" style={[styles.value, { color: palette.textPrimary }]}>
               {displayDays}
-              <Text variant="title" style={[styles.denominator, { color: palette.accentPrimary }]}>
+              <Text variant="title" style={[styles.denominator, { color: palette.textMuted }]}>
                 /7
               </Text>
             </Text>

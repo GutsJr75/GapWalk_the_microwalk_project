@@ -1,30 +1,32 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Animated, BackHandler, Platform, StyleSheet, Text, ToastAndroid, TouchableOpacity, View } from 'react-native';
+import { Animated, BackHandler, Image, Platform, StyleSheet, Text, ToastAndroid, TouchableOpacity, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
+import * as Font from 'expo-font';
 import * as SplashScreen from 'expo-splash-screen';
 import { NavigationContainer, createNavigationContainerRef } from '@react-navigation/native';
 import * as Notifications from 'expo-notifications';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
-import { getDatabase } from './src/lib/db';
+import { getDatabase } from './src/data/db';
 import { useAppStore } from './src/store';
-import { preferencesRepo } from './src/lib/repositories/preferencesRepo';
-import { plansRepo } from './src/lib/repositories/plansRepo';
-import { scheduleSourceRepo } from './src/lib/repositories/scheduleSourceRepo';
-import { sessionsRepo } from './src/lib/repositories/sessionsRepo';
+import { preferencesRepo } from './src/data/repositories/preferencesRepo';
+import { plansRepo } from './src/data/repositories/plansRepo';
+import { scheduleSourceRepo } from './src/data/repositories/scheduleSourceRepo';
+import { sessionsRepo } from './src/data/repositories/sessionsRepo';
+import { appFontAssets, appFontFamily } from './src/theme';
 import { getThemePalette } from './src/theme/palette';
 import {
   isNotificationsSupported,
   notificationService,
   WALK_NUDGE_ACTION_SKIP,
   WALK_NUDGE_ACTION_START,
-} from './src/lib/notifications';
-import { recoverOrphanedSession } from './src/lib/walkCheckpoint';
-import { notificationPlanActions } from './src/lib/notificationPlanActions';
-import { crashReporting } from './src/lib/crashReporting';
-import { analyticsService } from './src/lib/analytics';
-import { requestAllPermissions } from './src/lib/permissions';
-import { authStorage } from './src/lib/authStorage';
+} from './src/services/notifications';
+import { recoverOrphanedSession } from './src/services/walkCheckpoint';
+import { notificationPlanActions } from './src/services/notificationPlanActions';
+import { crashReporting } from './src/services/crashReporting';
+import { analyticsService } from './src/services/analytics';
+import { requestAllPermissions } from './src/services/permissions';
+import { authStorage } from './src/data/authStorage';
 
 // Screens
 import { IntroScreen } from './src/screens/IntroScreen';
@@ -38,6 +40,7 @@ import { ScheduleOverviewScreen } from './src/screens/ScheduleOverviewScreen';
 import { SettingsScreen } from './src/screens/SettingsScreen';
 import { WeeklyDataScreen } from './src/screens/WeeklyDataScreen';
 import { AchievementsScreen } from './src/screens/AchievementsScreen';
+import { AboutHelpScreen } from './src/screens/AboutHelpScreen';
 
 export type RootStackParamList = {
   Intro: undefined;
@@ -64,7 +67,7 @@ export type RootStackParamList = {
       manageMode?: boolean;
     }
     | undefined;
-  Dashboard: { openMenu?: boolean } | undefined;
+  Dashboard: { openMenu?: boolean; showPostWalkSummary?: boolean } | undefined;
   Walking: { planId?: string };
   ScheduleOverview: undefined;
   Settings: undefined;
@@ -74,12 +77,20 @@ export type RootStackParamList = {
       source?: 'profile' | 'options';
     }
     | undefined;
+  AboutHelp: undefined;
   Profile: undefined;
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 const navigationRef = createNavigationContainerRef<RootStackParamList>();
 const ROOT_BACK_EXIT_WINDOW_MS = 1800;
+const BOOT_GREETING_TYPING_MS = 52;
+const BOOT_GREETING_HOLD_MS = 420;
+const BOOT_BRAND_MARK = require('./assets/icons/brand-mark.png');
+const BOOT_BRAND_TILE_DARK = '#071a2e';
+const BOOT_BRAND_TILE_LIGHT = '#edf1f7';
+const BOOT_BRAND_MARK_DARK = '#2ee9a6';
+const BOOT_BRAND_MARK_LIGHT = '#047857';
 
 class ErrorBoundary extends React.Component<
   { children: React.ReactNode },
@@ -160,9 +171,18 @@ function App() {
   const pendingWalkPlanIdRef = useRef<string | null>(null);
   const lastHandledResponseRef = useRef<string | null>(null);
   const [isBootstrapDone, setIsBootstrapDone] = useState(false);
+  const [isBootGreetingDone, setIsBootGreetingDone] = useState(false);
+  const [bootGreetingText, setBootGreetingText] = useState('');
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const lastAndroidRootBackPressRef = useRef(0);
+  const bootGreetingTimerIdsRef = useRef<ReturnType<typeof setTimeout>[]>([]);
+  const hasPlayedBootGreetingRef = useRef(false);
+
+  const clearBootGreetingTimers = useCallback(() => {
+    bootGreetingTimerIdsRef.current.forEach((timerId) => clearTimeout(timerId));
+    bootGreetingTimerIdsRef.current = [];
+  }, []);
 
   // Hide native splash immediately so the app starts from our UI (no splash screen).
   useEffect(() => {
@@ -173,7 +193,7 @@ function App() {
 
   // Small pulse on the loading dot while bootstrap runs
   useEffect(() => {
-    if (isBootstrapDone) return;
+    if (isBootstrapDone && isBootGreetingDone) return;
     const loop = Animated.loop(
       Animated.sequence([
         Animated.timing(pulseAnim, {
@@ -190,7 +210,7 @@ function App() {
     );
     loop.start();
     return () => loop.stop();
-  }, [isBootstrapDone, pulseAnim]);
+  }, [isBootGreetingDone, isBootstrapDone, pulseAnim]);
 
   useEffect(() => {
     let cancelled = false;
@@ -211,6 +231,35 @@ function App() {
       clearTimeout(fallbackTimer);
     };
   }, []);
+
+  useEffect(() => {
+    if (!isBootstrapDone || hasPlayedBootGreetingRef.current) return;
+
+    hasPlayedBootGreetingRef.current = true;
+
+    clearBootGreetingTimers();
+    setBootGreetingText('');
+    setIsBootGreetingDone(false);
+
+    const greetingText = 'GapWalk';
+    let timelineMs = 120;
+
+    for (let index = 1; index <= greetingText.length; index += 1) {
+      timelineMs += BOOT_GREETING_TYPING_MS;
+      const timerId = setTimeout(() => {
+        setBootGreetingText(greetingText.slice(0, index));
+      }, timelineMs);
+      bootGreetingTimerIdsRef.current.push(timerId);
+    }
+
+    timelineMs += BOOT_GREETING_HOLD_MS;
+    const doneTimerId = setTimeout(() => {
+      setIsBootGreetingDone(true);
+    }, timelineMs);
+    bootGreetingTimerIdsRef.current.push(doneTimerId);
+
+    return clearBootGreetingTimers;
+  }, [clearBootGreetingTimers, isBootstrapDone]);
 
   const refreshDashboardSnapshot = useCallback(async () => {
     const mins = await sessionsRepo.getTodayMinutes();
@@ -299,6 +348,12 @@ function App() {
 
   const initializeApp = async () => {
     try {
+      try {
+        await Font.loadAsync(appFontAssets);
+      } catch (e) {
+        if (__DEV__) console.warn('Failed to load app fonts:', e);
+      }
+
       // Initialize database
       await getDatabase();
 
@@ -404,16 +459,17 @@ function App() {
   const palette = getThemePalette(themeMode);
   const isDark = themeMode === 'dark';
   const canOpenDashboard = isAuthenticated && hasCompletedOnboarding;
+  const showBootScreen = !isBootstrapDone || !isBootGreetingDone;
 
   // Fade in main app when bootstrap finishes
   useEffect(() => {
-    if (!isBootstrapDone) return;
+    if (showBootScreen) return;
     Animated.timing(fadeAnim, {
       toValue: 1,
       duration: 280,
       useNativeDriver: true,
     }).start();
-  }, [isBootstrapDone, fadeAnim]);
+  }, [fadeAnim, showBootScreen]);
 
   // Android: require a double-press to exit only when already at app root.
   useEffect(() => {
@@ -440,7 +496,7 @@ function App() {
     return () => subscription.remove();
   }, []);
 
-  if (!isBootstrapDone) {
+  if (showBootScreen) {
     return (
       <>
         <StatusBar style={isDark ? 'light' : 'dark'} />
@@ -448,16 +504,46 @@ function App() {
           <View style={[styles.bootRoot, { backgroundColor: palette.bgApp }]}>
             <Animated.View
               style={[
-                styles.bootDot,
+                styles.bootHero,
                 {
-                  backgroundColor: palette.accentPrimary,
                   opacity: pulseAnim.interpolate({
                     inputRange: [0.35, 1],
-                    outputRange: [0.2, 0.7],
+                    outputRange: [0.82, 1],
                   }),
+                  transform: [{
+                    scale: pulseAnim.interpolate({
+                      inputRange: [0.35, 1],
+                      outputRange: [0.985, 1.015],
+                    }),
+                  }],
                 },
               ]}
-            />
+            >
+              <View
+                style={[
+                  styles.bootLogoTile,
+                  {
+                    backgroundColor: isDark ? BOOT_BRAND_TILE_DARK : BOOT_BRAND_TILE_LIGHT,
+                    borderColor: isDark ? 'rgba(46,233,166,0.24)' : 'rgba(15,23,42,0.14)',
+                    shadowColor: isDark ? BOOT_BRAND_MARK_DARK : '#0f172a',
+                  },
+                ]}
+              >
+                <Image
+                  source={BOOT_BRAND_MARK}
+                  resizeMode="contain"
+                  style={[
+                    styles.bootLogoMark,
+                    {
+                      tintColor: isDark ? BOOT_BRAND_MARK_DARK : BOOT_BRAND_MARK_LIGHT,
+                    },
+                  ]}
+                />
+              </View>
+              <Text style={[styles.bootGreeting, { color: palette.textPrimary }]}>
+                {bootGreetingText || ' '}
+              </Text>
+            </Animated.View>
           </View>
         </SafeAreaProvider>
       </>
@@ -516,6 +602,7 @@ function App() {
               <Stack.Screen name="Settings" component={SettingsScreen} />
               <Stack.Screen name="WeeklyData" component={WeeklyDataScreen} />
               <Stack.Screen name="Achievements" component={AchievementsScreen} />
+              <Stack.Screen name="AboutHelp" component={AboutHelpScreen} />
               <Stack.Screen name="Profile" component={ProfileScreen} />
             </Stack.Navigator>
           </NavigationContainer>
@@ -530,10 +617,37 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
+    paddingHorizontal: 28,
   },
-  bootDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
+  bootHero: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 164,
+    width: '100%',
+  },
+  bootLogoTile: {
+    width: 82,
+    height: 82,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    shadowOpacity: 0.2,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 4,
+  },
+  bootLogoMark: {
+    width: 36,
+    height: 36,
+  },
+  bootGreeting: {
+    marginTop: 20,
+    minHeight: 38,
+    textAlign: 'center',
+    fontSize: 28,
+    lineHeight: 36,
+    fontFamily: appFontFamily.semibold,
+    letterSpacing: 0.2,
   },
 });

@@ -3,7 +3,7 @@ import { View, StyleSheet, ViewStyle, Pressable, StyleProp, Platform } from 'rea
 import { theme } from '../theme';
 import { useThemePalette } from '../theme/palette';
 import { useAppStore } from '../store';
-import { useTapFeedbackAction } from '../lib/useTapFeedbackAction';
+import { useTapFeedbackAction } from '../hooks/useTapFeedbackAction';
 
 interface CardProps {
   children: React.ReactNode;
