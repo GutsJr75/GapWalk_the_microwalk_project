@@ -17,7 +17,7 @@ import { sessionsRepo } from '../data/repositories/sessionsRepo';
 import { analyticsService } from '../services/analytics';
 import { androidWalkTracking } from '../services/androidWalkTracking';
 import { isNotificationsSupported, notificationService } from '../services/notifications';
-import { requestWalkTrackingPermissions } from '../services/permissions';
+import { requestWalkTrackingPermissions, WalkTrackingPermissionResults } from '../services/permissions';
 import { saveWalkCheckpoint, clearWalkCheckpoint } from '../services/walkCheckpoint';
 import { useAppStore } from '../store';
 
@@ -63,6 +63,7 @@ const GPS_MOTION_SEGMENT_METERS = 1.2;
 const GPS_MOTION_MAX_DT_SECONDS = 3;
 const MAX_VALID_JUMP_METERS = 80;
 const ESTIMATED_STRIDE_METERS = 0.78;
+const START_COUNTDOWN_SECONDS = 3;
 
 const formatClock = (seconds: number): string => {
   const clamped = Math.max(0, Math.floor(seconds));
@@ -207,10 +208,14 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
     steps: 0,
   });
   const [fallbackState, setFallbackState] = useState<FallbackState>(createFallbackState);
+  const [startCountdown, setStartCountdown] = useState<number | null>(null);
+  const [sessionStarted, setSessionStarted] = useState(false);
 
   const lastAndroidSnapshotRef = useRef<ActiveWalkSnapshot | null>(activeWalkSnapshot);
   const allowLeaveRef = useRef(false);
   const fallbackStateRef = useRef<FallbackState>(fallbackState);
+  const countdownTimerIdsRef = useRef<ReturnType<typeof setTimeout>[]>([]);
+  const hasMarkedPlanStartedRef = useRef(false);
   const lastStepAtRef = useRef<number | null>(null);
   const lastGpsMotionAtRef = useRef<number | null>(null);
   const lastAcceptedLocationAtRef = useRef<number | null>(null);
@@ -240,12 +245,39 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
     lastAndroidSnapshotRef.current = activeWalkSnapshot;
   }, [activeWalkSnapshot]);
 
+  const clearStartCountdown = useCallback(() => {
+    countdownTimerIdsRef.current.forEach((timerId) => clearTimeout(timerId));
+    countdownTimerIdsRef.current = [];
+  }, []);
+
+  const runStartCountdown = useCallback((onComplete: () => void) => {
+    clearStartCountdown();
+    setStartCountdown(START_COUNTDOWN_SECONDS);
+    countdownTimerIdsRef.current = [
+      setTimeout(() => setStartCountdown(2), 1000),
+      setTimeout(() => setStartCountdown(1), 2000),
+      setTimeout(() => {
+        setStartCountdown(null);
+        onComplete();
+      }, 3000),
+    ];
+  }, [clearStartCountdown]);
+
+  const markPlanStarted = useCallback(async () => {
+    if (!planId || hasMarkedPlanStartedRef.current) return;
+    const found = await plansRepo.getById(planId);
+    if (!found) return;
+    if (found.status === 'planned' || found.status === 'notified') {
+      await plansRepo.updateStatus(planId, 'started');
+    }
+    hasMarkedPlanStartedRef.current = true;
+  }, [planId]);
+
   const loadPlan = useCallback(async () => {
     if (!planId) return;
     const found = await plansRepo.getById(planId);
     if (!found) return;
     setPlan(found);
-    await plansRepo.updateStatus(planId, 'started');
   }, [planId]);
 
   useEffect(() => {
@@ -369,6 +401,9 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
     setActiveWalkSnapshot(snapshot);
     setPendingWalkPrompt(snapshot?.prompt ?? null);
     lastAndroidSnapshotRef.current = snapshot;
+    if (snapshot) {
+      setSessionStarted(true);
+    }
 
     if (snapshot?.prompt === 'end_confirmation') {
       setShowIdleModal(false);
@@ -406,14 +441,29 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
     });
 
     void (async () => {
-      let snapshot = await androidWalkTracking.getSnapshot();
-      if (!snapshot) {
-        await requestWalkTrackingPermissions();
-        snapshot = await androidWalkTracking.startSession({ planId });
-      }
-      if (!cancelled) {
+      const snapshot = await androidWalkTracking.getSnapshot();
+      if (cancelled) return;
+
+      if (snapshot) {
+        await markPlanStarted();
         applyAndroidSnapshot(snapshot);
+        return;
       }
+
+      if (prompt === 'end_confirmation') return;
+
+      await requestWalkTrackingPermissions();
+      if (cancelled) return;
+
+      runStartCountdown(() => {
+        if (cancelled) return;
+        void (async () => {
+          const freshSnapshot = await androidWalkTracking.startSession({ planId });
+          if (cancelled) return;
+          await markPlanStarted();
+          applyAndroidSnapshot(freshSnapshot);
+        })();
+      });
     })();
 
     const appStateSubscription = AppState.addEventListener('change', (nextState) => {
@@ -426,10 +476,11 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
 
     return () => {
       cancelled = true;
+      clearStartCountdown();
       subscription.remove();
       appStateSubscription.remove();
     };
-  }, [applyAndroidSnapshot, isAndroidService, planId, refreshAndroidSnapshot]);
+  }, [applyAndroidSnapshot, clearStartCountdown, isAndroidService, markPlanStarted, planId, prompt, refreshAndroidSnapshot, runStartCountdown]);
 
   const resolveFallbackPresentation = useCallback((state: FallbackState, nowMs: number) => {
     const recentStep = lastStepAtRef.current != null && nowMs - lastStepAtRef.current <= WALKING_LATCH_MS;
@@ -585,22 +636,35 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
     pedometerSubscriptionRef.current = subscription;
   }, [hydrateFallbackState, updateFallbackState]);
 
-  const startFallbackTracking = useCallback(async () => {
-    const permissionResults = await requestWalkTrackingPermissions();
+  const startFallbackTracking = useCallback(async (permissionResults?: WalkTrackingPermissionResults) => {
+    unsubscribeFallbackSensors();
+
+    const freshState = createFallbackState();
+    fallbackStateRef.current = freshState;
+    setFallbackState(freshState);
+    lastStepAtRef.current = null;
+    lastGpsMotionAtRef.current = null;
+    lastAcceptedLocationAtRef.current = null;
+    lastMotionAtRef.current = null;
+    lastCoordRef.current = null;
+    lastPedometerEventAtRef.current = null;
+    pedometerBaseRef.current = null;
+
+    const resolvedPermissions = permissionResults ?? await requestWalkTrackingPermissions();
     updateFallbackState((current) => {
       const nextState = {
         ...current,
-        locationPermissionGranted: permissionResults.locationForeground,
-        backgroundLocationGranted: permissionResults.locationBackground,
-        activityPermissionGranted: permissionResults.activityRecognition,
-        warning: permissionResults.locationForeground && !permissionResults.locationBackground
+        locationPermissionGranted: resolvedPermissions.locationForeground,
+        backgroundLocationGranted: resolvedPermissions.locationBackground,
+        activityPermissionGranted: resolvedPermissions.activityRecognition,
+        warning: resolvedPermissions.locationForeground && !resolvedPermissions.locationBackground
           ? 'Background location is off. Distance updates may pause when the app is not visible.'
           : null,
       };
       return hydrateFallbackState(nextState, Date.now());
     });
 
-    if (permissionResults.locationForeground) {
+    if (resolvedPermissions.locationForeground) {
       locationSubscriptionRef.current = await Location.watchPositionAsync(
         {
           accuracy: Location.Accuracy.High,
@@ -667,7 +731,7 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
       );
     }
 
-    if (permissionResults.activityRecognition) {
+    if (resolvedPermissions.activityRecognition) {
       subscribeFallbackPedometer();
     }
 
@@ -675,15 +739,42 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
       await notificationService.setupWalkSessionCategories();
       await notificationService.showWalkSessionNotification(formatClock(0), false);
     }
-  }, [hydrateFallbackState, subscribeFallbackPedometer, updateFallbackState]);
+  }, [hydrateFallbackState, subscribeFallbackPedometer, unsubscribeFallbackSensors, updateFallbackState]);
 
   useEffect(() => {
     if (isAndroidService) return;
 
-    let timer: ReturnType<typeof setInterval> | null = null;
-    void startFallbackTracking();
+    let cancelled = false;
 
-    timer = setInterval(() => {
+    void (async () => {
+      const permissionResults = await requestWalkTrackingPermissions();
+      if (cancelled) return;
+
+      runStartCountdown(() => {
+        if (cancelled) return;
+        void (async () => {
+          await startFallbackTracking(permissionResults);
+          if (cancelled) return;
+          setSessionStarted(true);
+          await markPlanStarted();
+        })();
+      });
+    })();
+
+    return () => {
+      cancelled = true;
+      clearStartCountdown();
+      unsubscribeFallbackSensors();
+      if (isNotificationsSupported && Platform.OS !== 'android') {
+        void notificationService.dismissWalkSessionNotification();
+      }
+    };
+  }, [clearStartCountdown, isAndroidService, markPlanStarted, runStartCountdown, startFallbackTracking, unsubscribeFallbackSensors]);
+
+  useEffect(() => {
+    if (isAndroidService || !sessionStarted) return;
+
+    const timer = setInterval(() => {
       const nowMs = Date.now();
       updateFallbackState((current) => {
         const nextState = {
@@ -702,16 +793,13 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
     }, 1000);
 
     return () => {
-      if (timer) clearInterval(timer);
-      unsubscribeFallbackSensors();
-      if (isNotificationsSupported && Platform.OS !== 'android') {
-        void notificationService.dismissWalkSessionNotification();
-      }
+      clearInterval(timer);
     };
-  }, [computeFallbackElapsedSeconds, hydrateFallbackState, isAndroidService, startFallbackTracking, unsubscribeFallbackSensors, updateFallbackState]);
+  }, [computeFallbackElapsedSeconds, hydrateFallbackState, isAndroidService, sessionStarted, updateFallbackState]);
 
   useEffect(() => {
     if (isAndroidService) return;
+    if (!sessionStarted) return;
     if (fallbackState.paused || showEndModal || showCompletion || showIdleModal) return;
     if (!fallbackState.hadWalkingSignal || lastMotionAtRef.current == null) return;
 
@@ -740,6 +828,7 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
     preferences?.stepGoal,
     preferences?.stepGoalEnabled,
     preferences?.strictnessMode,
+    sessionStarted,
     showCompletion,
     showEndModal,
     showIdleModal,
@@ -755,13 +844,13 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
 
   useEffect(() => {
     const unsubscribe = navigation.addListener('beforeRemove', (event) => {
-      if (allowLeaveRef.current) return;
+      if (allowLeaveRef.current || !sessionStarted) return;
       event.preventDefault();
       setShowIdleModal(false);
       setShowEndModal(true);
     });
     return unsubscribe;
-  }, [navigation]);
+  }, [navigation, sessionStarted]);
 
   const dismissCompletion = useCallback(() => {
     if (!showCompletion || completionDismissLockedRef.current) return;
@@ -804,18 +893,26 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
       showCompletion?: boolean;
     },
   ) => {
-    await sessionsRepo.save(session);
-    if (session.nudgePlanId) {
-      await plansRepo.updateStatus(session.nudgePlanId, options?.planStatus ?? 'completed');
+    const shouldResolveMatchingPlan = !session.nudgePlanId && (options?.planStatus ?? 'completed') === 'completed';
+    const matchedPlan = shouldResolveMatchingPlan
+      ? await plansRepo.findBestMatchingPlanForSession(session)
+      : null;
+    const resolvedSession = matchedPlan
+      ? { ...session, nudgePlanId: matchedPlan.id }
+      : session;
+
+    await sessionsRepo.save(resolvedSession);
+    if (resolvedSession.nudgePlanId) {
+      await plansRepo.updateStatus(resolvedSession.nudgePlanId, options?.planStatus ?? 'completed');
     }
 
     analyticsService.track('walk_completed', {
-      planId: session.nudgePlanId || null,
-      activeSeconds: session.activeSeconds,
-      pausedSeconds: session.pausedSeconds,
-      distanceMeters: Math.round(session.distanceMeters ?? 0),
-      steps: session.steps ?? 0,
-      usedLocation: session.usedLocation,
+      planId: resolvedSession.nudgePlanId || null,
+      activeSeconds: resolvedSession.activeSeconds,
+      pausedSeconds: resolvedSession.pausedSeconds,
+      distanceMeters: Math.round(resolvedSession.distanceMeters ?? 0),
+      steps: resolvedSession.steps ?? 0,
+      usedLocation: resolvedSession.usedLocation,
       hadWalkingSignal: options?.hadWalkingSignal ?? false,
       endReason: options?.endReason ?? 'manual',
     });
@@ -829,9 +926,9 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
 
     setCompletionKind(options?.endReason === 'idle_later' ? 'saved_later' : 'completed');
     setCompletionStats({
-      activeSeconds: session.activeSeconds,
-      distanceMeters: session.distanceMeters ?? 0,
-      steps: session.steps ?? 0,
+      activeSeconds: resolvedSession.activeSeconds,
+      distanceMeters: resolvedSession.distanceMeters ?? 0,
+      steps: resolvedSession.steps ?? 0,
     });
 
     if (options?.showCompletion === false) {
@@ -1240,6 +1337,30 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
         </View>
       </Modal>
 
+      {startCountdown != null && (
+        <View style={[styles.countdownOverlay, { backgroundColor: palette.overlay }]}>
+          <View
+            style={[
+              styles.countdownCard,
+              {
+                backgroundColor: palette.bgSurfaceElevated,
+                borderColor: palette.borderSoft,
+              },
+            ]}
+          >
+            <Text variant="bodySmall" color={palette.textMuted} style={styles.countdownEyebrow}>
+              Get ready
+            </Text>
+            <Text variant="title" style={styles.countdownValue}>
+              {startCountdown}
+            </Text>
+            <Text variant="body" color={palette.textMuted} style={styles.countdownHint}>
+              Your walk timer starts after the countdown.
+            </Text>
+          </View>
+        </View>
+      )}
+
       {showCompletion && (
         <Animated.View
           style={[
@@ -1548,6 +1669,37 @@ const styles = StyleSheet.create({
   },
   modalButton: {
     flex: 1,
+  },
+  countdownOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 24,
+    zIndex: 120,
+  },
+  countdownCard: {
+    width: '100%',
+    maxWidth: 320,
+    borderRadius: 28,
+    borderWidth: 1,
+    paddingHorizontal: 24,
+    paddingVertical: 28,
+    alignItems: 'center',
+  },
+  countdownEyebrow: {
+    letterSpacing: 1.3,
+    textTransform: 'uppercase',
+    marginBottom: 10,
+  },
+  countdownValue: {
+    fontSize: 88,
+    lineHeight: 94,
+    fontWeight: theme.fontWeight.bold,
+    marginBottom: 10,
+  },
+  countdownHint: {
+    textAlign: 'center',
+    lineHeight: 22,
   },
   completionOverlay: {
     ...StyleSheet.absoluteFillObject,

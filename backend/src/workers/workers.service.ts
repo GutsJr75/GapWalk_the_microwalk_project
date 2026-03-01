@@ -42,13 +42,13 @@ export class WorkersService implements OnModuleInit {
     );
     this.logger.log('Scheduled: daily nudge generation at 06:00');
 
-    // Send due push notifications every 2 minutes
+    // Send due push notifications every minute
     await this.pushQueue.upsertJobScheduler(
       'send-due-nudges',
-      { pattern: '*/2 * * * *' },
+      { pattern: '* * * * *' },
       { name: 'send-due-nudges', data: {} },
     );
-    this.logger.log('Scheduled: push send check every 2 min');
+    this.logger.log('Scheduled: push send check every 1 min');
 
     // Check push receipts every 15 minutes
     await this.receiptQueue.upsertJobScheduler(

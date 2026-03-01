@@ -39,6 +39,7 @@ import { YesterdayCard } from './dashboard/YesterdayCard';
 import { WeeklyStatsCard } from './dashboard/WeeklyStatsCard';
 import { CelebrationOverlay } from './dashboard/CelebrationOverlay';
 import { AchievementsSection } from './dashboard/AchievementsSection';
+import { CompletedPlansSection } from './dashboard/CompletedPlansSection';
 import { MissedPlansSection } from './dashboard/MissedPlansSection';
 import { BadgeUnlockedModal } from './dashboard/BadgeUnlockedModal';
 import { SideMenu, type SideMenuItem } from './dashboard/SideMenu';
@@ -150,6 +151,7 @@ export const DashboardScreen: React.FC<Props> = ({ navigation, route }) => {
   const [showBadgeModal, setShowBadgeModal] = useState(false);
   const badgeAnim = useRef(new Animated.Value(0)).current;
   const [yesterdayMinutes, setYesterdayMinutes] = useState<number | null>(null);
+  const [completedPlans, setCompletedPlans] = useState<NudgePlan[]>([]);
   const [missedPlans, setMissedPlans] = useState<NudgePlan[]>([]);
   // Staggered card entrance animations
   const cardAnims = useRef(
@@ -172,6 +174,7 @@ export const DashboardScreen: React.FC<Props> = ({ navigation, route }) => {
   const [changeInitialState, setChangeInitialState] = useState<{
     hour: string; minute: string; period: TimePeriod; duration: string;
   } | null>(null);
+  const [changeQuietHoursBypass, setChangeQuietHoursBypass] = useState(false);
   const hasChangeDraft =
     !!changeInitialState &&
     (changeHour !== changeInitialState.hour || changeMinute !== changeInitialState.minute ||
@@ -264,6 +267,7 @@ export const DashboardScreen: React.FC<Props> = ({ navigation, route }) => {
     const refreshedUpcoming = await plansRepo.getUpcomingPlans(20);
     setUpcomingPlans(refreshedUpcoming);
     const allTodayPlans = await plansRepo.getTodayPlans();
+    setCompletedPlans(allTodayPlans.filter((p) => p.status === 'completed'));
     setMissedPlans(allTodayPlans.filter((p) => p.status === 'cancelled' && p.reason === 'missed'));
     const allSessions = await sessionsRepo.getAll();
     setStreak(calculateStreak(allSessions));
@@ -450,12 +454,18 @@ export const DashboardScreen: React.FC<Props> = ({ navigation, route }) => {
     setChangeHour(parts.hour); setChangeMinute(parts.minute);
     setChangePeriod(parts.period); setChangeDuration(initialDuration);
     setChangeInitialState({ hour: parts.hour, minute: parts.minute, period: parts.period, duration: initialDuration });
-    setChangeError(null); setShowChangeModal(true);
+    setChangeQuietHoursBypass(false); setChangeError(null); setShowChangeModal(true);
   };
 
   const closeChangeModal = () => {
     if (savingChange) return;
-    const closeNow = () => { setShowChangeModal(false); setEditingOpportunity(null); setChangeError(null); setChangeInitialState(null); };
+    const closeNow = () => {
+      setShowChangeModal(false);
+      setEditingOpportunity(null);
+      setChangeError(null);
+      setChangeInitialState(null);
+      setChangeQuietHoursBypass(false);
+    };
     if (!hasChangeDraft) { closeNow(); return; }
     const title = 'Cancel this update?';
     const message = 'Your unsaved walk updates will be lost. Do you want to close this editor?';
@@ -465,6 +475,41 @@ export const DashboardScreen: React.FC<Props> = ({ navigation, route }) => {
     }
     Alert.alert(title, message, [{ text: 'No', style: 'cancel' }, { text: 'Yes', style: 'destructive', onPress: closeNow }]);
   };
+
+  const shouldAllowChangeQuietHoursBypass = useCallback((opportunity: PlanOpportunity) => {
+    if (!preferences) return false;
+    if (opportunity.plan.reason === 'manual') return true;
+    const currentStart = parseISO(opportunity.plan.walkStart);
+    const currentEnd = getPlanWalkEnd(opportunity.plan);
+    return (
+      timeUtils.isInQuietHours(currentStart, preferences.quietHoursStart, preferences.quietHoursEnd) ||
+      timeUtils.isInQuietHours(currentEnd, preferences.quietHoursStart, preferences.quietHoursEnd)
+    );
+  }, [preferences]);
+
+  const validateChangedWalkQuietHours = useCallback((nextStart: Date, walkEnd: Date): boolean => {
+    if (!editingOpportunity || !preferences) return true;
+    const inQuietHours =
+      timeUtils.isInQuietHours(nextStart, preferences.quietHoursStart, preferences.quietHoursEnd) ||
+      timeUtils.isInQuietHours(walkEnd, preferences.quietHoursStart, preferences.quietHoursEnd);
+
+    if (!inQuietHours) {
+      if (changeQuietHoursBypass) setChangeQuietHoursBypass(false);
+      return true;
+    }
+
+    if (shouldAllowChangeQuietHoursBypass(editingOpportunity)) {
+      if (!changeQuietHoursBypass) {
+        setChangeQuietHoursBypass(true);
+        setChangeError(`This walk is inside your quiet hours (${formatTime12(preferences.quietHoursStart)} – ${formatTime12(preferences.quietHoursEnd)}). Change the time, or tap "Update anyway" to bypass.`);
+        return false;
+      }
+      return true;
+    }
+
+    setChangeError('Pick a time outside your quiet hours.');
+    return false;
+  }, [changeQuietHoursBypass, editingOpportunity, preferences, shouldAllowChangeQuietHoursBypass]);
 
   const applyWalkChange = async () => {
     if (!editingOpportunity || !preferences || savingChange) return;
@@ -483,29 +528,43 @@ export const DashboardScreen: React.FC<Props> = ({ navigation, route }) => {
     const oldGapStart = parseISO(editingOpportunity.plan.gapStart);
     const oldGapEnd = parseISO(editingOpportunity.plan.gapEnd);
     const walkEnd = addMinutes(nextStart, duration);
-    if (timeUtils.isInQuietHours(nextStart, preferences.quietHoursStart, preferences.quietHoursEnd) ||
-      timeUtils.isInQuietHours(walkEnd, preferences.quietHoursStart, preferences.quietHoursEnd)) {
-      setChangeError('Pick a time outside your quiet hours.'); return;
-    }
+    if (!validateChangedWalkQuietHours(nextStart, walkEnd)) return;
     const notifyLeadMinutes = preferences.whenToNotify === 'delay' ? Math.max(0, preferences.notifyDelayMinutes ?? 5) : 0;
     const earliestForNotify = subMinutes(nextStart, notifyLeadMinutes);
-    const nextGapStart = isBefore(earliestForNotify, oldGapStart) ? earliestForNotify : oldGapStart;
-    const nextGapEnd = isAfter(walkEnd, oldGapEnd) ? walkEnd : oldGapEnd;
+    if (isBefore(earliestForNotify, oldGapStart)) {
+      const gapStartFmt = format(oldGapStart, 'h:mm a');
+      setChangeError(`Notification would fall before the gap start (${gapStartFmt}). Move the walk later or reduce the notification lead time.`);
+      return;
+    }
+    if (isAfter(walkEnd, oldGapEnd)) {
+      const gapEndFmt = format(oldGapEnd, 'h:mm a');
+      setChangeError(`Walk would finish after the gap ends at ${gapEndFmt}. Choose an earlier start or shorter duration.`);
+      return;
+    }
+    const nextGapStart = oldGapStart;
+    const nextGapEnd = oldGapEnd;
     try {
       setSavingChange(true);
+      const nextReason = editingOpportunity.plan.reason === 'manual' ? 'manual' : 'customized';
       await plansRepo.updateTiming(editingOpportunity.plan.id, {
         gapStart: nextGapStart.toISOString(), gapEnd: nextGapEnd.toISOString(),
         walkStart: nextStart.toISOString(), suggestedDurationMinutes: duration,
-        reason: 'customized', status: 'planned',
+        reason: nextReason, status: 'planned',
       });
       if (isNotificationsSupported) {
         await notificationService.cancelWalkNudges();
         const futurePlans = await plansRepo.getUpcomingPlans(100);
-        await notificationService.scheduleMultipleNudges(futurePlans, preferences);
+        await notificationService.scheduleMultipleNudges(
+          futurePlans.filter((plan) => plan.reason !== 'manual'),
+          preferences,
+        );
+        for (const plan of futurePlans.filter((plan) => plan.reason === 'manual')) {
+          await notificationService.scheduleManualNudge(plan);
+        }
       }
       const refreshedUpcoming = await plansRepo.getUpcomingPlans(20);
       setUpcomingPlans(refreshedUpcoming);
-      setShowChangeModal(false); setEditingOpportunity(null); setChangeError(null); setChangeInitialState(null);
+      setShowChangeModal(false); setEditingOpportunity(null); setChangeError(null); setChangeInitialState(null); setChangeQuietHoursBypass(false);
     } catch (error) {
       if (__DEV__) console.error('Failed to update walk window:', error);
       Alert.alert('Could Not Update', toUserFriendlyError(error));
@@ -528,17 +587,29 @@ export const DashboardScreen: React.FC<Props> = ({ navigation, route }) => {
       previewStart.setHours(hour24, minute, 0, 0);
       const previewEnd = addMinutes(previewStart, duration);
       if (!isAfter(previewStart, new Date())) { setChangeError('Choose a future time for this walk.'); return; }
-      if (preferences && (timeUtils.isInQuietHours(previewStart, preferences.quietHoursStart, preferences.quietHoursEnd) ||
-        timeUtils.isInQuietHours(previewEnd, preferences.quietHoursStart, preferences.quietHoursEnd))) {
-        setChangeError('Pick a time outside your quiet hours.'); return;
+      const previewGapStart = parseISO(editingOpportunity.plan.gapStart);
+      const previewGapEnd = parseISO(editingOpportunity.plan.gapEnd);
+      const notifyLead = preferences?.whenToNotify === 'delay' ? Math.max(0, preferences.notifyDelayMinutes ?? 5) : 0;
+      const previewNotifyStart = subMinutes(previewStart, notifyLead);
+      if (isBefore(previewNotifyStart, previewGapStart)) {
+        setChangeError(`Notification would fall before the gap start (${format(previewGapStart, 'h:mm a')}). Move the walk later or reduce the notification lead time.`);
+        return;
       }
+      if (isAfter(previewEnd, previewGapEnd)) {
+        setChangeError(`Walk would finish after the gap ends at ${format(previewGapEnd, 'h:mm a')}. Choose an earlier start or shorter duration.`);
+        return;
+      }
+      if (!validateChangedWalkQuietHours(previewStart, previewEnd)) return;
     }
     setChangeError(null);
+    const baseMessage = 'Are you sure you want to update this walk time and duration?';
+    const quietMessage = 'This walk is inside your quiet hours.\n\nDo you still want to update it and keep the reminder?';
+    const message = changeQuietHoursBypass ? quietMessage : baseMessage;
     if (Platform.OS === 'web' && typeof (globalThis as any).confirm === 'function') {
-      if ((globalThis as any).confirm('Update this walk?\n\nAre you sure you want to update this walk time and duration?')) void applyWalkChange();
+      if ((globalThis as any).confirm(`Update this walk?\n\n${message}`)) void applyWalkChange();
       return;
     }
-    Alert.alert('Update this walk?', 'Are you sure you want to update this walk time and duration?', [
+    Alert.alert('Update this walk?', message, [
       { text: 'No', style: 'cancel' },
       { text: 'Yes, Update', onPress: () => { void applyWalkChange(); } },
     ]);
@@ -747,8 +818,10 @@ export const DashboardScreen: React.FC<Props> = ({ navigation, route }) => {
   );
 
   const opportunities = useMemo<PlanOpportunity[]>(() => {
-    if (!preferences || goalReached) return [];
-    return activeTodayPlans.map((plan) => {
+    if (!preferences) return [];
+    return activeTodayPlans
+      .filter((plan) => !goalReached || plan.reason === 'manual')
+      .map((plan) => {
       const walkStart = parseISO(plan.walkStart);
       const walkEnd = getPlanWalkEnd(plan);
       const gapStart = parseISO(plan.gapStart);
@@ -872,7 +945,7 @@ export const DashboardScreen: React.FC<Props> = ({ navigation, route }) => {
           </Pressable>
         </View>
 
-        {goalReached ? (
+        {goalReached && opportunities.length === 0 ? (
           <Card elevated style={styles.emptyCard}>
             <Text variant="body" style={styles.emptyText}>Goal reached for today</Text>
             <Text variant="bodySmall" color={palette.textMuted} style={styles.emptyHint}>Nice work. Extra walks are still tracked, but reminders pause until tomorrow.</Text>
@@ -884,20 +957,29 @@ export const DashboardScreen: React.FC<Props> = ({ navigation, route }) => {
             <Text variant="bodySmall" color={palette.textMuted} style={styles.emptyHint}>No suitable gaps were found right now. Pull to refresh, or start a manual walk below.</Text>
           </Card>
         ) : (
-          opportunities.map((opportunity) => (
-            <GapItem
-              key={opportunity.key}
-              timeRange={opportunity.timeRange}
-              walkWindowLabel={opportunity.walkWindowLabel}
-              notifyLabel={opportunity.notifyLabel}
-              duration={opportunity.plan.suggestedDurationMinutes}
-              usedMinutes={0}
-              onCancel={() => cancelOpportunity(opportunity)}
-              onChange={() => openChangeOpportunity(opportunity)}
-            />
-          ))
+          <>
+            {goalReached && (
+              <Card elevated style={styles.emptyCard}>
+                <Text variant="body" style={styles.emptyText}>Goal reached for today</Text>
+                <Text variant="bodySmall" color={palette.textMuted} style={styles.emptyHint}>You already hit today&apos;s target. Any manually scheduled walks below still work.</Text>
+              </Card>
+            )}
+            {opportunities.map((opportunity) => (
+              <GapItem
+                key={opportunity.key}
+                timeRange={opportunity.timeRange}
+                walkWindowLabel={opportunity.walkWindowLabel}
+                notifyLabel={opportunity.notifyLabel}
+                duration={opportunity.plan.suggestedDurationMinutes}
+                usedMinutes={0}
+                onCancel={() => cancelOpportunity(opportunity)}
+                onChange={() => openChangeOpportunity(opportunity)}
+              />
+            ))}
+          </>
         )}
 
+        <CompletedPlansSection completedPlans={completedPlans} />
         <MissedPlansSection missedPlans={missedPlans} />
 
         <Button title="Start Manual Walk" onPress={() => navigation.navigate('Walking', {})} style={styles.walkBtn} testID="dashboard-start-manual-walk" />
@@ -911,7 +993,7 @@ export const DashboardScreen: React.FC<Props> = ({ navigation, route }) => {
         onRequestClose={closeChangeModal}
         title="Change walk window"
         subtitle="Set your preferred start time and walk duration."
-        saveLabel="Update"
+        saveLabel={changeQuietHoursBypass ? 'Update anyway' : 'Update'}
         saving={savingChange}
         saveDisabled={!hasChangeDraft}
         error={changeError}

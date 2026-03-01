@@ -64,6 +64,68 @@ const noopSubscription: Notifications.Subscription = {
   },
 };
 
+function buildNudgeTitle(walkStart: Date, _isManual = false): string {
+  const startTime = format(walkStart, 'h:mm a');
+  return `Your ${startTime} walk \uD83D\uDEB6`;
+}
+
+const NUDGE_BODIES_NOW_RELAXED = [
+  (dur: number) => `It's time! Head out for a ${dur}-min walk. Your body will thank you.`,
+  (dur: number) => `Walk o'clock. ${dur} minutes is all it takes — let's go!`,
+  (dur: number) => `Step outside for ${dur} min. A little movement goes a long way.`,
+  (dur: number) => `Your ${dur}-min walking window is open. Time to move!`,
+  (dur: number) => `Fresh air awaits. ${dur}-min walk starts now.`,
+  (dur: number) => `A ${dur}-min walk is the reset your day needs. Let's do it!`,
+];
+
+const NUDGE_BODIES_NOW_STRICT = [
+  (dur: number, time: string) => `Start now — your ${dur}-min walk is scheduled for ${time}. No delays.`,
+  (dur: number) => `No excuses — ${dur} minutes, starting right now.`,
+  (dur: number, time: string) => `It's ${time}. Your ${dur}-min walk is non-negotiable.`,
+  (dur: number) => `Time to go. ${dur} min, right now. You've got this.`,
+];
+
+const NUDGE_BODIES_SOON_RELAXED = [
+  (dur: number, time: string, mins: number) => `Your ${dur}-min walk starts in ${mins} min at ${time}. Wrap up and get ready.`,
+  (dur: number, time: string, mins: number) => `In ${mins} minutes: a ${dur}-min walk at ${time}. Almost time to move!`,
+  (dur: number, time: string, mins: number) => `Walking window opens at ${time} in ${mins} min — ${dur} minutes of fresh air.`,
+  (dur: number, time: string, mins: number) => `${mins} min heads-up: your ${dur}-min walk is at ${time}.`,
+];
+
+const NUDGE_BODIES_SOON_STRICT = [
+  (dur: number, time: string, mins: number) => `Be ready — your ${dur}-min walk starts at ${time} in ${mins} min.`,
+  (dur: number, time: string, mins: number) => `${mins} minutes until your ${dur}-min walk at ${time}. Get moving.`,
+];
+
+function pickVariant<T>(variants: T[], walkStart: Date): T {
+  // Rotate by day-of-month so it changes daily but is deterministic within a day
+  return variants[walkStart.getDate() % variants.length];
+}
+
+function buildNudgeBody(params: {
+  walkStart: Date;
+  durationMinutes: number;
+  notifyTime: Date;
+  isStrict: boolean;
+  progressHint?: string;
+}): string {
+  const { walkStart, durationMinutes, notifyTime, isStrict, progressHint = '' } = params;
+  const startTime = format(walkStart, 'h:mm a');
+  const minutesUntilWalk = Math.max(0, Math.round((walkStart.getTime() - notifyTime.getTime()) / 60000));
+
+  if (minutesUntilWalk > 0) {
+    const body = isStrict
+      ? pickVariant(NUDGE_BODIES_SOON_STRICT, walkStart)(durationMinutes, startTime, minutesUntilWalk)
+      : pickVariant(NUDGE_BODIES_SOON_RELAXED, walkStart)(durationMinutes, startTime, minutesUntilWalk);
+    return `${body}${progressHint}`;
+  }
+
+  const body = isStrict
+    ? pickVariant(NUDGE_BODIES_NOW_STRICT, walkStart)(durationMinutes, startTime)
+    : pickVariant(NUDGE_BODIES_NOW_RELAXED, walkStart)(durationMinutes);
+  return `${body}${progressHint}`;
+}
+
 export const notificationService = {
   /**
    * Request notification permissions
@@ -192,7 +254,6 @@ export const notificationService = {
       if (notifyTime <= now) return null;
 
       // Build personalized, varied notification text
-      const minutesUntilWalk = Math.max(0, Math.round((walkStart.getTime() - notifyTime.getTime()) / 60000));
       const dur = plan.suggestedDurationMinutes;
       const isStrict = prefs?.strictnessMode === 'no_excuses';
 
@@ -208,22 +269,14 @@ export const notificationService = {
         }
       } catch { /* ok */ }
 
-      const titles = isStrict
-        ? ['Time to get moving! \uD83D\uDCAA', 'Your walk is waiting for you \uD83D\uDEB6', 'Let\'s go for a walk! \uD83C\uDFC3']
-        : ['You have a great walking window \uD83D\uDEB6', 'Perfect time for a walk \u2600\uFE0F', 'How about a quick walk? \uD83D\uDC63'];
-      const titleHash = plan.id.split('').reduce((acc, c) => acc + c.charCodeAt(0), 0);
-      const title = titles[titleHash % titles.length];
-
-      let bodyText: string;
-      if (minutesUntilWalk > 0) {
-        bodyText = isStrict
-          ? `${dur} free minutes, starts in ${minutesUntilWalk} min. Let's make it count!${progressHint}`
-          : `About ${dur} free minutes, starts in ${minutesUntilWalk} min. A perfect chance to stretch your legs!${progressHint}`;
-      } else {
-        bodyText = isStrict
-          ? `${dur} free minutes right now. Let's make them count!${progressHint}`
-          : `About ${dur} free minutes right now. How about a refreshing walk?${progressHint}`;
-      }
+      const title = buildNudgeTitle(walkStart);
+      const bodyText = buildNudgeBody({
+        walkStart,
+        durationMinutes: dur,
+        notifyTime,
+        isStrict,
+        progressHint,
+      });
 
       const notificationId = await Notifications.scheduleNotificationAsync({
         content: {
@@ -265,8 +318,13 @@ export const notificationService = {
       if (walkStart <= now) return null;
 
       const dur = plan.suggestedDurationMinutes;
-      const title = 'Time for your planned walk \uD83D\uDEB6';
-      const body = `You scheduled a ${dur}-min walk. Ready to go?`;
+      const title = buildNudgeTitle(walkStart, true);
+      const body = buildNudgeBody({
+        walkStart,
+        durationMinutes: dur,
+        notifyTime: walkStart,
+        isStrict: false,
+      });
 
       const notificationId = await Notifications.scheduleNotificationAsync({
         content: {
@@ -322,7 +380,11 @@ export const notificationService = {
 
     for (const plan of plans) {
       if (!alreadyScheduled.has(plan.id)) {
-        await this.scheduleNudge(plan, prefs);
+        if (plan.reason === 'manual') {
+          await this.scheduleManualNudge(plan);
+        } else {
+          await this.scheduleNudge(plan, prefs);
+        }
       }
     }
   },
@@ -556,8 +618,8 @@ export const notificationService = {
       await Notifications.scheduleNotificationAsync({
         identifier: WALK_SESSION_NOTIFICATION_ID,
         content: {
-          title: `${statusEmoji} GapWalk: ${statusText}`,
-          body: timeText,
+          title: `${statusEmoji} ${statusText}`,
+          body: `${timeText} elapsed`,
           data: { type: 'walk_session' },
           categoryIdentifier: categoryId,
           sound: false,

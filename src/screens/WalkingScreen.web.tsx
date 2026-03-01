@@ -17,6 +17,7 @@ import { addMinutes } from 'date-fns';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Walking'>;
 const INACTIVITY_PAUSE_SECONDS = 30;
+const START_COUNTDOWN_SECONDS = 3;
 
 const formatClock = (seconds: number): string => {
   const clamped = Math.max(0, Math.floor(seconds));
@@ -40,12 +41,16 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
   const [showEndModal, setShowEndModal] = useState(false);
   const [showIdleModal, setShowIdleModal] = useState(false);
   const [showCompletion, setShowCompletion] = useState(false);
+  const [startCountdown, setStartCountdown] = useState<number | null>(null);
+  const [sessionStarted, setSessionStarted] = useState(false);
 
   const startIsoRef = useRef(new Date().toISOString());
   const pauseStartedAtRef = useRef<number | null>(null);
   const activeSegmentStartAtRef = useRef<number>(Date.now());
   const pausedRef = useRef(false);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const countdownTimerIdsRef = useRef<ReturnType<typeof setTimeout>[]>([]);
+  const hasMarkedPlanStartedRef = useRef(false);
   const allowLeaveRef = useRef(false);
 
   const completionPopAnim = useRef(new Animated.Value(0)).current;
@@ -58,16 +63,33 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
   const strictMode = preferences?.strictnessMode === 'no_excuses';
   const stepGoalEnforced = strictMode || !!preferences?.stepGoalEnabled;
 
-  useEffect(() => {
-    void (async () => {
-      if (planId) {
-        const found = await plansRepo.getById(planId);
-        if (found) {
-          setPlan(found);
-          await plansRepo.updateStatus(planId, 'started');
-        }
-      }
-    })();
+  const clearStartCountdown = useCallback(() => {
+    countdownTimerIdsRef.current.forEach((timerId) => clearTimeout(timerId));
+    countdownTimerIdsRef.current = [];
+  }, []);
+
+  const markPlanStarted = useCallback(async () => {
+    if (!planId || hasMarkedPlanStartedRef.current) return;
+    const found = await plansRepo.getById(planId);
+    if (!found) return;
+    if (found.status === 'planned' || found.status === 'notified') {
+      await plansRepo.updateStatus(planId, 'started');
+    }
+    hasMarkedPlanStartedRef.current = true;
+  }, [planId]);
+
+  const startSession = useCallback(async () => {
+    if (timerRef.current) clearInterval(timerRef.current);
+
+    startIsoRef.current = new Date().toISOString();
+    activeSegmentStartAtRef.current = Date.now();
+    pauseStartedAtRef.current = null;
+    pausedRef.current = false;
+    setPaused(false);
+    setPausedSeconds(0);
+    setActiveSeconds(0);
+    setTicks(0);
+    setSessionStarted(true);
 
     timerRef.current = setInterval(() => {
       setTicks((prev) => prev + 1);
@@ -76,10 +98,46 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
       }
     }, 1000);
 
+    await markPlanStarted();
+  }, [markPlanStarted]);
+
+  const runStartCountdown = useCallback((onComplete: () => void) => {
+    clearStartCountdown();
+    setStartCountdown(START_COUNTDOWN_SECONDS);
+
+    countdownTimerIdsRef.current = [
+      setTimeout(() => setStartCountdown(2), 1000),
+      setTimeout(() => setStartCountdown(1), 2000),
+      setTimeout(() => {
+        setStartCountdown(null);
+        onComplete();
+      }, 3000),
+    ];
+  }, [clearStartCountdown]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    void (async () => {
+      if (planId) {
+        const found = await plansRepo.getById(planId);
+        if (!cancelled && found) {
+          setPlan(found);
+        }
+      }
+      if (cancelled) return;
+      runStartCountdown(() => {
+        if (cancelled) return;
+        void startSession();
+      });
+    })();
+
     return () => {
+      cancelled = true;
+      clearStartCountdown();
       if (timerRef.current) clearInterval(timerRef.current);
     };
-  }, [planId]);
+  }, [clearStartCountdown, planId, runStartCountdown, startSession]);
 
   const resumeSession = useCallback(() => {
     const pauseStarted = pauseStartedAtRef.current;
@@ -109,6 +167,7 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
   }, [stepGoalEnforced]);
 
   useEffect(() => {
+    if (!sessionStarted) return;
     if (!stepGoalEnforced || paused || showEndModal || showCompletion || showIdleModal) return;
     const idleSeconds = Math.floor((Date.now() - activeSegmentStartAtRef.current) / 1000);
     if (idleSeconds < INACTIVITY_PAUSE_SECONDS) return;
@@ -130,6 +189,7 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
     showCompletion,
     showEndModal,
     showIdleModal,
+    sessionStarted,
     stepGoalEnforced,
     ticks,
   ]);
@@ -172,18 +232,26 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
       createdAt: new Date().toISOString(),
     };
 
-    await sessionsRepo.save(session);
-    if (planId) {
-      await plansRepo.updateStatus(planId, options?.planStatus ?? 'completed');
+    const shouldResolveMatchingPlan = !planId && (options?.planStatus ?? 'completed') === 'completed';
+    const matchedPlan = shouldResolveMatchingPlan
+      ? await plansRepo.findBestMatchingPlanForSession(session)
+      : null;
+    const resolvedSession = matchedPlan
+      ? { ...session, nudgePlanId: matchedPlan.id }
+      : session;
+
+    await sessionsRepo.save(resolvedSession);
+    if (resolvedSession.nudgePlanId) {
+      await plansRepo.updateStatus(resolvedSession.nudgePlanId, options?.planStatus ?? 'completed');
     }
 
     analyticsService.track('walk_completed', {
-      planId: planId || null,
-      activeSeconds,
-      pausedSeconds: finalPausedSeconds,
-      distanceMeters: 0,
-      steps: 0,
-      usedLocation: false,
+      planId: resolvedSession.nudgePlanId || null,
+      activeSeconds: resolvedSession.activeSeconds,
+      pausedSeconds: resolvedSession.pausedSeconds,
+      distanceMeters: resolvedSession.distanceMeters ?? 0,
+      steps: resolvedSession.steps ?? 0,
+      usedLocation: resolvedSession.usedLocation,
       hadWalkingSignal: false,
       endReason: options?.endReason ?? 'manual',
     });
@@ -238,12 +306,12 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
 
   useEffect(() => {
     const unsubscribe = navigation.addListener('beforeRemove', (e) => {
-      if (allowLeaveRef.current) return;
+      if (allowLeaveRef.current || !sessionStarted) return;
       e.preventDefault();
       setShowEndModal(true);
     });
     return unsubscribe;
-  }, [navigation]);
+  }, [navigation, sessionStarted]);
 
   const toggleSheet = () => {
     setSheetExpanded((prev) => !prev);
@@ -398,6 +466,16 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
           </Animated.View>
         </Animated.View>
       )}
+
+      {startCountdown != null && (
+        <View style={styles.countdownOverlay}>
+          <Text variant="body" color={palette.textMuted} style={styles.countdownLabel}>Get ready</Text>
+          <Text variant="title" style={styles.countdownValue}>{startCountdown}</Text>
+          <Text variant="bodySmall" color={palette.textMuted} style={styles.countdownHint}>
+            Your walk starts in a moment.
+          </Text>
+        </View>
+      )}
     </SafeAreaView>
   );
 };
@@ -517,6 +595,28 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     zIndex: 99,
+  },
+  countdownOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 24,
+    backgroundColor: 'rgba(5, 16, 36, 0.88)',
+    zIndex: 120,
+  },
+  countdownLabel: {
+    marginBottom: 10,
+    textTransform: 'uppercase',
+    letterSpacing: 1.2,
+  },
+  countdownValue: {
+    fontSize: 84,
+    lineHeight: 90,
+    fontWeight: theme.fontWeight.bold,
+    marginBottom: 10,
+  },
+  countdownHint: {
+    textAlign: 'center',
   },
   completionBurst: {
     position: 'absolute',

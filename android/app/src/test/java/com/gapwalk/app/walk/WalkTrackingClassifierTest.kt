@@ -98,6 +98,30 @@ class WalkTrackingClassifierTest {
   }
 
   @Test
+  fun classifyReturnsWalkingWhenOnlyAccelMotionIsRecent() {
+    val classification = WalkTrackingClassifier.classify(
+      WalkTrackingSnapshot(
+        sessionId = "session-accel",
+        startIso = "2026-02-28T10:00:00.000Z",
+        sessionStartMs = 1_000L,
+        locationPermissionGranted = true,
+        backgroundLocationGranted = true,
+        activityPermissionGranted = true,
+        stepCounterAvailable = true,
+        hadWalkingSignal = true,
+        lastAccelMotionAtMs = 14_000L,
+        lastMotionAtMs = 14_000L,
+      ),
+      18_000L,
+    )
+
+    assertEquals("walking", classification.motionState)
+    assertEquals("walking", classification.displayState)
+    assertEquals("medium", classification.motionConfidence)
+    assertEquals("Detecting motion...", classification.statusReason)
+  }
+
+  @Test
   fun classifyUsesGpsFallbackReasonWhenFallbackIsActive() {
     val classification = WalkTrackingClassifier.classify(
       WalkTrackingSnapshot(

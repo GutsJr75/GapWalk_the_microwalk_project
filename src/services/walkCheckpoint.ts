@@ -115,7 +115,7 @@ export async function recoverOrphanedSession(): Promise<WalkSession | null> {
       return null;
     }
 
-    const session: WalkSession = {
+    const baseSession: WalkSession = {
       id: row.session_id,
       nudgePlanId: row.plan_id ?? undefined,
       start: row.start_iso,
@@ -128,18 +128,25 @@ export async function recoverOrphanedSession(): Promise<WalkSession | null> {
       createdAt: row.updated_at,
     };
 
+    const matchedPlan = baseSession.nudgePlanId
+      ? null
+      : await plansRepo.findBestMatchingPlanForSession(baseSession);
+    const session = matchedPlan
+      ? { ...baseSession, nudgePlanId: matchedPlan.id }
+      : baseSession;
+
     await sessionsRepo.save(session);
 
-    if (row.plan_id) {
+    if (session.nudgePlanId) {
       try {
-        const linkedPlan = await plansRepo.getById(row.plan_id);
+        const linkedPlan = await plansRepo.getById(session.nudgePlanId);
         if (
           linkedPlan &&
           (linkedPlan.status === 'planned' ||
             linkedPlan.status === 'notified' ||
             linkedPlan.status === 'started')
         ) {
-          await plansRepo.updateStatus(row.plan_id, 'completed');
+          await plansRepo.updateStatus(session.nudgePlanId, 'completed');
         }
       } catch (planErr) {
         if (__DEV__) console.warn('Failed to update recovered plan status:', planErr);

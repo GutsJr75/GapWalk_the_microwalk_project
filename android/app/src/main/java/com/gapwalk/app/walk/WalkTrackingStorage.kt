@@ -54,6 +54,7 @@ object WalkTrackingStorage {
         stepCounterDisabledForSession = json.optBoolean("stepCounterDisabledForSession", false),
         stepCounterAnchor = json.optDoubleOrNull("stepCounterAnchor")?.toFloat(),
         lastRawStepCounter = json.optDoubleOrNull("lastRawStepCounter")?.toFloat(),
+        lastAccelMotionAtMs = json.optLongOrNull("lastAccelMotionAtMs"),
       )
     }.getOrNull()
   }
@@ -99,6 +100,7 @@ object WalkTrackingStorage {
     json.putNullable("stepFallbackBlockedUntilMs", snapshot.stepFallbackBlockedUntilMs)
     json.putNullable("stepCounterAnchor", snapshot.stepCounterAnchor?.toDouble())
     json.putNullable("lastRawStepCounter", snapshot.lastRawStepCounter?.toDouble())
+    json.putNullable("lastAccelMotionAtMs", snapshot.lastAccelMotionAtMs)
 
     context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
       .edit()
@@ -150,6 +152,7 @@ object WalkTrackingStorage {
       putNullableDouble("lastStepAtMs", snapshot.lastStepAtMs)
       putNullableDouble("lastGpsMotionAtMs", snapshot.lastGpsMotionAtMs)
       putNullableDouble("lastAcceptedLocationAtMs", snapshot.lastAcceptedLocationAtMs)
+      putNullableDouble("lastAccelMotionAtMs", snapshot.lastAccelMotionAtMs)
     }
   }
 

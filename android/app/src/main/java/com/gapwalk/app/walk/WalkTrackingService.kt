@@ -63,6 +63,22 @@ class WalkTrackingService : Service(), SensorEventListener {
       }
 
       snapshot = syncSensors(snapshot)
+
+      // Feed any detector timestamp that has not yet been applied to the session.
+      val detectorMotionAtMs = accelDetector?.lastMotionDetectedAtMs
+      if (!snapshot.paused && detectorMotionAtMs != null) {
+        val lastAppliedAccelMotionAtMs = snapshot.lastAccelMotionAtMs
+        if (lastAppliedAccelMotionAtMs == null || detectorMotionAtMs > lastAppliedAccelMotionAtMs) {
+          val accelSnapshot = WalkTrackingSessionController.applyAccelMotion(
+            context = applicationContext,
+            nowMs = detectorMotionAtMs,
+          )
+          if (accelSnapshot != null) {
+            snapshot = accelSnapshot
+          }
+        }
+      }
+
       currentSnapshot = snapshot
       emitSnapshot(snapshot)
       updateNotification(snapshot)
@@ -77,12 +93,15 @@ class WalkTrackingService : Service(), SensorEventListener {
   private var isLocationSubscribed = false
   private var isSensorSubscribed = false
   private var currentSnapshot: WalkTrackingSnapshot? = null
+  private var accelDetector: AccelerometerMotionDetector? = null
+  private var isAccelSubscribed = false
 
   override fun onCreate() {
     super.onCreate()
     fusedLocationClient = LocationServices.getFusedLocationProviderClient(this)
     sensorManager = getSystemService(SENSOR_SERVICE) as SensorManager
     stepCounterSensor = sensorManager.getDefaultSensor(Sensor.TYPE_STEP_COUNTER)
+    accelDetector = AccelerometerMotionDetector(sensorManager)
     ensureNotificationChannel()
   }
 
@@ -107,6 +126,7 @@ class WalkTrackingService : Service(), SensorEventListener {
     mainHandler.removeCallbacks(tickRunnable)
     unsubscribeLocation()
     unsubscribeStepSensor()
+    unsubscribeAccelDetector()
     super.onDestroy()
   }
 
@@ -150,6 +170,12 @@ class WalkTrackingService : Service(), SensorEventListener {
       }
     } else {
       unsubscribeStepSensor()
+    }
+
+    if (snapshot.paused) {
+      unsubscribeAccelDetector()
+    } else {
+      subscribeAccelDetector()
     }
 
     return next
@@ -207,6 +233,18 @@ class WalkTrackingService : Service(), SensorEventListener {
     isSensorSubscribed = false
   }
 
+  private fun subscribeAccelDetector() {
+    if (isAccelSubscribed) return
+    val registered = accelDetector?.start() ?: false
+    isAccelSubscribed = registered
+  }
+
+  private fun unsubscribeAccelDetector() {
+    if (!isAccelSubscribed) return
+    accelDetector?.stop()
+    isAccelSubscribed = false
+  }
+
   private fun updateNotification(snapshot: WalkTrackingSnapshot) {
     val manager = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
     manager.notify(NOTIFICATION_ID, buildNotification(snapshot))
@@ -250,11 +288,12 @@ class WalkTrackingService : Service(), SensorEventListener {
 
     val primaryLine = primaryStatusLine(snapshot)
     val summaryLine = buildSummaryLine(snapshot)
+    val notifTitle = if (snapshot.paused) "GapWalk – Paused ⏸" else "GapWalk – Walking 🚶"
     val builder = NotificationCompat.Builder(this, CHANNEL_ID)
       .setSmallIcon(R.drawable.ic_notification_walk)
       .setColor(ContextCompat.getColor(this, R.color.gapwalk_accent))
       .setColorized(false)
-      .setContentTitle(getString(R.string.app_name))
+      .setContentTitle(notifTitle)
       .setContentText(primaryLine)
       .setStyle(NotificationCompat.BigTextStyle().bigText(summaryLine))
       .setContentIntent(openAppIntent)
@@ -315,30 +354,30 @@ class WalkTrackingService : Service(), SensorEventListener {
   private fun formatElapsed(seconds: Int): String {
     val mins = seconds / 60
     val secs = seconds % 60
-    return String.format("%d min %02d sec", mins, secs)
+    return String.format("%d:%02d", mins, secs)
   }
 
   private fun primaryStatusLine(snapshot: WalkTrackingSnapshot): String {
     return when (snapshot.displayState) {
-      "walking" -> "Walking now"
-      "paused" -> "Paused"
-      "location_off" -> "Location needed"
-      "not_moving" -> "Not moving"
-      "sensor_issue" -> "Step sensor not responding"
-      else -> "Detecting movement..."
+      "walking" -> "🚶 Walking"
+      "paused" -> "⏸ Paused"
+      "location_off" -> "📍 Location turned off"
+      "not_moving" -> "⏸ Pausing – no movement detected"
+      "sensor_issue" -> "⚠️ Step sensor issue"
+      else -> "Starting…"
     }
   }
 
   private fun buildSummaryLine(snapshot: WalkTrackingSnapshot): String {
     val distanceMiles = snapshot.distanceMeters / 1609.34
-    val base = "${formatElapsed(snapshot.elapsedSeconds)} • ${snapshot.steps} steps • ${
+    val base = "${formatElapsed(snapshot.elapsedSeconds)} elapsed · ${snapshot.steps} steps · ${
       String.format(Locale.US, "%.2f mi", distanceMiles)
     }"
     val reason = snapshot.statusReason?.takeIf {
       it.isNotBlank() &&
-        it != "Detecting movement..."
+        it != "Detecting movement…"
     }
-    return if (reason != null) "$base • $reason" else base
+    return if (reason != null) "$base · $reason" else base
   }
 
   private fun pendingIntentImmutableFlag(): Int {

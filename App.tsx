@@ -350,13 +350,21 @@ function App() {
     });
 
     void Notifications.getLastNotificationResponseAsync()
-      .then((response) => {
-        if (response) {
-          void handleNotificationResponse(response);
-          const clearLastResponse = (Notifications as any).clearLastNotificationResponseAsync;
-          if (typeof clearLastResponse === 'function') {
-            void clearLastResponse();
-          }
+      .then(async (response) => {
+        if (!response) return;
+        // Cross-session dedup: skip if we already handled this exact response in a prior session.
+        const responseKey =
+          `${response.notification.request.identifier}:${response.actionIdentifier}`;
+        try {
+          const storedKey = await authStorage.getLastHandledNotificationKey();
+          if (storedKey === responseKey) return;
+        } catch { /* proceed */ }
+        void handleNotificationResponse(response);
+        // Persist the key so a subsequent cold start doesn't replay this action.
+        void authStorage.saveLastHandledNotificationKey(responseKey);
+        const clearLastResponse = (Notifications as any).clearLastNotificationResponseAsync;
+        if (typeof clearLastResponse === 'function') {
+          void clearLastResponse();
         }
       })
       .catch((error) => {

@@ -53,6 +53,7 @@ class WalkTrackingSessionControllerTest {
         lastMotionAtMs = 18_000L,
         lastStepAtMs = 18_000L,
         lastGpsMotionAtMs = 18_000L,
+        lastAccelMotionAtMs = 18_000L,
         lastRawStepCounter = 480f,
         stepCounterAnchor = 400f,
       ),
@@ -65,6 +66,7 @@ class WalkTrackingSessionControllerTest {
     assertNull(resumed.lastMotionAtMs)
     assertNull(resumed.lastStepAtMs)
     assertNull(resumed.lastGpsMotionAtMs)
+    assertNull(resumed.lastAccelMotionAtMs)
     assertEquals(480f - 80f, resumed.stepCounterAnchor)
     assertEquals(WalkTrackingClassifier.fallbackBlockedUntilMs(27_000L), resumed.stepFallbackBlockedUntilMs)
   }

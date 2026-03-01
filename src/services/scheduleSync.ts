@@ -25,8 +25,12 @@ export async function syncNudgePlansForCurrentSchedule(
     const date = addDays(new Date(), i);
     const dateKey = format(date, 'yyyy-MM-dd');
     const existing = await plansRepo.getByDate(dateKey);
-    const active = existing.filter((plan) => plan.status === 'planned' || plan.status === 'notified');
-    for (const plan of active) {
+    const activeAutoPlans = existing.filter(
+      (plan) =>
+        (plan.status === 'planned' || plan.status === 'notified') &&
+        plan.reason !== 'manual',
+    );
+    for (const plan of activeAutoPlans) {
       await plansRepo.updateStatus(plan.id, 'cancelled');
     }
 
@@ -38,14 +42,16 @@ export async function syncNudgePlansForCurrentSchedule(
   if (isNotificationsSupported) {
     try {
       await notificationService.cancelWalkNudges();
-      if (rebuiltPlans.length > 0) {
-        await notificationService.scheduleMultipleNudges(rebuiltPlans, prefs);
+      const futurePlans = await plansRepo.getUpcomingPlans(100);
+      if (futurePlans.length > 0) {
+        await notificationService.scheduleMultipleNudges(futurePlans, prefs);
       }
     } catch (error) {
       // If scheduling failed after cancellation, retry once
       try {
-        if (rebuiltPlans.length > 0) {
-          await notificationService.scheduleMultipleNudges(rebuiltPlans, prefs);
+        const futurePlans = await plansRepo.getUpcomingPlans(100);
+        if (futurePlans.length > 0) {
+          await notificationService.scheduleMultipleNudges(futurePlans, prefs);
         }
       } catch {
         if (__DEV__) console.error('Failed to reschedule nudges after sync:', error);

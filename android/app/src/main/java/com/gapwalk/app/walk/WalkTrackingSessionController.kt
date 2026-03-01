@@ -225,6 +225,21 @@ object WalkTrackingSessionController {
     return refreshAndSave(context, next, timestampMs)
   }
 
+  fun applyAccelMotion(
+    context: Context,
+    nowMs: Long = System.currentTimeMillis(),
+  ): WalkTrackingSnapshot? {
+    val snapshot = WalkTrackingStorage.load(context) ?: return null
+    if (snapshot.paused) return null
+
+    val next = snapshot.copy(
+      lastAccelMotionAtMs = nowMs,
+      hadWalkingSignal = true,
+      lastMotionAtMs = nowMs,
+    )
+    return refreshAndSave(context, next, nowMs)
+  }
+
   fun updateStepSensorRegistration(
     context: Context,
     sensorDetected: Boolean,
@@ -271,6 +286,7 @@ object WalkTrackingSessionController {
       lastMotionAtMs = null,
       lastStepAtMs = null,
       lastGpsMotionAtMs = null,
+      lastAccelMotionAtMs = null,
       gpsWalkingSinceAtMs = null,
       stepFallbackBlockedUntilMs = WalkTrackingClassifier.fallbackBlockedUntilMs(nowMs),
       stepCounterAnchor = reanchorAfterResume(

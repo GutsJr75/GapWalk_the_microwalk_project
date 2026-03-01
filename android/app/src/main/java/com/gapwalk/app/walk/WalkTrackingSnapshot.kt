@@ -41,6 +41,7 @@ data class WalkTrackingSnapshot(
   val stepCounterDisabledForSession: Boolean = false,
   val stepCounterAnchor: Float? = null,
   val lastRawStepCounter: Float? = null,
+  val lastAccelMotionAtMs: Long? = null,
 ) {
   fun computedElapsedSeconds(nowMs: Long = System.currentTimeMillis()): Int {
     val currentPauseMs = pauseStartedAtMs?.let { nowMs - it } ?: 0L

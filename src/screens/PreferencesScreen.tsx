@@ -31,6 +31,7 @@ import { screenChrome } from '../theme/screenChrome';
 import { getThemePalette } from '../theme/palette';
 import { Preferences, DEFAULT_PREFERENCES, PreferredWalkingPeriod } from '../types';
 import { preferencesRepo } from '../data/repositories/preferencesRepo';
+import { timeUtils } from '../utils/time';
 import { syncNudgePlansForCurrentSchedule } from '../services/scheduleSync';
 import {
   SAVE_CONFIRM_ACTION,
@@ -1227,6 +1228,21 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
                   <Text variant="muted" style={styles.note}>No preferred period selected.</Text>
                 )}
                 {preferredPeriodsError && <Text variant="bodySmall" style={styles.errorText}>{preferredPeriodsError}</Text>}
+                {prefs.preferredWalkingPeriodsEnabled && prefs.preferredWalkingPeriods.some((p) => {
+                  const base = new Date();
+                  const startDate = timeUtils.parseTime(p.start, base);
+                  const endDate = timeUtils.parseTime(p.end, base);
+                  const qStartDate = timeUtils.parseTime(prefs.quietHoursStart, base);
+                  return (
+                    timeUtils.isInQuietHours(startDate, prefs.quietHoursStart, prefs.quietHoursEnd) ||
+                    timeUtils.isInQuietHours(endDate, prefs.quietHoursStart, prefs.quietHoursEnd) ||
+                    timeUtils.isInTimeRange(qStartDate, p.start, p.end)
+                  );
+                }) && (
+                  <Text variant="bodySmall" style={[styles.errorText, { marginTop: 4 }]}>
+                    ⚠️ One or more preferred periods overlap your quiet hours. Notifications won't fire during quiet hours even if they fall within a preferred period.
+                  </Text>
+                )}
               </View>
             </Section>
           </View>

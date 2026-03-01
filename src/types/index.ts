@@ -123,6 +123,7 @@ export interface ActiveWalkSnapshot {
   lastMotionAtMs?: number | null;
   lastStepAtMs?: number | null;
   lastGpsMotionAtMs?: number | null;
+  lastAccelMotionAtMs?: number | null;
   lastAcceptedLocationAtMs?: number | null;
 }
 

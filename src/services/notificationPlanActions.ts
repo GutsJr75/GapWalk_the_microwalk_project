@@ -126,7 +126,7 @@ export const notificationPlanActions = {
     }
 
     const prefs = await preferencesRepo.get();
-    if (prefs) {
+    if (prefs && plan.reason !== 'manual') {
       const minsToday = await sessionsRepo.getTodayMinutes();
       if (minsToday >= prefs.dailyTargetMinutes) {
         await plansRepo.updateStatus(plan.id, 'cancelled');
@@ -232,12 +232,17 @@ export const notificationPlanActions = {
 
     await plansRepo.save(altPlan);
 
-    await notificationService.scheduleAlternativeGapNotification(
+    const notificationId = await notificationService.scheduleAlternativeGapNotification(
       altPlan.id,
       effectiveGapStart,
       nextGap.end,
       altPlan.suggestedDurationMinutes
     );
+
+    if (!notificationId) {
+      await plansRepo.updateStatusWithReason(altPlan.id, 'cancelled', 'alt_gap_notification_failed');
+      return false;
+    }
 
     analyticsService.track('alt_gap_suggested', {
       originalPlanId: skippedPlanId,

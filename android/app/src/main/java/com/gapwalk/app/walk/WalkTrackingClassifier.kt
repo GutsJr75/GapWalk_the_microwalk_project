@@ -25,9 +25,10 @@ object WalkTrackingClassifier {
   fun classify(snapshot: WalkTrackingSnapshot, nowMs: Long = System.currentTimeMillis()): Classification {
     val recentStep = isRecent(snapshot.lastStepAtMs, nowMs)
     val recentGpsMotion = isRecent(snapshot.lastGpsMotionAtMs, nowMs)
+    val recentAccelMotion = isRecent(snapshot.lastAccelMotionAtMs, nowMs)
     val recentLocationSample = isRecent(snapshot.lastAcceptedLocationAtMs, nowMs)
     val hasUsableStepPath = snapshot.activityPermissionGranted && snapshot.stepCounterAvailable
-    val isWalking = recentStep || recentGpsMotion
+    val isWalking = recentStep || recentGpsMotion || recentAccelMotion
     val inCalibration = isInCalibrationWindow(snapshot, nowMs) && !snapshot.paused && !isWalking
     val noLocationAndNoStepPath = !snapshot.locationPermissionGranted && !hasUsableStepPath
 
@@ -64,12 +65,15 @@ object WalkTrackingClassifier {
 
     val motionConfidence = when {
       recentStep && recentGpsMotion -> "high"
+      recentStep && recentAccelMotion -> "high"
       recentStep || recentGpsMotion -> "medium"
+      recentAccelMotion -> "medium"
       else -> "low"
     }
 
     val statusReason = when {
       snapshot.stepSource == "gps_fallback" && snapshot.locationPermissionGranted -> "Using GPS step backup"
+      displayState == "walking" && recentAccelMotion && !recentStep && !recentGpsMotion -> "Detecting motion..."
       displayState == "walking" && recentGpsMotion && !recentStep && hasUsableStepPath -> "Step sensor waiting"
       displayState == "sensor_issue" && hasUsableStepPath -> "Step sensor not responding"
       displayState == "location_off" -> "Location needed"
