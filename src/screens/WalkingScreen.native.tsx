@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Animated, AppState, AppStateStatus, Platform, Pressable, StyleSheet, View } from 'react-native';
+import MapView, { Polyline } from 'react-native-maps';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { Ionicons } from '@expo/vector-icons';
 import * as Location from 'expo-location';
@@ -1238,8 +1239,31 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
       </View>
 
       <View style={styles.body}>
-        <View style={styles.heroCluster}>
-          <View style={styles.heroStatusRow}>
+        <View style={[styles.mapContainer, { backgroundColor: palette.bgSurface }]}>
+          {(fallbackState.locationPermissionGranted || routeCoords.length > 0) ? (
+            <MapView
+              style={StyleSheet.absoluteFillObject}
+              showsUserLocation={true}
+              followsUserLocation={true}
+              showsMyLocationButton={false}
+              showsCompass={false}
+              toolbarEnabled={false}
+              customMapStyle={themeMode === 'dark' ? darkMapStyle : []}
+            >
+              {routeCoords.length >= 2 && (
+                <Polyline
+                  coordinates={routeCoords}
+                  strokeColor={statusColor}
+                  strokeWidth={4}
+                  lineCap="round"
+                  lineJoin="round"
+                />
+              )}
+            </MapView>
+          ) : null}
+
+          <View style={styles.heroOverlay}>
+          <Animated.View style={[styles.heroStatusRow, { opacity: statusChangeAnim, transform: [{ scale: statusChangeAnim }] }]}>
             <View
               style={[
                 styles.statusPill,
