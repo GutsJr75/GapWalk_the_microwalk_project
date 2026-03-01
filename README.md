@@ -50,7 +50,7 @@ The app works by:
 
 - **Smart gap detection** — algorithm scores candidate windows by size, time of day, and proximity to meetings
 - **Multiple schedule sources** — ICS file import, Google Calendar OAuth, or manual weekly entry
-- **Live walk tracking** — GPS route map, hardware pedometer, distance, timer, pause/resume
+- **Live walk tracking** — live GPS map with polyline route trail, hardware pedometer, distance, timer, pause/resume
 - **Idle detection** — auto-pauses if you stop moving for more than 30 seconds
 - **Session recovery** — checkpoints every 30 seconds; recovers automatically if the app is force-killed mid-walk
 - **Granular preferences** — 9+ user-configurable settings (daily targets, quiet hours, preferred walking periods, strictness mode, and more)
@@ -109,6 +109,8 @@ GapWalk follows a **layered, offline-first architecture** split into a React Nat
 | **SQLite on-device**      | Fast local reads, no data leaves device by default                                       |
 | **Zustand (not Redux)**   | Minimal boilerplate; state slices map directly to UI concerns                            |
 | **Expo managed workflow** | Faster iteration; EAS builds for production                                              |
+| **react-native-maps**     | Already bundled — native Apple/Google map tiles, no extra SDK setup on iOS               |
+| **Route stored in SQLite**| GPS path persisted to `walk_routes` table (throttled ≥ 5 m) — enables future replay     |
 | **NestJS backend**        | Modular, decorator-based — mirrors domain model cleanly                                  |
 | **Prisma ORM**            | Type-safe queries, auto-generated migrations                                             |
 | **BullMQ workers**        | Async nudge generation, push sending, and stats aggregation decoupled from request cycle |
@@ -168,7 +170,7 @@ GapWalk/
 │   │   ├── ManualScheduleScreen   # Create/edit recurring weekly schedule
 │   │   ├── PreferencesScreen      # Configure 9+ user settings
 │   │   ├── DashboardScreen        # Main hub: stats, plans, achievements
-│   │   ├── WalkingScreen          # Active walk: map, pedometer, timer
+│   │   ├── WalkingScreen          # Active walk: live map + polyline, pedometer, timer
 │   │   ├── SettingsScreen         # Theme, language, data reset
 │   │   ├── ScheduleOverviewScreen # All planned walking opportunities
 │   │   └── WeeklyDataScreen       # Aggregated weekly statistics
@@ -179,20 +181,23 @@ GapWalk/
 │   │   ├── PlanItem, AchievementCard
 │   │   └── MapErrorBoundary       # Graceful map failure handling
 │   │
-│   ├── lib/
+│   ├── services/                  # Business logic & integrations
 │   │   ├── gapEngine.ts           # Core gap detection & nudge plan generation
 │   │   ├── notifications.ts       # Scheduling, permissions, action callbacks
 │   │   ├── scheduleSync.ts        # Rebuild plans after schedule changes
 │   │   ├── walkCheckpoint.ts      # Persist in-progress session every ~30s
+│   │   ├── androidWalkTracking.ts # Bridge to native Android walk service
 │   │   ├── permissions.ts         # Centralized permission request helpers
-│   │   ├── statsUtils.ts          # Streak, adherence, weekly aggregation
-│   │   ├── time.ts                # Quiet-hour checks and time window helpers
-│   │   ├── types.ts               # Core types and preference defaults
-│   │   └── repositories/          # SQLite data access layer (8 repositories)
+│   │   └── analytics.ts           # Local analytics event tracking
+│   │
+│   ├── data/
+│   │   ├── db.ts                  # SQLite init, table creation, migrations
+│   │   └── repositories/          # SQLite data access layer (9 repositories)
 │   │       ├── preferencesRepo
-│   │       ├── nudgePlanRepo
-│   │       ├── walkSessionRepo
-│   │       ├── busyEventRepo
+│   │       ├── plansRepo
+│   │       ├── sessionsRepo
+│   │       ├── routeRepo          # walk_routes — GPS coordinates per session
+│   │       ├── eventsRepo
 │   │       ├── manualScheduleRepo
 │   │       ├── analyticsRepo
 │   │       ├── achievementRepo
@@ -287,13 +292,38 @@ IntroScreen
 
 During an active walk (`WalkingScreen`), the app:
 
-- **GPS tracking** — polls `expo-location` for position updates; computes incremental distance using the Haversine formula and smooths noisy readings.
-- **Step counting** — subscribes to the device hardware pedometer via `expo-sensors`. Falls back to GPS-based step estimation if the sensor is unavailable.
-- **Timer** — counts elapsed time with pause/resume support.
-- **Idle detection** — automatically pauses if speed drops below 0.65 m/s for more than 30 consecutive seconds.
+- **GPS tracking** — polls `expo-location` for position updates at 1-second / 1-metre intervals; computes incremental distance using the Haversine formula and filters GPS noise (outliers > 80 m are discarded).
+- **Step counting** — subscribes to the device hardware pedometer via `expo-sensors`. Falls back to GPS-based step estimation (0.78 m stride) if the sensor is unavailable or stalled.
+- **Timer** — counts elapsed active time with pause/resume support.
+- **Idle detection** — automatically pauses if no walking signal is detected for more than 30 consecutive seconds.
 - **Session checkpointing** — serializes the current walk state to SQLite every ~30 seconds so the session survives a force-kill.
 - **Session recovery** — on next app launch, if an incomplete checkpoint exists, the app resumes and saves the session.
-- **Map rendering** — live dark-themed route with polyline overlay (requires Google Maps API key on Android; Apple Maps on iOS requires no key).
+- **Live map** — `react-native-maps` fills the upper hero area of the walking screen. A `Polyline` is drawn over accumulated GPS coordinates in real time. The map uses a custom dark style when the app is in dark mode; Apple Maps on iOS, Google Maps on Android.
+- **Route persistence** — GPS coordinates are written to the `walk_routes` SQLite table (throttled to every ≥ 5 m) and linked to the `walk_sessions` row via `session_id` for future post-walk route replay.
+
+### Walk Tracking Architecture
+
+```
+WalkingScreen.native.tsx
+│
+├── Location.watchPositionAsync (expo-location, 1s / 1m)
+│   ├── haversineMeters()        → accumulates distanceMeters
+│   ├── setRouteCoords()         → drives live MapView Polyline
+│   └── routeRepo.appendPoint()  → persists to walk_routes (≥5 m throttle)
+│
+├── Pedometer.watchAsync (expo-sensors)
+│   └── step count / GPS fallback estimation
+│
+└── saveWalkCheckpoint()         → walk_checkpoint table (crash recovery, ~30s)
+```
+
+**Tracking paths by platform:**
+
+| Platform | Walk tracking path | Route accumulation |
+|---|---|---|
+| iOS | JS fallback (`expo-location` + `expo-sensors`) | Yes — via GPS watcher |
+| Android (standard) | JS fallback | Yes — via GPS watcher |
+| Android (native service) | `androidWalkTracking` native module | Not yet — planned |
 
 ---
 
@@ -414,7 +444,25 @@ cp .env.example .env
 | `GOOGLE_MAPS_API_KEY`              | Optional | Same key — used at native build time |
 | `EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID` | Optional | Google Calendar OAuth integration    |
 
-Without a Maps API key, the walking screen falls back to a simplified UI. Walk tracking (GPS distance, steps, time) continues to work normally.
+#### Android Maps API key setup
+
+`react-native-maps` requires a Google Maps API key for tile rendering on Android. iOS uses Apple Maps and needs no key.
+
+1. Create a key at [Google Cloud Console](https://console.cloud.google.com/) → APIs & Services → Credentials.
+2. Enable **Maps SDK for Android** on the key.
+3. Add it to `app.json`:
+
+```json
+"android": {
+  "config": {
+    "googleMaps": {
+      "apiKey": "YOUR_GOOGLE_MAPS_API_KEY"
+    }
+  }
+}
+```
+
+Without a Maps API key, the walking screen map area shows a blank tile background on Android. Walk tracking (GPS distance, steps, time) and route recording continue to work normally regardless.
 
 ---
 
@@ -466,8 +514,11 @@ maestro test e2e/maestro/notification-actions.yaml
 **Notifications not appearing**
 Verify notification permission is granted, no quiet hours are active, and there are upcoming plans on the dashboard. Test on a physical device (simulators have limited notification support).
 
-**Map shows a fallback view**
-Set `EXPO_PUBLIC_GOOGLE_MAPS_API_KEY` in your `.env` and `GOOGLE_MAPS_API_KEY` in `android/gradle.properties`, then rebuild. On iOS, Apple Maps works without an API key.
+**Map is blank on Android**
+Add your Google Maps API key to `app.json` under `expo.android.config.googleMaps.apiKey`, then rebuild (`eas build` or `./gradlew assembleRelease`). On iOS, Apple Maps works without an API key.
+
+**Route polyline does not appear**
+The polyline requires location permission and at least 2 GPS points. Make sure location is granted and walk far enough from the starting point. The polyline draws only on the JS (fallback) tracking path; the Android native service path does not yet emit coordinates to the map.
 
 **Step count stays at 0**
 Grant Activity Recognition permission. If the device has no hardware step sensor, the app automatically uses GPS-based estimation (works outdoors with location permission).

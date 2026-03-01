@@ -164,6 +164,18 @@ const initializeTables = async () => {
     );
   `);
 
+  // Walk routes table — stores GPS coordinates for each session's path.
+  await db.execAsync(`
+    CREATE TABLE IF NOT EXISTS walk_routes (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      session_id  TEXT    NOT NULL,
+      latitude    REAL    NOT NULL,
+      longitude   REAL    NOT NULL,
+      recorded_at TEXT    NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_walk_routes_session_id ON walk_routes(session_id);
+  `);
+
   // Create indexes
   await db.execAsync(`
     CREATE INDEX IF NOT EXISTS idx_busy_events_start ON busy_events(start);
@@ -306,6 +318,7 @@ export const resetDatabase = async () => {
     DROP TABLE IF EXISTS crash_reports;
     DROP TABLE IF EXISTS achievements;
     DROP TABLE IF EXISTS walk_checkpoint;
+    DROP TABLE IF EXISTS walk_routes;
   `);
 
   await initializeTables();

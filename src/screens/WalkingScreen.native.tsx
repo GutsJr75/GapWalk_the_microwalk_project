@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Animated, AppState, AppStateStatus, Platform, Pressable, StyleSheet, View } from 'react-native';
+import MapView, { Polyline } from 'react-native-maps';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { Ionicons } from '@expo/vector-icons';
 import * as Location from 'expo-location';
@@ -19,6 +20,7 @@ import { androidWalkTracking } from '../services/androidWalkTracking';
 import { isNotificationsSupported, notificationService } from '../services/notifications';
 import { requestWalkTrackingPermissions, WalkTrackingPermissionResults } from '../services/permissions';
 import { saveWalkCheckpoint, clearWalkCheckpoint } from '../services/walkCheckpoint';
+import { routeRepo } from '../data/repositories/routeRepo';
 import { useAppStore } from '../store';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Walking'>;
@@ -210,6 +212,7 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
   const [fallbackState, setFallbackState] = useState<FallbackState>(createFallbackState);
   const [startCountdown, setStartCountdown] = useState<number | null>(null);
   const [sessionStarted, setSessionStarted] = useState(false);
+  const [routeCoords, setRouteCoords] = useState<Coord[]>([]);
 
   const lastAndroidSnapshotRef = useRef<ActiveWalkSnapshot | null>(activeWalkSnapshot);
   const allowLeaveRef = useRef(false);
@@ -221,6 +224,7 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
   const lastAcceptedLocationAtRef = useRef<number | null>(null);
   const lastMotionAtRef = useRef<number | null>(null);
   const lastCoordRef = useRef<{ coord: Coord; timestampMs: number } | null>(null);
+  const lastSavedCoordRef = useRef<Coord | null>(null);
   const lastPedometerEventAtRef = useRef<number | null>(null);
   const pedometerBaseRef = useRef<number | null>(null);
   const pedometerSubscriptionRef = useRef<{ remove: () => void } | null>(null);
@@ -642,11 +646,13 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
     const freshState = createFallbackState();
     fallbackStateRef.current = freshState;
     setFallbackState(freshState);
+    setRouteCoords([]);
     lastStepAtRef.current = null;
     lastGpsMotionAtRef.current = null;
     lastAcceptedLocationAtRef.current = null;
     lastMotionAtRef.current = null;
     lastCoordRef.current = null;
+    lastSavedCoordRef.current = null;
     lastPedometerEventAtRef.current = null;
     pedometerBaseRef.current = null;
 
@@ -679,6 +685,20 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
           const timestampMs = typeof location.timestamp === 'number' ? location.timestamp : Date.now();
           const previous = lastCoordRef.current;
           lastCoordRef.current = { coord: nextCoord, timestampMs };
+
+          // Accumulate route for map polyline
+          setRouteCoords((prev) => [...prev, nextCoord]);
+
+          // Throttled DB write: persist every ≥5 m to avoid excessive writes
+          const lastSaved = lastSavedCoordRef.current;
+          if (!lastSaved || haversineMeters(lastSaved, nextCoord) >= 5) {
+            lastSavedCoordRef.current = nextCoord;
+            void routeRepo.appendPoint(
+              fallbackStateRef.current.sessionId,
+              nextCoord.latitude,
+              nextCoord.longitude,
+            );
+          }
 
           updateFallbackState((current) => {
             let nextState = current;
@@ -1151,6 +1171,20 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
     },
   ] as const;
 
+  const darkMapStyle = [
+    { elementType: 'geometry', stylers: [{ color: '#1a2130' }] },
+    { elementType: 'labels.text.fill', stylers: [{ color: '#8b9bbd' }] },
+    { elementType: 'labels.text.stroke', stylers: [{ color: '#0d1520' }] },
+    { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#273348' }] },
+    { featureType: 'road', elementType: 'geometry.stroke', stylers: [{ color: '#1a2536' }] },
+    { featureType: 'road.highway', elementType: 'geometry', stylers: [{ color: '#3a4d6e' }] },
+    { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#0d1f35' }] },
+    { featureType: 'poi', elementType: 'geometry', stylers: [{ color: '#1e2d3e' }] },
+    { featureType: 'poi.park', elementType: 'geometry', stylers: [{ color: '#172a1f' }] },
+    { featureType: 'transit', elementType: 'geometry', stylers: [{ color: '#212f45' }] },
+    { featureType: 'administrative', elementType: 'geometry.stroke', stylers: [{ color: '#334155' }] },
+  ];
+
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: palette.bgApp }]} edges={['top', 'left', 'right']}>
       <View style={[styles.topBar, { backgroundColor: palette.bgSurface, borderBottomColor: palette.borderSoft }]}>
@@ -1158,25 +1192,48 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
       </View>
 
       <View style={styles.body}>
-        <View style={styles.heroCluster}>
-          <View style={styles.heroStatusRow}>
-            <View
-              style={[
-                styles.statusPill,
-                {
-                  backgroundColor: statusTint,
-                  borderColor: statusBorderColor,
-                },
-              ]}
+        <View style={[styles.mapContainer, { backgroundColor: palette.bgSurface }]}>
+          {fallbackState.locationPermissionGranted || routeCoords.length > 0 ? (
+            <MapView
+              style={StyleSheet.absoluteFillObject}
+              showsUserLocation={true}
+              followsUserLocation={true}
+              showsMyLocationButton={false}
+              showsCompass={false}
+              toolbarEnabled={false}
+              customMapStyle={themeMode === 'dark' ? darkMapStyle : []}
             >
-              <View style={styles.statusDotWrap}>
-                {(displayState === 'walking' || displayState === 'calibrating') && (
-                  <Animated.View
-                    style={[
-                      styles.statusDotPulse,
-                      {
-                        backgroundColor: statusColor,
-                        opacity: pulseOpacity,
+              {routeCoords.length >= 2 && (
+                <Polyline
+                  coordinates={routeCoords}
+                  strokeColor={statusColor}
+                  strokeWidth={4}
+                  lineCap="round"
+                  lineJoin="round"
+                />
+              )}
+            </MapView>
+          ) : null}
+
+          <View style={styles.heroOverlay}>
+            <View style={styles.heroStatusRow}>
+              <View
+                style={[
+                  styles.statusPill,
+                  {
+                    backgroundColor: statusTint,
+                    borderColor: statusBorderColor,
+                  },
+                ]}
+              >
+                <View style={styles.statusDotWrap}>
+                  {(displayState === 'walking' || displayState === 'calibrating') && (
+                    <Animated.View
+                      style={[
+                        styles.statusDotPulse,
+                        {
+                          backgroundColor: statusColor,
+                          opacity: pulseOpacity,
                         transform: [{ scale: pulseScale }],
                       },
                     ]}
@@ -1197,7 +1254,7 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
             style={[
               styles.heroCard,
               {
-                backgroundColor: palette.bgSurface,
+                backgroundColor: themeMode === 'dark' ? 'rgba(18,26,44,0.90)' : 'rgba(255,255,255,0.92)',
                 borderColor: statusBorderColor,
                 shadowColor: statusColor,
                 transform: [{ translateY: cardLift }],
@@ -1251,6 +1308,7 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
               </View>
             </View>
           )}
+          </View>
         </View>
 
         <View
@@ -1512,15 +1570,22 @@ const styles = StyleSheet.create({
   body: {
     flex: 1,
     justifyContent: 'space-between',
-    paddingHorizontal: 20,
-    paddingTop: 18,
+    paddingHorizontal: 12,
+    paddingTop: 12,
     paddingBottom: 8,
   },
-  heroCluster: {
+  mapContainer: {
     flex: 1,
-    justifyContent: 'center',
-    gap: 16,
-    paddingBottom: 18,
+    borderRadius: 24,
+    overflow: 'hidden',
+    marginBottom: 12,
+  },
+  heroOverlay: {
+    position: 'absolute',
+    top: 16,
+    left: 16,
+    right: 16,
+    gap: 12,
   },
   heroStatusRow: {
     flexDirection: 'row',
