@@ -415,18 +415,45 @@ All permissions are optional. The app degrades gracefully:
 
 ### Prerequisites
 
-- Node.js 18+
-- Expo CLI (`npm install -g expo`)
-- Android Studio (for Android) or Xcode 15+ (for iOS, Mac only)
+**Required system tools** (must be installed before `npm install`):
+
+- **Java 17+** — Required for Android builds
+  ```bash
+  # Ubuntu/Debian:
+  sudo apt-get install openjdk-17-jdk-headless
+  export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
+
+  # macOS:
+  brew install openjdk@17
+  ```
+
+- **Node.js 18+** — For npm and Expo CLI
+  ```bash
+  # Visit https://nodejs.org or use a version manager
+  ```
+
+- **Android Studio** (for Android) or **Xcode 15+** (for iOS, Mac only)
+  - Required for building native development builds
+
+The setup script will verify these are installed when you run `npm install`.
 
 ### Install & Run
 
 ```bash
+# Install dependencies (will check prerequisites first)
 npm install
-npm run android   # Android emulator / connected device
-npm run ios       # iOS simulator (Mac only)
-npm run start     # Expo dev server (scan QR with Expo Go)
+
+# Run on native platforms
+npm run android   # Android emulator / connected device (development build)
+npm run ios       # iOS simulator (Mac only, development build)
+npm run start     # Expo dev server (scan QR with Expo Go — limited features)
+
+# For E2E testing
+npm run android:e2e   # Android with test mode enabled
+npm run ios:e2e       # iOS with test mode enabled
 ```
+
+**Note:** Use `npm run android` or `npm run ios` for a full-featured development build with all features (OAuth, notifications, database). Expo Go (`npm run start`) has limitations with OAuth and push notifications.
 
 ---
 
