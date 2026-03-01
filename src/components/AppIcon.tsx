@@ -14,6 +14,7 @@ export type AppIconName =
   | 'person'
   | 'trophy'
   | 'trash'
+  | 'close'
   | 'chevronRight'
   | 'chevronDown';
 
@@ -129,6 +130,12 @@ export const AppIcon: React.FC<AppIconProps> = ({
           <Path d="M7 7L8 19H16L17 7" {...common} />
           <Path d="M10 11V16" {...common} />
           <Path d="M14 11V16" {...common} />
+        </>
+      )}
+      {name === 'close' && (
+        <>
+          <Path d="M18 6L6 18" {...common} />
+          <Path d="M6 6L18 18" {...common} />
         </>
       )}
       {name === 'chevronRight' && <Path d="M10 6L16 12L10 18" {...common} />}

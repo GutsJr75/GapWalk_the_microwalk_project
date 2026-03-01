@@ -746,7 +746,7 @@ export const DashboardScreen: React.FC<Props> = ({ navigation, route }) => {
     return () => clearTimeout(timer);
   }, [route.params?.showPostWalkSummary, navigation, postWalkGlowAnim]);
 
-  const navigateToManageSchedule = () => { closeMenu(); navigation.navigate('ScheduleOverview'); };
+  const navigateToManageSchedule = () => { closeMenu(); navigation.navigate('ManualSchedule', { manageMode: true }); };
   const navigateToProfile = () => { closeMenu(); navigation.navigate('Profile'); };
   const navigateToPreferences = () => { closeMenu(); navigation.push('Preferences', { manageMode: true }); };
   const navigateToSettings = () => { closeMenu(); navigation.navigate('Settings'); };

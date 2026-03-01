@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Animated, AppState, AppStateStatus, Platform, Pressable, StyleSheet, View } from 'react-native';
+import { Animated, AppState, AppStateStatus, Easing, Platform, Pressable, StyleSheet, View } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { Ionicons } from '@expo/vector-icons';
 import * as Location from 'expo-location';
@@ -122,12 +122,6 @@ const displayDetail = (
   return statusReason ?? 'Take a few steps so GapWalk can calibrate your live movement signal.';
 };
 
-const confidenceLabel = (confidence: WalkMotionConfidence): string => {
-  if (confidence === 'high') return 'High confidence';
-  if (confidence === 'medium') return 'Medium confidence';
-  return 'Calibrating';
-};
-
 const sensorHealthLabel = (prefix: string, health: SensorHealth): string => {
   if (health === 'active') return `${prefix} live`;
   if (health === 'stale') return `${prefix} waiting`;
@@ -236,6 +230,12 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
     new Animated.Value(0),
   ]).current;
   const completionDismissLockedRef = useRef(false);
+  const walkRhythmAnim = useRef(new Animated.Value(0)).current;
+  const stepScaleAnim = useRef(new Animated.Value(1)).current;
+  const distanceScaleAnim = useRef(new Animated.Value(1)).current;
+  const statusChangeAnim = useRef(new Animated.Value(1)).current;
+  const prevStepsRef = useRef(0);
+  const prevDistanceRef = useRef(0);
 
   useEffect(() => {
     fallbackStateRef.current = fallbackState;
@@ -356,6 +356,41 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
     animation.start();
     return () => animation.stop();
   }, [displayState, statusPulseAnim]);
+
+  useEffect(() => {
+    walkRhythmAnim.stopAnimation();
+    walkRhythmAnim.setValue(0);
+    if (displayState !== 'walking') return undefined;
+    const anim = Animated.loop(
+      Animated.timing(walkRhythmAnim, {
+        toValue: 1,
+        duration: 900,
+        easing: Easing.linear,
+        useNativeDriver: true,
+      }),
+    );
+    anim.start();
+    return () => anim.stop();
+  }, [displayState, walkRhythmAnim]);
+
+  useEffect(() => {
+    if (steps === prevStepsRef.current || steps === 0) return;
+    prevStepsRef.current = steps;
+    stepScaleAnim.setValue(1.22);
+    Animated.spring(stepScaleAnim, { toValue: 1, tension: 280, friction: 9, useNativeDriver: true }).start();
+  }, [steps, stepScaleAnim]);
+
+  useEffect(() => {
+    if (distanceMeters === prevDistanceRef.current || distanceMeters === 0) return;
+    prevDistanceRef.current = distanceMeters;
+    distanceScaleAnim.setValue(1.16);
+    Animated.spring(distanceScaleAnim, { toValue: 1, tension: 280, friction: 9, useNativeDriver: true }).start();
+  }, [distanceMeters, distanceScaleAnim]);
+
+  useEffect(() => {
+    statusChangeAnim.setValue(0.88);
+    Animated.spring(statusChangeAnim, { toValue: 1, tension: 220, friction: 8, useNativeDriver: true }).start();
+  }, [displayState, statusChangeAnim]);
 
   useEffect(() => {
     if (!showCompletion) return;
@@ -1127,6 +1162,18 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
     inputRange: [0, 1],
     outputRange: [0, displayState === 'walking' ? -4 : -2],
   });
+  const rhythmDot0Opacity = walkRhythmAnim.interpolate({
+    inputRange: [0, 0.33, 0.67, 1],
+    outputRange: [1, 0.2, 0.2, 1],
+  });
+  const rhythmDot1Opacity = walkRhythmAnim.interpolate({
+    inputRange: [0, 0.33, 0.67, 1],
+    outputRange: [0.2, 1, 0.2, 0.2],
+  });
+  const rhythmDot2Opacity = walkRhythmAnim.interpolate({
+    inputRange: [0, 0.33, 0.67, 1],
+    outputRange: [0.2, 0.2, 1, 0.2],
+  });
   const completionSavedForLater = completionKind === 'saved_later';
   const completionAccent = completionSavedForLater ? '#38bdf8' : palette.accentPrimary;
   const completionTitle = completionSavedForLater ? 'Progress saved for later' : 'Walk recorded';
@@ -1159,7 +1206,7 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
 
       <View style={styles.body}>
         <View style={styles.heroCluster}>
-          <View style={styles.heroStatusRow}>
+          <Animated.View style={[styles.heroStatusRow, { transform: [{ scale: statusChangeAnim }] }]}>
             <View
               style={[
                 styles.statusPill,
@@ -1184,14 +1231,45 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
                 )}
                 <View style={[styles.statusDot, { backgroundColor: statusColor }]} />
               </View>
-              <Text variant="bodySmall" style={styles.statusPillText}>{heroStatusLabel}</Text>
+              <Ionicons
+                name={
+                  displayState === 'walking' ? 'walk' :
+                  displayState === 'paused' ? 'pause-circle-outline' :
+                  displayState === 'not_moving' ? 'body-outline' :
+                  displayState === 'location_off' ? 'location-outline' :
+                  'radio-outline'
+                }
+                size={16}
+                color={statusColor}
+              />
+              <Text variant="body" style={[styles.statusPillText, { color: statusColor }]}>{heroStatusLabel}</Text>
             </View>
 
             <View style={[styles.confidencePill, { backgroundColor: palette.bgSurfaceElevated, borderColor: palette.borderSoft }]}>
-              <Ionicons name="pulse-outline" size={14} color={statusColor} />
-              <Text variant="bodySmall" color={palette.textMuted}>{confidenceLabel(motionConfidence)}</Text>
+              <View style={styles.confidenceBars}>
+                {([8, 12, 16] as const).map((height, i) => {
+                  const activeBars = motionConfidence === 'high' ? 3 : motionConfidence === 'medium' ? 2 : 1;
+                  return (
+                    <View
+                      key={i}
+                      style={[
+                        styles.confidenceBar,
+                        {
+                          height,
+                          backgroundColor: i < activeBars
+                            ? statusColor
+                            : (themeMode === 'dark' ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.10)'),
+                        },
+                      ]}
+                    />
+                  );
+                })}
+              </View>
+              <Text variant="bodySmall" color={palette.textMuted}>
+                {motionConfidence === 'high' ? 'High' : motionConfidence === 'medium' ? 'Med' : 'Low'}
+              </Text>
             </View>
-          </View>
+          </Animated.View>
 
           <Animated.View
             style={[
@@ -1214,6 +1292,14 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
             <Text variant="body" style={styles.heroDetail}>
               {heroStatusDetail}
             </Text>
+
+            {displayState === 'walking' && (
+              <View style={styles.rhythmRow}>
+                {([rhythmDot0Opacity, rhythmDot1Opacity, rhythmDot2Opacity] as const).map((opacity, i) => (
+                  <Animated.View key={i} style={[styles.rhythmDot, { backgroundColor: statusColor, opacity }]} />
+                ))}
+              </View>
+            )}
 
             <View style={styles.heroMetaRow}>
               <View style={[styles.metaPill, { backgroundColor: palette.bgSurfaceElevated, borderColor: palette.borderSoft }]}>
@@ -1268,11 +1354,15 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
           <View style={styles.metricRow}>
             <View style={[styles.metricCard, { backgroundColor: palette.bgSurface, borderColor: palette.borderSoft }]}>
               <Text variant="body">Distance</Text>
-              <Text variant="heading" style={styles.metricValue}>{formatMiles(distanceMeters)}</Text>
+              <Animated.View style={{ transform: [{ scale: distanceScaleAnim }] }}>
+                <Text variant="heading" style={styles.metricValue}>{formatMiles(distanceMeters)}</Text>
+              </Animated.View>
             </View>
             <View style={[styles.metricCard, { backgroundColor: palette.bgSurface, borderColor: palette.borderSoft }]}>
               <Text variant="body">Steps</Text>
-              <Text variant="heading" style={styles.metricValue}>{steps.toLocaleString()}</Text>
+              <Animated.View style={{ transform: [{ scale: stepScaleAnim }] }}>
+                <Text variant="heading" style={styles.metricValue}>{steps.toLocaleString()}</Text>
+              </Animated.View>
             </View>
           </View>
 
@@ -1620,6 +1710,28 @@ const styles = StyleSheet.create({
   },
   warningTitle: {
     fontWeight: theme.fontWeight.semibold,
+  },
+  rhythmRow: {
+    flexDirection: 'row',
+    gap: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 4,
+  },
+  rhythmDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+  },
+  confidenceBars: {
+    flexDirection: 'row',
+    gap: 3,
+    alignItems: 'flex-end',
+    marginRight: 2,
+  },
+  confidenceBar: {
+    width: 4,
+    borderRadius: 2,
   },
   dock: {
     borderRadius: 28,

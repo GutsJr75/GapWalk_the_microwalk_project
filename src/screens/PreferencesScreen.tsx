@@ -331,7 +331,16 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
     toPreferredForm(DEFAULT_PREFERRED_PERIOD),
   ]);
   const allowNextBeforeRemoveRef = useRef(false);
+  const [viewOnlyTappedField, setViewOnlyTappedField] = useState<string | null>(null);
   const isManageViewOnly = manageMode && manageScreenMode === 'view';
+
+  const handleViewOnlyFieldTap = (fieldId: string) => {
+    setViewOnlyTappedField(fieldId);
+    setTimeout(
+      () => setViewOnlyTappedField((prev) => (prev === fieldId ? null : prev)),
+      2500,
+    );
+  };
   const palette = getThemePalette(themeMode);
   const isDark = themeMode === 'dark';
   const themedInput = {
@@ -881,6 +890,14 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
               onBack={manageMode ? handleManageBackToOptions : undefined}
             />
 
+            {isManageViewOnly && (
+              <View style={styles.viewOnlyBadge}>
+                <Text variant="bodySmall" style={[styles.viewOnlyBadgeText, { color: isDark ? '#fbbf24' : '#92400e' }]}>
+                  View Only
+                </Text>
+              </View>
+            )}
+
             {!manageMode && !hasSeenAllSections && (
               <View style={styles.reviewGateWarning}>
                 <Text variant="body" style={styles.reviewGateWarningTitle}>Review all sections to continue</Text>
@@ -915,7 +932,13 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
                     placeholderTextColor={palette.textMuted}
                   />
                   <Text variant="muted" style={styles.unit}>min</Text>
+                  {isManageViewOnly && (
+                    <Pressable style={StyleSheet.absoluteFillObject} onPress={() => handleViewOnlyFieldTap('dailyTargetMinutes')} />
+                  )}
                 </View>
+                {isManageViewOnly && viewOnlyTappedField === 'dailyTargetMinutes' && (
+                  <Text variant="bodySmall" style={styles.viewOnlyFieldHint}>Tap Update to start editing.</Text>
+                )}
                 {dailyTargetError && <Text variant="bodySmall" style={styles.errorText}>{dailyTargetError}</Text>}
               </View>
 
@@ -939,7 +962,13 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
                     placeholderTextColor={palette.textMuted}
                   />
                   <Text variant="muted" style={styles.unit}>min</Text>
+                  {isManageViewOnly && (
+                    <Pressable style={StyleSheet.absoluteFillObject} onPress={() => handleViewOnlyFieldTap('bufferMinutes')} />
+                  )}
                 </View>
+                {isManageViewOnly && viewOnlyTappedField === 'bufferMinutes' && (
+                  <Text variant="bodySmall" style={styles.viewOnlyFieldHint}>Tap Update to start editing.</Text>
+                )}
                 {bufferError && <Text variant="bodySmall" style={styles.errorText}>{bufferError}</Text>}
               </View>
 
@@ -963,7 +992,13 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
                     placeholderTextColor={palette.textMuted}
                   />
                   <Text variant="muted" style={styles.unit}>per day</Text>
+                  {isManageViewOnly && (
+                    <Pressable style={StyleSheet.absoluteFillObject} onPress={() => handleViewOnlyFieldTap('notificationCountPerDay')} />
+                  )}
                 </View>
+                {isManageViewOnly && viewOnlyTappedField === 'notificationCountPerDay' && (
+                  <Text variant="bodySmall" style={styles.viewOnlyFieldHint}>Tap Update to start editing.</Text>
+                )}
                 {notifError && <Text variant="bodySmall" style={styles.errorText}>{notifError}</Text>}
               </View>
             </Section>
@@ -1022,7 +1057,13 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
                     placeholderTextColor={palette.textMuted}
                   />
                   <Text variant="muted" style={styles.unit}>min</Text>
+                  {isManageViewOnly && (
+                    <Pressable style={StyleSheet.absoluteFillObject} onPress={() => handleViewOnlyFieldTap('notificationMinGapMinutes')} />
+                  )}
                 </View>
+                {isManageViewOnly && viewOnlyTappedField === 'notificationMinGapMinutes' && (
+                  <Text variant="bodySmall" style={styles.viewOnlyFieldHint}>Tap Update to start editing.</Text>
+                )}
                 {reminderGapError && <Text variant="bodySmall" style={styles.errorText}>{reminderGapError}</Text>}
               </View>
 
@@ -1155,7 +1196,13 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
                         placeholderTextColor={palette.textMuted}
                       />
                       <Text variant="muted" style={styles.unit}>steps</Text>
+                      {isManageViewOnly && (
+                        <Pressable style={StyleSheet.absoluteFillObject} onPress={() => handleViewOnlyFieldTap('stepGoal')} />
+                      )}
                     </View>
+                    {isManageViewOnly && viewOnlyTappedField === 'stepGoal' && (
+                      <Text variant="bodySmall" style={styles.viewOnlyFieldHint}>Tap Update to start editing.</Text>
+                    )}
                   </>
                 ) : (
                   <Text variant="muted" style={styles.note}>Step goal is currently off.</Text>
@@ -1788,4 +1835,25 @@ const styles = StyleSheet.create({
 
   /* validation */
   errorText: { color: theme.colors.error, marginTop: 6, fontSize: theme.fontSize.sm, lineHeight: 18 },
+
+  viewOnlyFieldHint: {
+    color: theme.colors.warning,
+    marginTop: 5,
+    fontSize: theme.fontSize.sm,
+    lineHeight: 18,
+  },
+  viewOnlyBadge: {
+    alignSelf: 'flex-start',
+    marginBottom: 8,
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: theme.borderRadius.sm,
+    backgroundColor: 'rgba(234,151,0,0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(234,151,0,0.28)',
+  },
+  viewOnlyBadgeText: {
+    fontWeight: theme.fontWeight.medium,
+    fontSize: 11,
+  },
 });

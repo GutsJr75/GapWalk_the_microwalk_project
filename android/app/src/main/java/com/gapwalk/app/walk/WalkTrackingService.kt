@@ -288,7 +288,7 @@ class WalkTrackingService : Service(), SensorEventListener {
 
     val primaryLine = primaryStatusLine(snapshot)
     val summaryLine = buildSummaryLine(snapshot)
-    val notifTitle = if (snapshot.paused) "GapWalk – Paused ⏸" else "GapWalk – Walking 🚶"
+    val notifTitle = if (snapshot.paused) "Walk paused" else "Walk in progress"
     val builder = NotificationCompat.Builder(this, CHANNEL_ID)
       .setSmallIcon(R.drawable.ic_notification_walk)
       .setColor(ContextCompat.getColor(this, R.color.gapwalk_accent))
@@ -308,7 +308,7 @@ class WalkTrackingService : Service(), SensorEventListener {
         if (snapshot.paused) "Resume" else "Pause",
         actionIntent,
       )
-      .addAction(0, "End", endIntent)
+      .addAction(0, "End walk", endIntent)
 
     if (snapshot.paused) {
       builder
@@ -358,26 +358,21 @@ class WalkTrackingService : Service(), SensorEventListener {
   }
 
   private fun primaryStatusLine(snapshot: WalkTrackingSnapshot): String {
-    return when (snapshot.displayState) {
-      "walking" -> "🚶 Walking"
-      "paused" -> "⏸ Paused"
-      "location_off" -> "📍 Location turned off"
-      "not_moving" -> "⏸ Pausing – no movement detected"
-      "sensor_issue" -> "⚠️ Step sensor issue"
-      else -> "Starting…"
-    }
+    val distanceMiles = snapshot.distanceMeters / 1609.34
+    val dist = String.format(Locale.US, "%.2f mi", distanceMiles)
+    val steps = String.format(Locale.US, "%,d", snapshot.steps)
+    return "$steps steps · $dist"
   }
 
   private fun buildSummaryLine(snapshot: WalkTrackingSnapshot): String {
     val distanceMiles = snapshot.distanceMeters / 1609.34
-    val base = "${formatElapsed(snapshot.elapsedSeconds)} elapsed · ${snapshot.steps} steps · ${
-      String.format(Locale.US, "%.2f mi", distanceMiles)
-    }"
+    val dist = String.format(Locale.US, "%.2f mi", distanceMiles)
+    val steps = String.format(Locale.US, "%,d", snapshot.steps)
+    val base = "$steps steps · $dist"
     val reason = snapshot.statusReason?.takeIf {
-      it.isNotBlank() &&
-        it != "Detecting movement…"
+      it.isNotBlank() && it != "Detecting movement…"
     }
-    return if (reason != null) "$base · $reason" else base
+    return if (reason != null) "$base\n$reason" else base
   }
 
   private fun pendingIntentImmutableFlag(): Int {

@@ -39,7 +39,6 @@ import { ManualScheduleScreen } from './src/screens/ManualScheduleScreen';
 import { PreferencesScreen } from './src/screens/PreferencesScreen';
 import { DashboardScreen } from './src/screens/DashboardScreen';
 import { WalkingScreen } from './src/screens/WalkingScreen';
-import { ScheduleOverviewScreen } from './src/screens/ScheduleOverviewScreen';
 import { SettingsScreen } from './src/screens/SettingsScreen';
 import { WeeklyDataScreen } from './src/screens/WeeklyDataScreen';
 import { AchievementsScreen } from './src/screens/AchievementsScreen';
@@ -72,7 +71,6 @@ export type RootStackParamList = {
     | undefined;
   Dashboard: { openMenu?: boolean; showPostWalkSummary?: boolean } | undefined;
   Walking: { planId?: string; prompt?: 'end_confirmation' } | undefined;
-  ScheduleOverview: undefined;
   Settings: undefined;
   WeeklyData: undefined;
   Achievements:
@@ -680,7 +678,6 @@ function App() {
               <Stack.Screen name="Preferences" component={PreferencesScreen} />
               <Stack.Screen name="Dashboard" component={DashboardScreen} options={{ animation: 'fade_from_bottom' }} />
               <Stack.Screen name="Walking" component={WalkingScreen} options={{ animation: 'slide_from_bottom' }} />
-              <Stack.Screen name="ScheduleOverview" component={ScheduleOverviewScreen} />
               <Stack.Screen name="Settings" component={SettingsScreen} />
               <Stack.Screen name="WeeklyData" component={WeeklyDataScreen} />
               <Stack.Screen name="Achievements" component={AchievementsScreen} />
