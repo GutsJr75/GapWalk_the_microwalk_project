@@ -63,7 +63,7 @@ export const ScheduleSetupScreen: React.FC<Props> = ({ navigation, route }) => {
       navigation.goBack();
       return;
     }
-    navigation.navigate(manageMode ? 'ScheduleOverview' : 'Dashboard');
+    navigation.navigate('Dashboard', { openMenu: true });
   };
 
   const navigateToManualSchedule = async () => {

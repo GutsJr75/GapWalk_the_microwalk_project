@@ -25,7 +25,6 @@ import * as DocumentPicker from 'expo-document-picker';
 import { RootStackParamList } from '../../App';
 import { Text } from '../components/Text';
 import { Button } from '../components/Button';
-import { Card } from '../components/Card';
 import { Modal as AppModal } from '../components/Modal';
 import { ScreenHeader } from '../components/ScreenHeader';
 import { TwoActionBar } from '../components/TwoActionBar';
@@ -580,6 +579,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
   const [slotFeedback, setSlotFeedback] = useState<{ dayIndex: number; slotIndex: number } | null>(null);
   const [clearArmedDay, setClearArmedDay] = useState<number | null>(null);
   const [poppingEventKey, setPoppingEventKey] = useState<string | null>(null);
+  const [viewOnlyEventInfo, setViewOnlyEventInfo] = useState<{ event: TemplateEvent; dayIndex: number } | null>(null);
   const [editorScrollEnabled, setEditorScrollEnabled] = useState(true);
   const { width: winWidth, height: winHeight } = useWindowDimensions();
   const allowNextBeforeRemoveRef = useRef(false);
@@ -598,7 +598,8 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
   const slotFeedbackScaleAnim = useRef(new Animated.Value(0.92)).current;
   const slotFeedbackOpacityAnim = useRef(new Animated.Value(0)).current;
   const eventPopAnim = useRef(new Animated.Value(0)).current;
-  const weekHeaderReleaseHandledRef = useRef(false);
+  const closeInfoBtnScale = useRef(new Animated.Value(1)).current;
+  const closeInfoBtnRotate = useRef(new Animated.Value(0)).current;
   const { scheduleSource, setScheduleSource, setUpcomingPlans, preferences, themeMode } = useAppStore();
 
   const scrollGridToNow = useCallback((animated = true) => {
@@ -671,12 +672,15 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
     }).start();
   }, [appearAnim]);
 
+  const scheduleSourceRef = useRef(scheduleSource);
+  scheduleSourceRef.current = scheduleSource;
+
   useFocusEffect(
     useCallback(() => {
       let active = true;
       const loadSavedTemplate = async () => {
         const resolveSourceState = async (): Promise<{ type: 'manual' | 'import'; filename?: string }> => {
-          const src = scheduleSource ?? (await scheduleSourceRepo.get());
+          const src = scheduleSourceRef.current ?? (await scheduleSourceRepo.get());
           if (!src) {
             return {
               type: routeImportedFilename ? 'import' : 'manual',
@@ -774,7 +778,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
       return () => {
         active = false;
       };
-    }, [prefillTemplate, requireSaveBeforeContinue, routeImportedFilename, scheduleSource, startWithEmpty])
+    }, [prefillTemplate, requireSaveBeforeContinue, routeImportedFilename, startWithEmpty])
   );
 
   const pickAndParseIcsTemplate = async (): Promise<{
@@ -1280,7 +1284,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
   };
 
   const handleManageBackToOptions = () => {
-    navigation.navigate('ScheduleOverview');
+    navigation.navigate('Dashboard', { openMenu: true });
   };
 
   const handleManageCancelEdit = () => {
@@ -2043,6 +2047,10 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
         selectedGridTarget?.kind === 'event' &&
         selectedGridTarget.dayIndex === dayIndex &&
         selectedGridTarget.eventKey === eventAtSlot.key;
+      if (isSecondTapOnSameEvent && isManageViewOnly) {
+        setViewOnlyEventInfo({ event: eventAtSlot.event, dayIndex: eventAtSlot.sourceDayIndex });
+        return;
+      }
       if (isSecondTapOnSameEvent && !isManageViewOnly) {
         setPoppingEventKey(eventAtSlot.key);
         eventPopAnim.stopAnimation();
@@ -2183,8 +2191,6 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
   const weekGridWidth = dayColumnWidth * DAY_COLUMNS;
   const gridTrackWidth = TIME_COL_WIDTH + weekGridWidth;
   const weekHeaderPagerWidth = weekGridWidth;
-  const weekHeaderSnapThreshold = weekHeaderPagerWidth * 0.28;
-
   const palette = getThemePalette(themeMode);
   const isDark = themeMode === 'dark';
   const mintTextOnTint = palette.accentOnTint;
@@ -2216,7 +2222,6 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
     ? `ICS file: ${importedFilename ?? 'calendar import'}`
     : 'Source: Manual schedule';
   const manageSourceIcon = sourceType === 'import' ? 'calendar' : 'adjust';
-  const sourceChoiceLabel = sheetSourceType === 'manual' ? 'Manual Entry' : 'Import calendar file (.ics)';
   const selectedDayVisibleCount = selectedDay !== null ? (visibleEntriesByDay[selectedDay] ?? []).length : 0;
   const clearDayLabel = selectedDay === null ? 'Clear day' : `Clear ${DAY_TAB_LABELS[selectedDay]}`;
   const headerWeekPages = useMemo(() => {
@@ -2245,35 +2250,12 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
     });
   }, [centerWeekHeaderPager]);
 
-  const finalizeWeekHeaderSwipe = useCallback((offsetX: number) => {
-    const delta = offsetX - weekHeaderPagerWidth;
-    if (Math.abs(delta) < weekHeaderSnapThreshold) {
-      centerWeekHeaderPager(true);
-      return;
-    }
-    commitWeekShift(delta > 0 ? 1 : -1);
-  }, [centerWeekHeaderPager, commitWeekShift, weekHeaderPagerWidth, weekHeaderSnapThreshold]);
-
-  const handleWeekHeaderScrollBeginDrag = useCallback(() => {
-    weekHeaderReleaseHandledRef.current = false;
-  }, []);
-
-  const handleWeekHeaderScrollEndDrag = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
-    const velocityX = event.nativeEvent.velocity?.x ?? 0;
-    if (Math.abs(velocityX) > 0.05 || weekHeaderReleaseHandledRef.current) {
-      return;
-    }
-    weekHeaderReleaseHandledRef.current = true;
-    finalizeWeekHeaderSwipe(event.nativeEvent.contentOffset.x);
-  }, [finalizeWeekHeaderSwipe]);
-
   const handleWeekHeaderMomentumScrollEnd = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
-    if (weekHeaderReleaseHandledRef.current) {
-      return;
-    }
-    weekHeaderReleaseHandledRef.current = true;
-    finalizeWeekHeaderSwipe(event.nativeEvent.contentOffset.x);
-  }, [finalizeWeekHeaderSwipe]);
+    const x = event.nativeEvent.contentOffset.x;
+    const page = Math.round(x / weekHeaderPagerWidth);
+    if (page === 0) commitWeekShift(-1);
+    else if (page === 2) commitWeekShift(1);
+  }, [commitWeekShift, weekHeaderPagerWidth]);
 
   const handleWeekHeaderAccessibilityAction = useCallback((event: AccessibilityActionEvent) => {
     if (event.nativeEvent.actionName === 'increment') {
@@ -2337,6 +2319,13 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
           title={manageMode ? 'Manage schedule' : 'Set up your schedule'}
           style={[styles.compactScreenHeader, manageMode && styles.manageHeaderTitle]}
         />
+        {manageMode && isManageViewOnly ? (
+          <View style={styles.viewOnlyBadge}>
+            <Text variant="bodySmall" style={[styles.viewOnlyBadgeText, { color: isDark ? '#fbbf24' : '#92400e' }]}>
+              View Only
+            </Text>
+          </View>
+        ) : null}
         {!manageMode && sourceType === 'import' && importedFilename ? (
           <View style={styles.icsBadge}>
             <Text variant="bodySmall" style={[styles.icsBadgeText, { color: mintTextOnTint }]} numberOfLines={1}>
@@ -2412,7 +2401,6 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
       <View style={[styles.weekHeaderWrap, { borderBottomColor: gridLineSoft, backgroundColor: palette.bgApp }]}>
         <View style={styles.weekHeaderTrackRow}>
           <View
-            pointerEvents="none"
             style={[
               styles.weekHeaderMonthRail,
               {
@@ -2422,27 +2410,42 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
               },
             ]}
           >
+            <Pressable
+              onPress={() => commitWeekShift(-1)}
+              style={styles.weekHeaderNavBtn}
+              accessibilityLabel="Previous week"
+              hitSlop={6}
+            >
+              <View style={{ transform: [{ rotate: '180deg' }] }}>
+                <AppIcon name="chevronDown" size={11} color={palette.accentPrimary} />
+              </View>
+            </Pressable>
             <Text variant="bodySmall" style={[styles.weekHeaderMonthRailMonthText, { color: palette.accentPrimary }]}>
               {activeWeekMonthLabel}
             </Text>
             <Text variant="bodySmall" style={[styles.weekHeaderMonthRailYearText, { color: palette.accentPrimary }]}>
               {activeWeekYearLabel}
             </Text>
+            <Pressable
+              onPress={() => commitWeekShift(1)}
+              style={styles.weekHeaderNavBtn}
+              accessibilityLabel="Next week"
+              hitSlop={6}
+            >
+              <AppIcon name="chevronDown" size={11} color={palette.accentPrimary} />
+            </Pressable>
           </View>
           <ScrollView
             ref={weekHeaderPagerRef}
             horizontal
+            pagingEnabled
             bounces={false}
             directionalLockEnabled
-            disableIntervalMomentum
-            decelerationRate="fast"
             showsHorizontalScrollIndicator={false}
             scrollEventThrottle={16}
             contentOffset={{ x: weekHeaderPagerWidth, y: 0 }}
             style={[styles.weekHeaderPager, { width: weekHeaderPagerWidth }]}
             contentContainerStyle={styles.weekHeaderPagerContent}
-            onScrollBeginDrag={handleWeekHeaderScrollBeginDrag}
-            onScrollEndDrag={handleWeekHeaderScrollEndDrag}
             onMomentumScrollEnd={handleWeekHeaderMomentumScrollEnd}
             accessibilityRole="adjustable"
             accessibilityLabel="Weekly schedule header"
@@ -2705,8 +2708,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
                               selectedGridTarget.dayIndex === dayIndex &&
                               selectedGridTarget.eventKey === slice.key;
                             const fullEventRange = `${formatTime12(slice.event.startTime)}-\n${formatTime12(slice.event.endTime)}`;
-                            const compactEventRange = `${slice.event.startTime}-${slice.event.endTime}`;
-                            const timeStr = isCompact ? compactEventRange : fullEventRange;
+                            const timeStr = fullEventRange;
                             return (
                               <View
                                 key={slice.key}
@@ -2730,7 +2732,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
                                 <Text
                                   variant="bodySmall"
                                   style={[styles.gridEventTitleH, isCompact && styles.gridEventTitleHCompact, !isDark && { color: '#ffffff' }]}
-                                  numberOfLines={isCompact ? 1 : canUseThreeTitleLines ? 3 : 2}
+                                  numberOfLines={canUseThreeTitleLines ? 3 : 2}
                                   ellipsizeMode="tail"
                                 >
                                   {slice.event.title}
@@ -2738,7 +2740,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
                                 <Text
                                   variant="bodySmall"
                                   style={[styles.gridEventTimeH, isCompact && styles.gridEventTimeHCompact, !isDark && { color: 'rgba(255,255,255,0.85)' }]}
-                                  numberOfLines={isCompact ? 1 : 2}
+                                  numberOfLines={2}
                                   ellipsizeMode="tail"
                                 >
                                   {timeStr}
@@ -2900,28 +2902,27 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
             style={[
               styles.switchSourceSheet,
               {
-                backgroundColor: palette.bgApp,
-                borderTopColor: gridLineSoft,
-                maxHeight: Math.max(420, Math.round(winHeight * 0.58)),
+                backgroundColor: isDark ? palette.bgApp : palette.bgSurfaceElevated,
+                borderTopColor: isDark ? 'rgba(255,255,255,0.08)' : palette.borderSoft,
+                maxHeight: Math.max(460, Math.round(winHeight * 0.62)),
               },
             ]}
           >
-            <View style={styles.switchSourceSheetHandleWrap}>
-              <View style={[styles.switchSourceSheetHandle, { backgroundColor: palette.borderStrong }]} />
-            </View>
-
-            <View style={styles.switchSourceHeader}>
-              <Text variant="title" style={styles.switchSourceHeading}>Change source</Text>
-              <Text variant="bodySmall" style={styles.switchSourceChoiceLine}>
-                Current Choice:{' '}
-                <Text variant="bodySmall" style={[styles.switchSourceChoiceValue, { color: palette.textPrimary }]}>
-                  {sourceChoiceLabel}
-                </Text>
-                {sheetSourceType === 'import' && sheetResolvedFilename ? (
-                  <Text variant="bodySmall" style={[styles.switchSourceChoiceFile, { color: palette.accentPrimary }]}>
-                    {' '}({sheetResolvedFilename})
-                  </Text>
-                ) : null}
+            {/* Header */}
+            <View style={[styles.switchSourceHeader, { borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : palette.borderSoft }]}>
+              <View style={styles.switchSourceHeaderTop}>
+                <Text variant="title" style={styles.switchSourceHeading}>Schedule Source</Text>
+                <Pressable
+                  style={({ pressed }) => [styles.switchSourceCloseBtn, { backgroundColor: isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.06)' }, pressed && { opacity: 0.6 }]}
+                  onPress={handleCloseSourceSheet}
+                  hitSlop={8}
+                  accessibilityLabel="Dismiss"
+                >
+                  <AppIcon name="close" size={14} color={palette.textMuted} />
+                </Pressable>
+              </View>
+              <Text variant="bodySmall" style={[styles.switchSourceSubtitle, { color: palette.textMuted }]}>
+                Choose how you want to provide your weekly schedule.
               </Text>
             </View>
 
@@ -2931,80 +2932,104 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
               showsVerticalScrollIndicator={false}
               keyboardShouldPersistTaps="handled"
             >
-              {/* Manual Entry card */}
-              <Card
-                selected={sheetSourceType === 'manual'}
+              {/* Manual Entry option */}
+              <Pressable
                 onPress={() => setSheetSourceType('manual')}
-                style={styles.switchSourceCard}
                 testID="switch-source-manual"
+                style={({ pressed }) => [
+                  styles.switchSourceOption,
+                  {
+                    borderColor: sheetSourceType === 'manual' ? palette.accentPrimary : (isDark ? 'rgba(255,255,255,0.09)' : palette.borderSoft),
+                    backgroundColor: sheetSourceType === 'manual'
+                      ? (isDark ? 'rgba(46,233,166,0.07)' : 'rgba(46,233,166,0.06)')
+                      : (isDark ? 'rgba(255,255,255,0.03)' : palette.bgApp),
+                  },
+                  pressed && { opacity: 0.82 },
+                ]}
               >
-                <View style={styles.switchSourceCardHeader}>
-                  <AppIcon name="adjust" size={16} color={palette.accentPrimary} />
-                  <Text variant="body" style={styles.switchSourceCardTitle}>Manual Entry</Text>
-                  {sourceType === 'manual' && (
-                    <View style={[styles.switchSourceCurrentTag, { backgroundColor: palette.accentMuted }]}>
-                      <Text variant="bodySmall" style={{ color: palette.accentPrimary, fontSize: theme.fontSize.xxs, fontWeight: theme.fontWeight.semibold }}>
-                        Current
-                      </Text>
-                    </View>
-                  )}
+                <View style={[styles.switchSourceOptionIcon, { backgroundColor: isDark ? 'rgba(46,233,166,0.13)' : 'rgba(46,233,166,0.11)' }]}>
+                  <AppIcon name="adjust" size={20} color={palette.accentPrimary} />
                 </View>
-                <Text variant="bodySmall" style={{ color: palette.textMuted, lineHeight: 20, marginTop: 6 }}>
-                  Build your weekly schedule by adding events manually on the grid.
-                </Text>
-              </Card>
+                <View style={styles.switchSourceOptionBody}>
+                  <View style={styles.switchSourceCardHeader}>
+                    <Text variant="body" style={styles.switchSourceCardTitle}>Manual Entry</Text>
+                    {sourceType === 'manual' && (
+                      <View style={[styles.switchSourceCurrentTag, { backgroundColor: palette.accentMuted }]}>
+                        <Text style={{ color: palette.accentPrimary, fontSize: theme.fontSize.xxs, fontWeight: theme.fontWeight.semibold }}>Active</Text>
+                      </View>
+                    )}
+                  </View>
+                  <Text variant="bodySmall" style={{ color: palette.textMuted, marginTop: 4, lineHeight: 19 }}>
+                    Add events directly to the weekly grid, your way
+                  </Text>
+                </View>
+                <View style={[styles.switchSourceRadio, { borderColor: sheetSourceType === 'manual' ? palette.accentPrimary : (isDark ? 'rgba(255,255,255,0.25)' : palette.borderStrong) }]}>
+                  {sheetSourceType === 'manual' && <View style={[styles.switchSourceRadioDot, { backgroundColor: palette.accentPrimary }]} />}
+                </View>
+              </Pressable>
 
-              {/* Import card */}
-              <Card
-                selected={sheetSourceType === 'import'}
+              {/* Calendar Import option */}
+              <Pressable
                 onPress={() => setSheetSourceType('import')}
-                style={styles.switchSourceCard}
                 testID="switch-source-import"
+                style={({ pressed }) => [
+                  styles.switchSourceOption,
+                  {
+                    borderColor: sheetSourceType === 'import' ? palette.accentPrimary : (isDark ? 'rgba(255,255,255,0.09)' : palette.borderSoft),
+                    backgroundColor: sheetSourceType === 'import'
+                      ? (isDark ? 'rgba(46,233,166,0.07)' : 'rgba(46,233,166,0.06)')
+                      : (isDark ? 'rgba(255,255,255,0.03)' : palette.bgApp),
+                  },
+                  pressed && { opacity: 0.82 },
+                ]}
               >
-                <View style={styles.switchSourceCardHeader}>
-                  <AppIcon name="calendar" size={16} color={palette.accentPrimary} />
-                  <Text variant="body" style={styles.switchSourceCardTitle}>Import calendar file (.ics)</Text>
-                  {sourceType === 'import' && (
-                    <View style={[styles.switchSourceCurrentTag, { backgroundColor: palette.accentMuted }]}>
-                      <Text variant="bodySmall" style={{ color: palette.accentPrimary, fontSize: theme.fontSize.xxs, fontWeight: theme.fontWeight.semibold }}>
-                        Current
-                      </Text>
-                    </View>
-                  )}
+                <View style={[styles.switchSourceOptionIcon, { backgroundColor: isDark ? 'rgba(46,233,166,0.13)' : 'rgba(46,233,166,0.11)' }]}>
+                  <AppIcon name="calendar" size={20} color={palette.accentPrimary} />
                 </View>
-                <Text variant="bodySmall" style={{ color: palette.textMuted, lineHeight: 20, marginTop: 6 }}>
-                  Import an exported calendar file from Google Calendar, Apple Calendar, or Outlook (.ics). GapWalk will fill your weekly grid automatically.
-                </Text>
+                <View style={styles.switchSourceOptionBody}>
+                  <View style={styles.switchSourceCardHeader}>
+                    <Text variant="body" style={styles.switchSourceCardTitle}>Calendar Import</Text>
+                    {sourceType === 'import' && (
+                      <View style={[styles.switchSourceCurrentTag, { backgroundColor: palette.accentMuted }]}>
+                        <Text style={{ color: palette.accentPrimary, fontSize: theme.fontSize.xxs, fontWeight: theme.fontWeight.semibold }}>Active</Text>
+                      </View>
+                    )}
+                  </View>
+                  <Text variant="bodySmall" style={{ color: palette.textMuted, marginTop: 4, lineHeight: 19 }}>
+                    Import a .ics file from Google, Apple, or Outlook
+                  </Text>
 
-                {sheetSourceType === 'import' && (
-                  <View style={styles.switchSourceFileSection}>
-                    <View style={[styles.switchSourceFileBanner, { backgroundColor: palette.bgSurfaceElevated, borderColor: palette.borderSoft }]}>
-                      <AppIcon name="calendar" size={13} color={sheetResolvedFilename ? palette.accentPrimary : palette.textMuted} />
+                  {sheetSourceType === 'import' && (
+                    <View style={[styles.switchSourceFileBanner, { borderTopColor: isDark ? 'rgba(255,255,255,0.08)' : palette.borderSoft }]}>
+                      <AppIcon name="calendar" size={14} color={sheetResolvedFilename ? palette.accentPrimary : palette.textMuted} />
                       <Text
                         variant="bodySmall"
                         style={{ color: sheetResolvedFilename ? palette.accentPrimary : palette.textMuted, flex: 1, fontWeight: theme.fontWeight.semibold }}
                         numberOfLines={1}
                       >
-                        {sheetResolvedFilename || 'No file selected'}
+                        {sheetResolvedFilename || 'No file chosen'}
                       </Text>
                       <Pressable
                         onPress={() => { void handlePickIcsForSourceSheet(); }}
                         disabled={importLoading}
                         style={({ pressed }) => [
                           styles.switchSourceFileBtn,
-                          { borderColor: palette.accentPrimary },
+                          { backgroundColor: palette.accentMuted, borderColor: palette.accentPrimary },
                           pressed && { opacity: 0.7 },
                           importLoading && { opacity: 0.5 },
                         ]}
                       >
-                        <Text variant="bodySmall" style={{ color: palette.accentPrimary, fontWeight: theme.fontWeight.semibold, fontSize: theme.fontSize.xs }}>
-                          {sheetResolvedFilename ? 'Change' : 'Choose file'}
+                        <Text style={{ color: palette.accentPrimary, fontWeight: theme.fontWeight.semibold, fontSize: theme.fontSize.xs }}>
+                          {sheetResolvedFilename ? 'Change' : 'Choose'}
                         </Text>
                       </Pressable>
                     </View>
-                  </View>
-                )}
-              </Card>
+                  )}
+                </View>
+                <View style={[styles.switchSourceRadio, { borderColor: sheetSourceType === 'import' ? palette.accentPrimary : (isDark ? 'rgba(255,255,255,0.25)' : palette.borderStrong) }]}>
+                  {sheetSourceType === 'import' && <View style={[styles.switchSourceRadioDot, { backgroundColor: palette.accentPrimary }]} />}
+                </View>
+              </Pressable>
 
               {importLoading && importStatus && (
                 <View style={styles.switchSourceStatusRow}>
@@ -3014,10 +3039,10 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
               )}
             </ScrollView>
 
-            <View style={[styles.switchSourceFooter, { borderTopColor: gridLineSoft, backgroundColor: palette.bgApp }]}>
+            <View style={[styles.switchSourceFooter, { borderTopColor: isDark ? 'rgba(255,255,255,0.06)' : palette.borderSoft, backgroundColor: isDark ? palette.bgApp : palette.bgSurfaceElevated }]}>
               {sourceSheetNeedsImportFile && sheetSourceType === 'import' && (
                 <Text variant="bodySmall" style={styles.switchSourceWarning}>
-                  Choose a calendar export file (.ics) before saving.
+                  Choose a calendar export file before saving.
                 </Text>
               )}
               <View style={styles.footerActions}>
@@ -3030,7 +3055,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
                   testID="switch-source-cancel"
                 />
                 <Button
-                  title="Save"
+                  title="Apply"
                   onPress={handleSaveSourceSheet}
                   style={styles.footerBtn}
                   disabled={importLoading || !sourceSheetHasChanges || sourceSheetNeedsImportFile}
@@ -3323,6 +3348,155 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
         </View>
       </AppModal>
 
+      {/* Event Info modal — view-only mode, shown on second tap of an event */}
+      <AppModal
+        visible={viewOnlyEventInfo !== null}
+        onClose={() => setViewOnlyEventInfo(null)}
+        title="Event Info"
+        rightAccessory={
+          <TouchableOpacity
+            style={[
+              styles.modalHeaderIconBtn,
+              {
+                backgroundColor: 'rgba(220,38,38,0.12)',
+                borderColor: 'rgba(220,38,38,0.28)',
+              },
+            ]}
+            onPress={() => {
+              closeInfoBtnScale.setValue(1);
+              closeInfoBtnRotate.setValue(0);
+              Animated.sequence([
+                Animated.spring(closeInfoBtnScale, {
+                  toValue: 1.35,
+                  friction: 4,
+                  tension: 200,
+                  useNativeDriver: true,
+                }),
+                Animated.parallel([
+                  Animated.timing(closeInfoBtnScale, {
+                    toValue: 0,
+                    duration: 160,
+                    easing: Easing.in(Easing.cubic),
+                    useNativeDriver: true,
+                  }),
+                  Animated.timing(closeInfoBtnRotate, {
+                    toValue: 1,
+                    duration: 160,
+                    easing: Easing.in(Easing.cubic),
+                    useNativeDriver: true,
+                  }),
+                ]),
+              ]).start(() => {
+                closeInfoBtnScale.setValue(1);
+                closeInfoBtnRotate.setValue(0);
+                setViewOnlyEventInfo(null);
+              });
+            }}
+            activeOpacity={1}
+            accessibilityRole="button"
+            accessibilityLabel="Close"
+          >
+            <Animated.View
+              style={{
+                transform: [
+                  { scale: closeInfoBtnScale },
+                  {
+                    rotate: closeInfoBtnRotate.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: ['0deg', '90deg'],
+                    }),
+                  },
+                ],
+              }}
+            >
+              <AppIcon name="close" size={17} color={theme.colors.error} />
+            </Animated.View>
+          </TouchableOpacity>
+        }
+      >
+        {viewOnlyEventInfo && (() => {
+          const { event, dayIndex } = viewOnlyEventInfo;
+          const seriesId = !event.isOneTime ? resolveRecurringSeriesId(event.id) : null;
+          const seriesDays = seriesId
+            ? [0, 1, 2, 3, 4, 5, 6].filter((d) =>
+                (entriesByDay[d] ?? []).some(
+                  (e) => !e.isOneTime && resolveRecurringSeriesId(e.id) === seriesId,
+                ),
+              )
+            : [dayIndex];
+
+          return (
+            <View style={styles.mForm}>
+              <View style={styles.modalSection}>
+                <Text variant="bodySmall" style={[styles.modalLabel, { color: palette.textMuted }]}>Title</Text>
+                <View style={[styles.input, themedInput, styles.eventInfoValueBox]}>
+                  <Text variant="body" style={{ color: palette.textPrimary }}>{event.title}</Text>
+                </View>
+              </View>
+
+              <View style={styles.modalSection}>
+                <Text variant="bodySmall" style={[styles.modalLabel, { color: palette.textMuted }]}>Frequency</Text>
+                <View style={styles.freqModeRow}>
+                  <View style={[styles.freqModeChip, themedChip, !event.isOneTime && styles.freqModeChipActive]}>
+                    <Text variant="bodySmall" style={StyleSheet.flatten([styles.freqModeText, !event.isOneTime && styles.freqModeTextActive, !event.isOneTime && { color: palette.pillSelectedText }])}>
+                      Repeats weekly
+                    </Text>
+                  </View>
+                  <View style={[styles.freqModeChip, themedChip, event.isOneTime && styles.freqModeChipActive]}>
+                    <Text variant="bodySmall" style={StyleSheet.flatten([styles.freqModeText, event.isOneTime && styles.freqModeTextActive, event.isOneTime && { color: palette.pillSelectedText }])}>
+                      One-time event
+                    </Text>
+                  </View>
+                </View>
+              </View>
+
+              {!event.isOneTime ? (
+                <View style={styles.modalSection}>
+                  <Text variant="bodySmall" style={[styles.modalLabel, { color: palette.textMuted }]}>Days</Text>
+                  <View style={styles.repeatDaysRow}>
+                    {DAY_TAB_LABELS.map((d, idx) => {
+                      const active = seriesDays.includes(idx);
+                      return (
+                        <View key={d} style={[styles.repeatDayChip, themedChip, active && styles.repeatDayChipActive]}>
+                          <Text variant="bodySmall" numberOfLines={1} style={StyleSheet.flatten([styles.repeatDayChipText, active && styles.repeatDayChipTextActive, active && { color: palette.pillSelectedText }])}>
+                            {d}
+                          </Text>
+                        </View>
+                      );
+                    })}
+                  </View>
+                </View>
+              ) : (
+                <View style={styles.modalSection}>
+                  <Text variant="bodySmall" style={[styles.modalLabel, { color: palette.textMuted }]}>Date</Text>
+                  <View style={[styles.input, themedInput, styles.eventInfoValueBox]}>
+                    <Text variant="body" style={{ color: palette.textPrimary }}>{event.oneTimeDate ?? '—'}</Text>
+                  </View>
+                </View>
+              )}
+
+              <View style={styles.modalSection}>
+                <Text variant="bodySmall" style={[styles.modalLabel, { color: palette.textMuted }]}>Time</Text>
+                <View style={styles.timeStack}>
+                  <View style={[styles.timeCard, themedChip]}>
+                    <Text variant="bodySmall" style={styles.timeCardLabel}>Start</Text>
+                    <View style={[styles.timeDisplay, themedInput, styles.eventInfoTimeDisplay]}>
+                      <Text variant="body" style={{ color: palette.textPrimary }}>{formatTime12(event.startTime)}</Text>
+                    </View>
+                  </View>
+                  <View style={[styles.timeCard, themedChip]}>
+                    <Text variant="bodySmall" style={styles.timeCardLabel}>End</Text>
+                    <View style={[styles.timeDisplay, themedInput, styles.eventInfoTimeDisplay]}>
+                      <Text variant="body" style={{ color: palette.textPrimary }}>{formatTime12(event.endTime)}</Text>
+                    </View>
+                  </View>
+                </View>
+              </View>
+            </View>
+          );
+        })()}
+      </AppModal>
+
     </SafeAreaView>
   );
 };
@@ -3367,6 +3541,20 @@ const styles = StyleSheet.create({
   manageBackBtnPressed: {
     transform: [{ translateX: -2 }, { scale: 0.95 }],
     opacity: 0.86,
+  },
+  viewOnlyBadge: {
+    alignSelf: 'flex-start',
+    marginBottom: 7,
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: theme.borderRadius.sm,
+    backgroundColor: 'rgba(234,151,0,0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(234,151,0,0.28)',
+  },
+  viewOnlyBadgeText: {
+    fontWeight: theme.fontWeight.medium,
+    fontSize: 11,
   },
   icsBadge: {
     alignSelf: 'center',
@@ -3512,45 +3700,61 @@ const styles = StyleSheet.create({
     borderTopRightRadius: 22,
     overflow: 'hidden',
   },
-  switchSourceSheetHandleWrap: {
-    alignItems: 'center',
-    paddingTop: 10,
-    paddingBottom: 8,
-  },
-  switchSourceSheetHandle: {
-    width: 48,
-    height: 4,
-    borderRadius: 999,
-    opacity: 0.8,
-  },
   switchSourceHeader: {
     paddingHorizontal: theme.layout.contentHorizontal,
-    paddingBottom: theme.spacing.sm,
+    paddingTop: 20,
+    paddingBottom: 16,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  switchSourceHeaderTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 4,
   },
   switchSourceHeading: {
-    marginBottom: 6,
-    fontWeight: theme.fontWeight.semibold,
+    fontWeight: theme.fontWeight.bold,
+    fontSize: 18,
   },
-  switchSourceChoiceLine: {
+  switchSourceCloseBtn: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  switchSourceSubtitle: {
+    fontSize: theme.fontSize.sm,
     lineHeight: 18,
-    fontWeight: theme.fontWeight.medium,
-  },
-  switchSourceChoiceValue: {
-    fontWeight: theme.fontWeight.semibold,
-  },
-  switchSourceChoiceFile: {
-    fontWeight: theme.fontWeight.semibold,
   },
   switchSourceScrollArea: {
     flex: 1,
   },
   switchSourceScrollContent: {
     paddingHorizontal: theme.layout.contentHorizontal,
-    paddingTop: theme.spacing.sm,
+    paddingTop: 16,
     paddingBottom: theme.spacing.md,
+    gap: 12,
   },
-  switchSourceCard: {
-    marginBottom: 16,
+  switchSourceOption: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    borderRadius: 16,
+    borderWidth: 1.5,
+    padding: 14,
+    gap: 12,
+  },
+  switchSourceOptionIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+    marginTop: 1,
+  },
+  switchSourceOptionBody: {
+    flex: 1,
   },
   switchSourceCardHeader: {
     flexDirection: 'row',
@@ -3560,29 +3764,41 @@ const styles = StyleSheet.create({
   switchSourceCardTitle: {
     fontWeight: theme.fontWeight.semibold,
     flex: 1,
+    fontSize: 15,
   },
   switchSourceCurrentTag: {
     borderRadius: 6,
     paddingVertical: 2,
-    paddingHorizontal: 8,
-  },
-  switchSourceFileSection: {
-    marginTop: 12,
+    paddingHorizontal: 7,
   },
   switchSourceFileBanner: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    borderRadius: theme.borderRadius.sm,
-    borderWidth: 1,
+    marginTop: 12,
+    paddingTop: 12,
+    borderTopWidth: StyleSheet.hairlineWidth,
   },
   switchSourceFileBtn: {
     borderWidth: 1,
     borderRadius: theme.borderRadius.sm,
     paddingVertical: 4,
     paddingHorizontal: 10,
+  },
+  switchSourceRadio: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    borderWidth: 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+    marginTop: 3,
+  },
+  switchSourceRadioDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
   },
   switchSourceStatusRow: {
     flexDirection: 'row',
@@ -3709,13 +3925,13 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
   },
   weekHeaderDayCell: {
-    paddingVertical: 4,
+    paddingVertical: 2,
     paddingHorizontal: 2,
     alignItems: 'center',
     justifyContent: 'center',
-    borderRadius: 10,
+    borderRadius: 8,
     borderWidth: 1,
-    minHeight: 44,
+    minHeight: 38,
   },
   weekHeaderDayCellActive: {
     borderRadius: 8,
@@ -3747,6 +3963,11 @@ const styles = StyleSheet.create({
   weekHeaderBadgeText: {
     fontSize: 10,
     fontWeight: '700' as any,
+  },
+  weekHeaderNavBtn: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 2,
   },
   gridToolbar: {
     flexDirection: 'row',
@@ -4097,24 +4318,24 @@ const styles = StyleSheet.create({
   gridEventTitleH: {
     color: '#06261d',
     fontWeight: '600' as any,
-    fontSize: 13,
-    lineHeight: 16,
+    fontSize: 11,
+    lineHeight: 13,
     includeFontPadding: false,
   },
   gridEventTitleHCompact: {
-    fontSize: 11,
-    lineHeight: 13,
+    fontSize: 10,
+    lineHeight: 12,
   },
   gridEventTimeH: {
     color: 'rgba(6,38,29,0.85)',
-    fontSize: 11,
-    lineHeight: 13,
+    fontSize: 10,
+    lineHeight: 12,
     marginTop: 2,
     includeFontPadding: false,
   },
   gridEventTimeHCompact: {
-    fontSize: 10,
-    lineHeight: 12,
+    fontSize: 9,
+    lineHeight: 11,
     marginTop: 1,
   },
   gridEventDurationH: {
@@ -4413,5 +4634,16 @@ const styles = StyleSheet.create({
     color: theme.colors.error,
     textAlign: 'center',
     marginBottom: 8,
+  },
+  eventInfoValueBox: {
+    justifyContent: 'center',
+    minHeight: 40,
+    paddingVertical: 8,
+  },
+  eventInfoTimeDisplay: {
+    flex: 1,
+    justifyContent: 'center',
+    minHeight: 40,
+    paddingVertical: 8,
   },
 });
