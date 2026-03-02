@@ -1,5 +1,5 @@
-import React, { useCallback, useMemo, useState } from 'react';
-import { View, StyleSheet } from 'react-native';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { View, StyleSheet, Animated, Easing } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { parseISO } from 'date-fns';
@@ -10,6 +10,7 @@ import { ScreenHeader } from '../components/ScreenHeader';
 import { Card } from '../components/Card';
 import { Text } from '../components/Text';
 import { Button } from '../components/Button';
+import { ScreenState } from '../components/ScreenState';
 import { TwoActionBar } from '../components/TwoActionBar';
 import { theme } from '../theme';
 import { screenChrome } from '../theme/screenChrome';
@@ -67,6 +68,20 @@ export const WeeklyDataScreen: React.FC<Props> = ({ navigation }) => {
   const textMuted = palette.textMuted;
 
   /* ---- Compute a trend comparison for the top-most (most recent) week ---- */
+  const maxMinutes = useMemo(
+    () => Math.max(1, ...weeklyHistory.map((w) => w.totalMinutes)),
+    [weeklyHistory],
+  );
+
+  const bestWeekIdx = useMemo(() => {
+    if (weeklyHistory.length === 0) return -1;
+    let best = 0;
+    for (let i = 1; i < weeklyHistory.length; i++) {
+      if (weeklyHistory[i].totalMinutes > weeklyHistory[best].totalMinutes) best = i;
+    }
+    return best;
+  }, [weeklyHistory]);
+
   const trendInfo = useMemo(() => {
     if (weeklyHistory.length < 2) return null;
     const current = weeklyHistory[0].totalMinutes;
@@ -86,41 +101,21 @@ export const WeeklyDataScreen: React.FC<Props> = ({ navigation }) => {
         />
 
         {loading ? (
-          <Card elevated style={styles.emptyCard}>
-            <Text variant="body" style={styles.emptyBody}>
-              Loading\u2026
-            </Text>
-          </Card>
+          <ScreenState variant="loading" title="Loading weekly data…" />
         ) : loadError ? (
-          <Card elevated style={styles.emptyCard}>
-            <Text variant="body" style={styles.emptyTitle}>
-              Could not load data
-            </Text>
-            <Text variant="bodySmall" style={styles.emptyBody}>
-              {loadError}
-            </Text>
-            <Button
-              title="Try again"
-              onPress={() => void load()}
-              variant="outline"
-              style={styles.retryBtn}
-            />
-          </Card>
+          <ScreenState
+            variant="error"
+            title="Could not load data"
+            subtitle={loadError}
+            onRetry={() => void load()}
+          />
         ) : weeklyHistory.length === 0 ? (
-          <Card elevated style={styles.emptyCard}>
-            <Ionicons
-              name="walk-outline"
-              size={36}
-              color={textMuted}
-              style={{ marginBottom: 10 }}
-            />
-            <Text variant="body" style={styles.emptyTitle}>
-              No weekly data yet
-            </Text>
-            <Text variant="bodySmall" style={styles.emptyBody}>
-              Complete a walk to start building weekly history.
-            </Text>
-          </Card>
+          <ScreenState
+            variant="empty"
+            title="No weekly data yet"
+            subtitle="Complete a walk to start building weekly history."
+            icon="walk-outline"
+          />
         ) : (
           weeklyHistory.map((week, idx) => {
             const start = parseISO(week.weekStart).toLocaleDateString(locale, {
@@ -137,6 +132,7 @@ export const WeeklyDataScreen: React.FC<Props> = ({ navigation }) => {
               <Card
                 key={week.weekStart}
                 elevated
+                accentBorder={idx === bestWeekIdx}
                 style={[styles.weekCard, isLatest && [styles.latestWeekCard, { borderColor: palette.accentBorder }]]}
               >
                 {/* Header row */}
@@ -191,6 +187,27 @@ export const WeeklyDataScreen: React.FC<Props> = ({ navigation }) => {
                     </View>
                   )}
                 </View>
+
+                {/* Minutes bar */}
+                <View style={[styles.minuteBarTrack, { backgroundColor: palette.borderSoft }]}>
+                  <View
+                    style={[
+                      styles.minuteBarFill,
+                      {
+                        backgroundColor: palette.accentPrimary,
+                        width: `${Math.round((week.totalMinutes / maxMinutes) * 100)}%`,
+                      },
+                    ]}
+                  />
+                </View>
+
+                {idx === bestWeekIdx && weeklyHistory.length > 1 && (
+                  <View style={[styles.bestBadge, { backgroundColor: palette.accentMuted }]}>
+                    <Text variant="bodySmall" style={[styles.bestBadgeText, { color: palette.accentPrimary }]}>
+                      Best Week 🏆
+                    </Text>
+                  </View>
+                )}
 
                 {/* Stats grid */}
                 <View style={styles.grid}>
@@ -302,6 +319,27 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 12,
+  },
+  minuteBarTrack: {
+    height: 6,
+    borderRadius: 3,
+    overflow: 'hidden',
+    marginBottom: 10,
+  },
+  minuteBarFill: {
+    height: '100%',
+    borderRadius: 3,
+  },
+  bestBadge: {
+    alignSelf: 'flex-end',
+    paddingHorizontal: 10,
+    paddingVertical: 3,
+    borderRadius: 999,
+    marginBottom: 8,
+  },
+  bestBadgeText: {
+    fontWeight: theme.fontWeight.semibold,
+    fontSize: theme.fontSize.xs,
   },
   /* --- Stats grid --- */
   grid: {

@@ -10,6 +10,7 @@ import { Card } from '../components/Card';
 import { Button } from '../components/Button';
 import { ScreenHeader } from '../components/ScreenHeader';
 import { TwoActionBar } from '../components/TwoActionBar';
+import { Ionicons } from '@expo/vector-icons';
 import { AppIcon } from '../components/AppIcon';
 import { theme } from '../theme';
 import { screenChrome } from '../theme/screenChrome';
@@ -236,13 +237,13 @@ export const SettingsScreen: React.FC<Props> = ({ navigation }) => {
             <View style={styles.segmentRow}>
               {renderSegmentPill({
                 selected: themeMode === 'dark',
-                title: darkLabel,
+                title: `☽  ${darkLabel}`,
                 onPress: () => setThemeMode('dark'),
                 testID: 'settings-theme-dark',
               })}
               {renderSegmentPill({
                 selected: themeMode === 'light',
-                title: lightLabel,
+                title: `☀  ${lightLabel}`,
                 onPress: () => setThemeMode('light'),
                 testID: 'settings-theme-light',
               })}
@@ -333,6 +334,7 @@ const styles = StyleSheet.create({
     marginBottom: SETTINGS_SECTION_LABEL_MARGIN_BOTTOM,
     fontWeight: theme.fontWeight.semibold,
     letterSpacing: 0.8,
+    textTransform: 'uppercase',
   },
   settingsListCard: {
     marginBottom: SETTINGS_BLOCK_GAP,

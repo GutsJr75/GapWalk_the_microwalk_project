@@ -1,5 +1,6 @@
-import React, { useState, useEffect } from 'react';
-import { View, StyleSheet, Alert, ActivityIndicator, Platform, LayoutAnimation, UIManager } from 'react-native';
+import React, { useState, useEffect, useRef } from 'react';
+import { View, StyleSheet, Alert, ActivityIndicator, Platform, LayoutAnimation, UIManager, Animated, Easing } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import * as AuthSession from 'expo-auth-session';
 import * as DocumentPicker from 'expo-document-picker';
@@ -466,6 +467,7 @@ export const ScheduleSetupScreen: React.FC<Props> = ({ navigation, route }) => {
           <Text variant="bodySmall" color={palette.textMuted} style={styles.cardDesc}>
             Sign in with Google to detect your busy times and find the best walking windows.
           </Text>
+          <Text variant="muted" style={styles.cardMicrocopy}>Reads event times from your primary calendar</Text>
         </Card>
 
         {/* Import & Manual – side by side */}
@@ -483,6 +485,12 @@ export const ScheduleSetupScreen: React.FC<Props> = ({ navigation, route }) => {
             <Text variant="bodySmall" color={palette.textMuted} style={styles.cardDesc}>
               Upload a .ics file so GapWalk can see when you're busy.
             </Text>
+            {selectedOption === 'import' && (
+              <View style={styles.checkmarkWrap}>
+                <Ionicons name="checkmark-circle" size={20} color={palette.accentPrimary} />
+              </View>
+            )}
+            <Text variant="muted" style={styles.cardMicrocopy}>Parses event times from .ics files</Text>
           </Card>
 
           <Card
@@ -498,14 +506,20 @@ export const ScheduleSetupScreen: React.FC<Props> = ({ navigation, route }) => {
             <Text variant="bodySmall" color={palette.textMuted} style={styles.cardDesc}>
               Build your weekly schedule and one-time events with a simple calendar.
             </Text>
+            {selectedOption === 'manual' && (
+              <View style={styles.checkmarkWrap}>
+                <Ionicons name="checkmark-circle" size={20} color={palette.accentPrimary} />
+              </View>
+            )}
+            <Text variant="muted" style={styles.cardMicrocopy}>No data leaves your device</Text>
           </Card>
         </View>
 
-        {/* Sync status */}
+        {/* Sync status overlay */}
         {loading && syncStatus && (
-          <View style={styles.syncRow}>
-            <ActivityIndicator size="small" color={theme.colors.accentPrimary} />
-            <Text variant="bodySmall" color={theme.colors.accentPrimary} style={styles.syncText}>{syncStatus}</Text>
+          <View style={[styles.syncOverlay, { backgroundColor: palette.bgSurface, borderColor: palette.borderSoft }]}>
+            <ActivityIndicator size="large" color={palette.accentPrimary} />
+            <Text variant="body" style={styles.syncOverlayText}>{syncStatus}</Text>
           </View>
         )}
 
@@ -614,14 +628,27 @@ const styles = StyleSheet.create({
     fontWeight: theme.fontWeight.medium,
     fontSize: theme.fontSize.xs,
   },
-  syncRow: {
-    flexDirection: 'row',
+  syncOverlay: {
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 10,
-    marginTop: 20,
+    gap: 14,
+    marginTop: 24,
+    paddingVertical: 28,
+    paddingHorizontal: 20,
+    borderRadius: theme.borderRadius.lg,
+    borderWidth: 1,
   },
-  syncText: { fontWeight: theme.fontWeight.medium },
+  syncOverlayText: { fontWeight: theme.fontWeight.medium, textAlign: 'center' },
+  checkmarkWrap: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+  },
+  cardMicrocopy: {
+    fontSize: theme.fontSize.xs,
+    marginTop: 6,
+    lineHeight: 16,
+  },
   e2eBtn: {
     marginTop: 12,
   },

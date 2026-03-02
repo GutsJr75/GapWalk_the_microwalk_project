@@ -7,6 +7,7 @@ import { RootStackParamList } from '../../App';
 import { Container } from '../components/Container';
 import { Text } from '../components/Text';
 import { Card } from '../components/Card';
+import { ScreenState } from '../components/ScreenState';
 import { ScreenHeader } from '../components/ScreenHeader';
 import { TwoActionBar } from '../components/TwoActionBar';
 import { theme } from '../theme';
@@ -201,7 +202,18 @@ export const ProfileScreen: React.FC<Props> = ({ navigation }) => {
         <Card elevated style={styles.card}>
           <View style={styles.heroRow}>
             <View style={[styles.heroAvatar, { backgroundColor: palette.accentMuted }]}>
-              <Ionicons name="person" size={34} color={palette.accentPrimary} />
+              {resolvedDisplayName && resolvedDisplayName !== 'GapWalker' ? (
+                <Text variant="title" style={[styles.avatarInitials, { color: palette.accentPrimary }]}>
+                  {resolvedDisplayName
+                    .split(' ')
+                    .filter(Boolean)
+                    .slice(0, 2)
+                    .map((w) => w[0].toUpperCase())
+                    .join('')}
+                </Text>
+              ) : (
+                <Ionicons name="person" size={34} color={palette.accentPrimary} />
+              )}
             </View>
             <View style={styles.heroInfo}>
               {!isEditingName ? (
@@ -309,51 +321,41 @@ export const ProfileScreen: React.FC<Props> = ({ navigation }) => {
         </Card>
 
         {loading ? (
-          <Card elevated style={styles.card}>
-            <Text variant="body">Loading profile...</Text>
-          </Card>
+          <ScreenState variant="loading" title="Loading profile…" />
         ) : loadError ? (
-          <Card elevated style={styles.card}>
-            <Text variant="body" style={styles.errorTitle}>Could not load profile</Text>
-            <Text variant="bodySmall" color={palette.textMuted}>{loadError}</Text>
-            <Pressable
-              style={({ pressed }) => [
-                styles.retryBtn,
-                {
-                  borderColor: palette.borderStrong,
-                  backgroundColor: palette.bgSurface,
-                },
-                pressed && styles.nameActionBtnPressed,
-              ]}
-              onPress={() => { void load(); }}
-              testID="profile-retry"
-            >
-              <Text variant="bodySmall">Try again</Text>
-            </Pressable>
-          </Card>
+          <ScreenState
+            variant="error"
+            title="Could not load profile"
+            subtitle={loadError}
+            onRetry={() => void load()}
+          />
         ) : (
           <>
             <Card elevated style={styles.card}>
               <Text variant="body" style={styles.sectionTitle}>Progress Snapshot</Text>
               <View style={styles.statsGrid}>
-                <View style={styles.statItem}>
+                <View style={[styles.statItem, styles.statTile, { backgroundColor: palette.bgSurfaceElevated }]}>
+                  <Ionicons name="flame-outline" size={18} color={palette.accentPrimary} style={styles.statIcon} />
                   <Text variant="title" style={[styles.statValue, { color: palette.accentPrimary }]}>{progress.currentStreak}</Text>
-                  <Text variant="bodySmall" color={palette.textMuted}>Current Streak</Text>
+                  <Text variant="bodySmall" color={palette.textMuted} style={styles.statLabel}>Streak</Text>
                 </View>
-                <View style={styles.statItem}>
+                <View style={[styles.statItem, styles.statTile, { backgroundColor: palette.bgSurfaceElevated }]}>
+                  <Ionicons name="walk-outline" size={18} color={palette.accentPrimary} style={styles.statIcon} />
                   <Text variant="title" style={[styles.statValue, { color: palette.accentPrimary }]}>{progress.totalWalks}</Text>
-                  <Text variant="bodySmall" color={palette.textMuted}>Total Walks</Text>
+                  <Text variant="bodySmall" color={palette.textMuted} style={styles.statLabel}>Walks</Text>
                 </View>
-                <View style={styles.statItem}>
+                <View style={[styles.statItem, styles.statTile, { backgroundColor: palette.bgSurfaceElevated }]}>
+                  <Ionicons name="time-outline" size={18} color={palette.accentPrimary} style={styles.statIcon} />
                   <Text variant="title" style={[styles.statValue, { color: palette.accentPrimary }]}>{progress.totalMinutes}</Text>
-                  <Text variant="bodySmall" color={palette.textMuted}>Total Minutes</Text>
+                  <Text variant="bodySmall" color={palette.textMuted} style={styles.statLabel}>Minutes</Text>
                 </View>
-                <View style={styles.statItem}>
+                <View style={[styles.statItem, styles.statTile, { backgroundColor: palette.bgSurfaceElevated }]}>
+                  <Ionicons name="calendar-outline" size={18} color={palette.accentPrimary} style={styles.statIcon} />
                   <Text variant="title" style={[styles.statValue, { color: palette.accentPrimary }]}>
                     {progress.activeDaysThisWeek}
                     <Text style={styles.statDenominator}>/7</Text>
                   </Text>
-                  <Text variant="bodySmall" color={palette.textMuted}>Active Days This Week</Text>
+                  <Text variant="bodySmall" color={palette.textMuted} style={styles.statLabel}>Active</Text>
                 </View>
               </View>
             </Card>
@@ -432,11 +434,15 @@ const styles = StyleSheet.create({
     gap: 14,
   },
   heroAvatar: {
-    width: 66,
-    height: 66,
-    borderRadius: 33,
+    width: 80,
+    height: 80,
+    borderRadius: 40,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  avatarInitials: {
+    fontWeight: theme.fontWeight.semibold,
+    fontSize: theme.fontSize.xl,
   },
   heroInfo: {
     flex: 1,
@@ -503,11 +509,24 @@ const styles = StyleSheet.create({
   statsGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    rowGap: 14,
+    rowGap: 10,
+    columnGap: 10,
+    justifyContent: 'space-between',
   },
   statItem: {
-    width: '50%',
-    paddingRight: 8,
+    width: '48%',
+  },
+  statTile: {
+    borderRadius: theme.borderRadius.md,
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    alignItems: 'center',
+  },
+  statIcon: {
+    marginBottom: 4,
+  },
+  statLabel: {
+    fontSize: theme.fontSize.xs,
   },
   statValue: {
     fontWeight: theme.fontWeight.bold,
