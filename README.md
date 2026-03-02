@@ -167,10 +167,11 @@ GapWalk/
 │   ├── screens/                   # All application screens
 │   │   ├── IntroScreen            # Onboarding landing page
 │   │   ├── ScheduleSetupScreen    # Choose schedule import method
-│   │   ├── ManualScheduleScreen   # Create/edit recurring weekly schedule
+│   │   ├── ManualScheduleScreen   # Create/edit recurring weekly schedule (Google Calendar, ICS, manual)
 │   │   ├── PreferencesScreen      # Configure 9+ user settings
 │   │   ├── DashboardScreen        # Main hub: stats, plans, achievements
 │   │   ├── WalkingScreen          # Active walk: live map + polyline, pedometer, timer
+│   │   ├── WalkingExpandedScreen  # Full-screen expanded walk view (swipe-up panel)
 │   │   ├── SettingsScreen         # Theme, language, data reset
 │   │   ├── ScheduleOverviewScreen # All planned walking opportunities
 │   │   └── WeeklyDataScreen       # Aggregated weekly statistics
@@ -187,16 +188,19 @@ GapWalk/
 │   │   ├── scheduleSync.ts        # Rebuild plans after schedule changes
 │   │   ├── walkCheckpoint.ts      # Persist in-progress session every ~30s
 │   │   ├── androidWalkTracking.ts # Bridge to native Android walk service
+│   │   ├── backendSync.ts         # Sync local SQLite data to research backend
+│   │   ├── googleCalendar.ts      # Google Calendar OAuth + event fetch
 │   │   ├── permissions.ts         # Centralized permission request helpers
 │   │   └── analytics.ts           # Local analytics event tracking
 │   │
 │   ├── data/
 │   │   ├── db.ts                  # SQLite init, table creation, migrations
-│   │   └── repositories/          # SQLite data access layer (9 repositories)
+│   │   └── repositories/          # SQLite data access layer (10 repositories)
 │   │       ├── preferencesRepo
 │   │       ├── plansRepo
 │   │       ├── sessionsRepo
 │   │       ├── routeRepo          # walk_routes — GPS coordinates per session
+│   │       ├── pauseEventsRepo    # walk pause/resume events per session
 │   │       ├── eventsRepo
 │   │       ├── manualScheduleRepo
 │   │       ├── analyticsRepo
@@ -216,16 +220,17 @@ GapWalk/
 │
 ├── backend/                       # NestJS research backend (optional)
 │   ├── src/
-│   │   ├── modules/               # 18 NestJS feature modules
+│   │   ├── modules/               # 19 NestJS feature modules
 │   │   │   ├── auth               # Auth0 JWT strategy + auto-registration
-│   │   │   ├── users              # Profile management
+│   │   │   ├── users              # Profile management (with user-profile DTO)
 │   │   │   ├── devices            # Expo push token tracking
 │   │   │   ├── preferences        # Settings CRUD
 │   │   │   ├── schedule           # ICS / Google Calendar import
 │   │   │   ├── manual-schedule    # Template → busy event generation
 │   │   │   ├── nudge-engine       # Server-side gap algorithm (mirrors frontend)
 │   │   │   ├── nudge-plans        # Plan lifecycle management
-│   │   │   ├── walk-sessions      # Recording completed sessions
+│   │   │   ├── walk-sessions      # Recording completed sessions + route points
+│   │   │   ├── app-sessions       # App session lifecycle tracking (research)
 │   │   │   ├── push-notifications # Expo push delivery & receipt checking
 │   │   │   ├── sync               # Bidirectional offline-first sync
 │   │   │   ├── analytics          # Event ingestion & aggregation
@@ -234,7 +239,7 @@ GapWalk/
 │   │   │   └── workers            # BullMQ background jobs
 │   │   └── main.ts
 │   └── prisma/
-│       └── schema.prisma          # 16 Prisma models
+│       └── schema.prisma          # 23 Prisma models
 │
 └── e2e/
     └── maestro/                   # End-to-end test flows
@@ -465,11 +470,15 @@ Copy `.env.example` to `.env`:
 cp .env.example .env
 ```
 
-| Variable                           | Required | Purpose                              |
-| ---------------------------------- | -------- | ------------------------------------ |
-| `EXPO_PUBLIC_GOOGLE_MAPS_API_KEY`  | Optional | Live map on walk screen (Android)    |
-| `GOOGLE_MAPS_API_KEY`              | Optional | Same key — used at native build time |
-| `EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID` | Optional | Google Calendar OAuth integration    |
+| Variable                           | Required | Purpose                                          |
+| ---------------------------------- | -------- | ------------------------------------------------ |
+| `EXPO_PUBLIC_GOOGLE_MAPS_API_KEY`  | Optional | Live map on walk screen (Android)                |
+| `GOOGLE_MAPS_API_KEY`              | Optional | Same key — used at native build time             |
+| `EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID` | Optional | Google Calendar OAuth (source sheet + setup)     |
+| `EXPO_PUBLIC_AUTH0_DOMAIN`         | Optional | Auth0 tenant domain (required for backend sync)  |
+| `EXPO_PUBLIC_AUTH0_CLIENT_ID`      | Optional | Auth0 app client ID (required for backend sync)  |
+| `EXPO_PUBLIC_AUTH0_AUDIENCE`       | Optional | Auth0 API audience (required for backend sync)   |
+| `EXPO_PUBLIC_API_URL`              | Optional | Backend API URL (required for research sync)     |
 
 #### Android Maps API key setup
 

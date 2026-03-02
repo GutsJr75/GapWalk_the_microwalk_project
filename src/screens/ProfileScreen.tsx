@@ -67,7 +67,8 @@ export const ProfileScreen: React.FC<Props> = ({ navigation }) => {
     const localName = profileDisplayName?.trim();
     if (localName) return localName;
     const authName = authUser?.name?.trim();
-    if (authName) return authName;
+    // Ignore auth name if it looks like an email address (Auth0 often sets name = email)
+    if (authName && !authName.includes('@')) return authName;
     return 'GapWalker';
   }, [authUser?.name, profileDisplayName]);
 

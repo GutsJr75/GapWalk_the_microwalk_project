@@ -10,7 +10,7 @@ This app's frontend stays at the repo root. The backend remains isolated in `bac
 - `src/i18n/`: translation literals and localization helpers
 - `src/screens/`: top-level app screens
 - `src/screens/dashboard/`: Dashboard-only view pieces
-- `src/services/`: app services and integrations such as notifications, analytics, schedule sync, and external providers
+- `src/services/`: app services and integrations such as notifications, analytics, schedule sync, Google Calendar OAuth, and backend sync
 - `src/store/`: global app state
 - `src/theme/`: design tokens, palette, and screen chrome helpers
 - `src/types/`: shared TypeScript types and domain models

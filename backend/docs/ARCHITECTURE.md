@@ -60,6 +60,7 @@ ManualScheduleModule ←── PrismaModule
 NudgeEngineModule   ←── PrismaModule
 NudgePlansModule    ←── PrismaModule, NudgeEngineModule
 WalkSessionsModule  ←── PrismaModule
+AppSessionsModule   ←── PrismaModule
 PushNotificationsModule ←── PrismaModule, DevicesModule, ConfigModule
 SyncModule          ←── PrismaModule
 AnalyticsModule     ←── PrismaModule
@@ -349,18 +350,18 @@ Every 15 minutes, the system:
 
 ## Database Schema Summary
 
-**16 models** across 5 domains:
+**23 models** across 5 domains:
 
-| Domain         | Models                                                                                  |
-| -------------- | --------------------------------------------------------------------------------------- |
-| Identity       | `User`, `Device`                                                                        |
-| Schedule       | `ScheduleSource`, `BusyEvent`, `ManualScheduleEntry`, `Preference`                      |
-| Nudging        | `NudgePlan`, `WalkSession`                                                              |
-| Analytics      | `AnalyticsEvent`, `CrashReport`, `BehaviorLog`, `DailyAggregation`, `WeeklyAggregation` |
-| Research       | `Study`, `StudyEnrollment`                                                              |
-| Infrastructure | `PushLog`                                                                               |
+| Domain         | Models                                                                                                                                 |
+| -------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| Identity       | `User`, `Device`, `UserProfile`                                                                                                        |
+| Schedule       | `ScheduleSource`, `BusyEvent`, `ManualScheduleEntry`, `Preference`, `GapOpportunity`                                                   |
+| Nudging        | `NudgePlan`, `WalkSession`, `WalkPauseEvent`, `WalkRoutePoint`                                                                         |
+| Analytics      | `AnalyticsEvent`, `CrashReport`, `BehaviorLog`, `DailyAggregation`, `WeeklyAggregation`, `AppSession`, `UserAchievement`, `ResearcherAction` |
+| Research       | `Study`, `StudyEnrollment`                                                                                                             |
+| Infrastructure | `PushLog`                                                                                                                              |
 
-**8 enums:** `UserRole`, `ScheduleSourceType`, `WhenToNotify`, `StrictnessMode`, `NudgePlanStatus`, `NudgePlanOrigin`, `BehaviorEventType`, `PushStatus`
+**11 enums:** `UserRole`, `ScheduleSourceType`, `WhenToNotify`, `StrictnessMode`, `NudgePlanStatus`, `NudgePlanOrigin`, `BehaviorEventType`, `PushStatus`, `BiologicalSex`, `OccupationType`, `ActivityLevel`
 
 ---
 

@@ -125,24 +125,28 @@ docker compose up -d
 ```
 backend/
 ├── prisma/
-│   └── schema.prisma          # Database schema (16 models, 8 enums)
+│   ├── schema.prisma          # Database schema (23 models, 11 enums)
+│   └── migrations/            # SQL migration history
+│       ├── 0001_init/
+│       └── 0002_research_tracking/  # User profiles, app sessions, route points, achievements
 ├── dashboard/
 │   └── public/index.html      # Researcher dashboard SPA
 ├── src/
 │   ├── main.ts                # Bootstrap, CORS, Swagger, global pipes/filters
-│   ├── app.module.ts          # Root module (18 modules)
+│   ├── app.module.ts          # Root module (19 modules)
 │   ├── prisma/                # PrismaService (global DB client)
 │   ├── config/                # ConfigModule (typed env config)
 │   ├── common/                # Guards, filters, interceptors, decorators, DTOs
 │   ├── auth/                  # Auth0 JWT strategy, auto-registration
-│   ├── users/                 # User profile CRUD
+│   ├── users/                 # User profile CRUD + user-profile DTO
 │   ├── devices/               # Expo push token management
 │   ├── preferences/           # Walk goals, notification settings
 │   ├── schedule/              # Schedule sources & busy events
 │   ├── manual-schedule/       # Weekly template → busy event generation
 │   ├── nudge-engine/          # Gap-finding algorithm, plan generation
 │   ├── nudge-plans/           # Nudge plan lifecycle
-│   ├── walk-sessions/         # Walk recording & stats
+│   ├── walk-sessions/         # Walk recording, route points & stats
+│   ├── app-sessions/          # App session lifecycle tracking (research)
 │   ├── push-notifications/    # Expo push sending, receipt checking
 │   ├── sync/                  # Bidirectional offline-first sync
 │   ├── analytics/             # Events, crash reports, aggregations
