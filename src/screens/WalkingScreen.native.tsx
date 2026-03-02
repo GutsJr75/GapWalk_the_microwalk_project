@@ -4,6 +4,7 @@ import MapView, { Marker, Polyline } from 'react-native-maps';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { Ionicons } from '@expo/vector-icons';
 import * as Location from 'expo-location';
+import * as Haptics from 'expo-haptics';
 import { Pedometer } from 'expo-sensors';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { RootStackParamList } from '../../App';
@@ -73,6 +74,17 @@ const formatClock = (seconds: number): string => {
   const mins = Math.floor(clamped / 60);
   const secs = String(clamped % 60).padStart(2, '0');
   return `${mins} min ${secs} sec`;
+};
+
+const formatClockDigital = (seconds: number): string => {
+  const clamped = Math.max(0, Math.floor(seconds));
+  const hrs = Math.floor(clamped / 3600);
+  const mins = Math.floor((clamped % 3600) / 60);
+  const secs = clamped % 60;
+  if (hrs > 0) {
+    return `${hrs}:${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+  }
+  return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
 };
 
 const formatMiles = (distanceMeters: number): string => `${(distanceMeters / 1609.34).toFixed(2)} mi`;
@@ -246,10 +258,12 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
 
   const dotsPanResponder = useRef(
     PanResponder.create({
-      onStartShouldSetPanResponder: () => false,
-      onMoveShouldSetPanResponder: (_, g) => Math.abs(g.dx) > 6 && Math.abs(g.dx) > Math.abs(g.dy),
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: () => true,
       onPanResponderRelease: (_, g) => {
         if (g.dx < -40 || g.vx < -0.4) {
+          navigation.navigate('WalkingExpanded');
+        } else if (Math.abs(g.dx) < 10 && Math.abs(g.dy) < 10) {
           navigation.navigate('WalkingExpanded');
         }
       },
@@ -1431,18 +1445,14 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
         >
           <View style={styles.dockDots} {...dotsPanResponder.panHandlers}>
             <View style={[styles.dockDot, styles.dockDotActive, { backgroundColor: palette.accentPrimary }]} />
-            <Pressable
-              onPress={() => navigation.navigate('WalkingExpanded')}
-              hitSlop={12}
-            >
-              <View style={[styles.dockDot, { backgroundColor: palette.borderStrong }]} />
-            </Pressable>
+            <View style={[styles.dockDot, { backgroundColor: palette.borderStrong }]} />
           </View>
 
           <View style={styles.metricGrid}>
             <View style={[styles.metricCard, { backgroundColor: palette.bgSurface, borderColor: palette.borderSoft }]}>
               <Text variant="body">Duration</Text>
-              <Text variant="heading" style={styles.metricValue}>{formatClock(activeSeconds)}</Text>
+              <Text style={styles.metricDigitalClock}>{formatClockDigital(activeSeconds)}</Text>
+              <Text variant="muted" style={styles.metricClockVerbose}>{formatClock(activeSeconds)}</Text>
             </View>
             <View style={[styles.metricCard, { backgroundColor: palette.bgSurface, borderColor: palette.borderSoft }]}>
               <Text variant="body">Distance</Text>
@@ -1465,13 +1475,28 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
           </View>
 
           <View style={styles.actionRow}>
-            <Button
-              title={paused ? 'Resume' : 'Pause'}
-              onPress={() => { void togglePause(); }}
-              variant="secondary"
-              style={styles.actionButton}
+            <Pressable
+              onPress={() => {
+                if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+                void togglePause();
+              }}
+              style={({ pressed }) => [
+                styles.fabButton,
+                {
+                  backgroundColor: palette.bgSurface,
+                  borderColor: palette.borderStrong,
+                },
+                pressed && { opacity: 0.7, transform: [{ scale: 0.92 }] },
+              ]}
               testID="walking-pause-resume"
-            />
+              hitSlop={8}
+            >
+              <Ionicons
+                name={paused ? 'play' : 'pause'}
+                size={26}
+                color={palette.accentPrimary}
+              />
+            </Pressable>
             <Button
               title="End"
               onPress={() => setShowEndModal(true)}
@@ -1908,6 +1933,25 @@ const styles = StyleSheet.create({
   },
   actionButton: {
     flex: 1,
+  },
+  fabButton: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    borderWidth: 1.5,
+    alignItems: 'center' as const,
+    justifyContent: 'center' as const,
+  },
+  metricDigitalClock: {
+    fontSize: 36,
+    lineHeight: 42,
+    fontWeight: theme.fontWeight.bold,
+    letterSpacing: -1,
+    fontVariant: ['tabular-nums' as const],
+  },
+  metricClockVerbose: {
+    fontSize: theme.fontSize.xs,
+    marginTop: 2,
   },
   modalText: {
     marginBottom: 18,
