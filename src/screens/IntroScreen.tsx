@@ -150,9 +150,18 @@ export const IntroScreen: React.FC<Props> = ({
           const payload = JSON.parse(decodeURIComponent(
             bytes.split('').map((c) => '%' + c.charCodeAt(0).toString(16).padStart(2, '0')).join('')
           ));
+          // Auth0 sets name = email when no display name is configured.
+          // Prefer given_name or nickname (from 'profile' scope) over a raw email name.
+          const rawName = (payload.name as string | undefined)?.trim();
+          const givenName = (payload.given_name as string | undefined)?.trim();
+          const nickname = (payload.nickname as string | undefined)?.trim();
+          const resolvedName =
+            (givenName && !givenName.includes('@') ? givenName : null) ??
+            (nickname && !nickname.includes('@') ? nickname : null) ??
+            (rawName && !rawName.includes('@') ? rawName : undefined);
           const user = {
             email: payload.email as string | undefined,
-            name: payload.name as string | undefined,
+            name: resolvedName,
             sub: payload.sub as string | undefined,
           };
           setAuthUser(user);

@@ -72,6 +72,9 @@ export const ProfileScreen: React.FC<Props> = ({ navigation }) => {
     return 'GapWalker';
   }, [authUser?.name, profileDisplayName]);
 
+  const hasCustomName = !!(profileDisplayName?.trim() ||
+    (authUser?.name?.trim() && !authUser.name.includes('@')));
+
   const normalizedDraftName = normalizeDisplayName(draftName);
   const draftNameValidationError = validateDisplayName(normalizedDraftName);
   const hasNameChanged = normalizedDraftName !== resolvedDisplayName;
@@ -292,7 +295,9 @@ export const ProfileScreen: React.FC<Props> = ({ navigation }) => {
               onPress={handleStartEditName}
               testID="profile-name-update"
             >
-              <Text variant="bodySmall" style={{ color: palette.textPrimary }}>Change Username</Text>
+              <Text variant="bodySmall" style={{ color: palette.textPrimary }}>
+                {hasCustomName ? 'Change Username' : 'Set Username'}
+              </Text>
             </Pressable>
           )}
 

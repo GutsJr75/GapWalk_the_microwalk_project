@@ -202,7 +202,7 @@ export const DashboardScreen: React.FC<Props> = ({ navigation, route }) => {
     const localName = profileDisplayName?.trim();
     if (localName) return localName;
     const authName = authUser?.name?.trim();
-    if (authName) return authName;
+    if (authName && !authName.includes('@')) return authName;
     return 'GapWalker';
   }, [authUser?.name, profileDisplayName]);
 

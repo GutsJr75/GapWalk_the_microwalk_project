@@ -162,7 +162,7 @@ export const SideMenu: React.FC<SideMenuProps> = ({
               </View>
               <View style={styles.profileMeta}>
                 <Text variant="body" style={styles.profileName}>
-                  {authUser?.name || 'GapWalker'}
+                  {(authUser?.name && !authUser.name.includes('@')) ? authUser.name : 'GapWalker'}
                 </Text>
                 <Text variant="bodySmall" color={palette.textMuted}>
                   {authUser?.email ||
