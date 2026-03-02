@@ -126,6 +126,7 @@ export async function recoverOrphanedSession(): Promise<WalkSession | null> {
       steps: row.steps || 0,
       usedLocation: row.used_location === 1,
       createdAt: row.updated_at,
+      wasRecovered: true,
     };
 
     const matchedPlan = baseSession.nudgePlanId

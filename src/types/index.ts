@@ -59,6 +59,16 @@ export interface WalkSession {
   calories?: number;
   usedLocation: boolean;
   createdAt: string;
+  // Research tracking fields
+  pauseCount?: number;
+  maxSpeedMps?: number;
+  avgSpeedMps?: number;
+  elevationGainMeters?: number;
+  stepSource?: WalkStepSource;
+  motionConfidence?: WalkMotionConfidence;
+  sensorHealthAtStart?: SensorHealth;
+  wasRecovered?: boolean;
+  nudgeToStartLatencySeconds?: number;
 }
 
 export type WalkMotionState =

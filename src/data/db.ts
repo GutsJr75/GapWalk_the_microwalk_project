@@ -171,9 +171,28 @@ const initializeTables = async () => {
       session_id  TEXT    NOT NULL,
       latitude    REAL    NOT NULL,
       longitude   REAL    NOT NULL,
+      accuracy_meters REAL,
+      altitude_meters REAL,
+      speed_mps   REAL,
+      bearing_degrees REAL,
       recorded_at TEXT    NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_walk_routes_session_id ON walk_routes(session_id);
+  `);
+
+  // Walk pause events table — each individual pause within a session.
+  await db.execAsync(`
+    CREATE TABLE IF NOT EXISTS walk_pause_events (
+      id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+      session_id            TEXT    NOT NULL,
+      pause_started_at      TEXT    NOT NULL,
+      pause_ended_at        TEXT,
+      pause_duration_seconds INTEGER,
+      pause_source          TEXT,
+      pause_reason          TEXT,
+      created_at            TEXT    DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_walk_pause_events_session_id ON walk_pause_events(session_id);
   `);
 
   // Create indexes
@@ -241,12 +260,22 @@ const runMigrations = async () => {
   await ensureColumn('preferences', 'min_walk_minutes', 'INTEGER NOT NULL DEFAULT 6');
   await ensureColumn('preferences', 'updated_at', 'TEXT DEFAULT CURRENT_TIMESTAMP');
 
-  // walk_sessions expansions
+  // Walk sessions expansions
   await ensureColumn('walk_sessions', 'distance_meters', 'REAL');
   await ensureColumn('walk_sessions', 'steps', 'INTEGER DEFAULT 0');
   await ensureColumn('walk_sessions', 'calories', 'REAL');
   await ensureColumn('walk_sessions', 'used_location', 'INTEGER DEFAULT 0');
   await ensureColumn('walk_sessions', 'created_at', 'TEXT DEFAULT CURRENT_TIMESTAMP');
+  // New research-grade walk session columns
+  await ensureColumn('walk_sessions', 'pause_count', 'INTEGER DEFAULT 0');
+  await ensureColumn('walk_sessions', 'max_speed_mps', 'REAL');
+  await ensureColumn('walk_sessions', 'avg_speed_mps', 'REAL');
+  await ensureColumn('walk_sessions', 'elevation_gain_meters', 'REAL');
+  await ensureColumn('walk_sessions', 'step_source', 'TEXT');
+  await ensureColumn('walk_sessions', 'motion_confidence', 'TEXT');
+  await ensureColumn('walk_sessions', 'sensor_health_at_start', 'TEXT');
+  await ensureColumn('walk_sessions', 'was_recovered', 'INTEGER DEFAULT 0');
+  await ensureColumn('walk_sessions', 'nudge_to_start_latency_seconds', 'INTEGER');
 
   // nudge_plans expansions
   await ensureColumn('nudge_plans', 'status', "TEXT NOT NULL DEFAULT 'planned'");
@@ -275,6 +304,27 @@ const runMigrations = async () => {
       id TEXT PRIMARY KEY,
       unlocked_at TEXT NOT NULL
     );
+  `);
+
+  // walk_routes: add new columns for richer GPS data
+  await ensureColumn('walk_routes', 'accuracy_meters', 'REAL');
+  await ensureColumn('walk_routes', 'altitude_meters', 'REAL');
+  await ensureColumn('walk_routes', 'speed_mps', 'REAL');
+  await ensureColumn('walk_routes', 'bearing_degrees', 'REAL');
+
+  // walk_pause_events: create if missing (for older installs)
+  await db.execAsync(`
+    CREATE TABLE IF NOT EXISTS walk_pause_events (
+      id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+      session_id            TEXT    NOT NULL,
+      pause_started_at      TEXT    NOT NULL,
+      pause_ended_at        TEXT,
+      pause_duration_seconds INTEGER,
+      pause_source          TEXT,
+      pause_reason          TEXT,
+      created_at            TEXT    DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_walk_pause_events_session_id ON walk_pause_events(session_id);
   `);
 };
 
@@ -319,6 +369,7 @@ export const resetDatabase = async () => {
     DROP TABLE IF EXISTS achievements;
     DROP TABLE IF EXISTS walk_checkpoint;
     DROP TABLE IF EXISTS walk_routes;
+    DROP TABLE IF EXISTS walk_pause_events;
   `);
 
   await initializeTables();

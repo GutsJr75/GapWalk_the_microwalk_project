@@ -229,12 +229,29 @@ class WalkTrackingService : Service(), SensorEventListener {
 
   private fun unsubscribeStepSensor() {
     if (!isSensorSubscribed) return
-    sensorManager.unregisterListener(this)
+    val sensor = stepCounterSensor
+    if (sensor != null) {
+      sensorManager.unregisterListener(this, sensor)
+    } else {
+      sensorManager.unregisterListener(this)
+    }
     isSensorSubscribed = false
   }
 
   private fun subscribeAccelDetector() {
-    if (isAccelSubscribed) return
+    if (isAccelSubscribed) {
+      // Re-register if the detector has gone completely silent (sensor killed by OS power management).
+      // Allow up to 10 seconds of silence before forcing a re-subscribe.
+      val lastEventAt = accelDetector?.lastSensorEventAtMs
+      val now = System.currentTimeMillis()
+      val sensorSilent = lastEventAt == null || now - lastEventAt > 10_000L
+      if (sensorSilent) {
+        accelDetector?.stop()
+        isAccelSubscribed = false
+      } else {
+        return
+      }
+    }
     val registered = accelDetector?.start() ?: false
     isAccelSubscribed = registered
   }
@@ -326,7 +343,14 @@ class WalkTrackingService : Service(), SensorEventListener {
   }
 
   private fun startForegroundCompat(notification: Notification) {
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+      // Android 14+ requires each foreground service type to be declared separately.
+      startForeground(
+        NOTIFICATION_ID,
+        notification,
+        ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION or ServiceInfo.FOREGROUND_SERVICE_TYPE_HEALTH,
+      )
+    } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
       startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION)
     } else {
       startForeground(NOTIFICATION_ID, notification)

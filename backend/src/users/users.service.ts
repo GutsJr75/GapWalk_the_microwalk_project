@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { UpdateUserDto } from './dto/update-user.dto';
+import { UpsertUserProfileDto } from './dto/user-profile.dto';
 import { User } from '@prisma/client';
 
 @Injectable()
@@ -32,6 +33,29 @@ export class UsersService {
         preferences: true,
         scheduleSource: true,
         devices: { where: { isActive: true } },
+        profile: true,
+      },
+    });
+  }
+
+  async upsertProfile(userId: string, dto: UpsertUserProfileDto) {
+    await this.findById(userId);
+    return this.prisma.userProfile.upsert({
+      where: { userId },
+      update: {
+        ...dto,
+        consentGivenAt: dto.consentGivenAt ? new Date(dto.consentGivenAt) : undefined,
+        onboardingCompletedAt: dto.onboardingCompletedAt
+          ? new Date(dto.onboardingCompletedAt)
+          : undefined,
+      },
+      create: {
+        userId,
+        ...dto,
+        consentGivenAt: dto.consentGivenAt ? new Date(dto.consentGivenAt) : undefined,
+        onboardingCompletedAt: dto.onboardingCompletedAt
+          ? new Date(dto.onboardingCompletedAt)
+          : undefined,
       },
     });
   }
@@ -44,7 +68,7 @@ export class UsersService {
         skip: (page - 1) * limit,
         take: limit,
         orderBy: { createdAt: 'desc' },
-        include: { preferences: true },
+        include: { preferences: true, profile: true },
       }),
       this.prisma.user.count({
         where: { role: 'participant', isActive: true },

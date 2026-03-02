@@ -34,12 +34,53 @@ export class WalkSessionsService {
         endTime: new Date(dto.endTime),
         activeSeconds: dto.activeSeconds,
         pausedSeconds: dto.pausedSeconds ?? 0,
+        pauseCount: dto.pauseCount ?? 0,
         distanceMeters: dto.distanceMeters,
         steps: dto.steps ?? 0,
         calories: dto.calories,
+        maxSpeedMps: dto.maxSpeedMps,
+        avgSpeedMps: dto.avgSpeedMps,
+        elevationGainMeters: dto.elevationGainMeters,
         usedLocation: dto.usedLocation ?? false,
+        stepSource: dto.stepSource,
+        motionConfidence: dto.motionConfidence,
+        sensorHealthAtStart: dto.sensorHealthAtStart,
+        wasRecovered: dto.wasRecovered ?? false,
+        nudgeToStartLatencySeconds: dto.nudgeToStartLatencySeconds,
       },
     });
+
+    // Persist pause events
+    if (dto.pauseEvents && dto.pauseEvents.length > 0) {
+      await this.prisma.walkPauseEvent.createMany({
+        data: dto.pauseEvents.map((p) => ({
+          userId,
+          sessionId: session.id,
+          pauseStartedAt: new Date(p.pauseStartedAt),
+          pauseEndedAt: p.pauseEndedAt ? new Date(p.pauseEndedAt) : null,
+          pauseDurationSeconds: p.pauseDurationSeconds,
+          pauseSource: p.pauseSource,
+          pauseReason: p.pauseReason,
+        })),
+      });
+    }
+
+    // Persist GPS route points
+    if (dto.routePoints && dto.routePoints.length > 0) {
+      await this.prisma.walkRoutePoint.createMany({
+        data: dto.routePoints.map((r) => ({
+          userId,
+          sessionId: session.id,
+          latitude: r.latitude,
+          longitude: r.longitude,
+          accuracyMeters: r.accuracyMeters,
+          altitudeMeters: r.altitudeMeters,
+          speedMps: r.speedMps,
+          bearingDegrees: r.bearingDegrees,
+          recordedAt: new Date(r.recordedAt),
+        })),
+      });
+    }
 
     // If linked to a plan, mark it completed
     if (dto.nudgePlanId) {
@@ -114,6 +155,20 @@ export class WalkSessionsService {
     return this.prisma.walkSession.findMany({
       where: { userId },
       orderBy: { start: 'desc' },
+    });
+  }
+
+  async getPauseEvents(userId: string, sessionId: string) {
+    return this.prisma.walkPauseEvent.findMany({
+      where: { userId, sessionId },
+      orderBy: { pauseStartedAt: 'asc' },
+    });
+  }
+
+  async getRoutePoints(userId: string, sessionId: string) {
+    return this.prisma.walkRoutePoint.findMany({
+      where: { userId, sessionId },
+      orderBy: { recordedAt: 'asc' },
     });
   }
 }

@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Query, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Body, Query, Param, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -16,7 +16,7 @@ export class WalkSessionsController {
   constructor(private readonly walkSessionsService: WalkSessionsService) {}
 
   @Post()
-  @ApiOperation({ summary: 'Record a walk session' })
+  @ApiOperation({ summary: 'Record a walk session (with pause events and GPS route)' })
   create(
     @CurrentUser('userId') userId: string,
     @Body() dto: CreateWalkSessionDto,
@@ -49,5 +49,23 @@ export class WalkSessionsController {
   @ApiOperation({ summary: 'Get all walk sessions' })
   getAll(@CurrentUser('userId') userId: string) {
     return this.walkSessionsService.getAll(userId);
+  }
+
+  @Get(':sessionId/pauses')
+  @ApiOperation({ summary: 'Get pause events for a walk session' })
+  getPauseEvents(
+    @CurrentUser('userId') userId: string,
+    @Param('sessionId') sessionId: string,
+  ) {
+    return this.walkSessionsService.getPauseEvents(userId, sessionId);
+  }
+
+  @Get(':sessionId/route')
+  @ApiOperation({ summary: 'Get GPS route points for a walk session' })
+  getRoutePoints(
+    @CurrentUser('userId') userId: string,
+    @Param('sessionId') sessionId: string,
+  ) {
+    return this.walkSessionsService.getRoutePoints(userId, sessionId);
   }
 }

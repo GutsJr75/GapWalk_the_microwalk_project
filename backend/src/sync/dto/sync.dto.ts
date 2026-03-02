@@ -45,6 +45,24 @@ class SyncNudgePlanDto {
   @IsOptional() @IsString() reason?: string;
 }
 
+class SyncWalkPauseEventDto {
+  @IsDateString() pauseStartedAt: string;
+  @IsOptional() @IsDateString() pauseEndedAt?: string;
+  @IsOptional() @IsInt() pauseDurationSeconds?: number;
+  @IsOptional() @IsString() pauseSource?: string;
+  @IsOptional() @IsString() pauseReason?: string;
+}
+
+class SyncWalkRoutePointDto {
+  @IsNumber() latitude: number;
+  @IsNumber() longitude: number;
+  @IsOptional() @IsNumber() accuracyMeters?: number;
+  @IsOptional() @IsNumber() altitudeMeters?: number;
+  @IsOptional() @IsNumber() speedMps?: number;
+  @IsOptional() @IsNumber() bearingDegrees?: number;
+  @IsDateString() recordedAt: string;
+}
+
 class SyncWalkSessionDto {
   @IsOptional() @IsString() localId?: string;
   @IsOptional() @IsString() nudgePlanId?: string;
@@ -52,10 +70,23 @@ class SyncWalkSessionDto {
   @IsDateString() endTime: string;
   @IsInt() activeSeconds: number;
   @IsOptional() @IsInt() pausedSeconds?: number;
+  @IsOptional() @IsInt() pauseCount?: number;
   @IsOptional() @IsNumber() distanceMeters?: number;
   @IsOptional() @IsInt() steps?: number;
   @IsOptional() @IsNumber() calories?: number;
+  @IsOptional() @IsNumber() maxSpeedMps?: number;
+  @IsOptional() @IsNumber() avgSpeedMps?: number;
+  @IsOptional() @IsNumber() elevationGainMeters?: number;
   @IsOptional() @IsBoolean() usedLocation?: boolean;
+  @IsOptional() @IsString() stepSource?: string;
+  @IsOptional() @IsString() motionConfidence?: string;
+  @IsOptional() @IsString() sensorHealthAtStart?: string;
+  @IsOptional() @IsBoolean() wasRecovered?: boolean;
+  @IsOptional() @IsInt() nudgeToStartLatencySeconds?: number;
+  @IsOptional() @IsArray() @ValidateNested({ each: true }) @Type(() => SyncWalkPauseEventDto)
+  pauseEvents?: SyncWalkPauseEventDto[];
+  @IsOptional() @IsArray() @ValidateNested({ each: true }) @Type(() => SyncWalkRoutePointDto)
+  routePoints?: SyncWalkRoutePointDto[];
 }
 
 class SyncPreferencesDto {
@@ -92,6 +123,23 @@ class SyncCrashReportDto {
   @IsOptional() @IsBoolean() isFatal?: boolean;
   @IsOptional() context?: any;
   @IsOptional() @IsDateString() clientCreatedAt?: string;
+  @IsOptional() @IsBoolean() wasWalkInProgress?: boolean;
+  @IsOptional() @IsString() recoveredSessionId?: string;
+  @IsOptional() @IsString() appState?: string;
+}
+
+class SyncAchievementDto {
+  @IsString() achievementId: string;
+  @IsDateString() unlockedAt: string;
+  @IsOptional() @IsDateString() notifiedAt?: string;
+}
+
+class SyncAppSessionDto {
+  @IsDateString() sessionStart: string;
+  @IsOptional() @IsDateString() sessionEnd?: string;
+  @IsOptional() @IsInt() foregroundSeconds?: number;
+  @IsOptional() screensVisited?: string[];
+  @IsOptional() @IsString() source?: string;
 }
 
 // ── Main sync request ──
@@ -155,4 +203,18 @@ export class SyncRequestDto {
   @ValidateNested({ each: true })
   @Type(() => SyncCrashReportDto)
   crashReports?: SyncCrashReportDto[];
+
+  @ApiPropertyOptional({ type: [SyncAchievementDto] })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => SyncAchievementDto)
+  achievements?: SyncAchievementDto[];
+
+  @ApiPropertyOptional({ type: [SyncAppSessionDto] })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => SyncAppSessionDto)
+  appSessions?: SyncAppSessionDto[];
 }

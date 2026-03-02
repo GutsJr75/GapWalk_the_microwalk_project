@@ -8,8 +8,11 @@ export const sessionsRepo = {
     await db.runAsync(
       `INSERT OR REPLACE INTO walk_sessions 
        (id, nudge_plan_id, start, end, active_seconds, paused_seconds, 
-        distance_meters, steps, calories, used_location, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        distance_meters, steps, calories, used_location, created_at,
+        pause_count, max_speed_mps, avg_speed_mps, elevation_gain_meters,
+        step_source, motion_confidence, sensor_health_at_start,
+        was_recovered, nudge_to_start_latency_seconds)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         session.id,
         session.nudgePlanId || null,
@@ -22,6 +25,15 @@ export const sessionsRepo = {
         session.calories || null,
         session.usedLocation ? 1 : 0,
         session.createdAt,
+        session.pauseCount ?? null,
+        session.maxSpeedMps ?? null,
+        session.avgSpeedMps ?? null,
+        session.elevationGainMeters ?? null,
+        session.stepSource ?? null,
+        session.motionConfidence ?? null,
+        session.sensorHealthAtStart ?? null,
+        session.wasRecovered ? 1 : 0,
+        session.nudgeToStartLatencySeconds ?? null,
       ]
     );
   },
@@ -40,6 +52,15 @@ export const sessionsRepo = {
       calories: number | null;
       used_location: number;
       created_at: string;
+      pause_count: number | null;
+      max_speed_mps: number | null;
+      avg_speed_mps: number | null;
+      elevation_gain_meters: number | null;
+      step_source: string | null;
+      motion_confidence: string | null;
+      sensor_health_at_start: string | null;
+      was_recovered: number | null;
+      nudge_to_start_latency_seconds: number | null;
     }>('SELECT * FROM walk_sessions WHERE id = ?', [id]);
     
     if (!row) return null;
@@ -56,6 +77,15 @@ export const sessionsRepo = {
       calories: row.calories || undefined,
       usedLocation: row.used_location === 1,
       createdAt: row.created_at,
+      pauseCount: row.pause_count ?? undefined,
+      maxSpeedMps: row.max_speed_mps ?? undefined,
+      avgSpeedMps: row.avg_speed_mps ?? undefined,
+      elevationGainMeters: row.elevation_gain_meters ?? undefined,
+      stepSource: (row.step_source as WalkSession['stepSource']) ?? undefined,
+      motionConfidence: (row.motion_confidence as WalkSession['motionConfidence']) ?? undefined,
+      sensorHealthAtStart: (row.sensor_health_at_start as WalkSession['sensorHealthAtStart']) ?? undefined,
+      wasRecovered: row.was_recovered === 1,
+      nudgeToStartLatencySeconds: row.nudge_to_start_latency_seconds ?? undefined,
     };
   },
   
@@ -77,6 +107,15 @@ export const sessionsRepo = {
       calories: number | null;
       used_location: number;
       created_at: string;
+      pause_count: number | null;
+      max_speed_mps: number | null;
+      avg_speed_mps: number | null;
+      elevation_gain_meters: number | null;
+      step_source: string | null;
+      motion_confidence: string | null;
+      sensor_health_at_start: string | null;
+      was_recovered: number | null;
+      nudge_to_start_latency_seconds: number | null;
     }>(
       'SELECT * FROM walk_sessions WHERE start >= ? AND start < ? ORDER BY start DESC',
       [startTime, endTime]
@@ -94,6 +133,15 @@ export const sessionsRepo = {
       calories: row.calories || undefined,
       usedLocation: row.used_location === 1,
       createdAt: row.created_at,
+      pauseCount: row.pause_count ?? undefined,
+      maxSpeedMps: row.max_speed_mps ?? undefined,
+      avgSpeedMps: row.avg_speed_mps ?? undefined,
+      elevationGainMeters: row.elevation_gain_meters ?? undefined,
+      stepSource: (row.step_source as WalkSession['stepSource']) ?? undefined,
+      motionConfidence: (row.motion_confidence as WalkSession['motionConfidence']) ?? undefined,
+      sensorHealthAtStart: (row.sensor_health_at_start as WalkSession['sensorHealthAtStart']) ?? undefined,
+      wasRecovered: row.was_recovered === 1,
+      nudgeToStartLatencySeconds: row.nudge_to_start_latency_seconds ?? undefined,
     }));
   },
   
@@ -131,6 +179,15 @@ export const sessionsRepo = {
       calories: number | null;
       used_location: number;
       created_at: string;
+      pause_count: number | null;
+      max_speed_mps: number | null;
+      avg_speed_mps: number | null;
+      elevation_gain_meters: number | null;
+      step_source: string | null;
+      motion_confidence: string | null;
+      sensor_health_at_start: string | null;
+      was_recovered: number | null;
+      nudge_to_start_latency_seconds: number | null;
     }>('SELECT * FROM walk_sessions ORDER BY start DESC');
     
     return rows.map(row => ({
@@ -145,6 +202,15 @@ export const sessionsRepo = {
       calories: row.calories || undefined,
       usedLocation: row.used_location === 1,
       createdAt: row.created_at,
+      pauseCount: row.pause_count ?? undefined,
+      maxSpeedMps: row.max_speed_mps ?? undefined,
+      avgSpeedMps: row.avg_speed_mps ?? undefined,
+      elevationGainMeters: row.elevation_gain_meters ?? undefined,
+      stepSource: (row.step_source as WalkSession['stepSource']) ?? undefined,
+      motionConfidence: (row.motion_confidence as WalkSession['motionConfidence']) ?? undefined,
+      sensorHealthAtStart: (row.sensor_health_at_start as WalkSession['sensorHealthAtStart']) ?? undefined,
+      wasRecovered: row.was_recovered === 1,
+      nudgeToStartLatencySeconds: row.nudge_to_start_latency_seconds ?? undefined,
     }));
   },
 };

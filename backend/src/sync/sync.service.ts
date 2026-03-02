@@ -146,7 +146,7 @@ export class SyncService {
           if (exists) continue;
         }
 
-        await this.prisma.walkSession.create({
+        const created = await this.prisma.walkSession.create({
           data: {
             userId,
             localId: session.localId,
@@ -155,12 +155,53 @@ export class SyncService {
             endTime: new Date(session.endTime),
             activeSeconds: session.activeSeconds,
             pausedSeconds: session.pausedSeconds ?? 0,
+            pauseCount: session.pauseCount ?? 0,
             distanceMeters: session.distanceMeters,
             steps: session.steps ?? 0,
             calories: session.calories,
+            maxSpeedMps: session.maxSpeedMps,
+            avgSpeedMps: session.avgSpeedMps,
+            elevationGainMeters: session.elevationGainMeters,
             usedLocation: session.usedLocation ?? false,
+            stepSource: session.stepSource,
+            motionConfidence: session.motionConfidence,
+            sensorHealthAtStart: session.sensorHealthAtStart,
+            wasRecovered: session.wasRecovered ?? false,
+            nudgeToStartLatencySeconds: session.nudgeToStartLatencySeconds,
           },
         });
+
+        // Persist pause events
+        if (session.pauseEvents && session.pauseEvents.length > 0) {
+          await this.prisma.walkPauseEvent.createMany({
+            data: session.pauseEvents.map((p) => ({
+              userId,
+              sessionId: created.id,
+              pauseStartedAt: new Date(p.pauseStartedAt),
+              pauseEndedAt: p.pauseEndedAt ? new Date(p.pauseEndedAt) : null,
+              pauseDurationSeconds: p.pauseDurationSeconds,
+              pauseSource: p.pauseSource,
+              pauseReason: p.pauseReason,
+            })),
+          });
+        }
+
+        // Persist GPS route points
+        if (session.routePoints && session.routePoints.length > 0) {
+          await this.prisma.walkRoutePoint.createMany({
+            data: session.routePoints.map((r) => ({
+              userId,
+              sessionId: created.id,
+              latitude: r.latitude,
+              longitude: r.longitude,
+              accuracyMeters: r.accuracyMeters,
+              altitudeMeters: r.altitudeMeters,
+              speedMps: r.speedMps,
+              bearingDegrees: r.bearingDegrees,
+              recordedAt: new Date(r.recordedAt),
+            })),
+          });
+        }
       }
     }
 
@@ -187,9 +228,48 @@ export class SyncService {
           stack: r.stack,
           isFatal: r.isFatal ?? false,
           context: (r.context ?? null) as Prisma.InputJsonValue,
+          wasWalkInProgress: r.wasWalkInProgress,
+          recoveredSessionId: r.recoveredSessionId,
+          appState: r.appState,
           clientCreatedAt: r.clientCreatedAt
             ? new Date(r.clientCreatedAt)
             : null,
+        })),
+      });
+    }
+
+    // Achievements (upsert — device is source of truth for unlock time)
+    if (dto.achievements && dto.achievements.length > 0) {
+      for (const a of dto.achievements) {
+        await this.prisma.userAchievement.upsert({
+          where: {
+            userId_achievementId: { userId, achievementId: a.achievementId },
+          },
+          update: {
+            notifiedAt: a.notifiedAt ? new Date(a.notifiedAt) : undefined,
+          },
+          create: {
+            userId,
+            achievementId: a.achievementId,
+            unlockedAt: new Date(a.unlockedAt),
+            notifiedAt: a.notifiedAt ? new Date(a.notifiedAt) : null,
+          },
+        });
+      }
+    }
+
+    // App sessions (always append)
+    if (dto.appSessions && dto.appSessions.length > 0) {
+      await this.prisma.appSession.createMany({
+        data: dto.appSessions.map((s) => ({
+          userId,
+          sessionStart: new Date(s.sessionStart),
+          sessionEnd: s.sessionEnd ? new Date(s.sessionEnd) : null,
+          foregroundSeconds: s.foregroundSeconds,
+          screensVisited: s.screensVisited
+            ? (s.screensVisited as unknown as Prisma.InputJsonValue)
+            : Prisma.JsonNull,
+          source: (s.source as any) ?? 'cold_start',
         })),
       });
     }

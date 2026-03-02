@@ -23,6 +23,7 @@ import { BehaviorLogModule } from './behavior-log/behavior-log.module';
 import { ResearcherModule } from './researcher/researcher.module';
 import { DashboardSpaModule } from './dashboard-spa/dashboard-spa.module';
 import { WorkersModule } from './workers/workers.module';
+import { AppSessionsModule } from './app-sessions/app-sessions.module';
 
 const enableWorkers =
   process.env.ENABLE_WORKERS !== 'false' && process.env.NODE_ENV !== 'test';
@@ -49,6 +50,7 @@ const enableWorkers =
     BehaviorLogModule,
     ResearcherModule,
     DashboardSpaModule,
+    AppSessionsModule,
     ...(enableWorkers ? [WorkersModule] : []),
   ],
   controllers: [AppController],

@@ -28,29 +28,91 @@ model User {
   updatedAt    DateTime  @updatedAt @map("updated_at")
 
   devices               Device[]
+  profile               UserProfile?
   preferences           Preference?
   scheduleSource        ScheduleSource?
   busyEvents            BusyEvent[]
   manualScheduleEntries ManualScheduleEntry[]
   nudgePlans            NudgePlan[]
   walkSessions          WalkSession[]
+  walkPauseEvents       WalkPauseEvent[]
+  walkRoutePoints       WalkRoutePoint[]
   analyticsEvents       AnalyticsEvent[]
+  appSessions           AppSession[]
   crashReports          CrashReport[]
   behaviorLogs          BehaviorLog[]
   studyEnrollments      StudyEnrollment[]
+  achievements          UserAchievement[]
+  researcherActions     ResearcherAction[]   @relation("ResearcherActorActions")
+  researcherTargets     ResearcherAction[]   @relation("ResearcherTargetActions")
 
   @@map("users")
 }
 
+// ─── USER PROFILE (demographics / research metadata) ────────
+
+enum ActivityLevel {
+  sedentary
+  lightly_active
+  moderately_active
+  active
+  very_active
+}
+
+enum BiologicalSex {
+  male
+  female
+  other
+  prefer_not_to_say
+}
+
+enum OccupationType {
+  sedentary_desk
+  light_activity
+  moderate_activity
+  heavy_activity
+  prefer_not_to_say
+}
+
+model UserProfile {
+  id                       String         @id @default(uuid()) @db.Uuid
+  userId                   String         @unique @map("user_id") @db.Uuid
+  ageGroup                 String?        @map("age_group")           // "18-24" | "25-34" | etc.
+  biologicalSex            BiologicalSex? @map("biological_sex")
+  heightCm                 Float?         @map("height_cm")
+  weightKg                 Float?         @map("weight_kg")
+  occupationType           OccupationType? @map("occupation_type")
+  selfReportedActivityLevel ActivityLevel? @map("self_reported_activity_level")
+  referralSource           String?        @map("referral_source")
+  locale                   String?
+  consentGivenAt           DateTime?      @map("consent_given_at")
+  consentVersion           String?        @map("consent_version")
+  onboardingCompletedAt    DateTime?      @map("onboarding_completed_at")
+  studyGroup               String?        @map("study_group")        // "control" | "intervention" | arm label
+  createdAt                DateTime       @default(now()) @map("created_at")
+  updatedAt                DateTime       @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_profiles")
+}
+
 model Device {
-  id            String   @id @default(uuid()) @db.Uuid
-  userId        String   @map("user_id") @db.Uuid
-  expoPushToken String   @map("expo_push_token")
-  platform      String // ios | android
-  appVersion    String?  @map("app_version")
-  isActive      Boolean  @default(true) @map("is_active")
-  createdAt     DateTime @default(now()) @map("created_at")
-  updatedAt     DateTime @updatedAt @map("updated_at")
+  id                              String   @id @default(uuid()) @db.Uuid
+  userId                          String   @map("user_id") @db.Uuid
+  expoPushToken                   String   @map("expo_push_token")
+  platform                        String   // ios | android
+  appVersion                      String?  @map("app_version")
+  osVersion                       String?  @map("os_version")
+  deviceModel                     String?  @map("device_model")
+  notificationPermissionGranted   Boolean? @map("notification_permission_granted")
+  locationPermissionLevel         String?  @map("location_permission_level") // none | when_in_use | always
+  activityPermissionGranted       Boolean? @map("activity_permission_granted")
+  batterySaverDetected            Boolean? @map("battery_saver_detected")
+  isActive                        Boolean  @default(true) @map("is_active")
+  lastSeenAt                      DateTime? @map("last_seen_at")
+  createdAt                       DateTime @default(now()) @map("created_at")
+  updatedAt                       DateTime @updatedAt @map("updated_at")
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -186,6 +248,10 @@ model NudgePlan {
   status                   NudgePlanStatus @default(planned)
   reason                   String?
   origin                   NudgePlanOrigin @default(server)
+  gapScore                 Float?          @map("gap_score")
+  notificationVariant      String?         @map("notification_variant")
+  manuallyTriggeredBy      String?         @map("manually_triggered_by") @db.Uuid
+  manualNudgeNote          String?         @map("manual_nudge_note")
   pushTicketId             String?         @map("push_ticket_id")
   pushSentAt               DateTime?       @map("push_sent_at")
   pushDeliveredAt          DateTime?       @map("push_delivered_at")
@@ -204,25 +270,79 @@ model NudgePlan {
 // ─── WALK SESSIONS ──────────────────────────────────────────
 
 model WalkSession {
-  id             String   @id @default(uuid()) @db.Uuid
-  userId         String   @map("user_id") @db.Uuid
-  nudgePlanId    String?  @unique @map("nudge_plan_id") @db.Uuid
-  localId        String?  @map("local_id")
-  start          DateTime
-  endTime        DateTime @map("end_time")
-  activeSeconds  Int      @default(0) @map("active_seconds")
-  pausedSeconds  Int      @default(0) @map("paused_seconds")
-  distanceMeters Float?   @map("distance_meters")
-  steps          Int      @default(0)
-  calories       Float?
-  usedLocation   Boolean  @default(false) @map("used_location")
-  createdAt      DateTime @default(now()) @map("created_at")
+  id                        String   @id @default(uuid()) @db.Uuid
+  userId                    String   @map("user_id") @db.Uuid
+  nudgePlanId               String?  @unique @map("nudge_plan_id") @db.Uuid
+  localId                   String?  @map("local_id")
+  start                     DateTime
+  endTime                   DateTime @map("end_time")
+  activeSeconds             Int      @default(0) @map("active_seconds")
+  pausedSeconds             Int      @default(0) @map("paused_seconds")
+  pauseCount                Int      @default(0) @map("pause_count")
+  distanceMeters            Float?   @map("distance_meters")
+  steps                     Int      @default(0)
+  calories                  Float?
+  maxSpeedMps               Float?   @map("max_speed_mps")
+  avgSpeedMps               Float?   @map("avg_speed_mps")
+  elevationGainMeters       Float?   @map("elevation_gain_meters")
+  usedLocation              Boolean  @default(false) @map("used_location")
+  stepSource                String?  @map("step_source")              // sensor | gps_fallback | none
+  motionConfidence          String?  @map("motion_confidence")        // low | medium | high
+  sensorHealthAtStart       String?  @map("sensor_health_at_start")  // active | stale | unsupported | denied
+  wasRecovered              Boolean  @default(false) @map("was_recovered")
+  nudgeToStartLatencySeconds Int?    @map("nudge_to_start_latency_seconds")
+  createdAt                 DateTime @default(now()) @map("created_at")
 
-  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
-  nudgePlan NudgePlan? @relation(fields: [nudgePlanId], references: [id], onDelete: SetNull)
+  user        User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  nudgePlan   NudgePlan?       @relation(fields: [nudgePlanId], references: [id], onDelete: SetNull)
+  pauseEvents WalkPauseEvent[]
+  routePoints WalkRoutePoint[]
 
   @@index([userId, start])
   @@map("walk_sessions")
+}
+
+// ─── WALK PAUSE EVENTS ──────────────────────────────────────
+
+model WalkPauseEvent {
+  id                    String   @id @default(uuid()) @db.Uuid
+  userId                String   @map("user_id") @db.Uuid
+  sessionId             String   @map("session_id") @db.Uuid
+  pauseStartedAt        DateTime @map("pause_started_at")
+  pauseEndedAt          DateTime? @map("pause_ended_at")
+  pauseDurationSeconds  Int?     @map("pause_duration_seconds")
+  pauseSource           String?  @map("pause_source")   // screen | auto_pause | notification
+  pauseReason           String?  @map("pause_reason")   // not_moving | user_action | phone_call
+  createdAt             DateTime @default(now()) @map("created_at")
+
+  user    User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  session WalkSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId])
+  @@index([userId])
+  @@map("walk_pause_events")
+}
+
+// ─── WALK ROUTE POINTS ──────────────────────────────────────
+
+model WalkRoutePoint {
+  id              Int      @id @default(autoincrement())
+  userId          String   @map("user_id") @db.Uuid
+  sessionId       String   @map("session_id") @db.Uuid
+  latitude        Float
+  longitude       Float
+  accuracyMeters  Float?   @map("accuracy_meters")
+  altitudeMeters  Float?   @map("altitude_meters")
+  speedMps        Float?   @map("speed_mps")
+  bearingDegrees  Float?   @map("bearing_degrees")
+  recordedAt      DateTime @map("recorded_at")
+
+  user    User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  session WalkSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId])
+  @@index([userId])
+  @@map("walk_route_points")
 }
 
 // ─── ANALYTICS & CRASH REPORTS ──────────────────────────────
@@ -243,14 +363,17 @@ model AnalyticsEvent {
 }
 
 model CrashReport {
-  id              String    @id @default(uuid()) @db.Uuid
-  userId          String    @map("user_id") @db.Uuid
-  message         String
-  stack           String?
-  isFatal         Boolean   @default(false) @map("is_fatal")
-  context         Json?
-  clientCreatedAt DateTime? @map("client_created_at")
-  createdAt       DateTime  @default(now()) @map("created_at")
+  id                  String    @id @default(uuid()) @db.Uuid
+  userId              String    @map("user_id") @db.Uuid
+  message             String
+  stack               String?
+  isFatal             Boolean   @default(false) @map("is_fatal")
+  context             Json?
+  wasWalkInProgress   Boolean?  @map("was_walk_in_progress")
+  recoveredSessionId  String?   @map("recovered_session_id")
+  appState            String?   @map("app_state")              // foreground | background | killed
+  clientCreatedAt     DateTime? @map("client_created_at")
+  createdAt           DateTime  @default(now()) @map("created_at")
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -262,17 +385,34 @@ model CrashReport {
 // ─── BEHAVIOR LOGS ──────────────────────────────────────────
 
 enum BehaviorEventType {
+  // Notification lifecycle
+  nudge_scheduled
   nudge_received
+  nudge_tapped
+  nudge_swiped_away
   nudge_opened
   nudge_dismissed
   nudge_expired
+  nudge_action_start
+  nudge_action_skip
+  alt_gap_suggested
+  alt_gap_accepted
+  alt_gap_declined
+  manual_nudge_triggered
+  app_foreground_from_nudge
+  // Walk lifecycle
   walk_started
   walk_completed
   walk_paused
   walk_resumed
   walk_cancelled
+  // App lifecycle
   app_opened
   app_backgrounded
+  // Settings changes
+  settings_changed
+  schedule_source_changed
+  goal_changed
 }
 
 model BehaviorLog {
@@ -392,4 +532,95 @@ model PushLog {
   @@index([nudgePlanId])
   @@index([status])
   @@map("push_logs")
+}
+
+// ─── APP SESSIONS ────────────────────────────────────────────
+
+enum AppOpenSource {
+  cold_start
+  notification
+  icon_tap
+  background_restore
+}
+
+model AppSession {
+  id                String        @id @default(uuid()) @db.Uuid
+  userId            String        @map("user_id") @db.Uuid
+  sessionStart      DateTime      @map("session_start")
+  sessionEnd        DateTime?     @map("session_end")
+  foregroundSeconds Int?          @map("foreground_seconds")
+  screensVisited    Json?         @map("screens_visited")   // string[]
+  source            AppOpenSource @default(cold_start)
+  createdAt         DateTime      @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([sessionStart])
+  @@map("app_sessions")
+}
+
+// ─── USER ACHIEVEMENTS (synced from device) ──────────────────
+
+model UserAchievement {
+  id            String   @id @default(uuid()) @db.Uuid
+  userId        String   @map("user_id") @db.Uuid
+  achievementId String   @map("achievement_id")
+  unlockedAt    DateTime @map("unlocked_at")
+  notifiedAt    DateTime? @map("notified_at")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, achievementId])
+  @@index([userId])
+  @@map("user_achievements")
+}
+
+// ─── GAP OPPORTUNITIES ───────────────────────────────────────
+
+model GapOpportunity {
+  id                   String   @id @default(uuid()) @db.Uuid
+  userId               String   @map("user_id") @db.Uuid
+  date                 String
+  gapStart             DateTime @map("gap_start")
+  gapEnd               DateTime @map("gap_end")
+  durationMinutes      Int      @map("duration_minutes")
+  availableWalkMinutes Int      @map("available_walk_minutes")
+  score                Float
+  wasUsedForNudge      Boolean  @default(false) @map("was_used_for_nudge")
+  reasonNotUsed        String?  @map("reason_not_used")  // too_short | quiet_hours | already_capped
+  createdAt            DateTime @default(now()) @map("created_at")
+
+  @@index([userId, date])
+  @@map("gap_opportunities")
+}
+
+// ─── RESEARCHER ACTIONS (audit log) ──────────────────────────
+
+enum ResearcherActionType {
+  manual_nudge
+  export_data
+  view_profile
+  modify_study
+  enroll_participant
+  withdraw_participant
+  send_message
+}
+
+model ResearcherAction {
+  id             String               @id @default(uuid()) @db.Uuid
+  researcherId   String               @map("researcher_id") @db.Uuid
+  targetUserId   String?              @map("target_user_id") @db.Uuid
+  actionType     ResearcherActionType @map("action_type")
+  payload        Json?
+  performedAt    DateTime             @default(now()) @map("performed_at")
+
+  researcher  User  @relation("ResearcherActorActions", fields: [researcherId], references: [id], onDelete: Cascade)
+  targetUser  User? @relation("ResearcherTargetActions", fields: [targetUserId], references: [id], onDelete: SetNull)
+
+  @@index([researcherId])
+  @@index([targetUserId])
+  @@index([performedAt])
+  @@map("researcher_actions")
 }

@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Animated, AppState, AppStateStatus, Platform, Pressable, StyleSheet, View } from 'react-native';
-import MapView, { Polyline } from 'react-native-maps';
+import { Animated, AppState, AppStateStatus, Easing, PanResponder, Platform, Pressable, StyleSheet, View } from 'react-native';
+import MapView, { Marker, Polyline } from 'react-native-maps';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { Ionicons } from '@expo/vector-icons';
 import * as Location from 'expo-location';
@@ -21,6 +21,7 @@ import { isNotificationsSupported, notificationService } from '../services/notif
 import { requestWalkTrackingPermissions, WalkTrackingPermissionResults } from '../services/permissions';
 import { saveWalkCheckpoint, clearWalkCheckpoint } from '../services/walkCheckpoint';
 import { routeRepo } from '../data/repositories/routeRepo';
+import { runBackendSync } from '../services/backendSync';
 import { useAppStore } from '../store';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Walking'>;
@@ -207,7 +208,9 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
   const [startCountdown, setStartCountdown] = useState<number | null>(null);
   const [sessionStarted, setSessionStarted] = useState(false);
   const [routeCoords, setRouteCoords] = useState<Coord[]>([]);
+  const [pinnedLocation, setPinnedLocation] = useState<Coord | null>(null);
 
+  const mapRef = useRef<MapView>(null);
   const lastAndroidSnapshotRef = useRef<ActiveWalkSnapshot | null>(activeWalkSnapshot);
   const allowLeaveRef = useRef(false);
   const fallbackStateRef = useRef<FallbackState>(fallbackState);
@@ -240,6 +243,18 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
   const statusChangeAnim = useRef(new Animated.Value(1)).current;
   const prevStepsRef = useRef(0);
   const prevDistanceRef = useRef(0);
+
+  const dotsPanResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => false,
+      onMoveShouldSetPanResponder: (_, g) => Math.abs(g.dx) > 6 && Math.abs(g.dx) > Math.abs(g.dy),
+      onPanResponderRelease: (_, g) => {
+        if (g.dx < -40 || g.vx < -0.4) {
+          navigation.navigate('WalkingExpanded');
+        }
+      },
+    }),
+  ).current;
 
   useEffect(() => {
     fallbackStateRef.current = fallbackState;
@@ -730,8 +745,23 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
             lastSavedCoordRef.current = nextCoord;
             void routeRepo.appendPoint(
               fallbackStateRef.current.sessionId,
-              nextCoord.latitude,
-              nextCoord.longitude,
+              {
+                latitude: location.coords.latitude,
+                longitude: location.coords.longitude,
+                accuracyMeters: typeof location.coords.accuracy === 'number' && location.coords.accuracy >= 0
+                  ? location.coords.accuracy
+                  : undefined,
+                altitudeMeters: typeof location.coords.altitude === 'number'
+                  ? location.coords.altitude
+                  : undefined,
+                speedMps: typeof location.coords.speed === 'number' && location.coords.speed >= 0
+                  ? location.coords.speed
+                  : undefined,
+                bearingDegrees: typeof location.coords.heading === 'number' && location.coords.heading >= 0
+                  ? location.coords.heading
+                  : undefined,
+                recordedAt: new Date(timestampMs).toISOString(),
+              }
             );
           }
 
@@ -740,7 +770,7 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
 
             if (previous) {
               const segmentMeters = haversineMeters(previous.coord, nextCoord);
-              const dtSeconds = Math.max(1, (timestampMs - previous.timestampMs) / 1000);
+              const dtSeconds = Math.max(1, timestampMs - previous.timestampMs) / 1000;
               const speedFromSensor = typeof location.coords.speed === 'number' && location.coords.speed >= 0
                 ? location.coords.speed
                 : null;
@@ -805,6 +835,14 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
       const permissionResults = await requestWalkTrackingPermissions();
       if (cancelled) return;
 
+      // Update permission flags immediately so the map renders before the countdown finishes
+      updateFallbackState((current) => ({
+        ...current,
+        locationPermissionGranted: permissionResults.locationForeground,
+        backgroundLocationGranted: permissionResults.locationBackground,
+        activityPermissionGranted: permissionResults.activityRecognition,
+      }));
+
       runStartCountdown(() => {
         if (cancelled) return;
         void (async () => {
@@ -824,7 +862,7 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
         void notificationService.dismissWalkSessionNotification();
       }
     };
-  }, [clearStartCountdown, isAndroidService, markPlanStarted, runStartCountdown, startFallbackTracking, unsubscribeFallbackSensors]);
+  }, [clearStartCountdown, isAndroidService, markPlanStarted, runStartCountdown, startFallbackTracking, unsubscribeFallbackSensors, updateFallbackState]);
 
   useEffect(() => {
     if (isAndroidService || !sessionStarted) return;
@@ -961,6 +999,9 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
       await plansRepo.updateStatus(resolvedSession.nudgePlanId, options?.planStatus ?? 'completed');
     }
 
+    // Fire-and-forget backend sync after every completed session
+    void runBackendSync();
+
     analyticsService.track('walk_completed', {
       planId: resolvedSession.nudgePlanId || null,
       activeSeconds: resolvedSession.activeSeconds,
@@ -1005,17 +1046,30 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
   ) => {
     if (!snapshot) return;
     const pauseDelta = snapshot.pauseStartedAtMs ? Date.now() - snapshot.pauseStartedAtMs : 0;
+    const sessionEndMs = Date.now();
+
+    // Compute nudge-to-start latency: seconds from plan's walkStart to actual session start
+    let nudgeToStartLatencySeconds: number | undefined;
+    if (plan?.walkStart) {
+      const latencyMs = new Date(snapshot.startIso).getTime() - new Date(plan.walkStart).getTime();
+      if (latencyMs >= 0) nudgeToStartLatencySeconds = Math.round(latencyMs / 1000);
+    }
+
     const session: WalkSession = {
       id: snapshot.sessionId,
       nudgePlanId: snapshot.planId || planId,
       start: snapshot.startIso,
-      end: new Date().toISOString(),
+      end: new Date(sessionEndMs).toISOString(),
       activeSeconds: snapshot.elapsedSeconds,
       pausedSeconds: Math.floor((snapshot.totalPausedMs + pauseDelta) / 1000),
       distanceMeters: snapshot.distanceMeters,
       steps: snapshot.steps,
       usedLocation: snapshot.usedLocation,
       createdAt: new Date().toISOString(),
+      stepSource: snapshot.stepSource,
+      motionConfidence: snapshot.motionConfidence,
+      sensorHealthAtStart: snapshot.pedometerHealth,
+      nudgeToStartLatencySeconds,
     };
 
     setActiveWalkSnapshot(null);
@@ -1024,7 +1078,7 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
       ...options,
       hadWalkingSignal: snapshot.hadWalkingSignal,
     });
-  }, [persistCompletedSession, planId, setActiveWalkSnapshot, setPendingWalkPrompt]);
+  }, [persistCompletedSession, plan, planId, setActiveWalkSnapshot, setPendingWalkPrompt]);
 
   const saveFallbackSession = useCallback(async (
     options?: {
@@ -1035,6 +1089,14 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
   ) => {
     const current = fallbackStateRef.current;
     const pauseDelta = current.pauseStartedAtMs ? Date.now() - current.pauseStartedAtMs : 0;
+
+    // Compute nudge-to-start latency
+    let nudgeToStartLatencySeconds: number | undefined;
+    if (plan?.walkStart) {
+      const latencyMs = new Date(current.startIso).getTime() - new Date(plan.walkStart).getTime();
+      if (latencyMs >= 0) nudgeToStartLatencySeconds = Math.round(latencyMs / 1000);
+    }
+
     const session: WalkSession = {
       id: current.sessionId,
       nudgePlanId: planId,
@@ -1046,6 +1108,10 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
       steps: current.steps,
       usedLocation: current.usedLocation,
       createdAt: new Date().toISOString(),
+      stepSource: current.stepSource,
+      motionConfidence: current.motionConfidence,
+      sensorHealthAtStart: current.pedometerHealth,
+      nudgeToStartLatencySeconds,
     };
 
     unsubscribeFallbackSensors();
@@ -1053,7 +1119,7 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
       ...options,
       hadWalkingSignal: current.hadWalkingSignal,
     });
-  }, [computeFallbackElapsedSeconds, persistCompletedSession, planId, unsubscribeFallbackSensors]);
+  }, [computeFallbackElapsedSeconds, persistCompletedSession, plan, planId, unsubscribeFallbackSensors]);
 
   const togglePause = useCallback(async () => {
     setShowIdleModal(false);
@@ -1143,6 +1209,17 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
     }
     setShowEndModal(false);
   }, [activeWalkSnapshot?.prompt, applyAndroidSnapshot, isAndroidService]);
+
+  const handleLocatePress = useCallback(async () => {
+    const location = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
+    const coord: Coord = { latitude: location.coords.latitude, longitude: location.coords.longitude };
+    setPinnedLocation(coord);
+    mapRef.current?.animateToRegion({
+      ...coord,
+      latitudeDelta: 0.005,
+      longitudeDelta: 0.005,
+    }, 800);
+  }, []);
 
   const statusColor = useMemo(() => {
     if (displayState === 'paused') return '#f59e0b';
@@ -1235,140 +1312,85 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: palette.bgApp }]} edges={['top', 'left', 'right']}>
       <View style={[styles.topBar, { backgroundColor: palette.bgSurface, borderBottomColor: palette.borderSoft }]}>
-        <Text variant="title">Walking</Text>
+        <Pressable onPress={() => navigation.goBack()} style={styles.topBarBtn} hitSlop={10}>
+          <Ionicons name="arrow-back" size={22} color={palette.textPrimary} />
+        </Pressable>
+        <Text variant="title" style={styles.topBarTitle}>Walking</Text>
+        <View style={styles.topBarBtn} />
       </View>
 
       <View style={styles.body}>
         <View style={[styles.mapContainer, { backgroundColor: palette.bgSurface }]}>
-          {(fallbackState.locationPermissionGranted || routeCoords.length > 0) ? (
-            <MapView
-              style={StyleSheet.absoluteFillObject}
-              showsUserLocation={true}
-              followsUserLocation={true}
-              showsMyLocationButton={false}
-              showsCompass={false}
-              toolbarEnabled={false}
-              customMapStyle={themeMode === 'dark' ? darkMapStyle : []}
-            >
-              {routeCoords.length >= 2 && (
-                <Polyline
-                  coordinates={routeCoords}
-                  strokeColor={statusColor}
-                  strokeWidth={4}
-                  lineCap="round"
-                  lineJoin="round"
-                />
-              )}
-            </MapView>
-          ) : null}
+          <MapView
+            ref={mapRef}
+            style={StyleSheet.absoluteFillObject}
+            showsUserLocation={true}
+            followsUserLocation={true}
+            showsMyLocationButton={false}
+            showsCompass={false}
+            toolbarEnabled={false}
+            customMapStyle={themeMode === 'dark' ? darkMapStyle : []}
+          >
+            {routeCoords.length >= 2 && (
+              <Polyline
+                coordinates={routeCoords}
+                strokeColor={statusColor}
+                strokeWidth={4}
+                lineCap="round"
+                lineJoin="round"
+              />
+            )}
+            {pinnedLocation && (
+              <Marker coordinate={pinnedLocation} pinColor={statusColor} />
+            )}
+          </MapView>
 
           <View style={styles.heroOverlay}>
-          <Animated.View style={[styles.heroStatusRow, { opacity: statusChangeAnim, transform: [{ scale: statusChangeAnim }] }]}>
-            <View
-              style={[
-                styles.statusPill,
-                {
-                  backgroundColor: statusTint,
-                  borderColor: statusBorderColor,
-                },
-              ]}
-            >
-              <View style={styles.statusDotWrap}>
-                {(displayState === 'walking' || displayState === 'calibrating') && (
-                  <Animated.View
-                    style={[
-                      styles.statusDotPulse,
-                      {
-                        backgroundColor: statusColor,
-                        opacity: pulseOpacity,
-                        transform: [{ scale: pulseScale }],
-                      },
-                    ]}
-                  />
-                )}
-                <View style={[styles.statusDot, { backgroundColor: statusColor }]} />
-              </View>
-              <Ionicons
-                name={
-                  displayState === 'walking' ? 'walk' :
-                  displayState === 'paused' ? 'pause-circle-outline' :
-                  displayState === 'not_moving' ? 'body-outline' :
-                  displayState === 'location_off' ? 'location-outline' :
-                  'radio-outline'
-                }
-                size={16}
-                color={statusColor}
-              />
-              <Text variant="body" style={[styles.statusPillText, { color: statusColor }]}>{heroStatusLabel}</Text>
-            </View>
-
-            <View style={[styles.confidencePill, { backgroundColor: palette.bgSurfaceElevated, borderColor: palette.borderSoft }]}>
-              <View style={styles.confidenceBars}>
-                {([8, 12, 16] as const).map((height, i) => {
-                  const activeBars = motionConfidence === 'high' ? 3 : motionConfidence === 'medium' ? 2 : 1;
-                  return (
-                    <View
-                      key={i}
+            <Animated.View style={[styles.heroStatusRow, { opacity: statusChangeAnim, transform: [{ scale: statusChangeAnim }] }]}>
+              <View
+                style={[
+                  styles.statusPill,
+                  {
+                    backgroundColor: statusTint,
+                    borderColor: statusBorderColor,
+                  },
+                ]}
+              >
+                <View style={styles.statusDotWrap}>
+                  {(displayState === 'walking' || displayState === 'calibrating') && (
+                    <Animated.View
                       style={[
-                        styles.confidenceBar,
+                        styles.statusDotPulse,
                         {
-                          height,
-                          backgroundColor: i < activeBars
-                            ? statusColor
-                            : (themeMode === 'dark' ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.10)'),
+                          backgroundColor: statusColor,
+                          opacity: pulseOpacity,
+                          transform: [{ scale: pulseScale }],
                         },
                       ]}
                     />
-                  );
-                })}
+                  )}
+                  <View style={[styles.statusDot, { backgroundColor: statusColor }]} />
+                </View>
+                <Ionicons
+                  name={
+                    displayState === 'walking' ? 'walk' :
+                    displayState === 'paused' ? 'pause-circle-outline' :
+                    displayState === 'not_moving' ? 'body-outline' :
+                    displayState === 'location_off' ? 'location-outline' :
+                    'radio-outline'
+                  }
+                  size={16}
+                  color={statusColor}
+                />
+                <Text variant="body" style={[styles.statusPillText, { color: statusColor }]}>{heroStatusLabel}</Text>
               </View>
-              <Text variant="bodySmall" color={palette.textMuted}>
-                {motionConfidence === 'high' ? 'High' : motionConfidence === 'medium' ? 'Med' : 'Low'}
-              </Text>
-            </View>
-          </Animated.View>
-
-          <Animated.View
-            style={[
-              styles.heroCard,
-              {
-                backgroundColor: themeMode === 'dark' ? 'rgba(18,26,44,0.90)' : 'rgba(255,255,255,0.92)',
-                borderColor: statusBorderColor,
-                shadowColor: statusColor,
-                transform: [{ translateY: cardLift }],
-              },
-            ]}
-          >
-            <Text variant="body" style={styles.heroLabel}>Live walk tracking</Text>
-            <Text variant="heading" style={styles.heroTime}>
-              {heroTime}
-            </Text>
-            <Text variant="bodySmall" color={palette.textMuted} style={styles.heroSub}>
-              {heroSubLabel}
-            </Text>
-            <Text variant="body" style={styles.heroDetail}>
-              {heroStatusDetail}
-            </Text>
-
-            {displayState === 'walking' && (
-              <View style={styles.rhythmRow}>
-                {([rhythmDot0Opacity, rhythmDot1Opacity, rhythmDot2Opacity] as const).map((opacity, i) => (
-                  <Animated.View key={i} style={[styles.rhythmDot, { backgroundColor: statusColor, opacity }]} />
-                ))}
-              </View>
-            )}
-
-            <View style={styles.heroMetaRow}>
-              <View style={[styles.metaPill, { backgroundColor: palette.bgSurfaceElevated, borderColor: palette.borderSoft }]}>
-                <Ionicons name="footsteps-outline" size={15} color={statusColor} />
-                <Text variant="bodySmall" color={palette.textMuted}>{stepSourceLabel(stepSource, pedometerHealth)}</Text>
-              </View>
-              <View style={[styles.metaPill, { backgroundColor: palette.bgSurfaceElevated, borderColor: palette.borderSoft }]}>
-                <Ionicons name="navigate-outline" size={15} color={statusColor} />
-                <Text variant="bodySmall" color={palette.textMuted}>{sensorHealthLabel('GPS', locationHealth)}</Text>
-              </View>
-            </View>
-          </Animated.View>
+              <Pressable
+                style={[styles.mapIcon, { backgroundColor: palette.bgSurfaceElevated, borderColor: palette.borderSoft }]}
+                onPress={() => { void handleLocatePress(); }}
+              >
+                <Ionicons name="locate" size={20} color={statusColor} />
+              </Pressable>
+            </Animated.View>
 
           {(permissionDenied || locationWarning) && (
             <View
@@ -1407,14 +1429,32 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
             },
           ]}
         >
-          <View style={[styles.dockGrip, { backgroundColor: palette.borderStrong }]} />
+          <View style={styles.dockDots} {...dotsPanResponder.panHandlers}>
+            <View style={[styles.dockDot, styles.dockDotActive, { backgroundColor: palette.accentPrimary }]} />
+            <Pressable
+              onPress={() => navigation.navigate('WalkingExpanded')}
+              hitSlop={12}
+            >
+              <View style={[styles.dockDot, { backgroundColor: palette.borderStrong }]} />
+            </Pressable>
+          </View>
 
-          <View style={styles.metricRow}>
+          <View style={styles.metricGrid}>
+            <View style={[styles.metricCard, { backgroundColor: palette.bgSurface, borderColor: palette.borderSoft }]}>
+              <Text variant="body">Duration</Text>
+              <Text variant="heading" style={styles.metricValue}>{formatClock(activeSeconds)}</Text>
+            </View>
             <View style={[styles.metricCard, { backgroundColor: palette.bgSurface, borderColor: palette.borderSoft }]}>
               <Text variant="body">Distance</Text>
               <Animated.View style={{ transform: [{ scale: distanceScaleAnim }] }}>
                 <Text variant="heading" style={styles.metricValue}>{formatMiles(distanceMeters)}</Text>
               </Animated.View>
+            </View>
+            <View style={[styles.metricCard, { backgroundColor: palette.bgSurface, borderColor: palette.borderSoft }]}>
+              <Text variant="body">Speed</Text>
+              <Text variant="heading" style={styles.metricValue}>
+                {activeSeconds > 0 ? ((distanceMeters / 1609.34) / (activeSeconds / 3600)).toFixed(1) : '0.0'} mph
+              </Text>
             </View>
             <View style={[styles.metricCard, { backgroundColor: palette.bgSurface, borderColor: palette.borderSoft }]}>
               <Text variant="body">Steps</Text>
@@ -1653,35 +1693,54 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   topBar: {
-    paddingHorizontal: 20,
-    paddingVertical: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 8,
+    paddingVertical: 10,
     borderBottomWidth: 1,
+  },
+  topBarBtn: {
+    width: 40,
+    height: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  topBarTitle: {
+    flex: 1,
+    textAlign: 'center',
   },
   body: {
     flex: 1,
-    justifyContent: 'space-between',
+    flexDirection: 'column',
     paddingHorizontal: 12,
     paddingTop: 12,
     paddingBottom: 8,
+    gap: 12,
   },
   mapContainer: {
     flex: 1,
     borderRadius: 24,
     overflow: 'hidden',
-    marginBottom: 12,
   },
   heroOverlay: {
     position: 'absolute',
     top: 16,
     left: 16,
     right: 16,
-    gap: 12,
+    pointerEvents: 'box-none',
+  },
+  mapIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
   },
   heroStatusRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    gap: 12,
   },
   statusPill: {
     flexDirection: 'row',
@@ -1722,22 +1781,22 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
   },
   heroCard: {
-    borderRadius: 24,
+    borderRadius: 16,
     borderWidth: 1,
-    paddingHorizontal: 22,
-    paddingVertical: 24,
-    gap: 10,
-    shadowOffset: { width: 0, height: 16 },
-    shadowOpacity: 0.18,
-    shadowRadius: 28,
-    elevation: 10,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    gap: 6,
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.12,
+    shadowRadius: 16,
+    elevation: 6,
   },
   heroLabel: {
     opacity: 0.9,
   },
   heroTime: {
-    fontSize: 36,
-    lineHeight: 42,
+    fontSize: 24,
+    lineHeight: 30,
   },
   heroSub: {
     opacity: 0.9,
@@ -1799,39 +1858,53 @@ const styles = StyleSheet.create({
     borderRadius: 2,
   },
   dock: {
-    borderRadius: 28,
-    borderWidth: 1,
-    paddingHorizontal: 20,
-    paddingTop: 14,
-    marginBottom: 8,
-  },
-  dockGrip: {
-    alignSelf: 'center',
-    width: 62,
-    height: 5,
-    borderRadius: 999,
-    marginBottom: 16,
-  },
-  metricRow: {
-    flexDirection: 'row',
-    gap: 12,
-  },
-  metricCard: {
-    flex: 1,
     borderRadius: 20,
     borderWidth: 1,
     paddingHorizontal: 16,
-    paddingVertical: 18,
-    gap: 10,
+    paddingTop: 12,
+    paddingBottom: 12,
+    gap: 12,
+  },
+  dockDots: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 6,
+    marginBottom: 4,
+  },
+  dockDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  dockDotActive: {
+    width: 20,
+    borderRadius: 4,
+  },
+  metricGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  metricCard: {
+    flex: 1,
+    minWidth: '48%',
+    borderRadius: 14,
+    borderWidth: 1,
+    paddingHorizontal: 10,
+    paddingVertical: 12,
+    gap: 6,
+    alignItems: 'center',
   },
   metricValue: {
-    fontSize: 24,
-    lineHeight: 30,
+    fontSize: 16,
+    lineHeight: 22,
+    fontWeight: '600',
   },
   actionRow: {
     flexDirection: 'row',
-    gap: 12,
-    marginTop: 18,
+    gap: 10,
   },
   actionButton: {
     flex: 1,

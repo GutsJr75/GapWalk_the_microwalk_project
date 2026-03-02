@@ -130,26 +130,43 @@ export const IntroScreen: React.FC<Props> = ({
 
       if (tokenResponse.idToken) {
         try {
+          // React Native has no atob/Buffer — decode base64url with a pure-JS approach
           const parts = tokenResponse.idToken.split('.');
-          const payload = JSON.parse(atob(parts[1]));
+          // Pad and convert base64url → base64 → byte array → UTF-8 string
+          const b64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+          const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+          let bytes = '';
+          let i = 0;
+          const padded = b64.padEnd(b64.length + (4 - b64.length % 4) % 4, '=');
+          while (i < padded.length) {
+            const enc1 = chars.indexOf(padded[i++]);
+            const enc2 = chars.indexOf(padded[i++]);
+            const enc3 = chars.indexOf(padded[i++]);
+            const enc4 = chars.indexOf(padded[i++]);
+            bytes += String.fromCharCode((enc1 << 2) | (enc2 >> 4));
+            if (padded[i - 2] !== '=') bytes += String.fromCharCode(((enc2 & 15) << 4) | (enc3 >> 2));
+            if (padded[i - 1] !== '=') bytes += String.fromCharCode(((enc3 & 3) << 6) | enc4);
+          }
+          const payload = JSON.parse(decodeURIComponent(
+            bytes.split('').map((c) => '%' + c.charCodeAt(0).toString(16).padStart(2, '0')).join('')
+          ));
           const user = {
             email: payload.email as string | undefined,
             name: payload.name as string | undefined,
             sub: payload.sub as string | undefined,
           };
           setAuthUser(user);
-          if (rememberMe) {
-            await authStorage.saveUser(user);
-          }
+          // Always persist — so email shows in Profile even without "Remember me"
+          await authStorage.saveUser(user);
         } catch {
           // ID token decode failed — non-critical
         }
       }
 
-      if (rememberMe) {
-        await authStorage.saveToken(tokenResponse.accessToken);
-        await authStorage.setRememberMe(true);
-      }
+      // Always save the token — it's needed for backend sync.
+      // "Remember me" controls whether the session is restored on next cold start.
+      await authStorage.saveToken(tokenResponse.accessToken);
+      await authStorage.setRememberMe(rememberMe);
     } catch (e) {
       if (__DEV__) console.warn('Token exchange failed:', e);
     }

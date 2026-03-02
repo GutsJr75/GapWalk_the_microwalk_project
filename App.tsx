@@ -30,6 +30,7 @@ import { analyticsService } from './src/services/analytics';
 import { androidWalkTracking } from './src/services/androidWalkTracking';
 import { requestAllPermissions } from './src/services/permissions';
 import { authStorage } from './src/data/authStorage';
+import { runBackendSync } from './src/services/backendSync';
 
 // Screens
 import { IntroScreen } from './src/screens/IntroScreen';
@@ -39,6 +40,7 @@ import { ManualScheduleScreen } from './src/screens/ManualScheduleScreen';
 import { PreferencesScreen } from './src/screens/PreferencesScreen';
 import { DashboardScreen } from './src/screens/DashboardScreen';
 import { WalkingScreen } from './src/screens/WalkingScreen';
+import { WalkingExpandedScreen } from './src/screens/WalkingExpandedScreen';
 import { SettingsScreen } from './src/screens/SettingsScreen';
 import { WeeklyDataScreen } from './src/screens/WeeklyDataScreen';
 import { AchievementsScreen } from './src/screens/AchievementsScreen';
@@ -71,6 +73,7 @@ export type RootStackParamList = {
     | undefined;
   Dashboard: { openMenu?: boolean; showPostWalkSummary?: boolean } | undefined;
   Walking: { planId?: string; prompt?: 'end_confirmation' } | undefined;
+  WalkingExpanded: undefined;
   Settings: undefined;
   WeeklyData: undefined;
   Achievements:
@@ -330,6 +333,10 @@ function App() {
       await refreshDashboardSnapshot();
       if (!startCheck.allowed) return;
 
+      // Track that user tapped "Start" on the nudge and the app foregrounded
+      analyticsService.track('nudge_action_start', { planId: data.planId });
+      analyticsService.track('app_foreground_from_nudge', { planId: data.planId });
+
       if (navigationRef.isReady()) {
         navigationRef.navigate('Walking', { planId: data.planId });
       } else {
@@ -423,6 +430,8 @@ function App() {
               distanceMeters: recovered.distanceMeters ?? 0,
               steps: recovered.steps ?? 0,
             });
+            // Sync the recovered session to the backend
+            void runBackendSync();
           }
           if (isNotificationsSupported) {
             void notificationService.dismissWalkSessionNotification();
@@ -432,15 +441,20 @@ function App() {
         if (__DEV__) console.warn('Failed to recover orphaned session:', e);
       }
       
-      // Restore auth session if "remember me" was enabled
+      // Restore auth session.
+      // Always load the stored user profile (email/name) so it appears in the
+      // Profile screen regardless of the "Remember me" setting.
+      // "Remember me" only controls whether the session token is restored
+      // (i.e. whether the user skips the login screen on next cold start).
       try {
+        const storedUser = await authStorage.getUser();
+        if (storedUser) setAuthUser(storedUser);
+
         const rememberMe = await authStorage.getRememberMe();
         if (rememberMe) {
           const storedToken = await authStorage.getToken();
-          const storedUser = await authStorage.getUser();
           if (storedToken) {
             setIsAuthenticated(true);
-            if (storedUser) setAuthUser(storedUser);
           }
         }
       } catch (e) {
@@ -571,6 +585,21 @@ function App() {
     return () => subscription.remove();
   }, [navigateToActiveWalk, setActiveWalkSnapshot, setPendingWalkPrompt]);
 
+  // Sync unsynchronised local data to the backend whenever the app comes to foreground.
+  // Throttled to at most once every 5 minutes to avoid hammering the API.
+  const lastSyncAtRef = useRef<number>(0);
+  useEffect(() => {
+    const SYNC_THROTTLE_MS = 5 * 60 * 1000;
+    const subscription = AppState.addEventListener('change', (nextState) => {
+      if (nextState !== 'active') return;
+      const now = Date.now();
+      if (now - lastSyncAtRef.current < SYNC_THROTTLE_MS) return;
+      lastSyncAtRef.current = now;
+      void runBackendSync();
+    });
+    return () => subscription.remove();
+  }, []);
+
   if (showBootScreen) {
     return (
       <>
@@ -678,6 +707,7 @@ function App() {
               <Stack.Screen name="Preferences" component={PreferencesScreen} />
               <Stack.Screen name="Dashboard" component={DashboardScreen} options={{ animation: 'fade_from_bottom' }} />
               <Stack.Screen name="Walking" component={WalkingScreen} options={{ animation: 'slide_from_bottom' }} />
+              <Stack.Screen name="WalkingExpanded" component={WalkingExpandedScreen} options={{ animation: 'slide_from_right' }} />
               <Stack.Screen name="Settings" component={SettingsScreen} />
               <Stack.Screen name="WeeklyData" component={WeeklyDataScreen} />
               <Stack.Screen name="Achievements" component={AchievementsScreen} />

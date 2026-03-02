@@ -21,7 +21,14 @@ import {
 } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useFocusEffect } from '@react-navigation/native';
+import * as AuthSession from 'expo-auth-session';
 import * as DocumentPicker from 'expo-document-picker';
+import {
+  googleCalendarService,
+  getGoogleAuthConfig,
+  isGoogleConfigured,
+  GOOGLE_DISCOVERY,
+} from '../services/googleCalendar';
 import { RootStackParamList } from '../../App';
 import { Text } from '../components/Text';
 import { Button } from '../components/Button';
@@ -568,12 +575,12 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
   const [importStatus, setImportStatus] = useState<string | null>(null);
   const [manageScreenMode, setManageScreenMode] = useState<'view' | 'edit'>(manageMode ? 'view' : 'edit');
   const [showSourceSheet, setShowSourceSheet] = useState(false);
-  const [sourceType, setSourceType] = useState<'manual' | 'import'>(initialSourceType);
-  const [savedSourceType, setSavedSourceType] = useState<'manual' | 'import'>(initialSourceType);
+  const [sourceType, setSourceType] = useState<'manual' | 'import' | 'google'>(initialSourceType);
+  const [savedSourceType, setSavedSourceType] = useState<'manual' | 'import' | 'google'>(initialSourceType);
   const [importedFilename, setImportedFilename] = useState<string | undefined>(routeImportedFilename);
   const [savedImportedFilename, setSavedImportedFilename] = useState<string | undefined>(routeImportedFilename);
   const [didConfirmImportEditConversion, setDidConfirmImportEditConversion] = useState(false);
-  const [sheetSourceType, setSheetSourceType] = useState<'manual' | 'import'>(initialSourceType);
+  const [sheetSourceType, setSheetSourceType] = useState<'manual' | 'import' | 'google'>(initialSourceType);
   const [sheetImportedFilename, setSheetImportedFilename] = useState<string | undefined>(routeImportedFilename);
   const [sheetImportedTemplate, setSheetImportedTemplate] = useState<Record<number, TemplateEvent[]> | null>(null);
   const [slotFeedback, setSlotFeedback] = useState<{ dayIndex: number; slotIndex: number } | null>(null);
@@ -601,6 +608,17 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
   const closeInfoBtnScale = useRef(new Animated.Value(1)).current;
   const closeInfoBtnRotate = useRef(new Animated.Value(0)).current;
   const { scheduleSource, setScheduleSource, setUpcomingPlans, preferences, themeMode } = useAppStore();
+
+  const authConfig = getGoogleAuthConfig();
+  const [, googleResponse, promptGoogleAsync] = AuthSession.useAuthRequest(
+    {
+      clientId: authConfig.clientId,
+      scopes: authConfig.scopes,
+      redirectUri: authConfig.redirectUri,
+      responseType: AuthSession.ResponseType.Token,
+    },
+    GOOGLE_DISCOVERY
+  );
 
   const scrollGridToNow = useCallback((animated = true) => {
     const now = new Date();
@@ -679,7 +697,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
     useCallback(() => {
       let active = true;
       const loadSavedTemplate = async () => {
-        const resolveSourceState = async (): Promise<{ type: 'manual' | 'import'; filename?: string }> => {
+        const resolveSourceState = async (): Promise<{ type: 'manual' | 'import' | 'google'; filename?: string }> => {
           const src = scheduleSourceRef.current ?? (await scheduleSourceRepo.get());
           if (!src) {
             return {
@@ -689,6 +707,9 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
           }
           if (src.type === 'ics') {
             return { type: 'import', filename: src.filename ?? routeImportedFilename };
+          }
+          if (src.type === 'google') {
+            return { type: 'google' };
           }
           return { type: 'manual' };
         };
@@ -854,6 +875,65 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
     }
   };
 
+  const handleGoogleCalendarImport = async (accessToken: string) => {
+    try {
+      setImportLoading(true);
+      setImportStatus('Fetching your Google Calendar events...');
+      const events = await googleCalendarService.fetchEvents(accessToken, 14);
+      if (events.length === 0) {
+        setImportLoading(false);
+        setImportStatus(null);
+        showMessage('No Events', 'No upcoming events found in your Google Calendar.');
+        return;
+      }
+      setImportStatus(`Processing ${events.length} events...`);
+      const weeklyTemplate = buildWeeklyTemplateFromIcsEvents(events);
+      const grouped = groupTemplateEntries(weeklyTemplate);
+      analyticsService.track('google_calendar_imported', {
+        eventsFetched: events.length,
+        weeklyTemplateEntries: weeklyTemplate.length,
+      });
+      setSheetSourceType('google');
+      setSheetImportedFilename(undefined);
+      setSheetImportedTemplate(grouped);
+      setImportLoading(false);
+      setImportStatus(null);
+    } catch (error) {
+      if (__DEV__) console.error('Google Calendar import failed:', error);
+      setImportLoading(false);
+      setImportStatus(null);
+      showMessage('Google Calendar Error', toUserFriendlyError(error));
+    }
+  };
+
+  const startGoogleAuth = async () => {
+    if (!isGoogleConfigured()) {
+      showMessage(
+        'Google Calendar',
+        'Google Calendar is not configured. Set EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID in your .env file.'
+      );
+      return;
+    }
+    setImportLoading(true);
+    setImportStatus('Opening Google sign-in...');
+    await promptGoogleAsync();
+  };
+
+  useEffect(() => {
+    if (googleResponse?.type === 'success') {
+      const { access_token } = googleResponse.params;
+      if (access_token) void handleGoogleCalendarImport(access_token);
+    } else if (googleResponse?.type === 'error') {
+      setImportLoading(false);
+      setImportStatus(null);
+      showMessage('Sign-in Failed', toUserFriendlyError(googleResponse.error ?? new Error('Could not sign in with Google')));
+    } else if (googleResponse?.type === 'dismiss') {
+      setImportLoading(false);
+      setImportStatus(null);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [googleResponse]);
+
   const currentSignature = useMemo(() => buildScheduleSignature(entriesByDay), [entriesByDay]);
   const hasUnsavedChanges = currentSignature !== initialSignature;
   const hasPendingImportedSchedule = sourceType === 'import' && Array.isArray(prefillTemplate) && !hasSavedSchedule;
@@ -879,6 +959,8 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
     ) ||
     sheetImportedTemplate !== null;
   const sourceSheetNeedsImportFile = sheetSourceType === 'import' && !(sheetResolvedFilename?.trim());
+  const sourceSheetNeedsGoogleConnect =
+    sheetSourceType === 'google' && !sheetImportedTemplate && sourceType !== 'google';
 
   useEffect(() => {
     if (!shouldConvertImportEditsToManual) {
@@ -1275,12 +1357,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
   };
 
   const handleManageChangeSource = () => {
-    showBinaryConfirm(
-      'Change schedule source?',
-      'Change lets you switch between manual entry and calendar import. Importing a file can replace your current grid before you save. Continue?',
-      'Yes',
-      handleOpenSourceSheet
-    );
+    handleOpenSourceSheet();
   };
 
   const handleManageBackToOptions = () => {
@@ -1628,7 +1705,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
 
   const performSave = async (options?: { convertImportEditsToManual?: boolean }) => {
     if (savingDone) return;
-    const effectiveSourceType: 'manual' | 'import' = options?.convertImportEditsToManual ? 'manual' : sourceType;
+    const effectiveSourceType: 'manual' | 'import' | 'google' = options?.convertImportEditsToManual ? 'manual' : sourceType;
     const effectiveImportedFilename = effectiveSourceType === 'import' ? importedFilename : undefined;
 
     if (effectiveSourceType === 'import' && !effectiveImportedFilename) {
@@ -1656,7 +1733,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
       })
     );
 
-    const eventSource: 'ics' | 'manual' = effectiveSourceType === 'import' ? 'ics' : 'manual';
+    const eventSource: 'ics' | 'manual' | 'google' = effectiveSourceType === 'import' ? 'ics' : effectiveSourceType === 'google' ? 'google' : 'manual';
     const base = startOfDay(new Date());
     const rangeEnd = addDays(base, 14);
     const recurringByDay = weeklyTemplate
@@ -1737,6 +1814,8 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
         }
         const src = effectiveSourceType === 'import'
           ? { type: 'ics' as const, filename: effectiveImportedFilename, lastImportedAt: new Date().toISOString() }
+          : effectiveSourceType === 'google'
+          ? { type: 'google' as const, googleConnected: true, lastImportedAt: new Date().toISOString() }
           : { type: 'manual' as const, lastImportedAt: new Date().toISOString() };
         try {
           await scheduleSourceRepo.save(src);
@@ -1756,7 +1835,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
         }
 
         analyticsService.track('schedule_saved', {
-          source: effectiveSourceType === 'import' ? 'ics' : 'manual',
+          source: effectiveSourceType,
           weeklyEntries: weeklyTemplate.filter((entry) => !entry.isOneTime).length,
           oneTimeEntries: weeklyTemplate.filter((entry) => entry.isOneTime).length,
           generatedEvents: events.length,
@@ -2220,8 +2299,11 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
     : 'Tap once to select a slot or event. Tap the same spot again to add or edit.';
   const manageSourceLabel = sourceType === 'import'
     ? `ICS file: ${importedFilename ?? 'calendar import'}`
+    : sourceType === 'google'
+    ? 'Source: Google Calendar'
     : 'Source: Manual schedule';
-  const manageSourceIcon = sourceType === 'import' ? 'calendar' : 'adjust';
+  const manageSourceIcon: import('../components/AppIcon').AppIconName =
+    sourceType === 'import' || sourceType === 'google' ? 'calendar' : 'adjust';
   const selectedDayVisibleCount = selectedDay !== null ? (visibleEntriesByDay[selectedDay] ?? []).length : 0;
   const clearDayLabel = selectedDay === null ? 'Clear day' : `Clear ${DAY_TAB_LABELS[selectedDay]}`;
   const headerWeekPages = useMemo(() => {
@@ -2904,7 +2986,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
               {
                 backgroundColor: isDark ? palette.bgApp : palette.bgSurfaceElevated,
                 borderTopColor: isDark ? 'rgba(255,255,255,0.08)' : palette.borderSoft,
-                maxHeight: Math.max(460, Math.round(winHeight * 0.62)),
+                height: Math.max(460, Math.round(winHeight * 0.62)),
               },
             ]}
           >
@@ -3031,6 +3113,77 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
                 </View>
               </Pressable>
 
+              {/* Google Calendar option */}
+              <Pressable
+                onPress={() => setSheetSourceType('google')}
+                testID="switch-source-google"
+                style={({ pressed }) => [
+                  styles.switchSourceOption,
+                  {
+                    borderColor: sheetSourceType === 'google' ? palette.accentPrimary : (isDark ? 'rgba(255,255,255,0.09)' : palette.borderSoft),
+                    backgroundColor: sheetSourceType === 'google'
+                      ? (isDark ? 'rgba(46,233,166,0.07)' : 'rgba(46,233,166,0.06)')
+                      : (isDark ? 'rgba(255,255,255,0.03)' : palette.bgApp),
+                  },
+                  pressed && { opacity: 0.82 },
+                ]}
+              >
+                <View style={[styles.switchSourceOptionIcon, { backgroundColor: isDark ? 'rgba(46,233,166,0.13)' : 'rgba(46,233,166,0.11)' }]}>
+                  <AppIcon name="google" size={20} color={palette.accentPrimary} />
+                </View>
+                <View style={styles.switchSourceOptionBody}>
+                  <View style={styles.switchSourceCardHeader}>
+                    <Text variant="body" style={styles.switchSourceCardTitle}>Google Calendar</Text>
+                    {sourceType === 'google' && (
+                      <View style={[styles.switchSourceCurrentTag, { backgroundColor: palette.accentMuted }]}>
+                        <Text style={{ color: palette.accentPrimary, fontSize: theme.fontSize.xxs, fontWeight: theme.fontWeight.semibold }}>Active</Text>
+                      </View>
+                    )}
+                  </View>
+                  <Text variant="bodySmall" style={{ color: palette.textMuted, marginTop: 4, lineHeight: 19 }}>
+                    Sync events directly from your Google account
+                  </Text>
+
+                  {sheetSourceType === 'google' && (
+                    <View style={[styles.switchSourceFileBanner, { borderTopColor: isDark ? 'rgba(255,255,255,0.08)' : palette.borderSoft }]}>
+                      <AppIcon
+                        name="google"
+                        size={14}
+                        color={sheetImportedTemplate || sourceType === 'google' ? palette.accentPrimary : palette.textMuted}
+                      />
+                      <Text
+                        variant="bodySmall"
+                        style={{ color: sheetImportedTemplate || sourceType === 'google' ? palette.accentPrimary : palette.textMuted, flex: 1, fontWeight: theme.fontWeight.semibold }}
+                        numberOfLines={1}
+                      >
+                        {sheetImportedTemplate
+                          ? `${Object.values(sheetImportedTemplate).flat().length} events ready`
+                          : sourceType === 'google'
+                          ? 'Connected'
+                          : 'Not connected'}
+                      </Text>
+                      <Pressable
+                        onPress={() => { void startGoogleAuth(); }}
+                        disabled={importLoading}
+                        style={({ pressed }) => [
+                          styles.switchSourceFileBtn,
+                          { backgroundColor: palette.accentMuted, borderColor: palette.accentPrimary },
+                          pressed && { opacity: 0.7 },
+                          importLoading && { opacity: 0.5 },
+                        ]}
+                      >
+                        <Text style={{ color: palette.accentPrimary, fontWeight: theme.fontWeight.semibold, fontSize: theme.fontSize.xs }}>
+                          {sourceType === 'google' ? 'Refresh' : 'Connect'}
+                        </Text>
+                      </Pressable>
+                    </View>
+                  )}
+                </View>
+                <View style={[styles.switchSourceRadio, { borderColor: sheetSourceType === 'google' ? palette.accentPrimary : (isDark ? 'rgba(255,255,255,0.25)' : palette.borderStrong) }]}>
+                  {sheetSourceType === 'google' && <View style={[styles.switchSourceRadioDot, { backgroundColor: palette.accentPrimary }]} />}
+                </View>
+              </Pressable>
+
               {importLoading && importStatus && (
                 <View style={styles.switchSourceStatusRow}>
                   <ActivityIndicator size="small" color={palette.accentPrimary} />
@@ -3043,6 +3196,11 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
               {sourceSheetNeedsImportFile && sheetSourceType === 'import' && (
                 <Text variant="bodySmall" style={styles.switchSourceWarning}>
                   Choose a calendar export file before saving.
+                </Text>
+              )}
+              {sourceSheetNeedsGoogleConnect && (
+                <Text variant="bodySmall" style={styles.switchSourceWarning}>
+                  Connect your Google account before applying.
                 </Text>
               )}
               <View style={styles.footerActions}>
@@ -3058,7 +3216,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
                   title="Apply"
                   onPress={handleSaveSourceSheet}
                   style={styles.footerBtn}
-                  disabled={importLoading || !sourceSheetHasChanges || sourceSheetNeedsImportFile}
+                  disabled={importLoading || !sourceSheetHasChanges || sourceSheetNeedsImportFile || sourceSheetNeedsGoogleConnect}
                   testID="switch-source-continue"
                 />
               </View>

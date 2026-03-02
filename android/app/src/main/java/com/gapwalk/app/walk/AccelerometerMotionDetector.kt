@@ -14,16 +14,16 @@ import kotlin.math.sqrt
  *
  * Walking produces a characteristic periodic acceleration pattern. We detect
  * this by computing the variance of acceleration magnitudes over a sliding
- * window. Walking variance is typically >1.2 m²/s⁴, while stationary is <0.4.
+ * window. Walking variance is typically >0.6 m²/s⁴, while stationary is <0.2.
  */
 class AccelerometerMotionDetector(
   private val sensorManager: SensorManager,
 ) : SensorEventListener {
 
   companion object {
-    private const val WALKING_VARIANCE_THRESHOLD = 1.2
+    private const val WALKING_VARIANCE_THRESHOLD = 0.6
     private const val WINDOW_SIZE = 30
-    private const val MIN_SAMPLES = 10
+    private const val MIN_SAMPLES = 15
     private const val GRAVITY_FILTER_ALPHA = 0.8f
   }
 
@@ -33,6 +33,10 @@ class AccelerometerMotionDetector(
 
   /** Timestamp of the last time walking motion was detected. */
   var lastMotionDetectedAtMs: Long? = null
+    private set
+
+  /** Timestamp of the last raw sensor event received, used to detect silent sensors. */
+  var lastSensorEventAtMs: Long? = null
     private set
 
   /** Whether the detector currently considers the device to be in walking motion. */
@@ -84,10 +88,13 @@ class AccelerometerMotionDetector(
     windowIndex = 0
     isWalkingMotion = false
     lastMotionDetectedAtMs = null
+    lastSensorEventAtMs = null
   }
 
   override fun onSensorChanged(event: SensorEvent?) {
     if (event == null) return
+
+    lastSensorEventAtMs = System.currentTimeMillis()
 
     val x: Float
     val y: Float

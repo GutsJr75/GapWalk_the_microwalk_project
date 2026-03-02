@@ -45,7 +45,14 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
         data: {
           auth0Sub: payload.sub,
           email: payload.email,
+          displayName: payload.name ?? payload.given_name ?? null,
         },
+      });
+    } else if (payload.email && user.email !== payload.email) {
+      // Keep email in sync if the user changes it in Auth0
+      user = await this.prisma.user.update({
+        where: { id: user.id },
+        data: { email: payload.email },
       });
     }
 

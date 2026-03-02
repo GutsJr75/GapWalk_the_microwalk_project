@@ -59,6 +59,7 @@ export const notificationPlanActions = {
     if (plan.status === 'planned') {
       await plansRepo.updateStatus(plan.id, 'notified');
       analyticsService.track('notification_delivered', { planId: plan.id });
+      analyticsService.track('nudge_scheduled', { planId: plan.id });
       return true;
     }
     return false;
@@ -74,6 +75,11 @@ export const notificationPlanActions = {
       planId: plan.id,
       skippedGapStart: plan.gapStart,
       skippedGapEnd: plan.gapEnd,
+    });
+    analyticsService.track('nudge_swiped_away', {
+      planId: plan.id,
+      gapStart: plan.gapStart,
+      gapEnd: plan.gapEnd,
     });
 
     void this.findAndSuggestAlternativeGap(planId).catch((e) => { if (__DEV__) console.warn('Alt gap suggestion failed:', e); });
@@ -108,6 +114,11 @@ export const notificationPlanActions = {
       planId: plan.id,
       skippedGapStart: plan.gapStart,
       skippedGapEnd: plan.gapEnd,
+    });
+    analyticsService.track('nudge_action_skip', {
+      planId: plan.id,
+      gapStart: plan.gapStart,
+      gapEnd: plan.gapEnd,
     });
 
     void this.findAndSuggestAlternativeGap(planId).catch((e) => { if (__DEV__) console.warn('Alt gap suggestion failed:', e); });
@@ -154,6 +165,7 @@ export const notificationPlanActions = {
     }
 
     analyticsService.track('notification_opened', { planId: plan.id });
+    analyticsService.track('nudge_tapped', { planId: plan.id });
     return { allowed: true, planExists: true };
   },
 
@@ -266,7 +278,11 @@ export const notificationPlanActions = {
     const prefs = await preferencesRepo.get();
     await notificationService.scheduleNudge(plan, prefs ?? undefined);
 
-    analyticsService.track('alt_gap_accepted', { planId: plan.id });
+    analyticsService.track('alt_gap_accepted', {
+      planId: plan.id,
+      gapStart: plan.gapStart,
+      gapEnd: plan.gapEnd,
+    });
     return true;
   },
 
@@ -278,7 +294,11 @@ export const notificationPlanActions = {
     if (!plan || plan.status !== 'planned') return false;
 
     await plansRepo.updateStatusWithReason(plan.id, 'cancelled', 'declined_alt_gap');
-    analyticsService.track('alt_gap_declined', { planId: plan.id });
+    analyticsService.track('alt_gap_declined', {
+      planId: plan.id,
+      gapStart: plan.gapStart,
+      gapEnd: plan.gapEnd,
+    });
     return true;
   },
 };

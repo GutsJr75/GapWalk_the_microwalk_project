@@ -203,9 +203,11 @@ export const ProfileScreen: React.FC<Props> = ({ navigation }) => {
               {!isEditingName ? (
                 <>
                   <Text variant="title" style={styles.heroName}>{resolvedDisplayName}</Text>
-                  <Text variant="bodySmall" color={palette.textMuted}>
-                    {authUser?.email || 'No email linked'}
-                  </Text>
+                  {authUser?.email ? (
+                    <Text variant="bodySmall" color={palette.textMuted}>
+                      {authUser.email.split('@')[0]}
+                    </Text>
+                  ) : null}
                 </>
               ) : (
                 <>
@@ -228,9 +230,11 @@ export const ProfileScreen: React.FC<Props> = ({ navigation }) => {
                       },
                     ]}
                   />
-                  <Text variant="bodySmall" color={palette.textMuted}>
-                    {authUser?.email || 'No email linked'}
-                  </Text>
+                  {authUser?.email ? (
+                    <Text variant="bodySmall" color={palette.textMuted}>
+                      {authUser.email.split('@')[0]}
+                    </Text>
+                  ) : null}
                 </>
               )}
             </View>
