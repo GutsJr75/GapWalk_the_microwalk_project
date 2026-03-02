@@ -22,6 +22,7 @@ import { isNotificationsSupported, notificationService } from '../services/notif
 import { requestWalkTrackingPermissions, WalkTrackingPermissionResults } from '../services/permissions';
 import { saveWalkCheckpoint, clearWalkCheckpoint } from '../services/walkCheckpoint';
 import { routeRepo } from '../data/repositories/routeRepo';
+import { pauseEventsRepo } from '../data/repositories/pauseEventsRepo';
 import { runBackendSync } from '../services/backendSync';
 import { useAppStore } from '../store';
 
@@ -51,6 +52,7 @@ interface FallbackState {
   activityPermissionGranted: boolean;
   hadWalkingSignal: boolean;
   warning: string | null;
+  pauseCount: number;
 }
 
 interface Coord {
@@ -187,6 +189,7 @@ const createFallbackState = (): FallbackState => {
     activityPermissionGranted: false,
     hadWalkingSignal: false,
     warning: null,
+    pauseCount: 0,
   };
 };
 
@@ -1069,6 +1072,8 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
       if (latencyMs >= 0) nudgeToStartLatencySeconds = Math.round(latencyMs / 1000);
     }
 
+    const pauseEvents = await pauseEventsRepo.getBySessionId(snapshot.sessionId);
+
     const session: WalkSession = {
       id: snapshot.sessionId,
       nudgePlanId: snapshot.planId || planId,
@@ -1083,6 +1088,7 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
       stepSource: snapshot.stepSource,
       motionConfidence: snapshot.motionConfidence,
       sensorHealthAtStart: snapshot.pedometerHealth,
+      pauseCount: pauseEvents.length,
       nudgeToStartLatencySeconds,
     };
 
@@ -1125,6 +1131,7 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
       stepSource: current.stepSource,
       motionConfidence: current.motionConfidence,
       sensorHealthAtStart: current.pedometerHealth,
+      pauseCount: current.pauseCount,
       nudgeToStartLatencySeconds,
     };
 
@@ -1168,6 +1175,7 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
         ...current,
         paused: true,
         pauseStartedAtMs: nowMs,
+        pauseCount: current.pauseCount + 1,
       }, nowMs);
     });
 

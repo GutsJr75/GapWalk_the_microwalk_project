@@ -31,6 +31,7 @@ interface SideMenuProps {
   menuItems: SideMenuItem[];
   onLogout: () => void;
   authUser: { email?: string; name?: string; sub?: string } | null;
+  displayName: string;
   hasSetPreferences: boolean;
   menuPanelWidth: number;
   slideAnim: Animated.Value;
@@ -94,6 +95,7 @@ export const SideMenu: React.FC<SideMenuProps> = ({
   menuItems,
   onLogout,
   authUser,
+  displayName,
   hasSetPreferences,
   menuPanelWidth,
   slideAnim,
@@ -158,11 +160,22 @@ export const SideMenu: React.FC<SideMenuProps> = ({
               ]}
             >
               <View style={[styles.profileAvatar, { backgroundColor: palette.accentMuted }]}>
-                <Ionicons name="person" size={20} color={palette.accentPrimary} />
+                {displayName !== 'GapWalker' ? (
+                  <Text variant="body" style={[styles.avatarInitials, { color: palette.accentPrimary }]}>
+                    {displayName
+                      .split(' ')
+                      .filter(Boolean)
+                      .slice(0, 2)
+                      .map((w) => w[0].toUpperCase())
+                      .join('')}
+                  </Text>
+                ) : (
+                  <Ionicons name="person" size={20} color={palette.accentPrimary} />
+                )}
               </View>
               <View style={styles.profileMeta}>
                 <Text variant="body" style={styles.profileName}>
-                  {(authUser?.name && !authUser.name.includes('@')) ? authUser.name : 'GapWalker'}
+                  {displayName}
                 </Text>
                 <Text variant="bodySmall" color={palette.textMuted}>
                   {authUser?.email ||
@@ -265,6 +278,10 @@ const styles = StyleSheet.create({
   },
   profileName: {
     fontWeight: theme.fontWeight.semibold,
+  },
+  avatarInitials: {
+    fontWeight: theme.fontWeight.semibold,
+    fontSize: theme.fontSize.sm,
   },
   sectionLabel: {
     marginBottom: 10,

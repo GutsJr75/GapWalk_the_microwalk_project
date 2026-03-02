@@ -403,7 +403,10 @@ export const DashboardScreen: React.FC<Props> = ({ navigation, route }) => {
         if (isNotificationsSupported && preferences) {
           await notificationService.cancelWalkNudges();
           const futurePlans = await plansRepo.getUpcomingPlans(100);
-          await notificationService.scheduleMultipleNudges(futurePlans, preferences);
+          await notificationService.scheduleMultipleNudges(futurePlans.filter((p) => p.reason !== 'manual'), preferences);
+          for (const plan of futurePlans.filter((p) => p.reason === 'manual')) {
+            await notificationService.scheduleManualNudge(plan);
+          }
         }
         const remainingToday = refreshedUpcoming
           .filter((plan) => plan.date === todayKey)
@@ -1043,6 +1046,7 @@ export const DashboardScreen: React.FC<Props> = ({ navigation, route }) => {
         menuItems={menuItems}
         onLogout={handleLogoutFromMenu}
         authUser={authUser}
+        displayName={resolvedDisplayName}
         hasSetPreferences={hasSetPreferences}
         menuPanelWidth={menuPanelWidth}
         slideAnim={menuSlide}
