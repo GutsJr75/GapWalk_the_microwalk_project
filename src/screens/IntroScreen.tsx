@@ -92,8 +92,7 @@ export const IntroScreen: React.FC<Props> = ({
   const verticalTopPadding = Math.round(viewportHeight * 0.072);
   const verticalBottomPadding = Math.round(viewportHeight * 0.09);
   const heroVerticalPadding = Math.max(theme.spacing.md, Math.round(viewportHeight * 0.02));
-  const heroToWhyGap = Math.max(theme.spacing.xl, Math.round(viewportHeight * 0.055));
-  const whyToHowGap = Math.max(theme.spacing.lg, Math.round(viewportHeight * 0.045));
+  const heroToHowGap = Math.max(theme.spacing.lg, Math.round(viewportHeight * 0.045));
   const ctaTopGap = Math.max(28, Math.round(viewportHeight * 0.045));
   const [loginRequest, loginResponse, promptLogin] = AuthSession.useAuthRequest(
     getAuth0RequestConfig('login'),
@@ -305,13 +304,12 @@ export const IntroScreen: React.FC<Props> = ({
   };
 
   return (
-    <Container scrollable entranceAnimated={false} resetScrollOnMount>
-      <View style={[styles.introLayout, { minHeight: viewportHeight }]}>
+    <Container entranceAnimated={false}>
+      <View style={styles.introLayout}>
         <View
           style={[
             styles.screen,
             {
-              minHeight: viewportHeight,
               paddingTop: verticalTopPadding,
               paddingBottom: verticalBottomPadding,
             },
@@ -331,47 +329,7 @@ export const IntroScreen: React.FC<Props> = ({
               </Text>
             </View>
 
-            <View style={[styles.section, { marginTop: heroToWhyGap }]}>
-              <Text variant="title" style={styles.sectionTitle}>Why it works</Text>
-
-              <View style={styles.feature}>
-                <View style={[styles.iconCircle, { backgroundColor: palette.bgSurfaceElevated }]}>
-                  <Text style={styles.iconEmoji}>{'\uD83D\uDCC5'}</Text>
-                </View>
-                <View style={styles.featureText}>
-                  <Text variant="body" style={styles.featureTitle}>Fits real gaps</Text>
-                  <Text variant="bodySmall">
-                    GapWalk only sends you notifications during schedule gaps that actually exist between your commitments.
-                  </Text>
-                </View>
-              </View>
-
-              <View style={styles.feature}>
-                <View style={[styles.iconCircle, { backgroundColor: palette.bgSurfaceElevated }]}>
-                  <Text style={styles.iconEmoji}>{'\uD83D\uDEB6'}</Text>
-                </View>
-                <View style={styles.featureText}>
-                  <Text variant="body" style={styles.featureTitle}>Small walks add up</Text>
-                  <Text variant="bodySmall">
-                    Micro-walks throughout the day contribute to your health without the pressure of long workouts.
-                  </Text>
-                </View>
-              </View>
-
-              <View style={styles.featureLast}>
-                <View style={[styles.iconCircle, { backgroundColor: palette.bgSurfaceElevated }]}>
-                  <Text style={styles.iconEmoji}>{'\uD83D\uDD14'}</Text>
-                </View>
-                <View style={styles.featureText}>
-                  <Text variant="body" style={styles.featureTitle}>Smart reminders</Text>
-                  <Text variant="bodySmall">
-                    Get gentle notifications at the right moments - never during class, meetings, or quiet hours.
-                  </Text>
-                </View>
-              </View>
-            </View>
-
-            <View style={[styles.howSection, { marginTop: whyToHowGap }]}>
+            <View style={[styles.howSection, { marginTop: heroToHowGap }]}>
               <TouchableOpacity
                 onPress={() => setShowHowItWorks((prev) => !prev)}
                 style={[
@@ -544,10 +502,11 @@ export const IntroScreen: React.FC<Props> = ({
 
 const styles = StyleSheet.create({
   introLayout: {
-    position: 'relative',
+    flex: 1,
   },
   screen: {
-    flexGrow: 1,
+    flex: 1,
+    justifyContent: 'space-between',
     alignSelf: 'center',
     width: '100%',
     maxWidth: theme.layout.contentMaxWidth,
@@ -599,42 +558,6 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     maxWidth: 356,
     alignSelf: 'center',
-  },
-  section: {
-    width: '100%',
-    maxWidth: 370,
-    alignSelf: 'center',
-  },
-  sectionTitle: {
-    marginBottom: theme.spacing.lg,
-    textAlign: 'center',
-  },
-  feature: {
-    flexDirection: 'row',
-    marginBottom: theme.spacing.md,
-    alignItems: 'flex-start',
-  },
-  featureLast: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-  },
-  iconCircle: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: theme.spacing.md,
-  },
-  iconEmoji: {
-    fontSize: 20,
-  },
-  featureText: {
-    flex: 1,
-  },
-  featureTitle: {
-    fontWeight: theme.fontWeight.semibold,
-    marginBottom: theme.spacing.ms,
   },
   howSection: {
     width: '100%',
@@ -700,9 +623,7 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 2 },
     elevation: 2,
   },
-  bottom: {
-    marginTop: 'auto',
-  },
+  bottom: {},
   authDivider: {
     flexDirection: 'row',
     alignItems: 'center',
