@@ -82,7 +82,7 @@ const pad2 = (n: number): string => String(n).padStart(2, '0');
  * Convert imported ICS events into a weekly template used by the schedule grid.
  * Duplicates (same day/title/time) are removed.
  */
-export const buildWeeklyTemplateFromIcsEvents = (events: BusyEvent[]): ManualScheduleEntry[] => {
+export const buildWeeklyTemplateFromIcsEvents = (events: BusyEvent[], idPrefix = 'ics'): ManualScheduleEntry[] => {
   const seen = new Set<string>();
   const template: ManualScheduleEntry[] = [];
 
@@ -104,7 +104,7 @@ export const buildWeeklyTemplateFromIcsEvents = (events: BusyEvent[]): ManualSch
     seen.add(dedupeKey);
 
     template.push({
-      id: `ics-${dayOfWeek}-${startTime}-${endTime}-${template.length}`,
+      id: `${idPrefix}-${dayOfWeek}-${startTime}-${endTime}-${template.length}`,
       title,
       dayOfWeek,
       startTime,
