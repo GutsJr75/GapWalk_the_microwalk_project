@@ -7,6 +7,19 @@ export class DevicesService {
   constructor(private readonly prisma: PrismaService) {}
 
   async register(userId: string, dto: RegisterDeviceDto) {
+    const deviceFields = {
+      platform: dto.platform,
+      appVersion: dto.appVersion,
+      osVersion: dto.osVersion,
+      deviceModel: dto.deviceModel,
+      notificationPermissionGranted: dto.notificationPermissionGranted,
+      locationPermissionLevel: dto.locationPermissionLevel,
+      activityPermissionGranted: dto.activityPermissionGranted,
+      batterySaverDetected: dto.batterySaverDetected,
+      lastSeenAt: new Date(),
+      isActive: true,
+    };
+
     return this.prisma.device.upsert({
       where: {
         userId_expoPushToken: {
@@ -14,17 +27,11 @@ export class DevicesService {
           expoPushToken: dto.expoPushToken,
         },
       },
-      update: {
-        platform: dto.platform,
-        appVersion: dto.appVersion,
-        isActive: true,
-        updatedAt: new Date(),
-      },
+      update: deviceFields,
       create: {
         userId,
         expoPushToken: dto.expoPushToken,
-        platform: dto.platform,
-        appVersion: dto.appVersion,
+        ...deviceFields,
       },
     });
   }

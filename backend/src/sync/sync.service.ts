@@ -82,21 +82,23 @@ export class SyncService {
       }
     }
 
-    // Manual schedule entries (replace all)
-    if (dto.manualScheduleEntries && dto.manualScheduleEntries.length > 0) {
+    // Manual schedule entries (replace all — including delete when array is empty)
+    if (dto.manualScheduleEntries !== undefined) {
       await this.prisma.manualScheduleEntry.deleteMany({ where: { userId } });
-      await this.prisma.manualScheduleEntry.createMany({
-        data: dto.manualScheduleEntries.map((e) => ({
-          userId,
-          localId: e.localId,
-          title: e.title,
-          dayOfWeek: e.dayOfWeek,
-          startTime: e.startTime,
-          endTime: e.endTime,
-          isOneTime: e.isOneTime ?? false,
-          oneTimeDate: e.oneTimeDate,
-        })),
-      });
+      if (dto.manualScheduleEntries.length > 0) {
+        await this.prisma.manualScheduleEntry.createMany({
+          data: dto.manualScheduleEntries.map((e) => ({
+            userId,
+            localId: e.localId,
+            title: e.title,
+            dayOfWeek: e.dayOfWeek,
+            startTime: e.startTime,
+            endTime: e.endTime,
+            isOneTime: e.isOneTime ?? false,
+            oneTimeDate: e.oneTimeDate,
+          })),
+        });
+      }
     }
 
     // Nudge plans (upsert by localId)
@@ -279,7 +281,7 @@ export class SyncService {
           screensVisited: s.screensVisited
             ? (s.screensVisited as unknown as Prisma.InputJsonValue)
             : Prisma.JsonNull,
-          source: (s.source as any) ?? 'cold_start',
+          source: s.source ?? 'cold_start',
         })),
       });
     }
@@ -307,7 +309,19 @@ export class SyncService {
       nudgePlans,
       walkSessions,
     ] = await Promise.all([
-      this.prisma.scheduleSource.findUnique({ where: { userId } }),
+      this.prisma.scheduleSource.findUnique({
+        where: { userId },
+        select: {
+          id: true,
+          userId: true,
+          type: true,
+          filename: true,
+          lastImportedAt: true,
+          googleConnected: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+      }),
       this.prisma.preference.findUnique({ where: { userId } }),
       this.prisma.busyEvent.findMany({
         where: { userId, createdAt: { gt: lastSyncedAt } },
