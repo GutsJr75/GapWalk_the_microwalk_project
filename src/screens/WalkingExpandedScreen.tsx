@@ -101,7 +101,7 @@ export const WalkingExpandedScreen: React.FC<Props> = ({ navigation }) => {
   ];
 
   return (
-    <SafeAreaView style={[styles.root, { backgroundColor: palette.bgApp }]} edges={['top', 'left', 'right']}>
+    <SafeAreaView style={[styles.root, { backgroundColor: palette.bgApp }]} edges={['top', 'left', 'right']} {...dotsPanResponder.panHandlers}>
       {/* Top bar */}
       <View style={[styles.topBar, { backgroundColor: palette.bgSurfaceElevated, borderBottomColor: palette.borderSoft }]}>
         <Pressable onPress={() => navigation.goBack()} style={styles.topBarBtn} hitSlop={10}>
@@ -151,7 +151,7 @@ export const WalkingExpandedScreen: React.FC<Props> = ({ navigation }) => {
           },
         ]}
       >
-        <View style={styles.dotsRow} {...dotsPanResponder.panHandlers}>
+        <View style={styles.dotsRow}>
           <Pressable onPress={() => navigation.goBack()} hitSlop={12}>
             <View style={[styles.dot, { width: 8, backgroundColor: palette.borderStrong }]} />
           </Pressable>
