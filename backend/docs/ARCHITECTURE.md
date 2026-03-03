@@ -267,7 +267,7 @@ Workers are enabled when `ENABLE_WORKERS` is not set to `false`.
 | Job                        | Schedule         | Description                                                                |
 | -------------------------- | ---------------- | -------------------------------------------------------------------------- |
 | **Daily nudge generation** | 06:00 every day  | Runs `nudgeEngine.generateAndSavePlans()` for all users                    |
-| **Send due nudges**        | Every 2 minutes  | Scans due `planned` server plans and sends push notifications              |
+| **Send due nudges**        | Every 1 minute   | Scans due `planned` server plans and sends push notifications              |
 | **Push receipt check**     | Every 15 minutes | Verifies Expo push delivery receipts, deactivates unregistered tokens      |
 | **Daily aggregation**      | 02:00 every day  | Computes `DailyAggregation` for all users (yesterday in each user's TZ)    |
 | **Weekly aggregation**     | Monday 03:00     | Computes `WeeklyAggregation` for all users (last week in each user's local week) |
@@ -439,8 +439,9 @@ Simple JWT token paste form. In production, this would integrate with Auth0 logi
 
 Multi-stage Dockerfile:
 
-1. **Builder:** `npm ci` → `prisma generate` → `nest build`
+1. **Builder:** `npm ci --ignore-scripts` → `prisma generate` → `nest build`
 2. **Runner:** Copies `dist/`, `node_modules/`, `prisma/`, `dashboard/`
+3. **Security:** Runs as non-root `appuser`, includes `HEALTHCHECK`
 
 ### Startup Order
 
@@ -448,3 +449,22 @@ Multi-stage Dockerfile:
 2. Redis starts
 3. `prisma-migrate` runs `prisma migrate deploy` then exits
 4. `api` starts (depends on both postgres and redis via `prisma-migrate`)
+
+---
+
+## Production Hardening
+
+| Feature | Implementation |
+|---|---|
+| **Graceful shutdown** | `app.enableShutdownHooks()` — clean Prisma/Redis disconnect on SIGTERM |
+| **Log levels** | Production: `error`, `warn`, `log` only |
+| **Non-root container** | Docker `appuser` with minimal permissions |
+| **Health check** | `GET /health` endpoint + Docker `HEALTHCHECK` |
+| **CORS** | Configurable via `CORS_ORIGIN` env variable |
+| **Validation** | Global `ValidationPipe` with whitelist/forbid/transform |
+| **Error handling** | `PrismaExceptionFilter` + `TransformInterceptor` |
+| **Inactive user filtering** | Workers skip `isActive: false` users |
+| **Redis memory limits** | `maxmemory 256mb` with `allkeys-lru` eviction |
+| **Service restarts** | `restart: unless-stopped` on all services |
+
+For full deployment instructions, see [DEPLOYMENT.md](DEPLOYMENT.md).

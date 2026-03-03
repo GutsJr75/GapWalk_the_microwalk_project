@@ -38,6 +38,7 @@ export class NudgeGenerationProcessor extends WorkerHost {
 
   private async generateForAllUsers() {
     const users = await this.prisma.user.findMany({
+      where: { isActive: true },
       select: { id: true },
     });
 
