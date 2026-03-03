@@ -1,8 +1,7 @@
-import * as AuthSession from 'expo-auth-session';
 import * as WebBrowser from 'expo-web-browser';
 import Constants, { ExecutionEnvironment } from 'expo-constants';
-import type { GoogleAuthRequestConfig } from 'expo-auth-session/providers/google';
 import { Platform } from 'react-native';
+import { GoogleSignin, statusCodes } from '@react-native-google-signin/google-signin';
 import { BusyEvent } from '../types';
 
 interface GoogleCalendarEventDateTime {
@@ -24,10 +23,36 @@ interface GoogleCalendarEventsResponse {
 
 WebBrowser.maybeCompleteAuthSession();
 
-let hasLoggedRedirectUri = false;
-const shouldLogOAuthRedirect =
-  typeof process !== 'undefined' && process.env?.EXPO_PUBLIC_DEBUG_OAUTH === '1';
-const NATIVE_REDIRECT_PATH = 'oauthredirect';
+/** Returns true when the error came from the user cancelling the sign-in. */
+export const isSignInCancelled = (error: unknown): boolean => {
+  if (!error || typeof error !== 'object') return false;
+  return (error as any).code === statusCodes.SIGN_IN_CANCELLED;
+};
+
+/**
+ * Start the native Google Sign-In flow and return a Google Calendar
+ * access token on success.  Uses @react-native-google-signin/google-signin
+ * (native SDK) to avoid the custom-URI-scheme restriction on Android.
+ */
+export async function signInWithGoogle(): Promise<string> {
+  GoogleSignin.configure({
+    scopes: SCOPES,
+    webClientId: GOOGLE_WEB_CLIENT_ID,
+    offlineAccess: false,
+  });
+
+  await GoogleSignin.hasPlayServices({ showPlayServicesUpdateDialog: true });
+  await GoogleSignin.signIn();
+
+  const tokens = await GoogleSignin.getTokens();
+  if (!tokens.accessToken) {
+    throw new Error(
+      'Google sign-in completed but no access token was returned.'
+    );
+  }
+  return tokens.accessToken;
+}
+
 const FALLBACK_NATIVE_APP_ID = 'com.gapwalk.app';
 
 /*
@@ -67,32 +92,6 @@ const getNativeAppId = (): string => {
   return FALLBACK_NATIVE_APP_ID;
 };
 
-/** Get the redirect URI used for OAuth (so you can add it in Google Cloud Console). */
-export function getGoogleRedirectUri(): string {
-  return AuthSession.makeRedirectUri({
-    path: NATIVE_REDIRECT_PATH,
-    native: `${getNativeAppId()}:/${NATIVE_REDIRECT_PATH}`,
-  });
-}
-
-/** Build Expo Google auth config for Google Calendar */
-export function getGoogleAuthConfig(): Partial<GoogleAuthRequestConfig> {
-  const redirectUri = getGoogleRedirectUri();
-
-  if (__DEV__ && shouldLogOAuthRedirect && !hasLoggedRedirectUri) {
-    console.log('[GapWalk] Google OAuth redirect URI:', redirectUri);
-    hasLoggedRedirectUri = true;
-  }
-
-  return {
-    webClientId: GOOGLE_WEB_CLIENT_ID,
-    iosClientId: GOOGLE_IOS_CLIENT_ID,
-    androidClientId: GOOGLE_ANDROID_CLIENT_ID,
-    scopes: SCOPES,
-    redirectUri,
-    selectAccount: true,
-  };
-}
 
 export function getGoogleConfigurationError(): string | null {
   if (

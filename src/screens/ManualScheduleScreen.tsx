@@ -792,7 +792,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
         return;
       }
       setImportStatus(`Processing ${events.length} events...`);
-      const weeklyTemplate = buildWeeklyTemplateFromIcsEvents(events);
+      const weeklyTemplate = buildWeeklyTemplateFromIcsEvents(events, 'gcal');
       const grouped = groupTemplateEntries(weeklyTemplate);
       analyticsService.track('google_calendar_imported', {
         eventsFetched: events.length,
