@@ -46,6 +46,7 @@ export class AggregationProcessor extends WorkerHost {
 
   private async computeDailyAll() {
     const users = await this.prisma.user.findMany({
+      where: { isActive: true },
       select: { id: true, timezone: true },
     });
 
@@ -74,6 +75,7 @@ export class AggregationProcessor extends WorkerHost {
 
   private async computeWeeklyAll() {
     const users = await this.prisma.user.findMany({
+      where: { isActive: true },
       select: { id: true, timezone: true },
     });
 

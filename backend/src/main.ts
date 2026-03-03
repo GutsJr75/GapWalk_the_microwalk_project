@@ -11,9 +11,17 @@ import { PrismaExceptionFilter } from './common/filters/prisma-exception.filter'
 import { TransformInterceptor } from './common/interceptors/transform.interceptor';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create(AppModule, {
+    logger:
+      process.env.NODE_ENV === 'production'
+        ? ['error', 'warn', 'log']
+        : ['error', 'warn', 'log', 'debug', 'verbose'],
+  });
   const configService = app.get(ConfigService);
   const logger = new Logger('Bootstrap');
+
+  // Enable graceful shutdown hooks
+  app.enableShutdownHooks();
 
   // Global prefix
   app.setGlobalPrefix('api', {
@@ -21,8 +29,9 @@ async function bootstrap() {
   });
 
   // CORS
+  const corsOrigin = configService.get<string>('corsOrigin') ?? 'http://localhost:8081';
   app.enableCors({
-    origin: configService.get<string>('corsOrigin') ?? 'http://localhost:8081',
+    origin: corsOrigin,
     credentials: true,
   });
 

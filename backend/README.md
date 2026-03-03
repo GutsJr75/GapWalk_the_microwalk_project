@@ -110,15 +110,17 @@ The API will be available at `http://localhost:3000`.
 ## Docker Deployment
 
 ```bash
-docker compose up -d
+docker compose up -d --build
 ```
 
-| Service          | Port | Purpose                    |
-| ---------------- | ---- | -------------------------- |
-| `postgres`       | 5432 | PostgreSQL 16 database     |
-| `redis`          | 6379 | BullMQ queue backend       |
-| `prisma-migrate` | —    | Runs migrations then exits |
-| `api`            | 3000 | Production API server      |
+| Service          | Port | Purpose                          |
+| ---------------- | ---- | -------------------------------- |
+| `postgres`       | 5432 | PostgreSQL 16 database           |
+| `redis`          | 6379 | BullMQ queue backend             |
+| `prisma-migrate` | —    | Runs migrations then exits       |
+| `api`            | 3000 | Production API server            |
+
+All services have health checks, restart policies (`unless-stopped`), and proper dependency ordering. The API container runs as a non-root user with a built-in Docker `HEALTHCHECK`.
 
 ## Project Structure
 
@@ -131,6 +133,13 @@ backend/
 │       └── 0002_research_tracking/  # User profiles, app sessions, route points, achievements
 ├── dashboard/
 │   └── public/index.html      # Researcher dashboard SPA
+├── docs/
+│   ├── USER_GUIDE.md          # User & feature documentation
+│   ├── API_REFERENCE.md       # Complete REST API reference
+│   ├── ARCHITECTURE.md        # System architecture & algorithms
+│   ├── DEPLOYMENT.md          # Production deployment guide
+│   ├── PRODUCTION_AUDIT.md    # Production readiness audit
+│   └── data-analysis.md       # Data analysis & research queries
 ├── src/
 │   ├── main.ts                # Bootstrap, CORS, Swagger, global pipes/filters
 │   ├── app.module.ts          # Root module (19 modules)
@@ -154,16 +163,49 @@ backend/
 │   ├── researcher/            # Study management, data export
 │   ├── dashboard-spa/         # Dashboard API + static serving
 │   └── workers/               # BullMQ background job processors
-└── docker-compose.yml
+├── Dockerfile                 # Multi-stage build (non-root, healthcheck)
+└── docker-compose.yml         # Full production stack
 ```
 
 ## Documentation
 
-| Document                                       | Description                                |
-| ---------------------------------------------- | ------------------------------------------ |
-| [docs/API_REFERENCE.md](docs/API_REFERENCE.md) | Complete REST API reference                |
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)   | System architecture, data flow, algorithms |
-| `/docs` (runtime)                              | Interactive Swagger UI                     |
+| Document                                             | Description                                     |
+| ---------------------------------------------------- | ----------------------------------------------- |
+| [docs/USER_GUIDE.md](docs/USER_GUIDE.md)             | User & feature guide — how GapWalk works        |
+| [docs/API_REFERENCE.md](docs/API_REFERENCE.md)       | Complete REST API reference                      |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)         | System architecture, data flow, algorithms       |
+| [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)             | Production deployment guide                      |
+| [docs/PRODUCTION_AUDIT.md](docs/PRODUCTION_AUDIT.md) | Production readiness audit & changes applied     |
+| [docs/data-analysis.md](docs/data-analysis.md)       | Data analysis, metrics, SQL queries for research |
+| `/docs` (runtime)                                    | Interactive Swagger UI                           |
+
+## Production Deployment
+
+### Quick Deploy with Docker Compose
+
+```bash
+# 1. Configure environment
+cp .env.example .env
+# Edit .env with production values (see docs/DEPLOYMENT.md for guidance)
+
+# 2. Deploy
+docker compose up -d --build
+
+# 3. Verify
+curl http://localhost:3000/health
+```
+
+### Production Checklist
+
+- [ ] All secrets rotated (Auth0, Expo, DB password)
+- [ ] `NODE_ENV=production` set
+- [ ] `CORS_ORIGIN` set to your production domain
+- [ ] SSL configured (database, Redis, reverse proxy)
+- [ ] Database backups configured
+- [ ] Monitoring/alerting set up on `/health` endpoint
+- [ ] Firewall rules restrict direct access to ports 3000, 5432, 6379
+
+See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for detailed deployment instructions and [docs/PRODUCTION_AUDIT.md](docs/PRODUCTION_AUDIT.md) for the full production readiness audit.
 
 ## License
 
