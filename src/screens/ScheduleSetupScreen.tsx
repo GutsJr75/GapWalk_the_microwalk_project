@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { View, StyleSheet, Alert, ActivityIndicator, Platform, LayoutAnimation, UIManager } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
-import * as AuthSession from 'expo-auth-session';
 import * as DocumentPicker from 'expo-document-picker';
 import { RootStackParamList } from '../../App';
 import { Container } from '../components/Container';
@@ -27,8 +26,9 @@ import { analyticsService } from '../services/analytics';
 import { useAppStore } from '../store';
 import {
   googleCalendarService,
-  getGoogleAuthConfig,
-  getGoogleRedirectUri,
+  signInWithGoogle,
+  isSignInCancelled,
+  getGoogleConfigurationError,
   isGoogleConfigured,
 } from '../services/googleCalendar';
 import { toUserFriendlyError } from '../utils/errorMessages';
@@ -36,12 +36,6 @@ import { useUnsavedChangesGuard } from '../hooks/useUnsavedChangesGuard';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'ScheduleSetup'>;
 type ScheduleOption = 'google' | 'import' | 'manual' | null;
-
-const discovery = {
-  authorizationEndpoint: 'https://accounts.google.com/o/oauth2/v2/auth',
-  tokenEndpoint: 'https://oauth2.googleapis.com/token',
-  revocationEndpoint: 'https://oauth2.googleapis.com/revoke',
-};
 
 const isFabric = !!(globalThis as any).nativeFabricUIManager;
 
@@ -111,33 +105,6 @@ export const ScheduleSetupScreen: React.FC<Props> = ({ navigation, route }) => {
     Alert.alert(title, message);
   };
 
-  // expo-auth-session hook for Google OAuth
-  const authConfig = getGoogleAuthConfig();
-  const [request, response, promptAsync] = AuthSession.useAuthRequest(
-    {
-      clientId: authConfig.clientId,
-      scopes: authConfig.scopes,
-      redirectUri: authConfig.redirectUri,
-      responseType: AuthSession.ResponseType.Token,
-    },
-    discovery
-  );
-
-  // Handle Google OAuth response
-  useEffect(() => {
-    if (response?.type === 'success') {
-      const { access_token } = response.params;
-      if (access_token) {
-        void handleGoogleSync(access_token);
-      }
-    } else if (response?.type === 'error') {
-      setLoading(false);
-      const msg = toUserFriendlyError(response.error ?? new Error('Could not sign in with Google'));
-      Alert.alert('Sign-in Failed', msg);
-    } else if (response?.type === 'dismiss') {
-      setLoading(false);
-    }
-  }, [response]);
 
   useEffect(() => {
     if (!manageMode || !scheduleSource) return;
@@ -151,13 +118,8 @@ export const ScheduleSetupScreen: React.FC<Props> = ({ navigation, route }) => {
   }, [manageMode, scheduleSource]);
 
   const toggle = (opt: ScheduleOption) => {
-    if (opt === 'google') return; // Google Calendar is upcoming feature, not selectable
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
     setSelectedOption(selectedOption === opt ? null : opt);
-  };
-
-  const onGoogleCardPress = () => {
-    Alert.alert('Coming soon', 'Google Calendar linking is coming soon. For now, use Import or Enter manually.');
   };
 
   /* ── Google Calendar sync ── */
@@ -214,18 +176,31 @@ export const ScheduleSetupScreen: React.FC<Props> = ({ navigation, route }) => {
   };
 
   const startGoogleAuth = async () => {
-    if (!isGoogleConfigured()) {
-      const redirectUri = getGoogleRedirectUri();
+    const configError = getGoogleConfigurationError();
+    if (configError || !isGoogleConfigured()) {
       Alert.alert(
         'Google Calendar',
-        'Google Calendar integration is coming soon. Please use Import or Enter manually for now.',
-        [{ text: 'OK' }]
+        configError ?? 'Google Calendar is not configured.',
+        [{ text: 'OK' }],
       );
       return;
     }
     setLoading(true);
     setSyncStatus('Opening Google sign-in...');
-    await promptAsync();
+    try {
+      const accessToken = await signInWithGoogle();
+      await handleGoogleSync(accessToken);
+    } catch (error) {
+      if (isSignInCancelled(error)) {
+        setLoading(false);
+        setSyncStatus(null);
+        return;
+      }
+      setLoading(false);
+      setSyncStatus(null);
+      const msg = toUserFriendlyError(error);
+      Alert.alert('Sign-in Failed', msg);
+    }
   };
 
   /* ── ICS import ── */
@@ -360,7 +335,10 @@ export const ScheduleSetupScreen: React.FC<Props> = ({ navigation, route }) => {
   /* ── Next ── */
   const runSelectedOption = async () => {
     if (!selectedOption) return;
-    if (selectedOption === 'google') await startGoogleAuth();
+    if (selectedOption === 'google') {
+      analyticsService.track('schedule_source_selected', { source: 'google', manageMode });
+      await startGoogleAuth();
+    }
     else if (selectedOption === 'import') {
       analyticsService.track('schedule_source_selected', { source: 'import', manageMode });
       await handleImport();
@@ -447,21 +425,23 @@ export const ScheduleSetupScreen: React.FC<Props> = ({ navigation, route }) => {
           {manageMode ? 'Choose how GapWalk should read your schedule' : 'Choose how to add your schedule'}
         </Text>
 
-        {/* Google Calendar – upcoming feature (not available yet) */}
+        {/* Google Calendar */}
         <Card
-          selected={false}
-          onPress={onGoogleCardPress}
-          style={[styles.googleCard, styles.upcomingCard, { borderColor: palette.textMuted }]}
+          selected={selectedOption === 'google'}
+          onPress={() => toggle('google')}
+          style={styles.googleCard}
           testID="schedule-option-google"
         >
           <View style={styles.cardHeader}>
             <View style={styles.cardTitleRow}>
-              <AppIcon name="calendar" size={15} color={palette.textMuted} />
-              <Text variant="body" style={[styles.cardTitle, { color: palette.textMuted }]}>Link Google Calendar</Text>
+              <AppIcon name="google" size={15} color={theme.colors.accentPrimary} />
+              <Text variant="body" style={styles.cardTitle}>Link Google Calendar</Text>
             </View>
-            <View style={[styles.upcomingBadge, { backgroundColor: palette.borderSoft }]}>
-              <Text variant="bodySmall" style={[styles.upcomingBadgeText, { color: palette.textMuted }]}>Coming soon</Text>
-            </View>
+            {scheduleSource?.type === 'google' && (
+              <View style={[styles.recommendedBadge]}>
+                <Text style={styles.recommendedText}>Active</Text>
+              </View>
+            )}
           </View>
           <Text variant="bodySmall" color={palette.textMuted} style={styles.cardDesc}>
             Sign in with Google to detect your busy times and find the best walking windows.
@@ -535,7 +515,7 @@ export const ScheduleSetupScreen: React.FC<Props> = ({ navigation, route }) => {
             <Button
               title="Update"
               onPress={handleContinue}
-              disabled={!selectedOption || selectedOption === 'google' || loading}
+              disabled={!selectedOption || loading}
               loading={loading && !syncStatus}
               style={styles.footerBtn}
               testID="schedule-setup-continue"
@@ -545,7 +525,7 @@ export const ScheduleSetupScreen: React.FC<Props> = ({ navigation, route }) => {
           <Button
             title="Next"
             onPress={handleContinue}
-            disabled={!selectedOption || selectedOption === 'google' || loading}
+            disabled={!selectedOption || loading}
             loading={loading && !syncStatus}
             full
             testID="schedule-setup-continue"

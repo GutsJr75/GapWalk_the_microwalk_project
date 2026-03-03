@@ -21,13 +21,13 @@ import {
 } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useFocusEffect } from '@react-navigation/native';
-import * as AuthSession from 'expo-auth-session';
 import * as DocumentPicker from 'expo-document-picker';
 import {
   googleCalendarService,
-  getGoogleAuthConfig,
+  signInWithGoogle,
+  isSignInCancelled,
+  getGoogleConfigurationError,
   isGoogleConfigured,
-  GOOGLE_DISCOVERY,
 } from '../services/googleCalendar';
 import { RootStackParamList } from '../../App';
 import { Text } from '../components/Text';
@@ -609,16 +609,6 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
   const closeInfoBtnRotate = useRef(new Animated.Value(0)).current;
   const { scheduleSource, setScheduleSource, setUpcomingPlans, preferences, themeMode } = useAppStore();
 
-  const authConfig = getGoogleAuthConfig();
-  const [, googleResponse, promptGoogleAsync] = AuthSession.useAuthRequest(
-    {
-      clientId: authConfig.clientId,
-      scopes: authConfig.scopes,
-      redirectUri: authConfig.redirectUri,
-      responseType: AuthSession.ResponseType.Token,
-    },
-    GOOGLE_DISCOVERY
-  );
 
   const scrollGridToNow = useCallback((animated = true) => {
     const now = new Date();
@@ -907,32 +897,30 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
   };
 
   const startGoogleAuth = async () => {
-    if (!isGoogleConfigured()) {
+    const configError = getGoogleConfigurationError();
+    if (configError || !isGoogleConfigured()) {
       showMessage(
         'Google Calendar',
-        'Google Calendar is not configured. Set EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID in your .env file.'
+        configError ?? 'Google Calendar is not configured.',
       );
       return;
     }
     setImportLoading(true);
     setImportStatus('Opening Google sign-in...');
-    await promptGoogleAsync();
-  };
-
-  useEffect(() => {
-    if (googleResponse?.type === 'success') {
-      const { access_token } = googleResponse.params;
-      if (access_token) void handleGoogleCalendarImport(access_token);
-    } else if (googleResponse?.type === 'error') {
+    try {
+      const accessToken = await signInWithGoogle();
+      await handleGoogleCalendarImport(accessToken);
+    } catch (error) {
+      if (isSignInCancelled(error)) {
+        setImportLoading(false);
+        setImportStatus(null);
+        return;
+      }
       setImportLoading(false);
       setImportStatus(null);
-      showMessage('Sign-in Failed', toUserFriendlyError(googleResponse.error ?? new Error('Could not sign in with Google')));
-    } else if (googleResponse?.type === 'dismiss') {
-      setImportLoading(false);
-      setImportStatus(null);
+      showMessage('Sign-in Failed', toUserFriendlyError(error));
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [googleResponse]);
+  };
 
   const currentSignature = useMemo(() => buildScheduleSignature(entriesByDay), [entriesByDay]);
   const hasUnsavedChanges = currentSignature !== initialSignature;

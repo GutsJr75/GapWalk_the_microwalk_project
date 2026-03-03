@@ -1,6 +1,10 @@
-import * as AuthSession from 'expo-auth-session';
-import * as WebBrowser from 'expo-web-browser';
 import { Platform } from 'react-native';
+import Constants, { ExecutionEnvironment } from 'expo-constants';
+import {
+  GoogleSignin,
+  isErrorWithCode,
+  statusCodes,
+} from '@react-native-google-signin/google-signin';
 import { BusyEvent } from '../types';
 
 interface GoogleCalendarEventDateTime {
@@ -20,77 +24,101 @@ interface GoogleCalendarEventsResponse {
   items?: GoogleCalendarEvent[];
 }
 
-WebBrowser.maybeCompleteAuthSession();
-
-let hasLoggedRedirectUri = false;
-const shouldLogOAuthRedirect =
-  typeof process !== 'undefined' && process.env?.EXPO_PUBLIC_DEBUG_OAUTH === '1';
-
-/*
- * ── Google OAuth Configuration ──
- *
- * To enable Google Calendar:
- * 1. Go to https://console.cloud.google.com
- * 2. Create a project (or select an existing one).
- * 3. Enable the "Google Calendar API" under APIs & Services → Library.
- * 4. Under APIs & Services → Credentials → Create Credentials → OAuth client ID:
- *    a. For Web: set Authorized redirect URIs to the URI logged below.
- *    b. For Android: add your package name + SHA-1 fingerprint.
- *    c. For iOS: add your bundle identifier.
- * 5. Paste your client IDs below.
- *
- * The redirect URI used by expo-auth-session is logged at startup
- * so you can copy it into the Google Cloud Console.
- */
-
-// Prefer env vars so you can set in .env without editing code (restart app after changing).
-const GOOGLE_WEB_CLIENT_ID = (typeof process !== 'undefined' && process.env?.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID) || 'YOUR_GOOGLE_WEB_CLIENT_ID';
-const GOOGLE_IOS_CLIENT_ID = (typeof process !== 'undefined' && process.env?.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID) || 'YOUR_GOOGLE_IOS_CLIENT_ID';
-const GOOGLE_ANDROID_CLIENT_ID = (typeof process !== 'undefined' && process.env?.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID) || 'YOUR_GOOGLE_ANDROID_CLIENT_ID';
+const GOOGLE_WEB_CLIENT_ID =
+  (typeof process !== 'undefined' && process.env?.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID) || '';
+const GOOGLE_IOS_CLIENT_ID =
+  (typeof process !== 'undefined' && process.env?.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID) || '';
+const GOOGLE_ANDROID_CLIENT_ID =
+  (typeof process !== 'undefined' && process.env?.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID) || '';
 
 const SCOPES = ['https://www.googleapis.com/auth/calendar.readonly'];
 
-/** Google OAuth discovery document (standard endpoints) */
-export const GOOGLE_DISCOVERY = {
-  authorizationEndpoint: 'https://accounts.google.com/o/oauth2/v2/auth',
-  tokenEndpoint: 'https://oauth2.googleapis.com/token',
-  revocationEndpoint: 'https://oauth2.googleapis.com/revoke',
-};
+const isPlaceholderClientId = (value: string): boolean =>
+  !value || value.startsWith('YOUR_') || value.startsWith('your_');
 
-/** Get the redirect URI used for OAuth (so you can add it in Google Cloud Console). */
-export function getGoogleRedirectUri(): string {
-  return AuthSession.makeRedirectUri({ scheme: 'gapwalk' });
+let _configured = false;
+
+/** One-time native Google Sign-In configuration. Safe to call multiple times. */
+export function configureGoogleSignIn(): void {
+  if (_configured) return;
+
+  GoogleSignin.configure({
+    webClientId: GOOGLE_WEB_CLIENT_ID,
+    iosClientId: GOOGLE_IOS_CLIENT_ID,
+    scopes: SCOPES,
+    offlineAccess: true,
+  });
+
+  _configured = true;
 }
 
-/** Build AuthSession.AuthRequestConfig for Google Calendar */
-export function getGoogleAuthConfig(): AuthSession.AuthRequestConfig {
-  const redirectUri = getGoogleRedirectUri();
+/**
+ * Trigger native Google Sign-In and return a Calendar-scoped access token.
+ * Throws on cancellation or other errors.
+ */
+export async function signInWithGoogle(): Promise<string> {
+  configureGoogleSignIn();
 
-  if (__DEV__ && shouldLogOAuthRedirect && !hasLoggedRedirectUri) {
-    console.log('[GapWalk] Google OAuth redirect URI:', redirectUri);
-    hasLoggedRedirectUri = true;
+  if (Platform.OS === 'android') {
+    await GoogleSignin.hasPlayServices({ showPlayServicesUpdateDialog: true });
   }
 
-  return {
-    clientId: Platform.select({
-      ios: GOOGLE_IOS_CLIENT_ID,
-      android: GOOGLE_ANDROID_CLIENT_ID,
-      default: GOOGLE_WEB_CLIENT_ID,
-    })!,
-    scopes: SCOPES,
-    redirectUri,
-    responseType: AuthSession.ResponseType.Token, // implicit grant → access token
-  };
+  await GoogleSignin.signIn();
+  const tokens = await GoogleSignin.getTokens();
+
+  if (!tokens.accessToken) {
+    throw new Error(
+      'Google sign-in completed without an access token. Check the OAuth client configuration and try again.',
+    );
+  }
+
+  return tokens.accessToken;
 }
 
-/** Whether Google Calendar is properly configured (client IDs are set) */
+/** Sign out the current Google account (silent, never throws). */
+export async function signOutGoogle(): Promise<void> {
+  try {
+    await GoogleSignin.signOut();
+  } catch {
+    // ignore
+  }
+}
+
+/** Whether the given error represents the user cancelling the sign-in prompt. */
+export function isSignInCancelled(error: unknown): boolean {
+  return isErrorWithCode(error) && error.code === statusCodes.SIGN_IN_CANCELLED;
+}
+
+export function getGoogleConfigurationError(): string | null {
+  if (
+    Platform.OS !== 'web' &&
+    Constants.executionEnvironment === ExecutionEnvironment.StoreClient
+  ) {
+    return 'Google Calendar sign-in is not supported in Expo Go. Use a development build or the installed app.';
+  }
+
+  if (Platform.OS === 'web') {
+    return 'Google Calendar sign-in requires a native build. Web is not yet supported.';
+  }
+
+  if (isPlaceholderClientId(GOOGLE_WEB_CLIENT_ID)) {
+    return 'Google Calendar is not configured. Set EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID in .env.';
+  }
+
+  if (Platform.OS === 'ios' && isPlaceholderClientId(GOOGLE_IOS_CLIENT_ID)) {
+    return 'Google Calendar is not configured for iOS. Set EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID in .env.';
+  }
+
+  if (Platform.OS === 'android' && isPlaceholderClientId(GOOGLE_ANDROID_CLIENT_ID)) {
+    return 'Google Calendar is not configured for Android. Set EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID in .env.';
+  }
+
+  return null;
+}
+
+/** Whether Google Calendar is properly configured (client IDs are set). */
 export const isGoogleConfigured = (): boolean => {
-  const id = Platform.select({
-    ios: GOOGLE_IOS_CLIENT_ID,
-    android: GOOGLE_ANDROID_CLIENT_ID,
-    default: GOOGLE_WEB_CLIENT_ID,
-  });
-  return !!id && !id.startsWith('YOUR_');
+  return getGoogleConfigurationError() === null;
 };
 
 export const googleCalendarService = {
@@ -114,7 +142,7 @@ export const googleCalendarService = {
 
     const response = await fetch(
       `https://www.googleapis.com/calendar/v3/calendars/primary/events?${params}`,
-      { headers: { Authorization: `Bearer ${accessToken}` } }
+      { headers: { Authorization: `Bearer ${accessToken}` } },
     );
 
     if (!response.ok) {
@@ -138,13 +166,11 @@ export const googleCalendarService = {
       }));
   },
 
-  /**
-   * Validate whether an access token is still usable.
-   */
+  /** Validate whether an access token is still usable. */
   async validateToken(accessToken: string): Promise<boolean> {
     try {
       const res = await fetch(
-        `https://www.googleapis.com/oauth2/v1/tokeninfo?access_token=${accessToken}`
+        `https://www.googleapis.com/oauth2/v1/tokeninfo?access_token=${accessToken}`,
       );
       return res.ok;
     } catch {
