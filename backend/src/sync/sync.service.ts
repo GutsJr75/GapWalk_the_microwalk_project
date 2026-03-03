@@ -146,11 +146,21 @@ export class SyncService {
           if (exists) continue;
         }
 
+        // Resolve local nudgePlanId to server UUID via localId lookup
+        let resolvedNudgePlanId: string | null = null;
+        if (session.nudgePlanId) {
+          const np = await this.prisma.nudgePlan.findFirst({
+            where: { userId, localId: session.nudgePlanId },
+            select: { id: true },
+          });
+          resolvedNudgePlanId = np?.id ?? null;
+        }
+
         const created = await this.prisma.walkSession.create({
           data: {
             userId,
             localId: session.localId,
-            nudgePlanId: session.nudgePlanId || null,
+            nudgePlanId: resolvedNudgePlanId,
             start: new Date(session.start),
             endTime: new Date(session.endTime),
             activeSeconds: session.activeSeconds,
@@ -274,10 +284,14 @@ export class SyncService {
       });
     }
 
-    // ── 2. Update user sync timestamp ──
+    // ── 2. Update user record (sync timestamp + profile if provided) ──
     await this.prisma.user.update({
       where: { id: userId },
-      data: { lastSyncedAt: syncTimestamp },
+      data: {
+        lastSyncedAt: syncTimestamp,
+        ...(dto.userProfile?.email ? { email: dto.userProfile.email } : {}),
+        ...(dto.userProfile?.displayName ? { displayName: dto.userProfile.displayName } : {}),
+      },
     });
 
     // ── 3. Return server state ──

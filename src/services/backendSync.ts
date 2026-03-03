@@ -47,6 +47,7 @@ export async function runBackendSync(): Promise<boolean> {
   if (!token) return false;
 
   try {
+    const storedUser = await authStorage.getUser();
     const [sessions, plans, events]: [WalkSession[], NudgePlan[], BusyEvent[]] = await Promise.all([
       sessionsRepo.getAll(),
       plansRepo.getUpcomingPlans(200),
@@ -62,17 +63,16 @@ export async function runBackendSync(): Promise<boolean> {
         ]);
 
         return {
-          id: session.id,
+          localId: session.id,
           nudgePlanId: session.nudgePlanId,
           start: session.start,
-          end: session.end,
+          endTime: session.end,
           activeSeconds: session.activeSeconds,
           pausedSeconds: session.pausedSeconds,
           distanceMeters: session.distanceMeters,
           steps: session.steps,
           calories: session.calories,
           usedLocation: session.usedLocation,
-          createdAt: session.createdAt,
           pauseCount: session.pauseCount,
           maxSpeedMps: session.maxSpeedMps,
           avgSpeedMps: session.avgSpeedMps,
@@ -110,9 +110,12 @@ export async function runBackendSync(): Promise<boolean> {
     }));
 
     const syncPayload = {
+      ...(storedUser?.email || storedUser?.name
+        ? { userProfile: { email: storedUser.email, displayName: storedUser.name } }
+        : {}),
       walkSessions,
       nudgePlans: plans.map((p: NudgePlan) => ({
-        id: p.id,
+        localId: p.id,
         date: p.date,
         gapStart: p.gapStart,
         gapEnd: p.gapEnd,
@@ -120,16 +123,14 @@ export async function runBackendSync(): Promise<boolean> {
         suggestedDurationMinutes: p.suggestedDurationMinutes,
         status: p.status,
         reason: p.reason,
-        createdAt: p.createdAt,
       })),
       busyEvents: events.map((e: BusyEvent) => ({
-        id: e.id,
+        localId: e.id,
         title: e.title,
         start: e.start,
-        end: e.end,
+        endTime: e.end,
         source: e.source,
         isAllDay: e.isAllDay,
-        createdAt: e.createdAt,
       })),
       achievements,
     };
