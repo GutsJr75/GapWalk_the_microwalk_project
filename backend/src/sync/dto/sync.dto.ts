@@ -11,7 +11,7 @@ import {
 } from 'class-validator';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { NudgePlanStatus, ScheduleSourceType } from '@prisma/client';
+import { NudgePlanStatus, ScheduleSourceType, WhenToNotify, StrictnessMode, AppOpenSource } from '@prisma/client';
 
 // ── Individual sync item DTOs ──
 
@@ -98,9 +98,9 @@ class SyncPreferencesDto {
   @IsOptional() @IsString() quietHoursEnd?: string;
   @IsOptional() @IsInt() minWalkMinutes?: number;
   @IsOptional() @IsInt() gracePeriodMinutes?: number;
-  @IsOptional() @IsString() whenToNotify?: string;
+  @IsOptional() @IsEnum(WhenToNotify) whenToNotify?: WhenToNotify;
   @IsOptional() @IsInt() notifyDelayMinutes?: number;
-  @IsOptional() @IsString() strictnessMode?: string;
+  @IsOptional() @IsEnum(StrictnessMode) strictnessMode?: StrictnessMode;
   @IsOptional() @IsBoolean() stepGoalEnabled?: boolean;
   @IsOptional() @IsInt() stepGoal?: number;
   @IsOptional() preferredWalkingPeriods?: Array<{ start: string; end: string }>;
@@ -139,7 +139,7 @@ class SyncAppSessionDto {
   @IsOptional() @IsDateString() sessionEnd?: string;
   @IsOptional() @IsInt() foregroundSeconds?: number;
   @IsOptional() screensVisited?: string[];
-  @IsOptional() @IsString() source?: string;
+  @IsOptional() @IsEnum(AppOpenSource) source?: AppOpenSource;
 }
 
 class SyncUserProfileDto {

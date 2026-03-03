@@ -8,6 +8,7 @@ const PROFILE_DISPLAY_NAME_KEY = 'gapwalk_profile_display_name';
 const SETTINGS_THEME_KEY = 'gapwalk_settings_theme';
 const SETTINGS_LANGUAGE_KEY = 'gapwalk_settings_language';
 const LAST_NOTIF_KEY = 'gapwalk_last_notif_response_key';
+const LAST_SYNC_AT_KEY = 'gapwalk_last_sync_at';
 
 export interface StoredAuthUser {
   email?: string;
@@ -99,6 +100,16 @@ export const authStorage = {
   async getLastHandledNotificationKey(): Promise<string | null> {
     if (Platform.OS === 'web') return null;
     try { return await SecureStore.getItemAsync(LAST_NOTIF_KEY); } catch { return null; }
+  },
+
+  async saveLastSyncedAt(isoTimestamp: string): Promise<void> {
+    if (Platform.OS === 'web') return;
+    await SecureStore.setItemAsync(LAST_SYNC_AT_KEY, isoTimestamp);
+  },
+
+  async getLastSyncedAt(): Promise<string | null> {
+    if (Platform.OS === 'web') return null;
+    return SecureStore.getItemAsync(LAST_SYNC_AT_KEY);
   },
 
   async clearAll(): Promise<void> {

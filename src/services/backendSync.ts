@@ -47,7 +47,10 @@ export async function runBackendSync(): Promise<boolean> {
   if (!token) return false;
 
   try {
-    const storedUser = await authStorage.getUser();
+    const [storedUser, lastSyncedAt] = await Promise.all([
+      authStorage.getUser(),
+      authStorage.getLastSyncedAt(),
+    ]);
     const [sessions, plans, events]: [WalkSession[], NudgePlan[], BusyEvent[]] = await Promise.all([
       sessionsRepo.getAll(),
       plansRepo.getUpcomingPlans(200),
@@ -110,6 +113,7 @@ export async function runBackendSync(): Promise<boolean> {
     }));
 
     const syncPayload = {
+      ...(lastSyncedAt ? { lastSyncedAt } : {}),
       ...(storedUser?.email || storedUser?.name
         ? { userProfile: { email: storedUser.email, displayName: storedUser.name } }
         : {}),
@@ -135,7 +139,10 @@ export async function runBackendSync(): Promise<boolean> {
       achievements,
     };
 
-    await apiFetch('/sync', syncPayload, token);
+    const result = await apiFetch('/sync', syncPayload, token);
+    if (result?.syncedAt) {
+      await authStorage.saveLastSyncedAt(result.syncedAt);
+    }
     return true;
   } catch (error) {
     if (__DEV__) console.warn('[BackendSync] Sync failed:', error);
