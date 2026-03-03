@@ -10,6 +10,7 @@ import {
   ALL_WALK_DISPLAY_CARDS,
   NotificationTimerMode,
 } from '../types';
+import { type GuidanceKey } from '../data/guidanceStorage';
 
 interface AppState {
   // Onboarding state
@@ -93,6 +94,11 @@ interface AppState {
   // Walk display cards
   walkDisplayCards: WalkDisplayCard[];
   setWalkDisplayCards: (cards: WalkDisplayCard[]) => void;
+
+  // Guidance / new-user hints
+  guidanceSeen: Record<GuidanceKey, boolean>;
+  setGuidanceSeen: (key: GuidanceKey, value: boolean) => void;
+  setAllGuidanceSeen: (flags: Record<GuidanceKey, boolean>) => void;
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -176,4 +182,16 @@ export const useAppStore = create<AppState>((set) => ({
   // Walk display cards
   walkDisplayCards: [...ALL_WALK_DISPLAY_CARDS],
   setWalkDisplayCards: (cards) => set({ walkDisplayCards: cards }),
+
+  // Guidance
+  guidanceSeen: {
+    dashboard_welcome: false,
+    dashboard_opportunities_hint: false,
+    dashboard_manual_walk_hint: false,
+    weekly_data_hint: false,
+    achievements_hint: false,
+  },
+  setGuidanceSeen: (key, value) =>
+    set((state) => ({ guidanceSeen: { ...state.guidanceSeen, [key]: value } })),
+  setAllGuidanceSeen: (flags) => set({ guidanceSeen: flags }),
 }));

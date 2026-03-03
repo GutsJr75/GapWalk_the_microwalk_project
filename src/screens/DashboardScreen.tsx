@@ -38,6 +38,7 @@ import { requestAllPermissions } from '../services/permissions';
 import { toUserFriendlyError } from '../utils/errorMessages';
 import { authStorage } from '../data/authStorage';
 import { SuccessToast } from '../components/SuccessToast';
+import { guidanceStorage } from '../data/guidanceStorage';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
   DASHBOARD_TOUR_STEPS,
@@ -171,6 +172,8 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
     setAuthUser,
     setHasSeenDashboardTour,
     hasSeenDashboardTour,
+    guidanceSeen,
+    setGuidanceSeen,
   } = useAppStore();
   const [tourVisible, setTourVisible] = useState(false);
   const tourStartedRef = useRef(false);
@@ -741,6 +744,7 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
       notifyChoice: initialNotifyChoice,
     });
     setAddWalkError(null); setQuietHoursBypass(false); setShowAddWalkModal(true);
+    if (!guidanceSeen.dashboard_manual_walk_hint) dismissGuidance('dashboard_manual_walk_hint');
   };
 
   const closeAddWalkModal = () => {
@@ -939,6 +943,12 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
       { text: 'Log out', style: 'destructive', onPress: () => { void doLogout(); } },
     ]);
   };
+
+  // ── Guidance helpers ──
+  const dismissGuidance = useCallback((key: Parameters<typeof setGuidanceSeen>[0]) => {
+    setGuidanceSeen(key, true);
+    void guidanceStorage.markSeen(key);
+  }, [setGuidanceSeen]);
 
   // ── Computed values ──
   const today = new Date();

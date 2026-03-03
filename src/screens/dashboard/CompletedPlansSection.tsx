@@ -8,12 +8,25 @@ import { parseISO, format } from 'date-fns';
 
 interface CompletedPlansSectionProps {
   completedPlans: NudgePlan[];
+  todayMinutesWalked?: number;
 }
 
-export const CompletedPlansSection: React.FC<CompletedPlansSectionProps> = ({ completedPlans }) => {
+export const CompletedPlansSection: React.FC<CompletedPlansSectionProps> = ({ completedPlans, todayMinutesWalked = 0 }) => {
   const palette = useThemePalette();
 
-  if (completedPlans.length === 0) return null;
+  if (completedPlans.length === 0) {
+    if (todayMinutesWalked > 0) return null;
+    return (
+      <View style={styles.section}>
+        <Text variant="bodySmall" color={palette.textMuted} style={styles.label}>
+          Completed today
+        </Text>
+        <Text variant="bodySmall" color={palette.textMuted} style={styles.emptyHint}>
+          No completed walks yet today. Start one from your opportunities above or tap &quot;Start Manual Walk&quot; below.
+        </Text>
+      </View>
+    );
+  }
 
   return (
     <View style={styles.section}>
@@ -83,5 +96,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     paddingVertical: 2,
     borderRadius: 999,
+  },
+  emptyHint: {
+    lineHeight: 18,
+    fontStyle: 'italic',
   },
 });
