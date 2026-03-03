@@ -8,12 +8,22 @@ import { parseISO, format } from 'date-fns';
 
 interface MissedPlansSectionProps {
   missedPlans: NudgePlan[];
+  hasOpportunities?: boolean;
 }
 
-export const MissedPlansSection: React.FC<MissedPlansSectionProps> = ({ missedPlans }) => {
+export const MissedPlansSection: React.FC<MissedPlansSectionProps> = ({ missedPlans, hasOpportunities = false }) => {
   const palette = useThemePalette();
 
-  if (missedPlans.length === 0) return null;
+  if (missedPlans.length === 0) {
+    if (!hasOpportunities) return null;
+    return (
+      <View style={styles.section}>
+        <Text variant="bodySmall" color={palette.textMuted} style={styles.emptyHint}>
+          Nothing missed yet — keep it up!
+        </Text>
+      </View>
+    );
+  }
 
   return (
     <View style={styles.section}>
@@ -88,5 +98,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     paddingVertical: 2,
     borderRadius: 999,
+  },
+  emptyHint: {
+    lineHeight: 18,
+    fontStyle: 'italic',
   },
 });

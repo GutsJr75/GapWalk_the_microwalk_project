@@ -30,6 +30,7 @@ import { analyticsService } from './src/services/analytics';
 import { androidWalkTracking } from './src/services/androidWalkTracking';
 import { requestAllPermissions } from './src/services/permissions';
 import { authStorage } from './src/data/authStorage';
+import { guidanceStorage } from './src/data/guidanceStorage';
 import { runBackendSync } from './src/services/backendSync';
 
 // Screens
@@ -173,6 +174,7 @@ function App() {
     setProfileDisplayName,
     setActiveWalkSnapshot,
     setPendingWalkPrompt,
+    setAllGuidanceSeen,
   } = useAppStore();
   const pendingWalkPlanIdRef = useRef<string | null>(null);
   const pendingWalkRouteRef = useRef<{ planId?: string; prompt?: 'end_confirmation' } | null>(null);
@@ -478,6 +480,14 @@ function App() {
         if (storedLang) setLanguage(storedLang);
       } catch (e) {
         if (__DEV__) console.warn('Failed to restore UI settings:', e);
+      }
+
+      // Load guidance "seen" flags so hint cards render correctly on first frame
+      try {
+        const flags = await guidanceStorage.loadAll();
+        setAllGuidanceSeen(flags);
+      } catch (e) {
+        if (__DEV__) console.warn('Failed to load guidance flags:', e);
       }
 
       // Check if user has completed onboarding (preferences saved).

@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { ActiveWalkSnapshot, Preferences, ScheduleSource, NudgePlan, WalkPrompt, WalkSession } from '../types';
+import { type GuidanceKey } from '../data/guidanceStorage';
 
 interface AppState {
   // Onboarding state
@@ -64,6 +65,11 @@ interface AppState {
   setThemeMode: (mode: 'dark' | 'light') => void;
   language: 'en' | 'es';
   setLanguage: (lang: 'en' | 'es') => void;
+
+  // Guidance / new-user hints
+  guidanceSeen: Record<GuidanceKey, boolean>;
+  setGuidanceSeen: (key: GuidanceKey, value: boolean) => void;
+  setAllGuidanceSeen: (flags: Record<GuidanceKey, boolean>) => void;
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -128,4 +134,16 @@ export const useAppStore = create<AppState>((set) => ({
   setThemeMode: (mode) => set({ themeMode: mode }),
   language: 'en',
   setLanguage: (lang) => set({ language: lang }),
+
+  // Guidance
+  guidanceSeen: {
+    dashboard_welcome: false,
+    dashboard_opportunities_hint: false,
+    dashboard_manual_walk_hint: false,
+    weekly_data_hint: false,
+    achievements_hint: false,
+  },
+  setGuidanceSeen: (key, value) =>
+    set((state) => ({ guidanceSeen: { ...state.guidanceSeen, [key]: value } })),
+  setAllGuidanceSeen: (flags) => set({ guidanceSeen: flags }),
 }));

@@ -31,6 +31,7 @@ import { timeUtils } from '../utils/time';
 import { requestAllPermissions } from '../services/permissions';
 import { toUserFriendlyError } from '../utils/errorMessages';
 import { authStorage } from '../data/authStorage';
+import { guidanceStorage } from '../data/guidanceStorage';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 // Extracted dashboard components
@@ -128,6 +129,8 @@ export const DashboardScreen: React.FC<Props> = ({ navigation, route }) => {
     hasCompletedOnboarding,
     setIsAuthenticated,
     setAuthUser,
+    guidanceSeen,
+    setGuidanceSeen,
   } = useAppStore();
   const [refreshing, setRefreshing] = useState(false);
   const [menuVisible, setMenuVisible] = useState(false);
@@ -629,6 +632,7 @@ export const DashboardScreen: React.FC<Props> = ({ navigation, route }) => {
     setAddWalkPeriod(initialPeriod); setAddWalkDuration(initialDuration);
     setAddWalkInitialState({ hour: initialHour, minute: initialMinute, period: initialPeriod, duration: initialDuration });
     setAddWalkError(null); setQuietHoursBypass(false); setShowAddWalkModal(true);
+    if (!guidanceSeen.dashboard_manual_walk_hint) dismissGuidance('dashboard_manual_walk_hint');
   };
 
   const closeAddWalkModal = () => {
@@ -781,6 +785,12 @@ export const DashboardScreen: React.FC<Props> = ({ navigation, route }) => {
     ]);
   };
 
+  // ── Guidance helpers ──
+  const dismissGuidance = useCallback((key: Parameters<typeof setGuidanceSeen>[0]) => {
+    setGuidanceSeen(key, true);
+    void guidanceStorage.markSeen(key);
+  }, [setGuidanceSeen]);
+
   // ── Computed values ──
   const today = new Date();
   const locale = language === 'es' ? 'es-ES' : 'en-US';
@@ -903,6 +913,29 @@ export const DashboardScreen: React.FC<Props> = ({ navigation, route }) => {
         <Animated.View style={{ opacity: cardAnims[0], transform: [{ translateY: cardAnims[0].interpolate({ inputRange: [0, 1], outputRange: [12, 0] }) }] }}>
           <Text variant="body" style={styles.readyText}>{readyPrompt}</Text>
           {yesterdayMessage && <YesterdayCard message={yesterdayMessage} />}
+
+          {!guidanceSeen.dashboard_welcome && (
+            <Card elevated style={styles.welcomeCard}>
+              <Text variant="body" style={styles.welcomeTitle}>Your dashboard at a glance</Text>
+              <View style={styles.welcomeBullet}>
+                <Ionicons name="stats-chart-outline" size={16} color={palette.accentPrimary} />
+                <Text variant="bodySmall" color={palette.textMuted} style={styles.welcomeBulletText}>Quick Status tracks your daily walking minutes, notification count, and steps.</Text>
+              </View>
+              <View style={styles.welcomeBullet}>
+                <Ionicons name="walk-outline" size={16} color={palette.accentPrimary} />
+                <Text variant="bodySmall" color={palette.textMuted} style={styles.welcomeBulletText}>Walking Opportunities shows gaps in your schedule where you can fit a walk.</Text>
+              </View>
+              <View style={styles.welcomeBullet}>
+                <Ionicons name="add-circle-outline" size={16} color={palette.accentPrimary} />
+                <Text variant="bodySmall" color={palette.textMuted} style={styles.welcomeBulletText}>Tap the + button to schedule a walk at a time that works for you.</Text>
+              </View>
+              <View style={styles.welcomeBullet}>
+                <Ionicons name="menu-outline" size={16} color={palette.accentPrimary} />
+                <Text variant="bodySmall" color={palette.textMuted} style={styles.welcomeBulletText}>Open the menu (top-right) for settings, weekly stats, achievements, and help.</Text>
+              </View>
+              <Button title="Got it" onPress={() => dismissGuidance('dashboard_welcome')} variant="outline" style={styles.welcomeDismiss} />
+            </Card>
+          )}
         </Animated.View>
 
         <Animated.View style={{ opacity: cardAnims[1], transform: [{ translateY: cardAnims[1].interpolate({ inputRange: [0, 1], outputRange: [12, 0] }) }] }}>
@@ -945,6 +978,12 @@ export const DashboardScreen: React.FC<Props> = ({ navigation, route }) => {
           </Pressable>
         </View>
 
+        {!guidanceSeen.dashboard_manual_walk_hint && (
+          <Text variant="bodySmall" color={palette.accentPrimary} style={styles.manualWalkHint}>
+            Tip: Tap the + button to add a walk at any time you like.
+          </Text>
+        )}
+
         {goalReached && opportunities.length === 0 ? (
           <Card elevated style={styles.emptyCard}>
             <Text variant="body" style={styles.emptyText}>Goal reached for today</Text>
@@ -954,7 +993,16 @@ export const DashboardScreen: React.FC<Props> = ({ navigation, route }) => {
           <Card elevated style={styles.emptyCard}>
             <Ionicons name="walk-outline" size={28} color={palette.textMuted} style={{ marginBottom: 8 }} />
             <Text variant="body" style={styles.emptyText}>No opportunities yet</Text>
-            <Text variant="bodySmall" color={palette.textMuted} style={styles.emptyHint}>No suitable gaps were found right now. Pull to refresh, or start a manual walk below.</Text>
+            {!guidanceSeen.dashboard_opportunities_hint ? (
+              <>
+                <Text variant="bodySmall" color={palette.textMuted} style={styles.emptyHint}>
+                  GapWalk scans your schedule for free gaps and suggests walk times. Opportunities will appear here as your day progresses. You can also tap + above to schedule a walk yourself.
+                </Text>
+                <Button title="Got it" onPress={() => dismissGuidance('dashboard_opportunities_hint')} variant="outline" style={styles.hintDismiss} />
+              </>
+            ) : (
+              <Text variant="bodySmall" color={palette.textMuted} style={styles.emptyHint}>No suitable gaps were found right now. Pull to refresh, or start a manual walk below.</Text>
+            )}
           </Card>
         ) : (
           <>
@@ -979,8 +1027,8 @@ export const DashboardScreen: React.FC<Props> = ({ navigation, route }) => {
           </>
         )}
 
-        <CompletedPlansSection completedPlans={completedPlans} />
-        <MissedPlansSection missedPlans={missedPlans} />
+        <CompletedPlansSection completedPlans={completedPlans} todayMinutesWalked={todayMinutesWalked} />
+        <MissedPlansSection missedPlans={missedPlans} hasOpportunities={opportunities.length > 0} />
 
         <Button title="Start Manual Walk" onPress={() => navigation.navigate('Walking', {})} style={styles.walkBtn} testID="dashboard-start-manual-walk" />
         <Text variant="muted" style={styles.dashboardFooter}>Your privacy matters. So does your health.</Text>
@@ -1082,4 +1130,11 @@ const styles = StyleSheet.create({
   walkBtn: { marginBottom: 20 },
   dashboardFooter: { textAlign: 'center', marginBottom: 8, lineHeight: 20 },
   readyText: { marginTop: 16, marginBottom: 16, textAlign: 'center', fontSize: theme.fontSize.lg, fontWeight: theme.fontWeight.semibold },
+  welcomeCard: { marginTop: 16, paddingVertical: 20, paddingHorizontal: 18, gap: 10 },
+  welcomeTitle: { fontWeight: theme.fontWeight.semibold, fontSize: theme.fontSize.md + 1, marginBottom: 4 },
+  welcomeBullet: { flexDirection: 'row', alignItems: 'flex-start', gap: 10 },
+  welcomeBulletText: { flex: 1, lineHeight: 20 },
+  welcomeDismiss: { marginTop: 6, alignSelf: 'flex-end' },
+  hintDismiss: { marginTop: 10 },
+  manualWalkHint: { marginBottom: 8, marginTop: -4, fontSize: theme.fontSize.sm, lineHeight: 18 },
 });

@@ -16,6 +16,7 @@ import { screenChrome } from '../theme/screenChrome';
 import { useThemePalette } from '../theme/palette';
 import { useAppStore } from '../store';
 import { sessionsRepo } from '../data/repositories/sessionsRepo';
+import { guidanceStorage } from '../data/guidanceStorage';
 import {
   calculateWeeklyHistory,
   WeeklyHistoryEntry,
@@ -28,11 +29,16 @@ type Props = NativeStackScreenProps<RootStackParamList, 'WeeklyData'>;
 /*  Screen                                                            */
 /* ------------------------------------------------------------------ */
 export const WeeklyDataScreen: React.FC<Props> = ({ navigation }) => {
-  const { language } = useAppStore();
+  const { language, guidanceSeen, setGuidanceSeen } = useAppStore();
   const palette = useThemePalette();
   const [weeklyHistory, setWeeklyHistory] = useState<WeeklyHistoryEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+
+  const dismissHint = useCallback(() => {
+    setGuidanceSeen('weekly_data_hint', true);
+    void guidanceStorage.markSeen('weekly_data_hint');
+  }, [setGuidanceSeen]);
 
   const load = useCallback(async () => {
     setLoadError(null);
@@ -84,6 +90,16 @@ export const WeeklyDataScreen: React.FC<Props> = ({ navigation }) => {
           subtitle="Review your weekly walking totals and trends."
           onBack={handleBack}
         />
+
+        {!guidanceSeen.weekly_data_hint && (
+          <Card elevated style={styles.hintCard}>
+            <Ionicons name="information-circle-outline" size={20} color={palette.accentPrimary} />
+            <Text variant="bodySmall" color={palette.textMuted} style={styles.hintText}>
+              This screen tracks your walking trends week by week. Complete walks to start building your history.
+            </Text>
+            <Button title="Got it" onPress={dismissHint} variant="outline" style={styles.hintDismiss} />
+          </Card>
+        )}
 
         {loading ? (
           <Card elevated style={styles.emptyCard}>
@@ -262,6 +278,23 @@ const styles = StyleSheet.create({
     alignSelf: 'center',
     width: '100%',
     maxWidth: theme.layout.contentMaxWidth,
+  },
+  hintCard: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    gap: 10,
+    marginBottom: 16,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+  },
+  hintText: {
+    flex: 1,
+    lineHeight: 20,
+  },
+  hintDismiss: {
+    alignSelf: 'flex-end',
+    marginTop: 4,
   },
   emptyCard: {
     alignItems: 'center',

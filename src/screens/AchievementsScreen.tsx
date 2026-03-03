@@ -16,6 +16,7 @@ import { useThemePalette } from '../theme/palette';
 import { useAppStore } from '../store';
 import { translateLiteral } from '../i18n';
 import { toUserFriendlyError } from '../utils/errorMessages';
+import { guidanceStorage } from '../data/guidanceStorage';
 import {
   ACHIEVEMENTS,
   achievementsRepo,
@@ -39,10 +40,15 @@ const formatUnlockedDate = (iso: string, language: 'en' | 'es'): string => {
 
 export const AchievementsScreen: React.FC<Props> = ({ navigation, route }) => {
   const palette = useThemePalette();
-  const { themeMode, language } = useAppStore();
+  const { themeMode, language, guidanceSeen, setGuidanceSeen } = useAppStore();
   const [unlockedAchievements, setUnlockedAchievements] = useState<UnlockedAchievement[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+
+  const dismissHint = useCallback(() => {
+    setGuidanceSeen('achievements_hint', true);
+    void guidanceStorage.markSeen('achievements_hint');
+  }, [setGuidanceSeen]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -206,6 +212,16 @@ export const AchievementsScreen: React.FC<Props> = ({ navigation, route }) => {
           themeMode={themeMode}
         />
 
+        {!guidanceSeen.achievements_hint && (
+          <Card elevated style={styles.hintCard}>
+            <Ionicons name="trophy-outline" size={20} color={palette.accentPrimary} />
+            <Text variant="bodySmall" color={palette.textMuted} style={styles.hintText}>
+              Earn badges by walking consistently. Your first badge is just one walk away!
+            </Text>
+            <Button title="Got it" onPress={dismissHint} variant="outline" style={styles.hintDismiss} />
+          </Card>
+        )}
+
         <Card elevated style={styles.summaryCard}>
           <View style={styles.summaryTitleRow}>
             <Text variant="body" style={styles.summaryTitle}>
@@ -265,6 +281,23 @@ const styles = StyleSheet.create({
     alignSelf: 'center',
     width: '100%',
     maxWidth: theme.layout.contentMaxWidth,
+  },
+  hintCard: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    gap: 10,
+    marginBottom: 16,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+  },
+  hintText: {
+    flex: 1,
+    lineHeight: 20,
+  },
+  hintDismiss: {
+    alignSelf: 'flex-end',
+    marginTop: 4,
   },
   summaryCard: {
     marginBottom: 16,
