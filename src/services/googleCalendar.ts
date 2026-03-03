@@ -1,10 +1,8 @@
-import { Platform } from 'react-native';
+import * as AuthSession from 'expo-auth-session';
+import * as WebBrowser from 'expo-web-browser';
 import Constants, { ExecutionEnvironment } from 'expo-constants';
-import {
-  GoogleSignin,
-  isErrorWithCode,
-  statusCodes,
-} from '@react-native-google-signin/google-signin';
+import type { GoogleAuthRequestConfig } from 'expo-auth-session/providers/google';
+import { Platform } from 'react-native';
 import { BusyEvent } from '../types';
 
 interface GoogleCalendarEventDateTime {
@@ -24,69 +22,76 @@ interface GoogleCalendarEventsResponse {
   items?: GoogleCalendarEvent[];
 }
 
-const GOOGLE_WEB_CLIENT_ID =
-  (typeof process !== 'undefined' && process.env?.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID) || '';
-const GOOGLE_IOS_CLIENT_ID =
-  (typeof process !== 'undefined' && process.env?.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID) || '';
-const GOOGLE_ANDROID_CLIENT_ID =
-  (typeof process !== 'undefined' && process.env?.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID) || '';
+WebBrowser.maybeCompleteAuthSession();
+
+let hasLoggedRedirectUri = false;
+const shouldLogOAuthRedirect =
+  typeof process !== 'undefined' && process.env?.EXPO_PUBLIC_DEBUG_OAUTH === '1';
+const NATIVE_REDIRECT_PATH = 'oauthredirect';
+const FALLBACK_NATIVE_APP_ID = 'com.gapwalk.app';
+
+/*
+ * ── Google OAuth Configuration ──
+ *
+ * To enable Google Calendar:
+ * 1. Go to https://console.cloud.google.com
+ * 2. Create a project (or select an existing one).
+ * 3. Enable the "Google Calendar API" under APIs & Services → Library.
+ * 4. Under APIs & Services → Credentials → Create Credentials → OAuth client ID:
+ *    a. Create a Web client for browser auth.
+ *    b. Create an Android client for your package name + SHA-1 fingerprint.
+ *    c. Create an iOS client for your bundle identifier.
+ * 5. Paste the platform-specific client IDs below. Do not reuse the web client ID on iOS/Android.
+ *
+ * Native builds in this app return to:
+ *   com.gapwalk.app:/oauthredirect
+ */
+
+// Prefer env vars so you can set in .env without editing code (restart app after changing).
+const GOOGLE_WEB_CLIENT_ID = (typeof process !== 'undefined' && process.env?.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID) || 'YOUR_GOOGLE_WEB_CLIENT_ID';
+const GOOGLE_IOS_CLIENT_ID = (typeof process !== 'undefined' && process.env?.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID) || 'YOUR_GOOGLE_IOS_CLIENT_ID';
+const GOOGLE_ANDROID_CLIENT_ID = (typeof process !== 'undefined' && process.env?.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID) || 'YOUR_GOOGLE_ANDROID_CLIENT_ID';
 
 const SCOPES = ['https://www.googleapis.com/auth/calendar.readonly'];
 
 const isPlaceholderClientId = (value: string): boolean =>
   !value || value.startsWith('YOUR_') || value.startsWith('your_');
 
-let _configured = false;
+const getNativeAppId = (): string => {
+  if (Platform.OS === 'ios') {
+    return Constants.expoConfig?.ios?.bundleIdentifier ?? FALLBACK_NATIVE_APP_ID;
+  }
+  if (Platform.OS === 'android') {
+    return Constants.expoConfig?.android?.package ?? FALLBACK_NATIVE_APP_ID;
+  }
+  return FALLBACK_NATIVE_APP_ID;
+};
 
-/** One-time native Google Sign-In configuration. Safe to call multiple times. */
-export function configureGoogleSignIn(): void {
-  if (_configured) return;
+/** Get the redirect URI used for OAuth (so you can add it in Google Cloud Console). */
+export function getGoogleRedirectUri(): string {
+  return AuthSession.makeRedirectUri({
+    path: NATIVE_REDIRECT_PATH,
+    native: `${getNativeAppId()}:/${NATIVE_REDIRECT_PATH}`,
+  });
+}
 
-  GoogleSignin.configure({
+/** Build Expo Google auth config for Google Calendar */
+export function getGoogleAuthConfig(): Partial<GoogleAuthRequestConfig> {
+  const redirectUri = getGoogleRedirectUri();
+
+  if (__DEV__ && shouldLogOAuthRedirect && !hasLoggedRedirectUri) {
+    console.log('[GapWalk] Google OAuth redirect URI:', redirectUri);
+    hasLoggedRedirectUri = true;
+  }
+
+  return {
     webClientId: GOOGLE_WEB_CLIENT_ID,
     iosClientId: GOOGLE_IOS_CLIENT_ID,
+    androidClientId: GOOGLE_ANDROID_CLIENT_ID,
     scopes: SCOPES,
-    offlineAccess: true,
-  });
-
-  _configured = true;
-}
-
-/**
- * Trigger native Google Sign-In and return a Calendar-scoped access token.
- * Throws on cancellation or other errors.
- */
-export async function signInWithGoogle(): Promise<string> {
-  configureGoogleSignIn();
-
-  if (Platform.OS === 'android') {
-    await GoogleSignin.hasPlayServices({ showPlayServicesUpdateDialog: true });
-  }
-
-  await GoogleSignin.signIn();
-  const tokens = await GoogleSignin.getTokens();
-
-  if (!tokens.accessToken) {
-    throw new Error(
-      'Google sign-in completed without an access token. Check the OAuth client configuration and try again.',
-    );
-  }
-
-  return tokens.accessToken;
-}
-
-/** Sign out the current Google account (silent, never throws). */
-export async function signOutGoogle(): Promise<void> {
-  try {
-    await GoogleSignin.signOut();
-  } catch {
-    // ignore
-  }
-}
-
-/** Whether the given error represents the user cancelling the sign-in prompt. */
-export function isSignInCancelled(error: unknown): boolean {
-  return isErrorWithCode(error) && error.code === statusCodes.SIGN_IN_CANCELLED;
+    redirectUri,
+    selectAccount: true,
+  };
 }
 
 export function getGoogleConfigurationError(): string | null {
@@ -98,25 +103,36 @@ export function getGoogleConfigurationError(): string | null {
   }
 
   if (Platform.OS === 'web') {
-    return 'Google Calendar sign-in requires a native build. Web is not yet supported.';
+    if (isPlaceholderClientId(GOOGLE_WEB_CLIENT_ID)) {
+      return 'Google Calendar is not configured for web. Set EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID in .env.';
+    }
+    return null;
   }
 
-  if (isPlaceholderClientId(GOOGLE_WEB_CLIENT_ID)) {
-    return 'Google Calendar is not configured. Set EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID in .env.';
+  const envVarName =
+    Platform.OS === 'ios'
+      ? 'EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID'
+      : 'EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID';
+  const nativePlatformLabel = Platform.OS === 'ios' ? 'iOS' : 'Android';
+  const nativeAppId = getNativeAppId();
+  const nativeClientId =
+    Platform.OS === 'ios' ? GOOGLE_IOS_CLIENT_ID : GOOGLE_ANDROID_CLIENT_ID;
+
+  if (isPlaceholderClientId(nativeClientId)) {
+    return `Google Calendar is not configured for ${nativePlatformLabel}. Create a ${nativePlatformLabel} OAuth client for ${nativeAppId} and set ${envVarName} in .env.`;
   }
 
-  if (Platform.OS === 'ios' && isPlaceholderClientId(GOOGLE_IOS_CLIENT_ID)) {
-    return 'Google Calendar is not configured for iOS. Set EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID in .env.';
-  }
-
-  if (Platform.OS === 'android' && isPlaceholderClientId(GOOGLE_ANDROID_CLIENT_ID)) {
-    return 'Google Calendar is not configured for Android. Set EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID in .env.';
+  if (
+    !isPlaceholderClientId(GOOGLE_WEB_CLIENT_ID) &&
+    nativeClientId === GOOGLE_WEB_CLIENT_ID
+  ) {
+    return `Google Calendar is misconfigured for ${nativePlatformLabel}. ${envVarName} must use a platform-specific OAuth client ID, not the same value as EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID.`;
   }
 
   return null;
 }
 
-/** Whether Google Calendar is properly configured (client IDs are set). */
+/** Whether Google Calendar is properly configured (client IDs are set) */
 export const isGoogleConfigured = (): boolean => {
   return getGoogleConfigurationError() === null;
 };
@@ -142,7 +158,7 @@ export const googleCalendarService = {
 
     const response = await fetch(
       `https://www.googleapis.com/calendar/v3/calendars/primary/events?${params}`,
-      { headers: { Authorization: `Bearer ${accessToken}` } },
+      { headers: { Authorization: `Bearer ${accessToken}` } }
     );
 
     if (!response.ok) {
@@ -166,11 +182,13 @@ export const googleCalendarService = {
       }));
   },
 
-  /** Validate whether an access token is still usable. */
+  /**
+   * Validate whether an access token is still usable.
+   */
   async validateToken(accessToken: string): Promise<boolean> {
     try {
       const res = await fetch(
-        `https://www.googleapis.com/oauth2/v1/tokeninfo?access_token=${accessToken}`,
+        `https://www.googleapis.com/oauth2/v1/tokeninfo?access_token=${accessToken}`
       );
       return res.ok;
     } catch {

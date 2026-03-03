@@ -25,6 +25,7 @@ export const getAuth0RequestConfig = (
 ): AuthSession.AuthRequestConfig => {
   const baseExtraParams: Record<string, string> = {
     ...(audience ? { audience } : {}),
+    prompt: 'login',
   };
 
   if (mode === 'signup') {

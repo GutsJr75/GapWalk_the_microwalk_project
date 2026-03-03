@@ -120,20 +120,19 @@ ALTER TABLE "crash_reports"
 
 -- ─── BEHAVIOR LOG ENUM ADDITIONS ────────────────────────────
 
-ALTER TYPE "BehaviorEventType"
-    ADD VALUE IF NOT EXISTS 'nudge_scheduled',
-    ADD VALUE IF NOT EXISTS 'nudge_tapped',
-    ADD VALUE IF NOT EXISTS 'nudge_swiped_away',
-    ADD VALUE IF NOT EXISTS 'nudge_action_start',
-    ADD VALUE IF NOT EXISTS 'nudge_action_skip',
-    ADD VALUE IF NOT EXISTS 'alt_gap_suggested',
-    ADD VALUE IF NOT EXISTS 'alt_gap_accepted',
-    ADD VALUE IF NOT EXISTS 'alt_gap_declined',
-    ADD VALUE IF NOT EXISTS 'manual_nudge_triggered',
-    ADD VALUE IF NOT EXISTS 'app_foreground_from_nudge',
-    ADD VALUE IF NOT EXISTS 'settings_changed',
-    ADD VALUE IF NOT EXISTS 'schedule_source_changed',
-    ADD VALUE IF NOT EXISTS 'goal_changed';
+ALTER TYPE "BehaviorEventType" ADD VALUE IF NOT EXISTS 'nudge_scheduled';
+ALTER TYPE "BehaviorEventType" ADD VALUE IF NOT EXISTS 'nudge_tapped';
+ALTER TYPE "BehaviorEventType" ADD VALUE IF NOT EXISTS 'nudge_swiped_away';
+ALTER TYPE "BehaviorEventType" ADD VALUE IF NOT EXISTS 'nudge_action_start';
+ALTER TYPE "BehaviorEventType" ADD VALUE IF NOT EXISTS 'nudge_action_skip';
+ALTER TYPE "BehaviorEventType" ADD VALUE IF NOT EXISTS 'alt_gap_suggested';
+ALTER TYPE "BehaviorEventType" ADD VALUE IF NOT EXISTS 'alt_gap_accepted';
+ALTER TYPE "BehaviorEventType" ADD VALUE IF NOT EXISTS 'alt_gap_declined';
+ALTER TYPE "BehaviorEventType" ADD VALUE IF NOT EXISTS 'manual_nudge_triggered';
+ALTER TYPE "BehaviorEventType" ADD VALUE IF NOT EXISTS 'app_foreground_from_nudge';
+ALTER TYPE "BehaviorEventType" ADD VALUE IF NOT EXISTS 'settings_changed';
+ALTER TYPE "BehaviorEventType" ADD VALUE IF NOT EXISTS 'schedule_source_changed';
+ALTER TYPE "BehaviorEventType" ADD VALUE IF NOT EXISTS 'goal_changed';
 
 -- ─── APP SESSIONS ────────────────────────────────────────────
 

@@ -142,6 +142,11 @@ class SyncAppSessionDto {
   @IsOptional() @IsString() source?: string;
 }
 
+class SyncUserProfileDto {
+  @IsOptional() @IsString() email?: string;
+  @IsOptional() @IsString() displayName?: string;
+}
+
 // ── Main sync request ──
 
 export class SyncRequestDto {
@@ -149,6 +154,12 @@ export class SyncRequestDto {
   @IsOptional()
   @IsDateString()
   lastSyncedAt?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => SyncUserProfileDto)
+  userProfile?: SyncUserProfileDto;
 
   @ApiPropertyOptional()
   @IsOptional()
