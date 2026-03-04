@@ -1,8 +1,14 @@
 import * as WebBrowser from 'expo-web-browser';
 import Constants, { ExecutionEnvironment } from 'expo-constants';
 import { Platform } from 'react-native';
-import { GoogleSignin, statusCodes } from '@react-native-google-signin/google-signin';
 import { BusyEvent } from '../types';
+
+// Lazy-load the native Google Sign-In module to avoid crashing in Expo Go
+// where the RNGoogleSignin native binary is not present.
+const getGoogleSignin = (): { GoogleSignin: any; statusCodes: any } => {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  return require('@react-native-google-signin/google-signin');
+};
 
 interface GoogleCalendarEventDateTime {
   date?: string;
@@ -26,6 +32,7 @@ WebBrowser.maybeCompleteAuthSession();
 /** Returns true when the error came from the user cancelling the sign-in. */
 export const isSignInCancelled = (error: unknown): boolean => {
   if (!error || typeof error !== 'object') return false;
+  const { statusCodes } = getGoogleSignin();
   return (error as any).code === statusCodes.SIGN_IN_CANCELLED;
 };
 
@@ -35,6 +42,8 @@ export const isSignInCancelled = (error: unknown): boolean => {
  * (native SDK) to avoid the custom-URI-scheme restriction on Android.
  */
 export async function signInWithGoogle(): Promise<string> {
+  const { GoogleSignin } = getGoogleSignin();
+
   GoogleSignin.configure({
     scopes: SCOPES,
     webClientId: GOOGLE_WEB_CLIENT_ID,
