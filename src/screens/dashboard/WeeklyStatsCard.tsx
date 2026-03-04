@@ -126,9 +126,7 @@ export const WeeklyStatsCard: React.FC<WeeklyStatsCardProps> = ({ weeklyStats, p
 };
 
 const styles = StyleSheet.create({
-  card: {
-    marginBottom: 16,
-  },
+  card: {},
   headerRow: {
     flexDirection: 'row',
     alignItems: 'center',

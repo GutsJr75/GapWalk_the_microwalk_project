@@ -92,7 +92,7 @@ export const GapItem: React.FC<GapItemProps> = ({
         </View>
 
         <View style={[styles.barTrack, barTrackTheme]}>
-          <View style={[styles.barFill, { width: `${pct * 100}%` }]} />
+          <View style={[styles.barFill, { width: `${pct * 100}%`, backgroundColor: palette.accentPrimary }]} />
         </View>
         <Text variant="muted" style={styles.barLabel}>
           {usedMinutes}/{duration} min completed
@@ -154,7 +154,6 @@ const styles = StyleSheet.create({
     borderRadius: theme.borderRadius.md,
     paddingVertical: theme.spacing.md,
     paddingHorizontal: theme.spacing.md,
-    marginBottom: theme.spacing.ml,
     borderWidth: 1,
     // native depth
     ...theme.shadow.card,
@@ -185,7 +184,6 @@ const styles = StyleSheet.create({
   },
   barFill: {
     height: '100%',
-    backgroundColor: theme.colors.accentPrimary,
     borderRadius: 3,
   },
   barLabel: {

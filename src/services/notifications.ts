@@ -25,7 +25,7 @@ export const WALK_SESSION_ACTION_RESUME = 'RESUME_WALK_SESSION';
 export const WALK_SESSION_ACTION_END = 'END_WALK_SESSION';
 
 // Android channel IDs
-const ANDROID_CHANNEL_DEFAULT = 'default';
+const ANDROID_CHANNEL_DEFAULT = 'gapwalk-nudges';
 const ANDROID_CHANNEL_WALK_SESSION = 'walk-session';
 
 const isExpoGo =
@@ -70,31 +70,31 @@ function buildNudgeTitle(walkStart: Date, _isManual = false): string {
 }
 
 const NUDGE_BODIES_NOW_RELAXED = [
-  (dur: number) => `It's time! Head out for a ${dur}-min walk. Your body will thank you.`,
-  (dur: number) => `Walk o'clock. ${dur} minutes is all it takes — let's go!`,
-  (dur: number) => `Step outside for ${dur} min. A little movement goes a long way.`,
-  (dur: number) => `Your ${dur}-min walking window is open. Time to move!`,
-  (dur: number) => `Fresh air awaits. ${dur}-min walk starts now.`,
-  (dur: number) => `A ${dur}-min walk is the reset your day needs. Let's do it!`,
+  (dur: number) => `It's time! Head out for a ${dur}-minute walk. Your body will thank you.`,
+  (dur: number) => `Walk o'clock. ${dur} minutes is all it takes. Let's go!`,
+  (dur: number) => `Step outside for ${dur} minutes. A little movement goes a long way.`,
+  (dur: number) => `Your ${dur}-minute walking window is open. Time to move!`,
+  (dur: number) => `Fresh air awaits. Your ${dur}-minute walk starts now.`,
+  (dur: number) => `A ${dur}-minute walk is the reset your day needs. Let's do it!`,
 ];
 
 const NUDGE_BODIES_NOW_STRICT = [
-  (dur: number, time: string) => `Start now — your ${dur}-min walk is scheduled for ${time}. No delays.`,
-  (dur: number) => `No excuses — ${dur} minutes, starting right now.`,
-  (dur: number, time: string) => `It's ${time}. Your ${dur}-min walk is non-negotiable.`,
-  (dur: number) => `Time to go. ${dur} min, right now. You've got this.`,
+  (dur: number, time: string) => `Your ${dur}-minute walk is at ${time}. Ready when you are.`,
+  (dur: number) => `${dur} minutes is all you need. Let's go!`,
+  (dur: number, time: string) => `It's ${time}. Time for your ${dur}-minute walk.`,
+  (dur: number) => `Time for your ${dur}-minute walk. You've got this.`,
 ];
 
 const NUDGE_BODIES_SOON_RELAXED = [
-  (dur: number, time: string, mins: number) => `Your ${dur}-min walk starts in ${mins} min at ${time}. Wrap up and get ready.`,
-  (dur: number, time: string, mins: number) => `In ${mins} minutes: a ${dur}-min walk at ${time}. Almost time to move!`,
-  (dur: number, time: string, mins: number) => `Walking window opens at ${time} in ${mins} min — ${dur} minutes of fresh air.`,
-  (dur: number, time: string, mins: number) => `${mins} min heads-up: your ${dur}-min walk is at ${time}.`,
+  (dur: number, time: string, mins: number) => `Your ${dur}-minute walk starts in ${mins} minutes at ${time}. Wrap up and get ready.`,
+  (dur: number, time: string, mins: number) => `In ${mins} minutes, a ${dur}-minute walk at ${time}. Almost time to move!`,
+  (dur: number, time: string, mins: number) => `Walking window opens at ${time} in ${mins} minutes for a ${dur}-minute walk.`,
+  (dur: number, time: string, mins: number) => `${mins}-minute heads-up: your ${dur}-minute walk is at ${time}.`,
 ];
 
 const NUDGE_BODIES_SOON_STRICT = [
-  (dur: number, time: string, mins: number) => `Be ready — your ${dur}-min walk starts at ${time} in ${mins} min.`,
-  (dur: number, time: string, mins: number) => `${mins} minutes until your ${dur}-min walk at ${time}. Get moving.`,
+  (dur: number, time: string, mins: number) => `Be ready: your ${dur}-minute walk starts at ${time} in ${mins} minutes.`,
+  (dur: number, time: string, mins: number) => `${mins} minutes until your ${dur}-minute walk at ${time}. Almost time to head out.`,
 ];
 
 function pickVariant<T>(variants: T[], walkStart: Date): T {
@@ -126,6 +126,37 @@ function buildNudgeBody(params: {
   return `${body}${progressHint}`;
 }
 
+export const MANUAL_NOTIFY_LEAD_MINUTE_OPTIONS = [0, 5, 10] as const;
+
+export type ManualNotifyLeadMinutes = typeof MANUAL_NOTIFY_LEAD_MINUTE_OPTIONS[number];
+
+export const normalizeManualNotifyLeadMinutes = (
+  minutes?: number | null,
+): ManualNotifyLeadMinutes => {
+  if (minutes === 10) return 10;
+  if (minutes === 5) return 5;
+  return 0;
+};
+
+export const getPlanNotifyTime = (plan: NudgePlan, prefs?: Preferences): Date => {
+  const walkStart = parseISO(plan.walkStart);
+
+  if (plan.reason === 'manual') {
+    return subMinutes(walkStart, normalizeManualNotifyLeadMinutes(plan.manualNotifyLeadMinutes));
+  }
+
+  let notifyTime = walkStart;
+  if (prefs?.whenToNotify === 'delay') {
+    notifyTime = subMinutes(notifyTime, prefs.notifyDelayMinutes ?? 5);
+    const gapStart = parseISO(plan.gapStart);
+    if (isBefore(notifyTime, gapStart)) {
+      notifyTime = gapStart;
+    }
+  }
+
+  return notifyTime;
+};
+
 export const notificationService = {
   /**
    * Request notification permissions
@@ -150,7 +181,7 @@ export const notificationService = {
     if (finalStatus !== 'granted') return false;
     
     if (Platform.OS === 'android') {
-      await Notifications.setNotificationChannelAsync('default', {
+      await Notifications.setNotificationChannelAsync(ANDROID_CHANNEL_DEFAULT, {
         name: 'GapWalk Nudges',
         importance: Notifications.AndroidImportance.HIGH,
         vibrationPattern: [0, 250, 250, 250],
@@ -161,7 +192,7 @@ export const notificationService = {
     await Notifications.setNotificationCategoryAsync(WALK_NUDGE_CATEGORY_ID, [
       {
         identifier: WALK_NUDGE_ACTION_SKIP,
-        buttonTitle: 'Not Now',
+        buttonTitle: 'Maybe later',
         options: {
           opensAppToForeground: true,
           isDestructive: true,
@@ -178,18 +209,18 @@ export const notificationService = {
 
     await Notifications.setNotificationCategoryAsync(ALT_GAP_CATEGORY_ID, [
       {
-        identifier: ALT_GAP_ACTION_ACCEPT,
-        buttonTitle: 'Yes',
-        options: {
-          opensAppToForeground: false,
-        },
-      },
-      {
         identifier: ALT_GAP_ACTION_DECLINE,
         buttonTitle: 'No',
         options: {
           opensAppToForeground: false,
           isDestructive: true,
+        },
+      },
+      {
+        identifier: ALT_GAP_ACTION_ACCEPT,
+        buttonTitle: 'Yes',
+        options: {
+          opensAppToForeground: false,
         },
       },
     ]);
@@ -224,16 +255,7 @@ export const notificationService = {
         } catch { /* ok — schedule anyway if DB read fails */ }
       }
 
-      let notifyTime = walkStart;
-
-      // Apply "delay" as "minutes before walk start", never before gap start.
-      if (prefs?.whenToNotify === 'delay') {
-        notifyTime = subMinutes(notifyTime, prefs.notifyDelayMinutes ?? 5);
-        const gapStart = parseISO(plan.gapStart);
-        if (isBefore(notifyTime, gapStart)) {
-          notifyTime = gapStart;
-        }
-      }
+      let notifyTime = getPlanNotifyTime(plan, prefs);
 
       if (prefs) {
         while (
@@ -314,15 +336,16 @@ export const notificationService = {
 
     try {
       const walkStart = parseISO(plan.walkStart);
+      const notifyTime = getPlanNotifyTime(plan);
       const now = new Date();
-      if (walkStart <= now) return null;
+      if (walkStart <= now || notifyTime <= now) return null;
 
       const dur = plan.suggestedDurationMinutes;
       const title = buildNudgeTitle(walkStart, true);
       const body = buildNudgeBody({
         walkStart,
         durationMinutes: dur,
-        notifyTime: walkStart,
+        notifyTime,
         isStrict: false,
       });
 
@@ -340,7 +363,7 @@ export const notificationService = {
         },
         trigger: {
           type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
-          seconds: Math.max(1, Math.ceil((walkStart.getTime() - Date.now()) / 1000)),
+          seconds: Math.max(1, Math.ceil((notifyTime.getTime() - Date.now()) / 1000)),
           repeats: false,
         },
       });
@@ -578,27 +601,27 @@ export const notificationService = {
     // silently swallowed and the user would see no effect.
     await Notifications.setNotificationCategoryAsync(WALK_SESSION_ACTIVE_CATEGORY, [
       {
-        identifier: WALK_SESSION_ACTION_PAUSE,
-        buttonTitle: 'Pause',
-        options: { opensAppToForeground: true },
-      },
-      {
         identifier: WALK_SESSION_ACTION_END,
         buttonTitle: 'End Walk',
         options: { opensAppToForeground: true, isDestructive: true },
+      },
+      {
+        identifier: WALK_SESSION_ACTION_PAUSE,
+        buttonTitle: 'Pause',
+        options: { opensAppToForeground: true },
       },
     ]);
 
     await Notifications.setNotificationCategoryAsync(WALK_SESSION_PAUSED_CATEGORY, [
       {
-        identifier: WALK_SESSION_ACTION_RESUME,
-        buttonTitle: 'Resume',
-        options: { opensAppToForeground: true },
-      },
-      {
         identifier: WALK_SESSION_ACTION_END,
         buttonTitle: 'End Walk',
         options: { opensAppToForeground: true, isDestructive: true },
+      },
+      {
+        identifier: WALK_SESSION_ACTION_RESUME,
+        buttonTitle: 'Resume',
+        options: { opensAppToForeground: true },
       },
     ]);
   },

@@ -9,6 +9,7 @@ const mapRowToPlan = (row: {
   gap_end: string;
   walk_start: string;
   suggested_duration_minutes: number;
+  manual_notify_lead_minutes: number;
   status: string;
   reason: string | null;
   created_at: string;
@@ -19,6 +20,7 @@ const mapRowToPlan = (row: {
   gapEnd: row.gap_end,
   walkStart: row.walk_start,
   suggestedDurationMinutes: row.suggested_duration_minutes,
+  manualNotifyLeadMinutes: row.manual_notify_lead_minutes ?? 0,
   status: row.status as NudgePlanStatus,
   reason: row.reason || undefined,
   createdAt: row.created_at,
@@ -44,9 +46,10 @@ export const plansRepo = {
     const db = await getDatabase();
     await db.runAsync(
       `INSERT OR REPLACE INTO nudge_plans 
-       (id, date, gap_start, gap_end, walk_start, suggested_duration_minutes, 
+       (id, date, gap_start, gap_end, walk_start, suggested_duration_minutes,
+        manual_notify_lead_minutes,
         status, reason, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         plan.id,
         plan.date,
@@ -54,6 +57,7 @@ export const plansRepo = {
         plan.gapEnd,
         plan.walkStart,
         plan.suggestedDurationMinutes,
+        plan.manualNotifyLeadMinutes ?? 0,
         plan.status,
         plan.reason || null,
         plan.createdAt,
@@ -68,10 +72,12 @@ export const plansRepo = {
         await db.runAsync(
           `INSERT OR REPLACE INTO nudge_plans
            (id, date, gap_start, gap_end, walk_start, suggested_duration_minutes,
+            manual_notify_lead_minutes,
             status, reason, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [plan.id, plan.date, plan.gapStart, plan.gapEnd, plan.walkStart,
-           plan.suggestedDurationMinutes, plan.status, plan.reason || null, plan.createdAt]
+           plan.suggestedDurationMinutes, plan.manualNotifyLeadMinutes ?? 0,
+           plan.status, plan.reason || null, plan.createdAt]
         );
       }
     });
@@ -86,6 +92,7 @@ export const plansRepo = {
       gap_end: string;
       walk_start: string;
       suggested_duration_minutes: number;
+      manual_notify_lead_minutes: number;
       status: string;
       reason: string | null;
       created_at: string;
@@ -107,6 +114,7 @@ export const plansRepo = {
       gap_end: string;
       walk_start: string;
       suggested_duration_minutes: number;
+      manual_notify_lead_minutes: number;
       status: string;
       reason: string | null;
       created_at: string;
@@ -128,6 +136,7 @@ export const plansRepo = {
       gap_end: string;
       walk_start: string;
       suggested_duration_minutes: number;
+      manual_notify_lead_minutes: number;
       status: string;
       reason: string | null;
       created_at: string;
@@ -150,6 +159,7 @@ export const plansRepo = {
       gap_end: string;
       walk_start: string;
       suggested_duration_minutes: number;
+      manual_notify_lead_minutes: number;
       status: string;
       reason: string | null;
       created_at: string;
@@ -233,6 +243,7 @@ export const plansRepo = {
       gapEnd: string;
       walkStart: string;
       suggestedDurationMinutes: number;
+      manualNotifyLeadMinutes?: number;
       reason?: string;
       status?: NudgePlanStatus;
     }
@@ -240,13 +251,15 @@ export const plansRepo = {
     const db = await getDatabase();
     await db.runAsync(
       `UPDATE nudge_plans
-       SET gap_start = ?, gap_end = ?, walk_start = ?, suggested_duration_minutes = ?, reason = ?, status = ?
+       SET gap_start = ?, gap_end = ?, walk_start = ?, suggested_duration_minutes = ?,
+           manual_notify_lead_minutes = ?, reason = ?, status = ?
        WHERE id = ?`,
       [
         timing.gapStart,
         timing.gapEnd,
         timing.walkStart,
         timing.suggestedDurationMinutes,
+        timing.manualNotifyLeadMinutes ?? 0,
         timing.reason ?? null,
         timing.status ?? 'planned',
         id,

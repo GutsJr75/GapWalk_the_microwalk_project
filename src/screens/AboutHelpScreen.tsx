@@ -212,7 +212,7 @@ export const AboutHelpScreen: React.FC<Props> = ({ navigation }) => {
               <View key={step} style={styles.stepRow}>
                 <View style={styles.stepIndicatorCol}>
                   <View style={[styles.stepBadge, { backgroundColor: palette.accentPrimary }]}>
-                    <Text variant="bodySmall" style={[styles.stepBadgeText, { color: palette.pillSelectedText }]}>
+                    <Text variant="bodySmall" style={[styles.stepBadgeText, { color: palette.accentOnSolid }]}>
                       {index + 1}
                     </Text>
                   </View>

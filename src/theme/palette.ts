@@ -1,5 +1,6 @@
 ﻿import { useAppStore } from '../store';
 import { theme } from './index';
+import { withAlpha } from './colorUtils';
 
 export type ThemeMode = 'dark' | 'light';
 
@@ -12,6 +13,7 @@ export interface ThemePalette {
   accentPrimary: string;
   accentMuted: string;
   accentBorder: string;
+  accentOnSolid: string;
   accentOnTint: string;
   info: string;
   success: string;
@@ -32,8 +34,9 @@ const darkPalette: ThemePalette = {
   // Increased contrast for secondary text legibility in dark mode.
   textMuted: '#8b9bbd',
   accentPrimary: theme.colors.accentPrimary,
-  accentMuted: 'rgba(46,233,166,0.12)',
-  accentBorder: 'rgba(46,233,166,0.25)',
+  accentMuted: withAlpha(theme.colors.accentPrimary, 0.12),
+  accentBorder: withAlpha(theme.colors.accentPrimary, 0.25),
+  accentOnSolid: '#06261d',
   accentOnTint: '#2ee9a6',
   info: '#38bdf8',
   success: '#4ade80',
@@ -56,13 +59,14 @@ const lightPalette: ThemePalette = {
   textMuted: '#475569',
   // Darker mint for readability on light surfaces (WCAG AA).
   accentPrimary: '#059669',
-  accentMuted: 'rgba(5,150,105,0.12)',
-  accentBorder: 'rgba(5,150,105,0.30)',
+  accentMuted: withAlpha('#059669', 0.12),
+  accentBorder: withAlpha('#059669', 0.30),
+  accentOnSolid: '#ffffff',
   accentOnTint: '#0f5132',
   info: '#0369a1',
   success: '#16a34a',
   trendDown: '#c2410c',
-  pillSelectedText: '#06261d',
+  pillSelectedText: '#ffffff',
   inputBg: 'rgba(15,23,42,0.08)',
   borderSoft: 'rgba(15,23,42,0.10)',
   borderStrong: 'rgba(15,23,42,0.18)',

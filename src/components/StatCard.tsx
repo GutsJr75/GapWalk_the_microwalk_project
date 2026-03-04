@@ -138,60 +138,60 @@ export const StatCard: React.FC<StatCardProps> = ({
 
   return (
     <Animated.View style={{ opacity: entranceAnim, transform: [{ translateY: entranceAnim.interpolate({ inputRange: [0, 1], outputRange: [8, 0] }) }] }}>
-    <Card shadowed={false} style={[styles.card, { backgroundColor: cardTint, borderColor: borderTint }]}>
-      <View style={styles.headerRow}>
-        <View style={[styles.titleDot, { backgroundColor: toneColor }]} />
-        <Text variant="body" style={styles.title}>{title}</Text>
-      </View>
+      <Card shadowed={false} style={[styles.card, { backgroundColor: cardTint, borderColor: borderTint }]}>
+        <View style={styles.headerRow}>
+          <View style={[styles.titleDot, { backgroundColor: toneColor }]} />
+          <Text variant="body" style={styles.title}>{title}</Text>
+        </View>
 
-      <View style={styles.circleContainer}>
-        <Animated.View style={[styles.svgWrapper, { transform: [{ scale: scaleAnim }] }]}>
-          <View style={[styles.circleCore, { backgroundColor: withAlpha(toneColor, isDark ? 0.12 : 0.10, 'transparent') }]} />
-          <Svg width={size} height={size}>
-            <G rotation="-90" origin={`${size / 2}, ${size / 2}`}>
-              <Circle
-                stroke={trackStroke}
-                strokeWidth={strokeWidth}
-                cx={size / 2}
-                cy={size / 2}
-                r={radius}
-                fill="transparent"
-              />
-              <Circle
-                stroke={toneColor}
-                strokeWidth={strokeWidth}
-                cx={size / 2}
-                cy={size / 2}
-                r={radius}
-                fill="transparent"
-                strokeDasharray={circumference}
-                strokeDashoffset={currentStrokeDashoffset}
-                strokeLinecap="round"
-              />
-            </G>
-          </Svg>
-          <View style={styles.circleText}>
-            <Text variant="title" style={[currentValueStyle, { color: palette.textPrimary }]}>
-              {current}
-              <Text variant="title" style={[goalValueStyle, { color: palette.textMuted }]}>/{target}</Text>
-            </Text>
-          </View>
-        </Animated.View>
-      </View>
+        <View style={styles.circleContainer}>
+          <Animated.View style={[styles.svgWrapper, { transform: [{ scale: scaleAnim }] }]}>
+            <View style={[styles.circleCore, { backgroundColor: withAlpha(toneColor, isDark ? 0.12 : 0.10, 'transparent') }]} />
+            <Svg width={size} height={size}>
+              <G rotation="-90" origin={`${size / 2}, ${size / 2}`}>
+                <Circle
+                  stroke={trackStroke}
+                  strokeWidth={strokeWidth}
+                  cx={size / 2}
+                  cy={size / 2}
+                  r={radius}
+                  fill="transparent"
+                />
+                <Circle
+                  stroke={toneColor}
+                  strokeWidth={strokeWidth}
+                  cx={size / 2}
+                  cy={size / 2}
+                  r={radius}
+                  fill="transparent"
+                  strokeDasharray={circumference}
+                  strokeDashoffset={currentStrokeDashoffset}
+                  strokeLinecap="round"
+                />
+              </G>
+            </Svg>
+            <View style={styles.circleText}>
+              <Text variant="title" style={[currentValueStyle, { color: palette.textPrimary }]}>
+                {current}
+                <Text variant="title" style={[goalValueStyle, { color: palette.textMuted }]}>/{target}</Text>
+              </Text>
+            </View>
+          </Animated.View>
+        </View>
 
-      <Text
-        variant="bodySmall"
-        style={[styles.completion, { color: palette.textMuted }, pct >= 1 && { color: toneColor, fontWeight: theme.fontWeight.semibold }]}
-      >
-        {pct >= 1 ? goalText : `Progress: ${current} of ${target} ${unitLabel}`}
-      </Text>
-    </Card>
+        <Text
+          variant="bodySmall"
+          style={[styles.completion, { color: palette.textMuted }, pct >= 1 && { color: toneColor, fontWeight: theme.fontWeight.semibold }]}
+        >
+          {pct >= 1 ? goalText : `Progress: ${current} of ${target} ${unitLabel}`}
+        </Text>
+      </Card>
     </Animated.View>
   );
 };
 
 const styles = StyleSheet.create({
-  card: { marginBottom: theme.spacing.md, paddingVertical: theme.spacing.md },
+  card: { paddingVertical: theme.spacing.md },
   headerRow: { flexDirection: 'row', alignItems: 'center', gap: theme.spacing.sm, marginBottom: theme.spacing.sm + theme.spacing.xs },
   titleDot: { width: 9, height: 9, borderRadius: 5 },
   title: { fontWeight: theme.fontWeight.semibold, marginBottom: 0 },

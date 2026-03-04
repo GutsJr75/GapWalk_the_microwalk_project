@@ -4,8 +4,6 @@ import {
   StyleSheet,
   ScrollView,
   TextInput,
-  StyleProp,
-  TextStyle,
   TouchableOpacity,
   Pressable,
   Alert,
@@ -25,8 +23,11 @@ import { Button } from '../components/Button';
 import { Card } from '../components/Card';
 import { Modal } from '../components/Modal';
 import { ScreenHeader } from '../components/ScreenHeader';
+import { SuccessToast } from '../components/SuccessToast';
+import { TwoDigitTimeInput } from '../components/TwoDigitTimeInput';
 import { AppIcon, AppIconName } from '../components/AppIcon';
 import { theme } from '../theme';
+import { withAlpha } from '../theme/colorUtils';
 import { screenChrome } from '../theme/screenChrome';
 import { getThemePalette } from '../theme/palette';
 import { Preferences, DEFAULT_PREFERENCES, PreferredWalkingPeriod } from '../types';
@@ -52,7 +53,6 @@ if (Platform.OS === 'android' && !isFabric && UIManager.setLayoutAnimationEnable
 }
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Preferences'>;
-type TimeInputMode = 'hour' | 'minute';
 type TimePeriod = 'AM' | 'PM';
 
 interface InfoAnchorRect {
@@ -69,42 +69,8 @@ interface ActiveInfoState {
 }
 
 /* â”€â”€â”€â”€â”€ time-input helpers â”€â”€â”€â”€â”€ */
-const onlyDigits = (value: string): string => value.replace(/[^0-9]/g, '').slice(0, 2);
-const normalizeHourTyping = (nextText: string): string => {
-  const digits = onlyDigits(nextText);
-  if (digits.length === 0) return '';
-  if (digits.length === 1) {
-    const first = digits[0];
-    if (first === '0' || first === '1') return first;
-    return `0${first}`;
-  }
-  const [first, second] = digits;
-  if (first === '0') return second === '0' ? '0' : `0${second}`;
-  if (first === '1') return Number(second) <= 2 ? `1${second}` : '1';
-  return `0${first}`;
-};
-const normalizeMinuteTyping = (nextText: string): string => {
-  const digits = onlyDigits(nextText);
-  if (digits.length === 0) return '';
-  if (digits.length === 1) {
-    const first = Number(digits[0]);
-    if (first >= 6) return `0${digits[0]}`;
-    return digits[0];
-  }
-  const [first, second] = digits;
-  if (Number(first) > 5) return `0${first}`;
-  const n = Number(`${first}${second}`);
-  return n <= 59 ? `${first}${second}` : first;
-};
-const normalizeTyping = (mode: TimeInputMode, nextText: string): string =>
-  mode === 'hour' ? normalizeHourTyping(nextText) : normalizeMinuteTyping(nextText);
 const isValidHour = (v: string): boolean => { if (v === '') return false; const n = Number(v); return Number.isInteger(n) && n >= 1 && n <= 12; };
 const isValidMinute = (v: string): boolean => { if (v === '') return false; const n = Number(v); return Number.isInteger(n) && n >= 0 && n <= 59; };
-const normalizeOnBlur = (mode: TimeInputMode, value: string): string => {
-  if (value === '') return '';
-  if (mode === 'hour') return isValidHour(value) ? String(Number(value)).padStart(2, '0') : '';
-  return isValidMinute(value) ? String(Number(value)).padStart(2, '0') : '';
-};
 const to24Hour = (hourText: string, minuteText: string, period: TimePeriod): string | null => {
   if (!isValidHour(hourText) || !isValidMinute(minuteText)) return null;
   let h = Number(hourText) % 12;
@@ -177,22 +143,6 @@ const toPreferredForm = (period: PreferredWalkingPeriod, id: string = makePrefer
   };
 };
 
-/* â”€â”€â”€â”€â”€ sub-components â”€â”€â”€â”€â”€ */
-interface TwoDigitTimeInputProps { mode: TimeInputMode; value: string; onChange: (v: string) => void; onBlurNormalize: () => void; placeholder: string; style: StyleProp<TextStyle>; placeholderTextColor?: string; }
-const TwoDigitTimeInput: React.FC<TwoDigitTimeInputProps> = ({ mode, value, onChange, onBlurNormalize, placeholder, style, placeholderTextColor }) => (
-  <TextInput
-    style={style}
-    value={value}
-    onChangeText={(t) => onChange(normalizeTyping(mode, t))}
-    onBlur={onBlurNormalize}
-    keyboardType="number-pad"
-    maxLength={2}
-    placeholder={placeholder}
-    placeholderTextColor={placeholderTextColor ?? theme.colors.textMuted}
-    selectTextOnFocus
-  />
-);
-
 /* â”€â”€ collapsible section â”€â”€ */
 const Section: React.FC<{
   title: string;
@@ -228,7 +178,7 @@ const Section: React.FC<{
         <View style={styles.sectionHeaderTextWrap}>
           {icon && (
             <View style={styles.sectionIconWrap}>
-              <AppIcon name={icon} size={14} color={theme.colors.accentPrimary} />
+              <AppIcon name={icon} size={14} color={palette.accentPrimary} />
             </View>
           )}
           <View style={styles.sectionHeaderText}>
@@ -262,8 +212,8 @@ const RadioOption: React.FC<{ selected: boolean; label: string; onPress: () => v
 
   return (
     <TouchableOpacity onPress={onPress} activeOpacity={0.7} style={styles.radioRow}>
-      <View style={[styles.radioCircle, { borderColor: radioBorderColor }, selected && styles.radioCircleActive]}>
-        {selected && <View style={styles.radioDot} />}
+      <View style={[styles.radioCircle, { borderColor: selected ? palette.accentPrimary : radioBorderColor }]}>
+        {selected && <View style={[styles.radioDot, { backgroundColor: palette.accentPrimary }]} />}
       </View>
       <Text variant="bodySmall" style={selected ? styles.radioLabelActive : styles.radioLabelDefault}>{label}</Text>
     </TouchableOpacity>
@@ -279,6 +229,9 @@ const InfoTip: React.FC<{
 }> = ({ id, text, activeInfoId, onToggle }) => {
   const anchorRef = useRef<View>(null);
   const isActive = activeInfoId === id;
+  const { themeMode } = useAppStore();
+  const palette = getThemePalette(themeMode);
+  const isDark = themeMode === 'dark';
 
   const handlePress = useCallback(() => {
     if (!anchorRef.current) return;
@@ -294,8 +247,14 @@ const InfoTip: React.FC<{
   return (
     <View ref={anchorRef} collapsable={false} style={styles.infoWrap}>
       <TouchableOpacity onPress={handlePress} hitSlop={10} style={styles.infoBtn}>
-        <View style={[styles.infoCircle, isActive && styles.infoCircleActive]}>
-          <Text style={styles.infoLetter}>i</Text>
+        <View
+          style={[
+            styles.infoCircle,
+            { borderColor: palette.accentPrimary },
+            isActive && { backgroundColor: withAlpha(palette.accentPrimary, isDark ? 0.16 : 0.12) },
+          ]}
+        >
+          <Text style={[styles.infoLetter, { color: palette.accentPrimary }]}>i</Text>
         </View>
       </TouchableOpacity>
     </View>
@@ -320,6 +279,7 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
   const [quietError, setQuietError] = useState<string | null>(null);
   const [preferredError, setPreferredError] = useState<string | null>(null);
   const [savingPrefs, setSavingPrefs] = useState(false);
+  const [showSaveToast, setShowSaveToast] = useState(false);
   const [activeInfo, setActiveInfo] = useState<ActiveInfoState | null>(null);
   const { width: viewportWidth, height: viewportHeight } = useWindowDimensions();
   const [quietForm, setQuietForm] = useState(() => {
@@ -331,6 +291,9 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
     toPreferredForm(DEFAULT_PREFERRED_PERIOD),
   ]);
   const allowNextBeforeRemoveRef = useRef(false);
+  const quietStartMinuteRef = useRef<TextInput>(null);
+  const quietEndMinuteRef = useRef<TextInput>(null);
+  const preferredMinuteRefs = useRef<Record<string, TextInput | null>>({});
   const [viewOnlyTappedField, setViewOnlyTappedField] = useState<string | null>(null);
   const isManageViewOnly = manageMode && manageScreenMode === 'view';
 
@@ -355,7 +318,7 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
   };
   const infoOverlayTheme = {
     backgroundColor: isDark ? theme.colors.bgSurface : palette.bgSurfaceElevated,
-    borderColor: isDark ? 'rgba(46,233,166,0.36)' : 'rgba(18,120,92,0.32)',
+    borderColor: withAlpha(palette.accentPrimary, isDark ? 0.36 : 0.32),
     shadowColor: palette.shadow,
   };
 
@@ -723,11 +686,7 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
         setSavingPrefs(false);
         if (manageMode) {
           setManageScreenMode('view');
-          if (Platform.OS === 'web' && typeof (globalThis as any).alert === 'function') {
-            (globalThis as any).alert('Preferences saved.\n\nYour preference changes were updated.');
-          } else {
-            Alert.alert('Preferences saved', 'Your preference changes were updated.');
-          }
+          setShowSaveToast(true);
           return;
         }
         runAllowedNavigation(() => {
@@ -1146,7 +1105,10 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
                       style={[
                         styles.togglePill,
                         themedSurface,
-                        !prefs.stepGoalEnabled && styles.togglePillActive,
+                        !prefs.stepGoalEnabled && {
+                          borderColor: palette.accentPrimary,
+                          backgroundColor: palette.accentMuted,
+                        },
                       ]}
                       activeOpacity={0.75}
                       onPress={() => update('stepGoalEnabled', false)}
@@ -1162,7 +1124,10 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
                       style={[
                         styles.togglePill,
                         themedSurface,
-                        prefs.stepGoalEnabled && styles.togglePillActive,
+                        prefs.stepGoalEnabled && {
+                          borderColor: palette.accentPrimary,
+                          backgroundColor: palette.accentMuted,
+                        },
                       ]}
                       activeOpacity={0.75}
                       onPress={() => updateMany({
@@ -1225,7 +1190,10 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
                     style={[
                       styles.togglePill,
                       themedSurface,
-                      !prefs.preferredWalkingPeriodsEnabled && styles.togglePillActive,
+                      !prefs.preferredWalkingPeriodsEnabled && {
+                        borderColor: palette.accentPrimary,
+                        backgroundColor: palette.accentMuted,
+                      },
                     ]}
                     activeOpacity={0.75}
                     onPress={disablePreferredPeriods}
@@ -1241,7 +1209,10 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
                     style={[
                       styles.togglePill,
                       themedSurface,
-                      prefs.preferredWalkingPeriodsEnabled && styles.togglePillActive,
+                      prefs.preferredWalkingPeriodsEnabled && {
+                        borderColor: palette.accentPrimary,
+                        backgroundColor: palette.accentMuted,
+                      },
                     ]}
                     activeOpacity={0.75}
                     onPress={enablePreferredPeriods}
@@ -1264,7 +1235,7 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
                       <Text variant="muted" style={styles.preferredSummaryLabel}>Selected periods</Text>
                       <View style={styles.preferredSummaryAction}>
                         <Text variant="bodySmall" style={styles.preferredSummaryActionText}>Edit</Text>
-                        <AppIcon name="chevronRight" size={14} color={theme.colors.accentPrimary} />
+                        <AppIcon name="chevronRight" size={14} color={palette.accentPrimary} />
                       </View>
                     </View>
                     <Text variant="body" style={styles.preferredSummaryValue} numberOfLines={3}>
@@ -1286,10 +1257,10 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
                     timeUtils.isInTimeRange(qStartDate, p.start, p.end)
                   );
                 }) && (
-                  <Text variant="bodySmall" style={[styles.errorText, { marginTop: 4 }]}>
-                    ⚠️ One or more preferred periods overlap your quiet hours. Notifications won't fire during quiet hours even if they fall within a preferred period.
-                  </Text>
-                )}
+                    <Text variant="bodySmall" style={[styles.errorText, { marginTop: 4 }]}>
+                      ⚠️ One or more preferred periods overlap your quiet hours. Notifications won't fire during quiet hours even if they fall within a preferred period.
+                    </Text>
+                  )}
               </View>
             </Section>
           </View>
@@ -1384,14 +1355,37 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
           <Text variant="muted">Start</Text>
           <View style={styles.qTimeInputRow}>
             <View style={styles.clockRow}>
-              <TwoDigitTimeInput mode="hour" style={[styles.input, styles.timeInput, themedInput]} placeholderTextColor={palette.textMuted} value={quietForm.startHourRaw} onChange={v => setQuietForm(p => ({ ...p, startHourRaw: v }))} onBlurNormalize={() => setQuietForm(p => ({ ...p, startHourRaw: normalizeOnBlur('hour', p.startHourRaw) }))} placeholder="HH" />
+              <TwoDigitTimeInput
+                mode="hour"
+                style={[styles.input, styles.timeInput, themedInput]}
+                placeholderTextColor={palette.textMuted}
+                value={quietForm.startHourRaw}
+                onChange={(v) => setQuietForm((p) => ({ ...p, startHourRaw: v }))}
+                onBlurNormalize={(v) => setQuietForm((p) => ({ ...p, startHourRaw: v }))}
+                onAutoComplete={() => quietStartMinuteRef.current?.focus()}
+                placeholder="HH"
+              />
               <Text variant="body">:</Text>
-              <TwoDigitTimeInput mode="minute" style={[styles.input, styles.timeInput, themedInput]} placeholderTextColor={palette.textMuted} value={quietForm.startMinuteRaw} onChange={v => setQuietForm(p => ({ ...p, startMinuteRaw: v }))} onBlurNormalize={() => setQuietForm(p => ({ ...p, startMinuteRaw: normalizeOnBlur('minute', p.startMinuteRaw) }))} placeholder="MM" />
+              <TwoDigitTimeInput
+                mode="minute"
+                inputRef={quietStartMinuteRef}
+                style={[styles.input, styles.timeInput, themedInput]}
+                placeholderTextColor={palette.textMuted}
+                value={quietForm.startMinuteRaw}
+                onChange={(v) => setQuietForm((p) => ({ ...p, startMinuteRaw: v }))}
+                onBlurNormalize={(v) => setQuietForm((p) => ({ ...p, startMinuteRaw: v }))}
+                placeholder="MM"
+                returnKeyType="done"
+              />
             </View>
-            <View style={styles.periodRow}>
+            <View style={[styles.periodToggleContainer, themedSurface]}>
               {(['AM', 'PM'] as const).map(per => (
-                <TouchableOpacity key={`qs-${per}`} style={[styles.periodBtn, themedSurface, quietForm.startPeriod === per && styles.periodBtnActive]} onPress={() => setQuietForm(p => ({ ...p, startPeriod: per }))}>
-                  <Text variant="bodySmall" color={quietForm.startPeriod === per ? theme.colors.bgApp : theme.colors.textPrimary}>{per}</Text>
+                <TouchableOpacity
+                  key={`qs-${per}`}
+                  style={[styles.periodBtn, quietForm.startPeriod === per && { backgroundColor: palette.accentPrimary }]}
+                  onPress={() => setQuietForm(p => ({ ...p, startPeriod: per }))}
+                >
+                  <Text variant="bodySmall" color={quietForm.startPeriod === per ? palette.accentOnSolid : theme.colors.textPrimary}>{per}</Text>
                 </TouchableOpacity>
               ))}
             </View>
@@ -1401,14 +1395,37 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
           <Text variant="muted">End</Text>
           <View style={styles.qTimeInputRow}>
             <View style={styles.clockRow}>
-              <TwoDigitTimeInput mode="hour" style={[styles.input, styles.timeInput, themedInput]} placeholderTextColor={palette.textMuted} value={quietForm.endHourRaw} onChange={v => setQuietForm(p => ({ ...p, endHourRaw: v }))} onBlurNormalize={() => setQuietForm(p => ({ ...p, endHourRaw: normalizeOnBlur('hour', p.endHourRaw) }))} placeholder="HH" />
+              <TwoDigitTimeInput
+                mode="hour"
+                style={[styles.input, styles.timeInput, themedInput]}
+                placeholderTextColor={palette.textMuted}
+                value={quietForm.endHourRaw}
+                onChange={(v) => setQuietForm((p) => ({ ...p, endHourRaw: v }))}
+                onBlurNormalize={(v) => setQuietForm((p) => ({ ...p, endHourRaw: v }))}
+                onAutoComplete={() => quietEndMinuteRef.current?.focus()}
+                placeholder="HH"
+              />
               <Text variant="body">:</Text>
-              <TwoDigitTimeInput mode="minute" style={[styles.input, styles.timeInput, themedInput]} placeholderTextColor={palette.textMuted} value={quietForm.endMinuteRaw} onChange={v => setQuietForm(p => ({ ...p, endMinuteRaw: v }))} onBlurNormalize={() => setQuietForm(p => ({ ...p, endMinuteRaw: normalizeOnBlur('minute', p.endMinuteRaw) }))} placeholder="MM" />
+              <TwoDigitTimeInput
+                mode="minute"
+                inputRef={quietEndMinuteRef}
+                style={[styles.input, styles.timeInput, themedInput]}
+                placeholderTextColor={palette.textMuted}
+                value={quietForm.endMinuteRaw}
+                onChange={(v) => setQuietForm((p) => ({ ...p, endMinuteRaw: v }))}
+                onBlurNormalize={(v) => setQuietForm((p) => ({ ...p, endMinuteRaw: v }))}
+                placeholder="MM"
+                returnKeyType="done"
+              />
             </View>
-            <View style={styles.periodRow}>
+            <View style={[styles.periodToggleContainer, themedSurface]}>
               {(['AM', 'PM'] as const).map(per => (
-                <TouchableOpacity key={`qe-${per}`} style={[styles.periodBtn, themedSurface, quietForm.endPeriod === per && styles.periodBtnActive]} onPress={() => setQuietForm(p => ({ ...p, endPeriod: per }))}>
-                  <Text variant="bodySmall" color={quietForm.endPeriod === per ? theme.colors.bgApp : theme.colors.textPrimary}>{per}</Text>
+                <TouchableOpacity
+                  key={`qe-${per}`}
+                  style={[styles.periodBtn, quietForm.endPeriod === per && { backgroundColor: palette.accentPrimary }]}
+                  onPress={() => setQuietForm(p => ({ ...p, endPeriod: per }))}
+                >
+                  <Text variant="bodySmall" color={quietForm.endPeriod === per ? palette.accentOnSolid : theme.colors.textPrimary}>{per}</Text>
                 </TouchableOpacity>
               ))}
             </View>
@@ -1427,7 +1444,7 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
           Add 1 to 5 preferred time periods. GapWalk will prioritize these windows, but other gaps will still be shown.
         </Text>
         {preferredForm.map((period, idx) => (
-          <View key={period.id} style={styles.prefPeriodCard}>
+          <View key={period.id} style={[styles.prefPeriodCard, themedSurface]}>
             <View style={styles.prefPeriodHeader}>
               <Text variant="bodySmall" style={styles.fieldLabel}>Period {idx + 1}</Text>
               {preferredForm.length > 1 && (
@@ -1447,28 +1464,31 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
                     placeholderTextColor={palette.textMuted}
                     value={period.startHourRaw}
                     onChange={(v) => updatePreferredFormById(period.id, { startHourRaw: v })}
-                    onBlurNormalize={() => updatePreferredFormById(period.id, { startHourRaw: normalizeOnBlur('hour', period.startHourRaw) })}
+                    onBlurNormalize={(v) => updatePreferredFormById(period.id, { startHourRaw: v })}
+                    onAutoComplete={() => preferredMinuteRefs.current[`${period.id}-start`]?.focus()}
                     placeholder="HH"
                   />
                   <Text variant="body">:</Text>
                   <TwoDigitTimeInput
                     mode="minute"
+                    inputRef={(node) => { preferredMinuteRefs.current[`${period.id}-start`] = node; }}
                     style={[styles.input, styles.timeInput, themedInput]}
                     placeholderTextColor={palette.textMuted}
                     value={period.startMinuteRaw}
                     onChange={(v) => updatePreferredFormById(period.id, { startMinuteRaw: v })}
-                    onBlurNormalize={() => updatePreferredFormById(period.id, { startMinuteRaw: normalizeOnBlur('minute', period.startMinuteRaw) })}
+                    onBlurNormalize={(v) => updatePreferredFormById(period.id, { startMinuteRaw: v })}
                     placeholder="MM"
+                    returnKeyType="done"
                   />
                 </View>
-                <View style={styles.periodRow}>
+                <View style={[styles.periodToggleContainer, themedSurface]}>
                   {(['AM', 'PM'] as const).map((per) => (
                     <TouchableOpacity
                       key={`${period.id}-start-${per}`}
-                      style={[styles.periodBtn, themedSurface, period.startPeriod === per && styles.periodBtnActive]}
+                      style={[styles.periodBtn, period.startPeriod === per && { backgroundColor: palette.accentPrimary }]}
                       onPress={() => updatePreferredFormById(period.id, { startPeriod: per })}
                     >
-                      <Text variant="bodySmall" color={period.startPeriod === per ? theme.colors.bgApp : theme.colors.textPrimary}>{per}</Text>
+                      <Text variant="bodySmall" color={period.startPeriod === per ? palette.accentOnSolid : theme.colors.textPrimary}>{per}</Text>
                     </TouchableOpacity>
                   ))}
                 </View>
@@ -1485,28 +1505,31 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
                     placeholderTextColor={palette.textMuted}
                     value={period.endHourRaw}
                     onChange={(v) => updatePreferredFormById(period.id, { endHourRaw: v })}
-                    onBlurNormalize={() => updatePreferredFormById(period.id, { endHourRaw: normalizeOnBlur('hour', period.endHourRaw) })}
+                    onBlurNormalize={(v) => updatePreferredFormById(period.id, { endHourRaw: v })}
+                    onAutoComplete={() => preferredMinuteRefs.current[`${period.id}-end`]?.focus()}
                     placeholder="HH"
                   />
                   <Text variant="body">:</Text>
                   <TwoDigitTimeInput
                     mode="minute"
+                    inputRef={(node) => { preferredMinuteRefs.current[`${period.id}-end`] = node; }}
                     style={[styles.input, styles.timeInput, themedInput]}
                     placeholderTextColor={palette.textMuted}
                     value={period.endMinuteRaw}
                     onChange={(v) => updatePreferredFormById(period.id, { endMinuteRaw: v })}
-                    onBlurNormalize={() => updatePreferredFormById(period.id, { endMinuteRaw: normalizeOnBlur('minute', period.endMinuteRaw) })}
+                    onBlurNormalize={(v) => updatePreferredFormById(period.id, { endMinuteRaw: v })}
                     placeholder="MM"
+                    returnKeyType="done"
                   />
                 </View>
-                <View style={styles.periodRow}>
+                <View style={[styles.periodToggleContainer, themedSurface]}>
                   {(['AM', 'PM'] as const).map((per) => (
                     <TouchableOpacity
                       key={`${period.id}-end-${per}`}
-                      style={[styles.periodBtn, themedSurface, period.endPeriod === per && styles.periodBtnActive]}
+                      style={[styles.periodBtn, period.endPeriod === per && { backgroundColor: palette.accentPrimary }]}
                       onPress={() => updatePreferredFormById(period.id, { endPeriod: per })}
                     >
-                      <Text variant="bodySmall" color={period.endPeriod === per ? theme.colors.bgApp : theme.colors.textPrimary}>{per}</Text>
+                      <Text variant="bodySmall" color={period.endPeriod === per ? palette.accentOnSolid : theme.colors.textPrimary}>{per}</Text>
                     </TouchableOpacity>
                   ))}
                 </View>
@@ -1524,13 +1547,18 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
           disabled={preferredForm.length >= MAX_PREFERRED_PERIODS}
           activeOpacity={0.75}
         >
-          <Text variant="bodySmall" style={styles.prefAddText}>
+          <Text variant="bodySmall" style={[styles.prefAddText, { color: palette.accentPrimary }]}>
             + Add period
           </Text>
         </TouchableOpacity>
         {!!preferredError && <Text variant="muted" style={styles.qError}>{preferredError}</Text>}
         <Button title="Save periods" onPress={applyPreferredPeriods} />
       </Modal>
+      <SuccessToast
+        visible={showSaveToast}
+        message="Preferences saved"
+        onDismiss={() => setShowSaveToast(false)}
+      />
     </Container>
   );
 };
@@ -1635,8 +1663,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  radioCircleActive: { borderColor: theme.colors.accentPrimary },
-  radioDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: theme.colors.accentPrimary },
+  radioCircleActive: {},
+  radioDot: { width: 10, height: 10, borderRadius: 5 },
   radioLabelDefault: { color: theme.colors.textPrimary },
   radioLabelActive: { color: theme.colors.accentPrimary, fontWeight: theme.fontWeight.semibold },
   controlStartGap: { marginTop: 6 },
@@ -1648,10 +1676,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  togglePillActive: {
-    borderColor: theme.colors.accentPrimary,
-    backgroundColor: 'rgba(46,233,166,0.12)',
-  },
+  togglePillActive: {},
   togglePillText: { color: theme.colors.textPrimary },
   togglePillTextActive: { color: theme.colors.accentPrimary, fontWeight: theme.fontWeight.semibold },
 
@@ -1663,17 +1688,13 @@ const styles = StyleSheet.create({
     height: 14,
     borderRadius: 7,
     borderWidth: 1.5,
-    borderColor: theme.colors.accentPrimary,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  infoCircleActive: {
-    backgroundColor: 'rgba(46,233,166,0.16)',
-  },
+  infoCircleActive: {},
   infoLetter: {
     fontSize: 9,
     fontWeight: theme.fontWeight.bold,
-    color: theme.colors.accentPrimary,
     lineHeight: 11,
   },
   infoOverlayRoot: {
@@ -1692,7 +1713,6 @@ const styles = StyleSheet.create({
     borderRadius: theme.borderRadius.md,
     padding: 14,
     borderWidth: 1,
-    borderColor: 'rgba(46,233,166,0.25)',
     elevation: 18,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
@@ -1780,9 +1800,9 @@ const styles = StyleSheet.create({
   qTimeInputRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 },
   clockRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   timeInput: { flex: 0, width: 56, textAlign: 'center' },
-  periodRow: { flexDirection: 'row', gap: 4 },
-  periodBtn: { borderRadius: theme.borderRadius.sm, backgroundColor: theme.colors.bgApp, alignItems: 'center', justifyContent: 'center', paddingVertical: 7, paddingHorizontal: 8, minWidth: 42 },
-  periodBtnActive: { backgroundColor: theme.colors.accentPrimary },
+  periodToggleContainer: { flexDirection: 'row', borderRadius: theme.borderRadius.sm, borderWidth: 1, overflow: 'hidden', alignSelf: 'center' },
+  periodBtn: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 4, paddingHorizontal: 8, minWidth: 38, minHeight: 28 },
+  periodBtnActive: {},
   prefPeriodCard: {
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.08)',
@@ -1813,7 +1833,6 @@ const styles = StyleSheet.create({
     opacity: 0.45,
   },
   prefAddText: {
-    color: theme.colors.accentPrimary,
     fontWeight: theme.fontWeight.semibold,
   },
   qError: { color: theme.colors.warning, textAlign: 'center', marginBottom: 10 },

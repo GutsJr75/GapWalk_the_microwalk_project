@@ -19,7 +19,8 @@ import { useThemePalette } from '../theme/palette';
 interface ModalProps {
   visible: boolean;
   onClose: () => void;
-  title?: string;
+  title?: string | React.ReactNode;
+  leftAccessory?: React.ReactNode;
   rightAccessory?: React.ReactNode;
   children?: React.ReactNode;
 }
@@ -28,6 +29,7 @@ export const Modal: React.FC<ModalProps> = ({
   visible,
   onClose,
   title,
+  leftAccessory,
   rightAccessory,
   children,
 }) => {
@@ -129,12 +131,15 @@ export const Modal: React.FC<ModalProps> = ({
                   },
                 ]}
               >
-                {(title || rightAccessory) && (
+                {(title || leftAccessory || rightAccessory) && (
                   <View style={styles.headerRow}>
-                    <View style={styles.headerAccessorySlot} />
-                    <Text variant="body" style={styles.title}>
-                      {title}
-                    </Text>
+                    <View style={styles.headerAccessorySlot}>
+                      {leftAccessory}
+                    </View>
+                    {typeof title === 'string'
+                      ? <Text variant="body" style={styles.title}>{title}</Text>
+                      : <View style={styles.titleSlot}>{title}</View>
+                    }
                     <View style={styles.headerAccessorySlot}>
                       {rightAccessory}
                     </View>
@@ -204,5 +209,10 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     fontWeight: theme.fontWeight.bold,
     fontSize: theme.fontSize.lg,
+  },
+  titleSlot: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 });

@@ -64,6 +64,14 @@ interface AppState {
   setThemeMode: (mode: 'dark' | 'light') => void;
   language: 'en' | 'es';
   setLanguage: (lang: 'en' | 'es') => void;
+
+  // Settings
+  distanceUnit: 'km' | 'mi';
+  setDistanceUnit: (unit: 'km' | 'mi') => void;
+  firstDayOfWeek: 'sun' | 'mon';
+  setFirstDayOfWeek: (day: 'sun' | 'mon') => void;
+  vibrationEnabled: boolean;
+  setVibrationEnabled: (val: boolean) => void;
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -128,4 +136,12 @@ export const useAppStore = create<AppState>((set) => ({
   setThemeMode: (mode) => set({ themeMode: mode }),
   language: 'en',
   setLanguage: (lang) => set({ language: lang }),
+
+  // Settings
+  distanceUnit: 'km',
+  setDistanceUnit: (unit) => set({ distanceUnit: unit }),
+  firstDayOfWeek: 'sun',
+  setFirstDayOfWeek: (day) => set({ firstDayOfWeek: day }),
+  vibrationEnabled: true,
+  setVibrationEnabled: (val) => set({ vibrationEnabled: val }),
 }));

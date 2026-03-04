@@ -8,6 +8,9 @@ const PROFILE_DISPLAY_NAME_KEY = 'gapwalk_profile_display_name';
 const SETTINGS_THEME_KEY = 'gapwalk_settings_theme';
 const SETTINGS_LANGUAGE_KEY = 'gapwalk_settings_language';
 const LAST_NOTIF_KEY = 'gapwalk_last_notif_response_key';
+const SETTINGS_DISTANCE_UNIT_KEY = 'gapwalk_settings_distance_unit';
+const SETTINGS_FIRST_DAY_KEY = 'gapwalk_settings_first_day';
+const SETTINGS_VIBRATION_KEY = 'gapwalk_settings_vibration';
 
 export interface StoredAuthUser {
   email?: string;
@@ -99,6 +102,43 @@ export const authStorage = {
   async getLastHandledNotificationKey(): Promise<string | null> {
     if (Platform.OS === 'web') return null;
     try { return await SecureStore.getItemAsync(LAST_NOTIF_KEY); } catch { return null; }
+  },
+
+  async saveDistanceUnit(unit: string): Promise<void> {
+    if (Platform.OS === 'web') return;
+    await SecureStore.setItemAsync(SETTINGS_DISTANCE_UNIT_KEY, unit);
+  },
+
+  async getDistanceUnit(): Promise<'km' | 'mi' | null> {
+    if (Platform.OS === 'web') return null;
+    const val = await SecureStore.getItemAsync(SETTINGS_DISTANCE_UNIT_KEY);
+    if (val === 'km' || val === 'mi') return val;
+    return null;
+  },
+
+  async saveFirstDayOfWeek(day: string): Promise<void> {
+    if (Platform.OS === 'web') return;
+    await SecureStore.setItemAsync(SETTINGS_FIRST_DAY_KEY, day);
+  },
+
+  async getFirstDayOfWeek(): Promise<'sun' | 'mon' | null> {
+    if (Platform.OS === 'web') return null;
+    const val = await SecureStore.getItemAsync(SETTINGS_FIRST_DAY_KEY);
+    if (val === 'sun' || val === 'mon') return val;
+    return null;
+  },
+
+  async saveVibrationEnabled(enabled: boolean): Promise<void> {
+    if (Platform.OS === 'web') return;
+    await SecureStore.setItemAsync(SETTINGS_VIBRATION_KEY, enabled ? '1' : '0');
+  },
+
+  async getVibrationEnabled(): Promise<boolean | null> {
+    if (Platform.OS === 'web') return null;
+    const val = await SecureStore.getItemAsync(SETTINGS_VIBRATION_KEY);
+    if (val === '1') return true;
+    if (val === '0') return false;
+    return null;
   },
 
   async clearAll(): Promise<void> {

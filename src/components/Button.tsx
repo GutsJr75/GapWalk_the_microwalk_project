@@ -40,7 +40,7 @@ export const Button: React.FC<ButtonProps> = ({
   const labelColor = disabled
     ? palette.textMuted
     : variant === 'primary'
-      ? (isDark ? '#111827' : '#ffffff')
+      ? palette.accentOnSolid
       : variant === 'danger'
         ? theme.colors.white
         : variant === 'muted'
@@ -79,7 +79,7 @@ export const Button: React.FC<ButtonProps> = ({
     <AnimatedPressable
       style={[
         styles.button,
-        variant === 'primary' && styles.primaryButton,
+        variant === 'primary' && { backgroundColor: palette.accentPrimary },
         variant === 'secondary' && {
           backgroundColor: palette.bgSurface,
           borderWidth: 1,
@@ -143,9 +143,6 @@ const styles = StyleSheet.create({
   },
   fullWidth: {
     width: '100%',
-  },
-  primaryButton: {
-    backgroundColor: theme.colors.accentPrimary,
   },
   outlineButton: {
     backgroundColor: 'transparent',

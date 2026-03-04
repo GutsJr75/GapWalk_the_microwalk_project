@@ -12,6 +12,7 @@ import { GapItem } from '../components/GapItem';
 import { Card } from '../components/Card';
 import { type AppIconName } from '../components/AppIcon';
 import { theme } from '../theme';
+import { withAlpha } from '../theme/colorUtils';
 import { getThemePalette } from '../theme/palette';
 import { useAppStore } from '../store';
 import { preferencesRepo } from '../data/repositories/preferencesRepo';
@@ -21,16 +22,22 @@ import { scheduleSourceRepo } from '../data/repositories/scheduleSourceRepo';
 import { eventsRepo } from '../data/repositories/eventsRepo';
 import { achievementsRepo, type UnlockedAchievement, type AchievementId } from '../data/repositories/achievementsRepo';
 import { gapEngine } from '../services/gapEngine';
-import { isNotificationsSupported, notificationService } from '../services/notifications';
+import {
+  getPlanNotifyTime,
+  isNotificationsSupported,
+  normalizeManualNotifyLeadMinutes,
+  notificationService,
+} from '../services/notifications';
 import { notificationPlanActions } from '../services/notificationPlanActions';
 import { googleCalendarService } from '../services/googleCalendar';
-import { NudgePlan } from '../types';
+import { NudgePlan, Preferences } from '../types';
 import { calculateStreak, calculateWeeklyStats, getMotivationalMessage, StreakData, WeeklyStats } from '../utils/statsUtils';
 import { addMinutes, format, isAfter, isBefore, parseISO, subMinutes, subDays } from 'date-fns';
 import { timeUtils } from '../utils/time';
 import { requestAllPermissions } from '../services/permissions';
 import { toUserFriendlyError } from '../utils/errorMessages';
 import { authStorage } from '../data/authStorage';
+import { SuccessToast } from '../components/SuccessToast';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 // Extracted dashboard components
@@ -66,9 +73,36 @@ interface PlanOpportunity {
 }
 
 type TimePeriod = 'AM' | 'PM';
+type ManualReminderChoice = 'atTime' | '5min' | '10min';
 
 const MENU_WIDTH_RATIO = 0.78;
 const MENU_MAX_WIDTH = 360;
+
+const MANUAL_REMINDER_OPTIONS: Array<{ value: ManualReminderChoice; label: string }> = [
+  { value: 'atTime', label: 'At walk time' },
+  { value: '5min', label: '5 minutes before' },
+  { value: '10min', label: '10 minutes before' },
+];
+
+const getManualReminderChoiceFromLead = (leadMinutes?: number | null): ManualReminderChoice => {
+  const normalizedLead = normalizeManualNotifyLeadMinutes(leadMinutes);
+  if (normalizedLead === 10) return '10min';
+  if (normalizedLead === 5) return '5min';
+  return 'atTime';
+};
+
+const getManualReminderLeadFromChoice = (choice: ManualReminderChoice): number => {
+  if (choice === '10min') return 10;
+  if (choice === '5min') return 5;
+  return 0;
+};
+
+const getDefaultManualReminderChoice = (prefs?: Preferences | null): ManualReminderChoice => {
+  if (prefs?.whenToNotify === 'delay') {
+    return getManualReminderChoiceFromLead(prefs.notifyDelayMinutes);
+  }
+  return 'atTime';
+};
 
 const getPlanWalkEnd = (plan: NudgePlan): Date => {
   const walkStart = parseISO(plan.walkStart);
@@ -99,7 +133,7 @@ const BurgerIcon = ({
 }) => (
   <Pressable
     onPress={() => {
-      if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+      if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => { });
       onPress();
     }}
     style={({ pressed }) => [styles.burgerBtn, pressed && { opacity: 0.6, transform: [{ scale: 0.9 }] }]}
@@ -169,16 +203,20 @@ export const DashboardScreen: React.FC<Props> = ({ navigation, route }) => {
   const [changeMinute, setChangeMinute] = useState('');
   const [changePeriod, setChangePeriod] = useState<TimePeriod>('AM');
   const [changeDuration, setChangeDuration] = useState('');
+  const [changeNotifyChoice, setChangeNotifyChoice] = useState<ManualReminderChoice>('atTime');
   const [changeError, setChangeError] = useState<string | null>(null);
   const [savingChange, setSavingChange] = useState(false);
+  const [showSaveToast, setShowSaveToast] = useState(false);
+  const [saveToastMessage, setSaveToastMessage] = useState('');
   const [changeInitialState, setChangeInitialState] = useState<{
-    hour: string; minute: string; period: TimePeriod; duration: string;
+    hour: string; minute: string; period: TimePeriod; duration: string; notifyChoice: ManualReminderChoice;
   } | null>(null);
   const [changeQuietHoursBypass, setChangeQuietHoursBypass] = useState(false);
   const hasChangeDraft =
     !!changeInitialState &&
     (changeHour !== changeInitialState.hour || changeMinute !== changeInitialState.minute ||
-      changePeriod !== changeInitialState.period || changeDuration !== changeInitialState.duration);
+      changePeriod !== changeInitialState.period || changeDuration !== changeInitialState.duration ||
+      changeNotifyChoice !== changeInitialState.notifyChoice);
 
   // ── Add walk modal state ──
   const [showAddWalkModal, setShowAddWalkModal] = useState(false);
@@ -186,10 +224,11 @@ export const DashboardScreen: React.FC<Props> = ({ navigation, route }) => {
   const [addWalkMinute, setAddWalkMinute] = useState('');
   const [addWalkPeriod, setAddWalkPeriod] = useState<TimePeriod>('AM');
   const [addWalkDuration, setAddWalkDuration] = useState('10');
+  const [addNotifyChoice, setAddNotifyChoice] = useState<ManualReminderChoice>('atTime');
   const [addWalkError, setAddWalkError] = useState<string | null>(null);
   const [savingAddWalk, setSavingAddWalk] = useState(false);
   const [addWalkInitialState, setAddWalkInitialState] = useState<{
-    hour: string; minute: string; period: TimePeriod; duration: string;
+    hour: string; minute: string; period: TimePeriod; duration: string; notifyChoice: ManualReminderChoice;
   } | null>(null);
   const [quietHoursBypass, setQuietHoursBypass] = useState(false);
 
@@ -418,12 +457,7 @@ export const DashboardScreen: React.FC<Props> = ({ navigation, route }) => {
         }
         const next = remainingToday[0];
         const nextWalkStart = parseISO(next.walkStart);
-        let nextNotify = nextWalkStart;
-        if (preferences.whenToNotify === 'delay') {
-          nextNotify = subMinutes(nextWalkStart, preferences.notifyDelayMinutes ?? 5);
-          const nextGapStart = parseISO(next.gapStart);
-          if (isBefore(nextNotify, nextGapStart)) nextNotify = nextGapStart;
-        }
+        const nextNotify = getPlanNotifyTime(next, preferences);
         const nextEndRaw = addMinutes(parseISO(next.walkStart), next.suggestedDurationMinutes);
         const nextGapEnd = parseISO(next.gapEnd);
         const nextEnd = isAfter(nextEndRaw, nextGapEnd) ? nextGapEnd : nextEndRaw;
@@ -453,10 +487,21 @@ export const DashboardScreen: React.FC<Props> = ({ navigation, route }) => {
   const openChangeOpportunity = (opportunity: PlanOpportunity) => {
     const parts = to12HourParts(opportunity.plan.walkStart);
     const initialDuration = String(opportunity.plan.suggestedDurationMinutes);
+    const initialNotifyChoice =
+      opportunity.plan.reason === 'manual'
+        ? getManualReminderChoiceFromLead(opportunity.plan.manualNotifyLeadMinutes)
+        : getDefaultManualReminderChoice(preferences);
     setEditingOpportunity(opportunity);
     setChangeHour(parts.hour); setChangeMinute(parts.minute);
     setChangePeriod(parts.period); setChangeDuration(initialDuration);
-    setChangeInitialState({ hour: parts.hour, minute: parts.minute, period: parts.period, duration: initialDuration });
+    setChangeNotifyChoice(initialNotifyChoice);
+    setChangeInitialState({
+      hour: parts.hour,
+      minute: parts.minute,
+      period: parts.period,
+      duration: initialDuration,
+      notifyChoice: initialNotifyChoice,
+    });
     setChangeQuietHoursBypass(false); setChangeError(null); setShowChangeModal(true);
   };
 
@@ -518,6 +563,10 @@ export const DashboardScreen: React.FC<Props> = ({ navigation, route }) => {
     if (!editingOpportunity || !preferences || savingChange) return;
     const hour = parseInt(changeHour, 10); const minute = parseInt(changeMinute, 10);
     const duration = parseInt(changeDuration, 10);
+    const isManualPlan = editingOpportunity.plan.reason === 'manual';
+    const manualNotifyLeadMinutes = isManualPlan
+      ? getManualReminderLeadFromChoice(changeNotifyChoice)
+      : editingOpportunity.plan.manualNotifyLeadMinutes ?? 0;
     if (!Number.isInteger(hour) || hour < 1 || hour > 12 || !Number.isInteger(minute) || minute < 0 || minute > 59) {
       setChangeError('Please enter a valid start time.'); return;
     }
@@ -532,26 +581,35 @@ export const DashboardScreen: React.FC<Props> = ({ navigation, route }) => {
     const oldGapEnd = parseISO(editingOpportunity.plan.gapEnd);
     const walkEnd = addMinutes(nextStart, duration);
     if (!validateChangedWalkQuietHours(nextStart, walkEnd)) return;
-    const notifyLeadMinutes = preferences.whenToNotify === 'delay' ? Math.max(0, preferences.notifyDelayMinutes ?? 5) : 0;
-    const earliestForNotify = subMinutes(nextStart, notifyLeadMinutes);
-    if (isBefore(earliestForNotify, oldGapStart)) {
-      const gapStartFmt = format(oldGapStart, 'h:mm a');
-      setChangeError(`Notification would fall before the gap start (${gapStartFmt}). Move the walk later or reduce the notification lead time.`);
-      return;
+    if (isManualPlan) {
+      const manualNotifyTime = subMinutes(nextStart, manualNotifyLeadMinutes);
+      if (manualNotifyTime <= new Date()) {
+        setChangeError('Reminder time would be in the past. Choose a later walk time or a shorter reminder lead time.');
+        return;
+      }
+    } else {
+      const notifyLeadMinutes = preferences.whenToNotify === 'delay' ? Math.max(0, preferences.notifyDelayMinutes ?? 5) : 0;
+      const earliestForNotify = subMinutes(nextStart, notifyLeadMinutes);
+      if (isBefore(earliestForNotify, oldGapStart)) {
+        const gapStartFmt = format(oldGapStart, 'h:mm a');
+        setChangeError(`Notification would fall before the gap start (${gapStartFmt}). Move the walk later or reduce the notification lead time.`);
+        return;
+      }
+      if (isAfter(walkEnd, oldGapEnd)) {
+        const gapEndFmt = format(oldGapEnd, 'h:mm a');
+        setChangeError(`Walk would finish after the gap ends at ${gapEndFmt}. Choose an earlier start or shorter duration.`);
+        return;
+      }
     }
-    if (isAfter(walkEnd, oldGapEnd)) {
-      const gapEndFmt = format(oldGapEnd, 'h:mm a');
-      setChangeError(`Walk would finish after the gap ends at ${gapEndFmt}. Choose an earlier start or shorter duration.`);
-      return;
-    }
-    const nextGapStart = oldGapStart;
-    const nextGapEnd = oldGapEnd;
+    const nextGapStart = isManualPlan ? nextStart : oldGapStart;
+    const nextGapEnd = isManualPlan ? walkEnd : oldGapEnd;
     try {
       setSavingChange(true);
-      const nextReason = editingOpportunity.plan.reason === 'manual' ? 'manual' : 'customized';
+      const nextReason = isManualPlan ? 'manual' : 'customized';
       await plansRepo.updateTiming(editingOpportunity.plan.id, {
         gapStart: nextGapStart.toISOString(), gapEnd: nextGapEnd.toISOString(),
         walkStart: nextStart.toISOString(), suggestedDurationMinutes: duration,
+        manualNotifyLeadMinutes,
         reason: nextReason, status: 'planned',
       });
       if (isNotificationsSupported) {
@@ -568,6 +626,8 @@ export const DashboardScreen: React.FC<Props> = ({ navigation, route }) => {
       const refreshedUpcoming = await plansRepo.getUpcomingPlans(20);
       setUpcomingPlans(refreshedUpcoming);
       setShowChangeModal(false); setEditingOpportunity(null); setChangeError(null); setChangeInitialState(null); setChangeQuietHoursBypass(false);
+      setSaveToastMessage('Walk time updated');
+      setShowSaveToast(true);
     } catch (error) {
       if (__DEV__) console.error('Failed to update walk window:', error);
       Alert.alert('Could Not Update', toUserFriendlyError(error));
@@ -586,21 +646,30 @@ export const DashboardScreen: React.FC<Props> = ({ navigation, route }) => {
     }
     if (editingOpportunity) {
       const previewStart = parseISO(editingOpportunity.plan.walkStart);
+      const isManualPlan = editingOpportunity.plan.reason === 'manual';
       let hour24 = hour % 12; if (changePeriod === 'PM') hour24 += 12;
       previewStart.setHours(hour24, minute, 0, 0);
       const previewEnd = addMinutes(previewStart, duration);
       if (!isAfter(previewStart, new Date())) { setChangeError('Choose a future time for this walk.'); return; }
-      const previewGapStart = parseISO(editingOpportunity.plan.gapStart);
-      const previewGapEnd = parseISO(editingOpportunity.plan.gapEnd);
-      const notifyLead = preferences?.whenToNotify === 'delay' ? Math.max(0, preferences.notifyDelayMinutes ?? 5) : 0;
-      const previewNotifyStart = subMinutes(previewStart, notifyLead);
-      if (isBefore(previewNotifyStart, previewGapStart)) {
-        setChangeError(`Notification would fall before the gap start (${format(previewGapStart, 'h:mm a')}). Move the walk later or reduce the notification lead time.`);
-        return;
-      }
-      if (isAfter(previewEnd, previewGapEnd)) {
-        setChangeError(`Walk would finish after the gap ends at ${format(previewGapEnd, 'h:mm a')}. Choose an earlier start or shorter duration.`);
-        return;
+      if (isManualPlan) {
+        const previewNotifyTime = subMinutes(previewStart, getManualReminderLeadFromChoice(changeNotifyChoice));
+        if (previewNotifyTime <= new Date()) {
+          setChangeError('Reminder time would be in the past. Choose a later walk time or a shorter reminder lead time.');
+          return;
+        }
+      } else {
+        const previewGapStart = parseISO(editingOpportunity.plan.gapStart);
+        const previewGapEnd = parseISO(editingOpportunity.plan.gapEnd);
+        const notifyLead = preferences?.whenToNotify === 'delay' ? Math.max(0, preferences.notifyDelayMinutes ?? 5) : 0;
+        const previewNotifyStart = subMinutes(previewStart, notifyLead);
+        if (isBefore(previewNotifyStart, previewGapStart)) {
+          setChangeError(`Notification would fall before the gap start (${format(previewGapStart, 'h:mm a')}). Move the walk later or reduce the notification lead time.`);
+          return;
+        }
+        if (isAfter(previewEnd, previewGapEnd)) {
+          setChangeError(`Walk would finish after the gap ends at ${format(previewGapEnd, 'h:mm a')}. Choose an earlier start or shorter duration.`);
+          return;
+        }
       }
       if (!validateChangedWalkQuietHours(previewStart, previewEnd)) return;
     }
@@ -628,9 +697,17 @@ export const DashboardScreen: React.FC<Props> = ({ navigation, route }) => {
     const initialMinute = '00';
     const initialPeriod: TimePeriod = h >= 12 ? 'PM' : 'AM';
     const initialDuration = '10';
+    const initialNotifyChoice = getDefaultManualReminderChoice(preferences);
     setAddWalkHour(initialHour); setAddWalkMinute(initialMinute);
     setAddWalkPeriod(initialPeriod); setAddWalkDuration(initialDuration);
-    setAddWalkInitialState({ hour: initialHour, minute: initialMinute, period: initialPeriod, duration: initialDuration });
+    setAddNotifyChoice(initialNotifyChoice);
+    setAddWalkInitialState({
+      hour: initialHour,
+      minute: initialMinute,
+      period: initialPeriod,
+      duration: initialDuration,
+      notifyChoice: initialNotifyChoice,
+    });
     setAddWalkError(null); setQuietHoursBypass(false); setShowAddWalkModal(true);
   };
 
@@ -638,7 +715,8 @@ export const DashboardScreen: React.FC<Props> = ({ navigation, route }) => {
     if (savingAddWalk) return;
     const hasDraftChanges = !!addWalkInitialState &&
       (addWalkHour !== addWalkInitialState.hour || addWalkMinute !== addWalkInitialState.minute ||
-        addWalkPeriod !== addWalkInitialState.period || addWalkDuration !== addWalkInitialState.duration);
+        addWalkPeriod !== addWalkInitialState.period || addWalkDuration !== addWalkInitialState.duration ||
+        addNotifyChoice !== addWalkInitialState.notifyChoice);
     const closeNow = () => { setShowAddWalkModal(false); setAddWalkError(null); setAddWalkInitialState(null); };
     if (!hasDraftChanges) { closeNow(); return; }
     const title = 'Cancel this walk setup?';
@@ -654,6 +732,7 @@ export const DashboardScreen: React.FC<Props> = ({ navigation, route }) => {
     if (!preferences || savingAddWalk) return;
     const hour = parseInt(addWalkHour, 10); const minute = parseInt(addWalkMinute, 10);
     const duration = parseInt(addWalkDuration, 10);
+    const manualNotifyLeadMinutes = getManualReminderLeadFromChoice(addNotifyChoice);
     if (!Number.isInteger(hour) || hour < 1 || hour > 12 || !Number.isInteger(minute) || minute < 0 || minute > 59) {
       setAddWalkError('Please enter a valid time.'); return;
     }
@@ -677,13 +756,20 @@ export const DashboardScreen: React.FC<Props> = ({ navigation, route }) => {
         id: `plan-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`,
         date: todayStr, gapStart: walkStart.toISOString(), gapEnd: walkEnd.toISOString(),
         walkStart: walkStart.toISOString(), suggestedDurationMinutes: duration,
+        manualNotifyLeadMinutes,
         status: 'planned', reason: 'manual', createdAt: new Date().toISOString(),
       };
+      if (getPlanNotifyTime(plan) <= new Date()) {
+        setAddWalkError('Reminder time would be in the past. Choose a later walk time or a shorter reminder lead time.');
+        return;
+      }
       await plansRepo.save(plan);
       if (isNotificationsSupported) await notificationService.scheduleManualNudge(plan);
       const refreshedUpcoming = await plansRepo.getUpcomingPlans(20);
       setUpcomingPlans(refreshedUpcoming);
       setShowAddWalkModal(false); setAddWalkError(null); setAddWalkInitialState(null);
+      setSaveToastMessage('Walk added');
+      setShowSaveToast(true);
     } catch (error) {
       if (__DEV__) console.error('Failed to create manual walk:', error);
       setAddWalkError(toUserFriendlyError(error));
@@ -692,6 +778,36 @@ export const DashboardScreen: React.FC<Props> = ({ navigation, route }) => {
 
   const requestSaveManualWalk = () => {
     if (savingAddWalk) return;
+    const hour = parseInt(addWalkHour, 10);
+    const minute = parseInt(addWalkMinute, 10);
+    const duration = parseInt(addWalkDuration, 10);
+    if (!Number.isInteger(hour) || hour < 1 || hour > 12 || !Number.isInteger(minute) || minute < 0 || minute > 59) {
+      setAddWalkError('Please enter a valid time.'); return;
+    }
+    if (!Number.isInteger(duration) || duration < 1 || duration > 180) {
+      setAddWalkError('Set duration between 1 and 180 minutes.'); return;
+    }
+    let hour24 = hour % 12; if (addWalkPeriod === 'PM') hour24 += 12;
+    const previewStart = new Date();
+    previewStart.setHours(hour24, minute, 0, 0);
+    if (!isAfter(previewStart, new Date())) { setAddWalkError('Choose a future time.'); return; }
+    const previewPlan: NudgePlan = {
+      id: 'preview-manual-plan',
+      date: format(previewStart, 'yyyy-MM-dd'),
+      gapStart: previewStart.toISOString(),
+      gapEnd: addMinutes(previewStart, duration).toISOString(),
+      walkStart: previewStart.toISOString(),
+      suggestedDurationMinutes: duration,
+      manualNotifyLeadMinutes: getManualReminderLeadFromChoice(addNotifyChoice),
+      status: 'planned',
+      reason: 'manual',
+      createdAt: new Date().toISOString(),
+    };
+    if (getPlanNotifyTime(previewPlan) <= new Date()) {
+      setAddWalkError('Reminder time would be in the past. Choose a later walk time or a shorter reminder lead time.');
+      return;
+    }
+    setAddWalkError(null);
     const baseMessage = 'Do you want to save this walk and schedule a notification?';
     const quietMessage = `This walk is inside your quiet hours.\n\nDo you still want to save it and schedule a notification?`;
     const message = quietHoursBypass ? quietMessage : baseMessage;
@@ -825,29 +941,25 @@ export const DashboardScreen: React.FC<Props> = ({ navigation, route }) => {
     return activeTodayPlans
       .filter((plan) => !goalReached || plan.reason === 'manual')
       .map((plan) => {
-      const walkStart = parseISO(plan.walkStart);
-      const walkEnd = getPlanWalkEnd(plan);
-      const gapStart = parseISO(plan.gapStart);
-      const gapEnd = parseISO(plan.gapEnd);
-      let notifyAt = walkStart;
-      if (plan.reason !== 'manual' && preferences.whenToNotify === 'delay') {
-        notifyAt = subMinutes(walkStart, preferences.notifyDelayMinutes ?? 5);
-        if (isBefore(notifyAt, gapStart)) notifyAt = gapStart;
-      }
-      const isManual = plan.reason === 'manual';
-      return {
-        key: plan.id, plan,
-        timeRange: `${format(walkStart, 'h:mm a')} - ${format(walkEnd, 'h:mm a')}`,
-        walkWindowLabel: isManual ? 'Personally scheduled walk' : `Available window: ${format(gapStart, 'h:mm a')} - ${format(gapEnd, 'h:mm a')}`,
-        notifyLabel: `Notification time: ${format(notifyAt, 'h:mm a')}`,
-      };
-    });
+        const walkStart = parseISO(plan.walkStart);
+        const walkEnd = getPlanWalkEnd(plan);
+        const gapStart = parseISO(plan.gapStart);
+        const gapEnd = parseISO(plan.gapEnd);
+        const notifyAt = getPlanNotifyTime(plan, preferences);
+        const isManual = plan.reason === 'manual';
+        return {
+          key: plan.id, plan,
+          timeRange: `${format(walkStart, 'h:mm a')} - ${format(walkEnd, 'h:mm a')}`,
+          walkWindowLabel: isManual ? 'Personally scheduled walk' : `Available window: ${format(gapStart, 'h:mm a')} - ${format(gapEnd, 'h:mm a')}`,
+          notifyLabel: `Notification time: ${format(notifyAt, 'h:mm a')}`,
+        };
+      });
   }, [activeTodayPlans, goalReached, preferences]);
 
   const horizontalPadding = Math.max(width * 0.1, 16);
   const verticalPadding = Math.max(height * 0.05, 16);
   const palette = getThemePalette(themeMode);
-  const topGlowColor = themeMode === 'dark' ? 'rgba(46,233,166,0.08)' : 'rgba(46,233,166,0.13)';
+  const topGlowColor = withAlpha(palette.accentPrimary, themeMode === 'dark' ? 0.08 : 0.13);
   const bottomGlowColor = themeMode === 'dark' ? 'rgba(56,189,248,0.09)' : 'rgba(56,189,248,0.11)';
 
   const renderBackdrop = (
@@ -866,15 +978,17 @@ export const DashboardScreen: React.FC<Props> = ({ navigation, route }) => {
         {renderBackdrop}
         <ScrollView
           contentContainerStyle={[styles.scroll, { paddingHorizontal: horizontalPadding, paddingTop: verticalPadding, paddingBottom: verticalPadding }]}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.colors.accentPrimary} />}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={palette.accentPrimary} />}
         >
-          <Text variant="title" style={dashboardHeadingStyle}>{resolvedDashboardHeading}</Text>
-          <Text variant="body" color={palette.textMuted} style={styles.headingSub}>{dayName}, {monthDay}</Text>
-          <Card elevated style={styles.promptCard}>
-            <Text variant="body" style={styles.promptTitle}>Get started</Text>
-            <Text variant="bodySmall" color={palette.textMuted} style={styles.promptText}>Set up your preferences so GapWalk can find the best walking windows in your schedule.</Text>
-            <Button title="Set up preferences" onPress={() => navigation.navigate('Preferences', {})} />
-          </Card>
+          <View style={styles.emptyStateStack}>
+            <Text variant="title" style={dashboardHeadingStyle}>{resolvedDashboardHeading}</Text>
+            <Text variant="body" color={palette.textMuted} style={styles.headingSub}>{dayName}, {monthDay}</Text>
+            <Card elevated style={styles.promptCard}>
+              <Text variant="body" style={styles.promptTitle}>Get started</Text>
+              <Text variant="bodySmall" color={palette.textMuted} style={styles.promptText}>Set up your preferences so GapWalk can find the best walking windows in your schedule.</Text>
+              <Button title="Set up preferences" onPress={() => navigation.navigate('Preferences', {})} />
+            </Card>
+          </View>
         </ScrollView>
       </SafeAreaView>
     );
@@ -899,95 +1013,113 @@ export const DashboardScreen: React.FC<Props> = ({ navigation, route }) => {
       <ScrollView
         ref={dashboardScrollRef}
         contentContainerStyle={[styles.scroll, { paddingHorizontal: Math.max(width * 0.1, 16), paddingTop: Math.max(height * 0.03, 12), paddingBottom: Math.max(height * 0.04, 20) }]}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.colors.accentPrimary} />}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={palette.accentPrimary} />}
       >
         <CelebrationOverlay visible={showCelebration} animValue={celebrationAnim} currentStreak={streak.currentStreak} />
 
-        <Animated.View style={{ opacity: cardAnims[0], transform: [{ translateY: cardAnims[0].interpolate({ inputRange: [0, 1], outputRange: [12, 0] }) }] }}>
-          <Text variant="body" style={styles.readyText}>{readyPrompt}</Text>
-          {yesterdayMessage && <YesterdayCard message={yesterdayMessage} />}
-        </Animated.View>
-
-        <Animated.View style={{ opacity: cardAnims[1], transform: [{ translateY: cardAnims[1].interpolate({ inputRange: [0, 1], outputRange: [12, 0] }) }] }}>
-          <StreakCard streak={streak} />
-        </Animated.View>
-
-        <Animated.View style={{ opacity: cardAnims[2], transform: [{ translateY: cardAnims[2].interpolate({ inputRange: [0, 1], outputRange: [12, 0] }) }] }}>
-          <AchievementsSection unlockedAchievements={unlockedAchievements} />
-        </Animated.View>
-
-        <View ref={quickStatusRef} collapsable={false}>
-          <Animated.View style={[
-            { opacity: cardAnims[3], transform: [{ translateY: cardAnims[3].interpolate({ inputRange: [0, 1], outputRange: [12, 0] }) }] },
-            { borderRadius: 16, overflow: 'hidden' },
-          ]}>
-            <Animated.View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, borderRadius: 16, borderWidth: 2, borderColor: palette.accentPrimary, opacity: postWalkGlowAnim }} pointerEvents="none" />
-            <Text variant="body" style={styles.qsTitle}>Quick Status</Text>
-            <StatCard title="Daily Target" current={todayMinutesWalked} target={preferences.dailyTargetMinutes} unitLabel="minutes" tone="target" />
-            <StatCard title="Notification Count" current={todayNotificationCount} target={preferences.notificationCountPerDay} unitLabel="times" tone="notifications" />
-            {showStepGoalCard && <StatCard title="Step Goal" current={todaySteps} target={preferences.stepGoal} unitLabel="steps" tone="steps" />}
+        <View style={styles.dashboardStack}>
+          <Animated.View style={{ opacity: cardAnims[0], transform: [{ translateY: cardAnims[0].interpolate({ inputRange: [0, 1], outputRange: [12, 0] }) }] }}>
+            <View style={styles.statusIntroStack}>
+              <Text variant="body" style={styles.readyText}>{readyPrompt}</Text>
+              {yesterdayMessage && <YesterdayCard message={yesterdayMessage} />}
+            </View>
           </Animated.View>
 
-          <Animated.View style={{ opacity: cardAnims[4], transform: [{ translateY: cardAnims[4].interpolate({ inputRange: [0, 1], outputRange: [12, 0] }) }] }}>
-            <WeeklyStatsCard weeklyStats={weeklyStats} prevWeeklyStats={prevWeeklyStats} />
+          <Animated.View style={{ opacity: cardAnims[1], transform: [{ translateY: cardAnims[1].interpolate({ inputRange: [0, 1], outputRange: [12, 0] }) }] }}>
+            <StreakCard streak={streak} />
           </Animated.View>
-        </View>
 
-        <Animated.View style={{ opacity: cardAnims[5], transform: [{ translateY: cardAnims[5].interpolate({ inputRange: [0, 1], outputRange: [12, 0] }) }] }}>
-        <View style={styles.gapHeaderRow}>
-          <View style={{ flex: 1 }}>
-            <Text variant="body" style={styles.gapTitle}>Walking Opportunities</Text>
-            <Text variant="muted" style={styles.gapSubtitle}>See your next walk windows and reminder times.</Text>
+          {unlockedAchievements.length > 0 && (
+            <Animated.View style={{ opacity: cardAnims[2], transform: [{ translateY: cardAnims[2].interpolate({ inputRange: [0, 1], outputRange: [12, 0] }) }] }}>
+              <AchievementsSection unlockedAchievements={unlockedAchievements} />
+            </Animated.View>
+          )}
+
+          <View ref={quickStatusRef} collapsable={false} style={styles.quickStatusStack}>
+            <Animated.View style={[
+              { opacity: cardAnims[3], transform: [{ translateY: cardAnims[3].interpolate({ inputRange: [0, 1], outputRange: [12, 0] }) }] },
+              { borderRadius: 16, overflow: 'hidden' },
+            ]}>
+              <Animated.View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, borderRadius: 16, borderWidth: 2, borderColor: palette.accentPrimary, opacity: postWalkGlowAnim }} pointerEvents="none" />
+              <View style={styles.quickStatusContent}>
+                <Text variant="body" style={styles.qsTitle}>Quick Status</Text>
+                <View style={styles.quickStatusCards}>
+                  <StatCard title="Daily Target" current={todayMinutesWalked} target={preferences.dailyTargetMinutes} unitLabel="minutes" tone="target" />
+                  <StatCard title="Notification Count" current={todayNotificationCount} target={preferences.notificationCountPerDay} unitLabel="times" tone="notifications" />
+                  {showStepGoalCard && <StatCard title="Step Goal" current={todaySteps} target={preferences.stepGoal} unitLabel="steps" tone="steps" />}
+                </View>
+              </View>
+            </Animated.View>
+
+            <Animated.View style={{ opacity: cardAnims[4], transform: [{ translateY: cardAnims[4].interpolate({ inputRange: [0, 1], outputRange: [12, 0] }) }] }}>
+              <WeeklyStatsCard weeklyStats={weeklyStats} prevWeeklyStats={prevWeeklyStats} />
+            </Animated.View>
           </View>
-          <Pressable
-            onPress={() => { if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {}); openAddWalkModal(); }}
-            hitSlop={12}
-            style={({ pressed }) => [styles.addWalkBtn, { borderColor: palette.borderStrong }, pressed && { opacity: 0.7, transform: [{ scale: 0.92 }] }]}
-          >
-            <Ionicons name="add" size={22} color={palette.accentPrimary} />
-          </Pressable>
+
+          <Animated.View style={{ opacity: cardAnims[5], transform: [{ translateY: cardAnims[5].interpolate({ inputRange: [0, 1], outputRange: [12, 0] }) }] }}>
+            <View style={styles.opportunitySection}>
+              <View style={styles.gapHeaderRow}>
+                <View style={{ flex: 1 }}>
+                  <Text variant="body" style={styles.gapTitle}>Walking Opportunities</Text>
+                  <Text variant="muted" style={styles.gapSubtitle}>See your next walk windows and reminder times.</Text>
+                </View>
+                <Pressable
+                  onPress={() => { if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => { }); openAddWalkModal(); }}
+                  hitSlop={12}
+                  style={({ pressed }) => [styles.addWalkBtn, { borderColor: palette.borderStrong }, pressed && { opacity: 0.7, transform: [{ scale: 0.92 }] }]}
+                >
+                  <Ionicons name="add" size={22} color={palette.accentPrimary} />
+                </Pressable>
+              </View>
+
+              {goalReached && opportunities.length === 0 ? (
+                <Card elevated style={styles.emptyCard}>
+                  <Text variant="body" style={styles.emptyText}>Goal reached for today</Text>
+                  <Text variant="bodySmall" color={palette.textMuted} style={styles.emptyHint}>Nice work. Extra walks are still tracked, but reminders pause until tomorrow.</Text>
+                </Card>
+              ) : opportunities.length === 0 ? (
+                <Card elevated style={styles.emptyCard}>
+                  <Ionicons name="walk-outline" size={28} color={palette.textMuted} style={{ marginBottom: 8 }} />
+                  <Text variant="body" style={styles.emptyText}>No opportunities yet</Text>
+                  <Text variant="bodySmall" color={palette.textMuted} style={styles.emptyHint}>No suitable gaps were found right now. Pull to refresh, or start a manual walk below.</Text>
+                </Card>
+              ) : (
+                <View style={styles.opportunityList}>
+                  {goalReached && (
+                    <Card elevated style={styles.emptyCard}>
+                      <Text variant="body" style={styles.emptyText}>Goal reached for today</Text>
+                      <Text variant="bodySmall" color={palette.textMuted} style={styles.emptyHint}>You already hit today&apos;s target. Any manually scheduled walks below still work.</Text>
+                    </Card>
+                  )}
+                  {opportunities.map((opportunity) => (
+                    <GapItem
+                      key={opportunity.key}
+                      timeRange={opportunity.timeRange}
+                      walkWindowLabel={opportunity.walkWindowLabel}
+                      notifyLabel={opportunity.notifyLabel}
+                      duration={opportunity.plan.suggestedDurationMinutes}
+                      usedMinutes={0}
+                      onCancel={() => cancelOpportunity(opportunity)}
+                      onChange={() => openChangeOpportunity(opportunity)}
+                    />
+                  ))}
+                </View>
+              )}
+
+              {(completedPlans.length > 0 || missedPlans.length > 0) && (
+                <View style={styles.historyStack}>
+                  {completedPlans.length > 0 && <CompletedPlansSection completedPlans={completedPlans} />}
+                  {missedPlans.length > 0 && <MissedPlansSection missedPlans={missedPlans} />}
+                </View>
+              )}
+
+              <View style={styles.footerStack}>
+                <Button title="Start Manual Walk" onPress={() => navigation.navigate('Walking', {})} testID="dashboard-start-manual-walk" />
+                <Text variant="muted" style={styles.dashboardFooter}>Your privacy matters. So does your health.</Text>
+              </View>
+            </View>
+          </Animated.View>
         </View>
-
-        {goalReached && opportunities.length === 0 ? (
-          <Card elevated style={styles.emptyCard}>
-            <Text variant="body" style={styles.emptyText}>Goal reached for today</Text>
-            <Text variant="bodySmall" color={palette.textMuted} style={styles.emptyHint}>Nice work. Extra walks are still tracked, but reminders pause until tomorrow.</Text>
-          </Card>
-        ) : opportunities.length === 0 ? (
-          <Card elevated style={styles.emptyCard}>
-            <Ionicons name="walk-outline" size={28} color={palette.textMuted} style={{ marginBottom: 8 }} />
-            <Text variant="body" style={styles.emptyText}>No opportunities yet</Text>
-            <Text variant="bodySmall" color={palette.textMuted} style={styles.emptyHint}>No suitable gaps were found right now. Pull to refresh, or start a manual walk below.</Text>
-          </Card>
-        ) : (
-          <>
-            {goalReached && (
-              <Card elevated style={styles.emptyCard}>
-                <Text variant="body" style={styles.emptyText}>Goal reached for today</Text>
-                <Text variant="bodySmall" color={palette.textMuted} style={styles.emptyHint}>You already hit today&apos;s target. Any manually scheduled walks below still work.</Text>
-              </Card>
-            )}
-            {opportunities.map((opportunity) => (
-              <GapItem
-                key={opportunity.key}
-                timeRange={opportunity.timeRange}
-                walkWindowLabel={opportunity.walkWindowLabel}
-                notifyLabel={opportunity.notifyLabel}
-                duration={opportunity.plan.suggestedDurationMinutes}
-                usedMinutes={0}
-                onCancel={() => cancelOpportunity(opportunity)}
-                onChange={() => openChangeOpportunity(opportunity)}
-              />
-            ))}
-          </>
-        )}
-
-        <CompletedPlansSection completedPlans={completedPlans} />
-        <MissedPlansSection missedPlans={missedPlans} />
-
-        <Button title="Start Manual Walk" onPress={() => navigation.navigate('Walking', {})} style={styles.walkBtn} testID="dashboard-start-manual-walk" />
-        <Text variant="muted" style={styles.dashboardFooter}>Your privacy matters. So does your health.</Text>
-        </Animated.View>
       </ScrollView>
 
       {/* Change Walk Modal */}
@@ -1008,6 +1140,12 @@ export const DashboardScreen: React.FC<Props> = ({ navigation, route }) => {
         onMinuteChange={setChangeMinute}
         onPeriodChange={setChangePeriod}
         onDurationChange={setChangeDuration}
+        notificationTimingLabel={editingOpportunity?.plan.reason === 'manual' ? 'When to send reminders' : undefined}
+        notificationTimingValue={editingOpportunity?.plan.reason === 'manual' ? changeNotifyChoice : undefined}
+        notificationTimingOptions={editingOpportunity?.plan.reason === 'manual' ? MANUAL_REMINDER_OPTIONS : undefined}
+        onNotificationTimingChange={editingOpportunity?.plan.reason === 'manual'
+          ? (value) => setChangeNotifyChoice(value as ManualReminderChoice)
+          : undefined}
         onSave={requestSaveWalkChange}
         onCancel={closeChangeModal}
       />
@@ -1017,7 +1155,7 @@ export const DashboardScreen: React.FC<Props> = ({ navigation, route }) => {
         visible={showAddWalkModal}
         onRequestClose={closeAddWalkModal}
         title="Add a MicroWalk"
-        subtitle="Pick a time and duration. You'll get a notification when it's time."
+        subtitle="Pick a time, duration, and reminder timing for this MicroWalk."
         saveLabel={quietHoursBypass ? 'Save anyway' : 'Save'}
         saving={savingAddWalk}
         error={addWalkError}
@@ -1029,6 +1167,10 @@ export const DashboardScreen: React.FC<Props> = ({ navigation, route }) => {
         onMinuteChange={setAddWalkMinute}
         onPeriodChange={setAddWalkPeriod}
         onDurationChange={setAddWalkDuration}
+        notificationTimingLabel="When to send reminders"
+        notificationTimingValue={addNotifyChoice}
+        notificationTimingOptions={MANUAL_REMINDER_OPTIONS}
+        onNotificationTimingChange={(value) => setAddNotifyChoice(value as ManualReminderChoice)}
         onSave={requestSaveManualWalk}
         onCancel={closeAddWalkModal}
       />
@@ -1051,6 +1193,11 @@ export const DashboardScreen: React.FC<Props> = ({ navigation, route }) => {
         menuPanelWidth={menuPanelWidth}
         slideAnim={menuSlide}
       />
+      <SuccessToast
+        visible={showSaveToast}
+        message={saveToastMessage}
+        onDismiss={() => setShowSaveToast(false)}
+      />
     </SafeAreaView>
   );
 };
@@ -1066,24 +1213,33 @@ const styles = StyleSheet.create({
   headerRight: { width: 32, alignItems: 'flex-end' },
   heading: { textAlign: 'left', fontSize: theme.fontSize.xl + 2 },
   headingCompact: { textAlign: 'left', fontSize: theme.fontSize.lg + 3, lineHeight: theme.fontSize.lg + 8 },
-  headingSub: { textAlign: 'left', marginBottom: 20, marginTop: 4 },
   headingDate: { textAlign: 'left', marginTop: 2 },
   burgerBtn: { padding: 3, transform: [{ scale: 0.8 }] },
   burgerLine: { width: 18, height: 2, backgroundColor: theme.colors.textPrimary, marginVertical: 2, borderRadius: 1 },
   scroll: { width: '100%' },
+  dashboardStack: { gap: theme.spacing.md },
+  emptyStateStack: { gap: theme.spacing.md },
+  statusIntroStack: { gap: theme.spacing.md },
+  quickStatusStack: { gap: theme.spacing.md },
+  quickStatusContent: { gap: theme.spacing.md },
+  quickStatusCards: { gap: theme.spacing.md },
+  opportunitySection: { gap: theme.spacing.md },
+  opportunityList: { gap: theme.spacing.sm },
+  historyStack: { gap: theme.spacing.md },
+  footerStack: { gap: theme.spacing.md },
   headerFrame: { backgroundColor: theme.colors.bgSurfaceElevated, borderRadius: 0, borderWidth: 0, width: '100%', marginHorizontal: 0, marginTop: 0 },
-  qsTitle: { fontWeight: theme.fontWeight.semibold, fontSize: theme.fontSize.md + 2, marginBottom: 12, marginTop: 10 },
-  gapHeaderRow: { flexDirection: 'row', alignItems: 'flex-start', marginTop: 24, marginBottom: 12 },
+  qsTitle: { fontWeight: theme.fontWeight.semibold, fontSize: theme.fontSize.md + 2 },
+  gapHeaderRow: { flexDirection: 'row', alignItems: 'flex-start' },
   gapTitle: { fontWeight: theme.fontWeight.semibold, fontSize: theme.fontSize.md + 2, marginBottom: 4 },
   gapSubtitle: { fontSize: theme.fontSize.sm, lineHeight: 20 },
   addWalkBtn: { width: 36, height: 36, borderRadius: 18, borderWidth: 1.5, alignItems: 'center' as const, justifyContent: 'center' as const, marginLeft: 10, marginTop: 2 },
-  emptyCard: { alignItems: 'center', paddingVertical: 28, paddingHorizontal: 20, marginBottom: 12 },
+  emptyCard: { alignItems: 'center', paddingVertical: 28, paddingHorizontal: 20 },
   emptyText: { fontWeight: theme.fontWeight.semibold, marginBottom: 4 },
   emptyHint: { textAlign: 'center', lineHeight: 18 },
-  promptCard: { marginBottom: 16, gap: 10 },
+  promptCard: { gap: 10 },
   promptTitle: { fontWeight: theme.fontWeight.semibold },
   promptText: { lineHeight: 18 },
-  walkBtn: { marginBottom: 20 },
-  dashboardFooter: { textAlign: 'center', marginBottom: 8, lineHeight: 20 },
-  readyText: { marginTop: 16, marginBottom: 16, textAlign: 'center', fontSize: theme.fontSize.lg, fontWeight: theme.fontWeight.semibold },
+  dashboardFooter: { textAlign: 'center', lineHeight: 20 },
+  readyText: { textAlign: 'center', fontSize: theme.fontSize.lg, fontWeight: theme.fontWeight.semibold },
+  headingSub: { textAlign: 'left', marginTop: 4 },
 });

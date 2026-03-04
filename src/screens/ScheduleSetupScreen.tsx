@@ -479,7 +479,7 @@ export const ScheduleSetupScreen: React.FC<Props> = ({ navigation, route }) => {
             testID="schedule-option-import"
           >
             <View style={styles.cardTitleRow}>
-              <AppIcon name="calendar" size={15} color={theme.colors.accentPrimary} />
+              <AppIcon name="calendar" size={15} color={palette.accentPrimary} />
               <Text variant="body" style={styles.cardTitle}>Import</Text>
             </View>
             <Text variant="bodySmall" color={palette.textMuted} style={styles.cardDesc}>
@@ -500,7 +500,7 @@ export const ScheduleSetupScreen: React.FC<Props> = ({ navigation, route }) => {
             testID="schedule-option-manual"
           >
             <View style={styles.cardTitleRow}>
-              <AppIcon name="adjust" size={15} color={theme.colors.accentPrimary} />
+              <AppIcon name="adjust" size={15} color={palette.accentPrimary} />
               <Text variant="body" style={styles.cardTitle}>Input manually</Text>
             </View>
             <Text variant="bodySmall" color={palette.textMuted} style={styles.cardDesc}>
@@ -603,17 +603,6 @@ const styles = StyleSheet.create({
   },
   cardTitle: { fontWeight: theme.fontWeight.semibold },
   cardDesc: { lineHeight: 18, marginTop: 6 },
-  recommendedBadge: {
-    backgroundColor: 'rgba(46,233,166,0.12)',
-    borderRadius: 6,
-    paddingVertical: 3,
-    paddingHorizontal: 10,
-  },
-  recommendedText: {
-    color: theme.colors.accentPrimary,
-    fontWeight: theme.fontWeight.medium,
-    fontSize: theme.fontSize.xs,
-  },
   upcomingCard: {
     opacity: 0.7,
   },
