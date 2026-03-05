@@ -50,37 +50,37 @@ export type RootStackParamList = {
   Intro: undefined;
   ScheduleSetup: { manageMode?: boolean } | undefined;
   ManualSchedule:
-    | {
-      manageMode?: boolean;
-      importedFilename?: string;
-      importedEventCount?: number;
-      prefillTemplate?: {
-        id: string;
-        title: string;
-        dayOfWeek: number;
-        startTime: string;
-        endTime: string;
-      }[];
-      requireSaveBeforeContinue?: boolean;
-      startWithEmpty?: boolean;
-    }
-    | undefined;
+  | {
+    manageMode?: boolean;
+    importedFilename?: string;
+    importedEventCount?: number;
+    prefillTemplate?: {
+      id: string;
+      title: string;
+      dayOfWeek: number;
+      startTime: string;
+      endTime: string;
+    }[];
+    requireSaveBeforeContinue?: boolean;
+    startWithEmpty?: boolean;
+  }
+  | undefined;
   Preferences:
-    | {
-      skipScheduleSource?: boolean;
-      manageMode?: boolean;
-    }
-    | undefined;
+  | {
+    skipScheduleSource?: boolean;
+    manageMode?: boolean;
+  }
+  | undefined;
   Dashboard: { openMenu?: boolean; showPostWalkSummary?: boolean } | undefined;
   Walking: { planId?: string; prompt?: 'end_confirmation' } | undefined;
   WalkingExpanded: undefined;
   Settings: undefined;
   WeeklyData: undefined;
   Achievements:
-    | {
-      source?: 'profile' | 'options';
-    }
-    | undefined;
+  | {
+    source?: 'profile' | 'options';
+  }
+  | undefined;
   AboutHelp: undefined;
   Profile: undefined;
 };
@@ -173,6 +173,7 @@ function App() {
     setProfileDisplayName,
     setActiveWalkSnapshot,
     setPendingWalkPrompt,
+    setHasSeenDashboardTour,
   } = useAppStore();
   const pendingWalkPlanIdRef = useRef<string | null>(null);
   const pendingWalkRouteRef = useRef<{ planId?: string; prompt?: 'end_confirmation' } | null>(null);
@@ -194,7 +195,7 @@ function App() {
   // Hide native splash immediately so the app starts from our UI (no splash screen).
   useEffect(() => {
     if (Platform.OS !== 'web') {
-      SplashScreen.hideAsync().catch(() => {});
+      SplashScreen.hideAsync().catch(() => { });
     }
   }, []);
 
@@ -440,7 +441,7 @@ function App() {
       } catch (e) {
         if (__DEV__) console.warn('Failed to recover orphaned session:', e);
       }
-      
+
       // Restore auth session.
       // Always load the stored user profile (email/name) so it appears in the
       // Profile screen regardless of the "Remember me" setting.
@@ -478,6 +479,14 @@ function App() {
         if (storedLang) setLanguage(storedLang);
       } catch (e) {
         if (__DEV__) console.warn('Failed to restore UI settings:', e);
+      }
+
+      // Restore tour state
+      try {
+        const dashTourSeen = await authStorage.getDashboardTourSeen();
+        if (dashTourSeen) setHasSeenDashboardTour(true);
+      } catch (e) {
+        if (__DEV__) console.warn('Failed to restore tour state:', e);
       }
 
       // Check if user has completed onboarding (preferences saved).

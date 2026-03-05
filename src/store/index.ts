@@ -5,17 +5,17 @@ interface AppState {
   // Onboarding state
   hasCompletedOnboarding: boolean;
   setHasCompletedOnboarding: (value: boolean) => void;
-  
+
   // Schedule source
   scheduleSource: ScheduleSource | null;
   setScheduleSource: (source: ScheduleSource | null) => void;
-  
+
   // Preferences
   preferences: Preferences | null;
   setPreferences: (prefs: Preferences | null) => void;
   hasSetPreferences: boolean;
   setHasSetPreferences: (value: boolean) => void;
-  
+
   // Dashboard stats
   todayMinutesWalked: number;
   todayNotificationCount: number;
@@ -24,7 +24,7 @@ interface AppState {
   setTodayStats: (minutes: number, notifCount: number, steps?: number) => void;
   setTodaySteps: (steps: number) => void;
   setUpcomingPlans: (plans: NudgePlan[]) => void;
-  
+
   // Active walk session
   activeWalkSession: WalkSession | null;
   setActiveWalkSession: (session: WalkSession | null) => void;
@@ -32,11 +32,11 @@ interface AppState {
   setActiveWalkSnapshot: (snapshot: ActiveWalkSnapshot | null) => void;
   pendingWalkPrompt: WalkPrompt | null;
   setPendingWalkPrompt: (prompt: WalkPrompt | null) => void;
-  
+
   // Location permission
   hasLocationPermission: boolean;
   setHasLocationPermission: (value: boolean) => void;
-  
+
   // Notification permission
   hasNotificationPermission: boolean;
   setHasNotificationPermission: (value: boolean) => void;
@@ -48,7 +48,7 @@ interface AppState {
   // Whether initial permissions have been requested
   hasRequestedPermissions: boolean;
   setHasRequestedPermissions: (value: boolean) => void;
-  
+
   // Auth state
   isAuthenticated: boolean;
   setIsAuthenticated: (value: boolean) => void;
@@ -58,6 +58,11 @@ interface AppState {
   setProfileDisplayName: (name: string | null) => void;
   rememberMe: boolean;
   setRememberMe: (value: boolean) => void;
+
+  // Tour state
+
+  hasSeenDashboardTour: boolean;
+  setHasSeenDashboardTour: (value: boolean) => void;
 
   // UI settings
   themeMode: 'dark' | 'light';
@@ -78,23 +83,23 @@ export const useAppStore = create<AppState>((set) => ({
   // Onboarding
   hasCompletedOnboarding: false,
   setHasCompletedOnboarding: (value) => set({ hasCompletedOnboarding: value }),
-  
+
   // Schedule source
   scheduleSource: null,
   setScheduleSource: (source) => set({ scheduleSource: source }),
-  
+
   // Preferences
   preferences: null,
   setPreferences: (prefs) => set({ preferences: prefs }),
   hasSetPreferences: false,
   setHasSetPreferences: (value) => set({ hasSetPreferences: value }),
-  
+
   // Dashboard stats
   todayMinutesWalked: 0,
   todayNotificationCount: 0,
   todaySteps: 0,
   upcomingPlans: [],
-  setTodayStats: (minutes, notifCount, steps) => 
+  setTodayStats: (minutes, notifCount, steps) =>
     set((state) => ({
       todayMinutesWalked: minutes,
       todayNotificationCount: notifCount,
@@ -102,7 +107,7 @@ export const useAppStore = create<AppState>((set) => ({
     })),
   setTodaySteps: (steps) => set({ todaySteps: steps }),
   setUpcomingPlans: (plans) => set({ upcomingPlans: plans }),
-  
+
   // Active walk
   activeWalkSession: null,
   setActiveWalkSession: (session) => set({ activeWalkSession: session }),
@@ -110,7 +115,7 @@ export const useAppStore = create<AppState>((set) => ({
   setActiveWalkSnapshot: (snapshot) => set({ activeWalkSnapshot: snapshot }),
   pendingWalkPrompt: null,
   setPendingWalkPrompt: (prompt) => set({ pendingWalkPrompt: prompt }),
-  
+
   // Permissions
   hasLocationPermission: false,
   setHasLocationPermission: (value) => set({ hasLocationPermission: value }),
@@ -120,7 +125,7 @@ export const useAppStore = create<AppState>((set) => ({
   setHasActivityPermission: (value) => set({ hasActivityPermission: value }),
   hasRequestedPermissions: false,
   setHasRequestedPermissions: (value) => set({ hasRequestedPermissions: value }),
-  
+
   // Auth
   isAuthenticated: false,
   setIsAuthenticated: (value) => set({ isAuthenticated: value }),
@@ -130,6 +135,11 @@ export const useAppStore = create<AppState>((set) => ({
   setProfileDisplayName: (name) => set({ profileDisplayName: name }),
   rememberMe: false,
   setRememberMe: (value) => set({ rememberMe: value }),
+
+  // Tour state
+
+  hasSeenDashboardTour: false,
+  setHasSeenDashboardTour: (value) => set({ hasSeenDashboardTour: value }),
 
   // UI settings
   themeMode: 'dark',

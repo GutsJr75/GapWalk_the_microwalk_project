@@ -1,10 +1,13 @@
-import React, { useCallback, useEffect, useRef } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  Animated,
+  Easing,
   PanResponder,
   Pressable,
   StyleSheet,
   View,
 } from 'react-native';
+import Svg, { Circle } from 'react-native-svg';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -13,6 +16,7 @@ import { Text } from '../components/Text';
 import { Button } from '../components/Button';
 import { theme } from '../theme';
 import { useThemePalette } from '../theme/palette';
+import { plansRepo } from '../data/repositories/plansRepo';
 import { androidWalkTracking } from '../services/androidWalkTracking';
 import { useAppStore } from '../store';
 
@@ -32,18 +36,17 @@ const fmtSpeed = (distanceMeters: number, seconds: number): string => {
   return `${((distanceMeters / 1609.34) / (seconds / 3600)).toFixed(1)} mph`;
 };
 
-const fmtPace = (seconds: number, distanceMeters: number): string => {
-  if (distanceMeters < 10) return '—';
-  const pace = (seconds / 60) / (distanceMeters / 1609.34);
-  const mins = Math.floor(pace);
-  const secs = String(Math.round((pace - mins) * 60)).padStart(2, '00');
-  return `${mins}:${secs} /mi`;
+const fmtRemaining = (elapsedSec: number, targetSec: number): string => {
+  const remaining = Math.max(0, Math.floor(targetSec - elapsedSec));
+  const m = Math.floor(remaining / 60);
+  const ss = String(remaining % 60).padStart(2, '0');
+  return `${m}:${ss}`;
 };
 
 export const WalkingExpandedScreen: React.FC<Props> = ({ navigation }) => {
   const palette = useThemePalette();
   const insets = useSafeAreaInsets();
-  const { activeWalkSnapshot, setActiveWalkSnapshot, setPendingWalkPrompt } = useAppStore();
+  const { activeWalkSnapshot, setActiveWalkSnapshot, setPendingWalkPrompt, preferences, todaySteps } = useAppStore();
 
   const snapshot = activeWalkSnapshot;
   const elapsedSeconds = snapshot?.elapsedSeconds ?? 0;
@@ -71,6 +74,66 @@ export const WalkingExpandedScreen: React.FC<Props> = ({ navigation }) => {
   }, [navigation, setPendingWalkPrompt]);
 
   const accentColor = palette.accentPrimary;
+  const planId = snapshot?.planId;
+
+  // Breathing ring target: use nudge plan duration if available, else 60 min
+  const [ringTargetSeconds, setRingTargetSeconds] = useState(3600);
+  const [hasPlan, setHasPlan] = useState(false);
+  useEffect(() => {
+    if (!planId) return;
+    plansRepo.getById(planId).then((plan) => {
+      if (plan?.suggestedDurationMinutes) {
+        setRingTargetSeconds(plan.suggestedDurationMinutes * 60);
+        setHasPlan(true);
+      }
+    }).catch(() => {});
+  }, [planId]);
+
+  // Staggered entrance animation for timer + 6 stat cards
+  const entranceAnims = useRef(
+    Array.from({ length: 7 }, () => new Animated.Value(0)),
+  ).current;
+
+  useEffect(() => {
+    Animated.stagger(
+      60,
+      entranceAnims.map((anim) =>
+        Animated.timing(anim, {
+          toValue: 1,
+          duration: 250,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: true,
+        }),
+      ),
+    ).start();
+  }, [entranceAnims]);
+
+  // Breathing ring animation
+  const breatheAnim = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    if (paused) {
+      breatheAnim.setValue(0);
+      return undefined;
+    }
+    const anim = Animated.loop(
+      Animated.sequence([
+        Animated.timing(breatheAnim, {
+          toValue: 1,
+          duration: 1800,
+          easing: Easing.inOut(Easing.ease),
+          useNativeDriver: true,
+        }),
+        Animated.timing(breatheAnim, {
+          toValue: 0,
+          duration: 1800,
+          easing: Easing.inOut(Easing.ease),
+          useNativeDriver: true,
+        }),
+      ]),
+    );
+    anim.start();
+    return () => anim.stop();
+  }, [paused, breatheAnim]);
 
   const dotsPanResponder = useRef(
     PanResponder.create({
@@ -84,6 +147,19 @@ export const WalkingExpandedScreen: React.FC<Props> = ({ navigation }) => {
     }),
   ).current;
 
+  const ringSize = 120;
+  const ringStroke = 4;
+  const ringRadius = (ringSize - ringStroke) / 2;
+  const ringCircumference = ringRadius * 2 * Math.PI;
+  const ringProgress = Math.min(1, elapsedSeconds / ringTargetSeconds);
+
+  const stepGoalEnabled = preferences?.stepGoalEnabled ?? false;
+  const stepGoalTarget = preferences?.stepGoal ?? 1000;
+  const totalStepsToday = todaySteps + steps;
+  const goalPct = stepGoalEnabled
+    ? `${Math.min(100, Math.round((totalStepsToday / stepGoalTarget) * 100))}%`
+    : 'N/A';
+
   // 3 rows × 2 cols so each row can flex vertically
   const statRows = [
     [
@@ -91,12 +167,12 @@ export const WalkingExpandedScreen: React.FC<Props> = ({ navigation }) => {
       { label: 'Speed',    value: fmtSpeed(distanceMeters, elapsedSeconds) },
     ],
     [
-      { label: 'Steps',    value: steps.toLocaleString() },
-      { label: 'Pace',     value: fmtPace(elapsedSeconds, distanceMeters) },
+      { label: 'Steps',      value: steps.toLocaleString() },
+      { label: 'Time Remaining', value: hasPlan ? fmtRemaining(elapsedSeconds, ringTargetSeconds) : 'N/A' },
     ],
     [
-      { label: 'Elevation', value: '—' },
-      { label: 'Calories',  value: `${Math.round(steps * 0.04)} kcal` },
+      { label: 'Calories',     value: `${Math.round(steps * 0.04)} kcal` },
+      { label: 'Goal Progress', value: goalPct },
     ],
   ];
 
@@ -114,27 +190,80 @@ export const WalkingExpandedScreen: React.FC<Props> = ({ navigation }) => {
 
       {/* Content — fills all space between top bar and action strip */}
       <View style={styles.content}>
-        {/* Timer card — grows to fill space above stat rows */}
-        <View style={[styles.timerCard, { backgroundColor: palette.bgSurface, borderColor: palette.borderSoft }]}>
-          <Text variant="bodySmall" color={palette.textMuted} style={styles.timerLabel}>Duration</Text>
-          <Text style={[styles.timerValue, { color: palette.textPrimary }]}>{fmtClock(elapsedSeconds)}</Text>
-        </View>
+        {/* Timer card with breathing progress ring */}
+        <Animated.View
+          style={{
+            opacity: entranceAnims[0],
+            transform: [{ translateY: entranceAnims[0].interpolate({ inputRange: [0, 1], outputRange: [12, 0] }) }],
+          }}
+        >
+          <View style={[styles.timerCard, { backgroundColor: palette.bgSurface, borderColor: palette.borderSoft }]}>
+            <Text variant="bodySmall" color={palette.textMuted} style={styles.timerLabel}>Duration</Text>
+            <View style={styles.timerRingWrap}>
+              <Animated.View style={{
+                transform: [{
+                  scale: breatheAnim.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [1, 1.04],
+                  }),
+                }],
+              }}>
+                <Svg width={ringSize} height={ringSize}>
+                  <Circle
+                    cx={ringSize / 2}
+                    cy={ringSize / 2}
+                    r={ringRadius}
+                    stroke={palette.borderSoft}
+                    strokeWidth={ringStroke}
+                    fill="transparent"
+                  />
+                  <Circle
+                    cx={ringSize / 2}
+                    cy={ringSize / 2}
+                    r={ringRadius}
+                    stroke={accentColor}
+                    strokeWidth={ringStroke}
+                    fill="transparent"
+                    strokeDasharray={`${ringCircumference}`}
+                    strokeDashoffset={ringCircumference * (1 - ringProgress)}
+                    strokeLinecap="round"
+                    rotation="-90"
+                    origin={`${ringSize / 2}, ${ringSize / 2}`}
+                  />
+                </Svg>
+              </Animated.View>
+              <View style={styles.timerRingCenter}>
+                <Text style={[styles.timerValue, { color: palette.textPrimary }]}>{fmtClock(elapsedSeconds)}</Text>
+              </View>
+            </View>
+          </View>
+        </Animated.View>
 
         {/* Stat grid — 3 equal-height rows, each with 2 equal-width cards */}
         <View style={styles.statsGrid}>
-          {statRows.map((row) => (
+          {statRows.map((row, rowIndex) => (
             <View key={row[0].label} style={styles.statsRow}>
-              {row.map((card) => (
-                <View
-                  key={card.label}
-                  style={[styles.statCard, { backgroundColor: palette.bgSurface, borderColor: palette.borderSoft }]}
-                >
-                  <Text variant="bodySmall" color={palette.textMuted}>{card.label}</Text>
-                  <Text variant="heading" style={[styles.statValue, { color: palette.textPrimary }]}>
-                    {card.value}
-                  </Text>
-                </View>
-              ))}
+              {row.map((card, colIndex) => {
+                const animIndex = 1 + rowIndex * 2 + colIndex;
+                return (
+                  <Animated.View
+                    key={card.label}
+                    style={[
+                      styles.statCard,
+                      { backgroundColor: palette.bgSurface, borderColor: palette.borderSoft },
+                      {
+                        opacity: entranceAnims[animIndex],
+                        transform: [{ translateY: entranceAnims[animIndex].interpolate({ inputRange: [0, 1], outputRange: [12, 0] }) }],
+                      },
+                    ]}
+                  >
+                    <Text variant="body" color={palette.textMuted}>{card.label}</Text>
+                    <Text style={[styles.statValue, { color: palette.textPrimary }]}>
+                      {card.value}
+                    </Text>
+                  </Animated.View>
+                );
+              })}
             </View>
           ))}
         </View>
@@ -203,14 +332,16 @@ const styles = StyleSheet.create({
     flex: 1,
     padding: 10,
     gap: 8,
+    justifyContent: 'center',
   },
-  // Timer takes 2 flex units (≈40%), stat grid takes 3 (≈60%)
+  // Timer card — compact with breathing ring
   timerCard: {
-    flex: 2,
+    flex: 0,
     borderRadius: 16,
     borderWidth: 1,
     alignItems: 'center',
     justifyContent: 'center',
+    paddingVertical: 14,
     gap: 4,
   },
   timerLabel: {
@@ -218,18 +349,27 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
   },
   timerValue: {
-    fontSize: 54,
-    lineHeight: 62,
+    fontSize: 32,
+    lineHeight: 38,
     fontWeight: theme.fontWeight.bold,
     letterSpacing: -1,
     fontVariant: ['tabular-nums'],
   },
+  timerRingWrap: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    position: 'relative',
+  },
+  timerRingCenter: {
+    position: 'absolute',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   statsGrid: {
-    flex: 3,
+    flex: 0,
     gap: 8,
   },
   statsRow: {
-    flex: 1,
     flexDirection: 'row',
     gap: 8,
   },
@@ -238,13 +378,14 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     borderWidth: 1,
     paddingHorizontal: 14,
-    justifyContent: 'center',
+    paddingVertical: 14,
+    justifyContent: 'flex-start',
     gap: 4,
   },
   statValue: {
-    fontSize: 18,
-    lineHeight: 24,
-    fontWeight: '600',
+    fontSize: 24,
+    lineHeight: 30,
+    fontWeight: '700',
   },
   actionStrip: {
     borderTopWidth: 1,

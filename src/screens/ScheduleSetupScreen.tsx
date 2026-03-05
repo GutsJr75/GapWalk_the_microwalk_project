@@ -26,6 +26,7 @@ import {
 } from '../utils/confirmMessages';
 import { analyticsService } from '../services/analytics';
 import { useAppStore } from '../store';
+import { authStorage } from '../data/authStorage';
 import {
   googleCalendarService,
   getGoogleAuthConfig,
@@ -50,7 +51,9 @@ if (Platform.OS === 'android' && !isFabric && UIManager.setLayoutAnimationEnable
   UIManager.setLayoutAnimationEnabledExperimental(true);
 }
 
-export const ScheduleSetupScreen: React.FC<Props> = ({ navigation, route }) => {
+
+
+const ScheduleSetupScreenInner: React.FC<Props> = ({ navigation, route }) => {
   const [selectedOption, setSelectedOption] = useState<ScheduleOption>(null);
   const [loading, setLoading] = useState(false);
   const [syncStatus, setSyncStatus] = useState<string | null>(null);
@@ -472,47 +475,49 @@ export const ScheduleSetupScreen: React.FC<Props> = ({ navigation, route }) => {
 
         {/* Import & Manual – side by side */}
         <View style={styles.row}>
-          <Card
-            selected={selectedOption === 'import'}
-            onPress={() => toggle('import')}
-            style={[styles.halfCard, selectedOption === 'import' && styles.selectedHalfCard]}
-            testID="schedule-option-import"
-          >
-            <View style={styles.cardTitleRow}>
-              <AppIcon name="calendar" size={15} color={palette.accentPrimary} />
-              <Text variant="body" style={styles.cardTitle}>Import</Text>
-            </View>
-            <Text variant="bodySmall" color={palette.textMuted} style={styles.cardDesc}>
-              Upload a .ics file so GapWalk can see when you're busy.
-            </Text>
-            {selectedOption === 'import' && (
-              <View style={styles.checkmarkWrap}>
-                <Ionicons name="checkmark-circle" size={20} color={palette.accentPrimary} />
+          <View style={styles.halfCard}>
+            <Card
+              selected={selectedOption === 'import'}
+              onPress={() => toggle('import')}
+              style={[selectedOption === 'import' && styles.selectedHalfCard]}
+              testID="schedule-option-import"
+            >
+              <View style={styles.cardTitleRow}>
+                <AppIcon name="calendar" size={15} color={palette.accentPrimary} />
+                <Text variant="body" style={styles.cardTitle}>Import</Text>
               </View>
-            )}
-            <Text variant="muted" style={styles.cardMicrocopy}>Parses event times from .ics files</Text>
-          </Card>
+              <Text variant="bodySmall" color={palette.textMuted} style={styles.cardDesc}>
+                Upload a .ics file so GapWalk can see when you're busy.
+              </Text>
+              {selectedOption === 'import' && (
+                <View style={styles.checkmarkWrap}>
+                  <Ionicons name="checkmark-circle" size={20} color={palette.accentPrimary} />
+                </View>
+              )}
+            </Card>
+          </View>
 
-          <Card
-            selected={selectedOption === 'manual'}
-            onPress={() => toggle('manual')}
-            style={[styles.halfCard, selectedOption === 'manual' && styles.selectedHalfCard]}
-            testID="schedule-option-manual"
-          >
-            <View style={styles.cardTitleRow}>
-              <AppIcon name="adjust" size={15} color={palette.accentPrimary} />
-              <Text variant="body" style={styles.cardTitle}>Input manually</Text>
-            </View>
-            <Text variant="bodySmall" color={palette.textMuted} style={styles.cardDesc}>
-              Build your weekly schedule and one-time events with a simple calendar.
-            </Text>
-            {selectedOption === 'manual' && (
-              <View style={styles.checkmarkWrap}>
-                <Ionicons name="checkmark-circle" size={20} color={palette.accentPrimary} />
+          <View style={styles.halfCard}>
+            <Card
+              selected={selectedOption === 'manual'}
+              onPress={() => toggle('manual')}
+              style={[selectedOption === 'manual' && styles.selectedHalfCard]}
+              testID="schedule-option-manual"
+            >
+              <View style={styles.cardTitleRow}>
+                <AppIcon name="adjust" size={15} color={palette.accentPrimary} />
+                <Text variant="body" style={styles.cardTitle}>Input manually</Text>
               </View>
-            )}
-            <Text variant="muted" style={styles.cardMicrocopy}>No data leaves your device</Text>
-          </Card>
+              <Text variant="bodySmall" color={palette.textMuted} style={styles.cardDesc}>
+                Build your weekly schedule and one-time events with a simple calendar.
+              </Text>
+              {selectedOption === 'manual' && (
+                <View style={styles.checkmarkWrap}>
+                  <Ionicons name="checkmark-circle" size={20} color={palette.accentPrimary} />
+                </View>
+              )}
+            </Card>
+          </View>
         </View>
 
         {/* Sync status overlay */}
@@ -571,6 +576,10 @@ export const ScheduleSetupScreen: React.FC<Props> = ({ navigation, route }) => {
       </View>
     </Container>
   );
+};
+
+export const ScheduleSetupScreen: React.FC<Props> = (props) => {
+  return <ScheduleSetupScreenInner {...props} />;
 };
 
 const styles = StyleSheet.create({

@@ -452,6 +452,8 @@ const getVisibleEntriesByDayForWeek = (
   return out;
 };
 
+
+
 export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => {
   const today = new Date();
   const todayIndex = Number.isFinite(today.getDay()) ? today.getDay() : 1;
@@ -2633,7 +2635,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
           </View>
 
           {/* Grid: fixed 7 day columns (X) with vertical time axis (Y) */}
-          <View style={[styles.gridContainer, { paddingHorizontal: GRID_PADDING }]}>
+            <View style={[styles.gridContainer, { paddingHorizontal: GRID_PADDING }]}>
             <View
               style={[
                 styles.gridWrap,
@@ -2901,14 +2903,14 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
         </ScrollView>
 
         <View
-          style={[
-            styles.footer,
-            {
-              borderTopColor: gridLineSoft,
-              backgroundColor: palette.bgApp,
-            },
-          ]}
-        >
+            style={[
+              styles.footer,
+              {
+                borderTopColor: gridLineSoft,
+                backgroundColor: palette.bgApp,
+              },
+            ]}
+          >
           {!!saveError && <Text variant="bodySmall" style={styles.saveError}>{saveError}</Text>}
           {isE2E && (
             <Button
@@ -2963,7 +2965,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
             )
           )}
           {!manageMode && <Text variant="muted" style={styles.privacy}>Your schedule stays private. Privacy is our top priority.</Text>}
-        </View>
+          </View>
       </Animated.View>
 
       <RNModal

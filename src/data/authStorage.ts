@@ -11,6 +11,8 @@ const LAST_NOTIF_KEY = 'gapwalk_last_notif_response_key';
 const SETTINGS_DISTANCE_UNIT_KEY = 'gapwalk_settings_distance_unit';
 const SETTINGS_FIRST_DAY_KEY = 'gapwalk_settings_first_day';
 const SETTINGS_VIBRATION_KEY = 'gapwalk_settings_vibration';
+const TOUR_SCHEDULE_SEEN_KEY = 'gapwalk_tour_schedule_seen';
+const TOUR_DASHBOARD_SEEN_KEY = 'gapwalk_tour_dashboard_seen';
 
 export interface StoredAuthUser {
   email?: string;
@@ -146,5 +148,27 @@ export const authStorage = {
     await SecureStore.deleteItemAsync(AUTH_TOKEN_KEY);
     await SecureStore.deleteItemAsync(AUTH_USER_KEY);
     await SecureStore.deleteItemAsync(REMEMBER_ME_KEY);
+  },
+
+  async saveScheduleTourSeen(seen: boolean): Promise<void> {
+    if (Platform.OS === 'web') return;
+    await SecureStore.setItemAsync(TOUR_SCHEDULE_SEEN_KEY, seen ? '1' : '0');
+  },
+
+  async getScheduleTourSeen(): Promise<boolean> {
+    if (Platform.OS === 'web') return false;
+    const val = await SecureStore.getItemAsync(TOUR_SCHEDULE_SEEN_KEY);
+    return val === '1';
+  },
+
+  async saveDashboardTourSeen(seen: boolean): Promise<void> {
+    if (Platform.OS === 'web') return;
+    await SecureStore.setItemAsync(TOUR_DASHBOARD_SEEN_KEY, seen ? '1' : '0');
+  },
+
+  async getDashboardTourSeen(): Promise<boolean> {
+    if (Platform.OS === 'web') return false;
+    const val = await SecureStore.getItemAsync(TOUR_DASHBOARD_SEEN_KEY);
+    return val === '1';
   },
 };

@@ -1,4 +1,4 @@
-﻿import { useAppStore } from '../store';
+import { useAppStore } from '../store';
 import { theme } from './index';
 import { withAlpha } from './colorUtils';
 
@@ -57,10 +57,10 @@ const lightPalette: ThemePalette = {
   textPrimary: '#111827',
   // Darker muted text to meet AA contrast across light surfaces.
   textMuted: '#475569',
-  // Darker mint for readability on light surfaces (WCAG AA).
-  accentPrimary: '#059669',
-  accentMuted: withAlpha('#059669', 0.12),
-  accentBorder: withAlpha('#059669', 0.30),
+  // Brand mint accent, shared with dark mode for visual consistency.
+  accentPrimary: theme.colors.accentPrimary,
+  accentMuted: withAlpha(theme.colors.accentPrimary, 0.12),
+  accentBorder: withAlpha(theme.colors.accentPrimary, 0.30),
   accentOnSolid: '#ffffff',
   accentOnTint: '#0f5132',
   info: '#0369a1',

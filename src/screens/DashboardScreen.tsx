@@ -39,6 +39,11 @@ import { toUserFriendlyError } from '../utils/errorMessages';
 import { authStorage } from '../data/authStorage';
 import { SuccessToast } from '../components/SuccessToast';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import {
+  DASHBOARD_TOUR_STEPS,
+  TourOverlay,
+  type TourTargetRef,
+} from '../tour';
 
 // Extracted dashboard components
 import { StreakCard } from './dashboard/StreakCard';
@@ -147,7 +152,9 @@ const BurgerIcon = ({
   </Pressable>
 );
 
-export const DashboardScreen: React.FC<Props> = ({ navigation, route }) => {
+
+
+const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
   const {
     preferences, setPreferences, hasSetPreferences, setHasSetPreferences,
     todayMinutesWalked, todayNotificationCount, upcomingPlans,
@@ -162,7 +169,11 @@ export const DashboardScreen: React.FC<Props> = ({ navigation, route }) => {
     hasCompletedOnboarding,
     setIsAuthenticated,
     setAuthUser,
+    setHasSeenDashboardTour,
+    hasSeenDashboardTour,
   } = useAppStore();
+  const [tourVisible, setTourVisible] = useState(false);
+  const tourStartedRef = useRef(false);
   const [refreshing, setRefreshing] = useState(false);
   const [menuVisible, setMenuVisible] = useState(false);
   const menuSlide = useRef(new Animated.Value(0)).current;
@@ -187,6 +198,21 @@ export const DashboardScreen: React.FC<Props> = ({ navigation, route }) => {
   const [yesterdayMinutes, setYesterdayMinutes] = useState<number | null>(null);
   const [completedPlans, setCompletedPlans] = useState<NudgePlan[]>([]);
   const [missedPlans, setMissedPlans] = useState<NudgePlan[]>([]);
+
+  // Tour target refs
+  const tourMenuRef = useRef<View>(null);
+  const tourQuickStatusRef = useRef<View>(null);
+  const tourOpportunitiesRef = useRef<View>(null);
+  const tourAddWalkRef = useRef<View>(null);
+  const tourManualWalkRef = useRef<View>(null);
+
+  const tourTargets: TourTargetRef[] = useMemo(() => [
+    { ref: tourMenuRef, stepIndex: 0 },
+    { ref: tourQuickStatusRef, stepIndex: 1 },
+    { ref: tourOpportunitiesRef, stepIndex: 2 },
+    { ref: tourAddWalkRef, stepIndex: 3 },
+    { ref: tourManualWalkRef, stepIndex: 4 },
+  ], []);
   // Staggered card entrance animations
   const cardAnims = useRef(
     Array.from({ length: 6 }, () => new Animated.Value(0))
@@ -363,6 +389,12 @@ export const DashboardScreen: React.FC<Props> = ({ navigation, route }) => {
           })
         )
       ).start();
+
+      // Auto-start tour for new users
+      if (hasCompletedOnboarding && !hasSeenDashboardTour && !tourStartedRef.current) {
+        tourStartedRef.current = true;
+        setTimeout(() => setTourVisible(true), 1500);
+      }
     }, [load, hasRequestedPermissions])
   );
 
@@ -873,6 +905,13 @@ export const DashboardScreen: React.FC<Props> = ({ navigation, route }) => {
   const navigateToAchievements = () => { closeMenu(); navigation.navigate('Achievements', { source: 'options' }); };
   const navigateToAboutHelp = () => { closeMenu(); navigation.navigate('AboutHelp'); };
 
+  const handleReplayTour = () => {
+    closeMenu();
+    setHasSeenDashboardTour(false);
+    void authStorage.saveDashboardTourSeen(false);
+    setTimeout(() => setTourVisible(true), 600);
+  };
+
   const menuItems: SideMenuItem[] = [
     { key: 'profile', label: 'Profile', icon: 'person', onPress: navigateToProfile, testID: 'dashboard-menu-profile' },
     { key: 'schedule', label: 'Manage schedule', icon: 'calendar', onPress: navigateToManageSchedule, testID: 'dashboard-menu-schedule' },
@@ -881,6 +920,7 @@ export const DashboardScreen: React.FC<Props> = ({ navigation, route }) => {
     { key: 'achievements', label: 'Achievements', icon: 'trophy', onPress: navigateToAchievements, testID: 'dashboard-menu-achievements' },
     { key: 'settings', label: 'Settings', icon: 'settings', onPress: navigateToSettings, testID: 'dashboard-menu-settings' },
     { key: 'about-help', label: 'About & Help', icon: 'info', onPress: navigateToAboutHelp, testID: 'dashboard-menu-about-help' },
+    { key: 'replay-tour', label: 'Replay Tour', icon: 'info', onPress: handleReplayTour, testID: 'dashboard-menu-replay-tour' },
   ];
 
   const handleLogoutFromMenu = () => {
@@ -1004,7 +1044,7 @@ export const DashboardScreen: React.FC<Props> = ({ navigation, route }) => {
             <Text variant="title" style={dashboardHeadingStyle}>{resolvedDashboardHeading}</Text>
             <Text variant="bodySmall" color={palette.textMuted} style={styles.headingDate}>{dayName}, {monthDay}</Text>
           </View>
-          <View style={styles.headerRight}>
+          <View ref={tourMenuRef} style={styles.headerRight} collapsable={false}>
             <BurgerIcon onPress={openMenu} color={palette.textPrimary} testID="dashboard-open-menu" />
           </View>
         </View>
@@ -1035,41 +1075,65 @@ export const DashboardScreen: React.FC<Props> = ({ navigation, route }) => {
             </Animated.View>
           )}
 
-          <View ref={quickStatusRef} collapsable={false} style={styles.quickStatusStack}>
-            <Animated.View style={[
-              { opacity: cardAnims[3], transform: [{ translateY: cardAnims[3].interpolate({ inputRange: [0, 1], outputRange: [12, 0] }) }] },
-              { borderRadius: 16, overflow: 'hidden' },
-            ]}>
-              <Animated.View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, borderRadius: 16, borderWidth: 2, borderColor: palette.accentPrimary, opacity: postWalkGlowAnim }} pointerEvents="none" />
-              <View style={styles.quickStatusContent}>
-                <Text variant="body" style={styles.qsTitle}>Quick Status</Text>
-                <View style={styles.quickStatusCards}>
-                  <StatCard title="Daily Target" current={todayMinutesWalked} target={preferences.dailyTargetMinutes} unitLabel="minutes" tone="target" />
-                  <StatCard title="Notification Count" current={todayNotificationCount} target={preferences.notificationCountPerDay} unitLabel="times" tone="notifications" />
-                  {showStepGoalCard && <StatCard title="Step Goal" current={todaySteps} target={preferences.stepGoal} unitLabel="steps" tone="steps" />}
+          <View ref={quickStatusRef} collapsable={false}>
+            <View ref={tourQuickStatusRef} style={styles.quickStatusStack} collapsable={false}>
+              <Animated.View style={[
+                { opacity: cardAnims[3], transform: [{ translateY: cardAnims[3].interpolate({ inputRange: [0, 1], outputRange: [12, 0] }) }] },
+                { borderRadius: 16, overflow: 'hidden' },
+              ]}>
+                <Animated.View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, borderRadius: 16, borderWidth: 2, borderColor: palette.accentPrimary, opacity: postWalkGlowAnim }} pointerEvents="none" />
+                <View style={styles.quickStatusContent}>
+                  <Text variant="body" style={styles.qsTitle}>Quick Status</Text>
+                  <View style={styles.quickStatusCards}>
+                    <StatCard
+                      title="Daily Target"
+                      current={todayMinutesWalked}
+                      target={preferences.dailyTargetMinutes}
+                      unitLabel="minutes"
+                      tone="target"
+                    />
+                    <StatCard
+                      title="Notification Count"
+                      current={todayNotificationCount}
+                      target={preferences.notificationCountPerDay}
+                      unitLabel="times"
+                      tone="notifications"
+                    />
+                    {showStepGoalCard && (
+                      <StatCard
+                        title="Step Goal"
+                        current={todaySteps}
+                        target={preferences.stepGoal}
+                        unitLabel="steps"
+                        tone="steps"
+                      />
+                    )}
+                  </View>
                 </View>
-              </View>
-            </Animated.View>
+              </Animated.View>
 
-            <Animated.View style={{ opacity: cardAnims[4], transform: [{ translateY: cardAnims[4].interpolate({ inputRange: [0, 1], outputRange: [12, 0] }) }] }}>
-              <WeeklyStatsCard weeklyStats={weeklyStats} prevWeeklyStats={prevWeeklyStats} />
-            </Animated.View>
+              <Animated.View style={{ opacity: cardAnims[4], transform: [{ translateY: cardAnims[4].interpolate({ inputRange: [0, 1], outputRange: [12, 0] }) }] }}>
+                <WeeklyStatsCard weeklyStats={weeklyStats} prevWeeklyStats={prevWeeklyStats} />
+              </Animated.View>
+            </View>
           </View>
 
           <Animated.View style={{ opacity: cardAnims[5], transform: [{ translateY: cardAnims[5].interpolate({ inputRange: [0, 1], outputRange: [12, 0] }) }] }}>
-            <View style={styles.opportunitySection}>
+            <View ref={tourOpportunitiesRef} style={styles.opportunitySection} collapsable={false}>
               <View style={styles.gapHeaderRow}>
                 <View style={{ flex: 1 }}>
                   <Text variant="body" style={styles.gapTitle}>Walking Opportunities</Text>
                   <Text variant="muted" style={styles.gapSubtitle}>See your next walk windows and reminder times.</Text>
                 </View>
-                <Pressable
-                  onPress={() => { if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => { }); openAddWalkModal(); }}
-                  hitSlop={12}
-                  style={({ pressed }) => [styles.addWalkBtn, { borderColor: palette.borderStrong }, pressed && { opacity: 0.7, transform: [{ scale: 0.92 }] }]}
-                >
-                  <Ionicons name="add" size={22} color={palette.accentPrimary} />
-                </Pressable>
+                <View ref={tourAddWalkRef} collapsable={false}>
+                  <Pressable
+                    onPress={() => { if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => { }); openAddWalkModal(); }}
+                    hitSlop={12}
+                    style={({ pressed }) => [styles.addWalkBtn, { borderColor: palette.borderStrong }, pressed && { opacity: 0.7, transform: [{ scale: 0.92 }] }]}
+                  >
+                    <Ionicons name="add" size={22} color={palette.accentPrimary} />
+                  </Pressable>
+                </View>
               </View>
 
               {goalReached && opportunities.length === 0 ? (
@@ -1113,7 +1177,7 @@ export const DashboardScreen: React.FC<Props> = ({ navigation, route }) => {
                 </View>
               )}
 
-              <View style={styles.footerStack}>
+              <View ref={tourManualWalkRef} style={styles.footerStack} collapsable={false}>
                 <Button title="Start Manual Walk" onPress={() => navigation.navigate('Walking', {})} testID="dashboard-start-manual-walk" />
                 <Text variant="muted" style={styles.dashboardFooter}>Your privacy matters. So does your health.</Text>
               </View>
@@ -1198,8 +1262,24 @@ export const DashboardScreen: React.FC<Props> = ({ navigation, route }) => {
         message={saveToastMessage}
         onDismiss={() => setShowSaveToast(false)}
       />
+
+      <TourOverlay
+        visible={tourVisible}
+        targets={tourTargets}
+        steps={DASHBOARD_TOUR_STEPS}
+        scrollViewRef={dashboardScrollRef}
+        onFinish={() => {
+          setTourVisible(false);
+          setHasSeenDashboardTour(true);
+          void authStorage.saveDashboardTourSeen(true);
+        }}
+      />
     </SafeAreaView>
   );
+};
+
+export const DashboardScreen: React.FC<Props> = (props) => {
+  return <DashboardScreenInner {...props} />;
 };
 
 const styles = StyleSheet.create({
@@ -1221,7 +1301,7 @@ const styles = StyleSheet.create({
   emptyStateStack: { gap: theme.spacing.md },
   statusIntroStack: { gap: theme.spacing.md },
   quickStatusStack: { gap: theme.spacing.md },
-  quickStatusContent: { gap: theme.spacing.md },
+  quickStatusContent: { gap: theme.spacing.md, paddingHorizontal: 4 },
   quickStatusCards: { gap: theme.spacing.md },
   opportunitySection: { gap: theme.spacing.md },
   opportunityList: { gap: theme.spacing.sm },
