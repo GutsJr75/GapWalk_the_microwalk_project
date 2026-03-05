@@ -492,7 +492,7 @@ const ScheduleSetupScreenInner: React.FC<Props> = ({ navigation, route }) => {
             <Card
               selected={selectedOption === 'import'}
               onPress={() => toggle('import')}
-              style={[styles.halfCardContent, selectedOption === 'import' && styles.selectedHalfCard]}
+              style={[selectedOption === 'import' && styles.selectedHalfCard]}
               testID="schedule-option-import"
             >
               <View style={styles.cardTitleRow}>
@@ -502,6 +502,11 @@ const ScheduleSetupScreenInner: React.FC<Props> = ({ navigation, route }) => {
               <Text variant="bodySmall" color={palette.textMuted} style={styles.cardDesc}>
                 Upload a .ics file so GapWalk can see when you're busy.
               </Text>
+              {selectedOption === 'import' && (
+                <View style={styles.checkmarkWrap}>
+                  <Ionicons name="checkmark-circle" size={20} color={palette.accentPrimary} />
+                </View>
+              )}
             </Card>
           </View>
 
@@ -509,7 +514,7 @@ const ScheduleSetupScreenInner: React.FC<Props> = ({ navigation, route }) => {
             <Card
               selected={selectedOption === 'manual'}
               onPress={() => toggle('manual')}
-              style={[styles.halfCardContent, selectedOption === 'manual' && styles.selectedHalfCard]}
+              style={[selectedOption === 'manual' && styles.selectedHalfCard]}
               testID="schedule-option-manual"
             >
               <View style={styles.cardTitleRow}>
@@ -519,6 +524,11 @@ const ScheduleSetupScreenInner: React.FC<Props> = ({ navigation, route }) => {
               <Text variant="bodySmall" color={palette.textMuted} style={styles.cardDesc}>
                 Build your weekly schedule and one-time events with a simple calendar.
               </Text>
+              {selectedOption === 'manual' && (
+                <View style={styles.checkmarkWrap}>
+                  <Ionicons name="checkmark-circle" size={20} color={palette.accentPrimary} />
+                </View>
+              )}
             </Card>
           </View>
         </View>

@@ -81,7 +81,6 @@ const ESTIMATED_STRIDE_METERS = 0.78;
 const START_COUNTDOWN_SECONDS = 3;
 const MAP_LATITUDE_DELTA = 0.005;
 const MAP_LONGITUDE_DELTA = 0.005;
-const WALK_STATE_UPDATE_ERROR_MESSAGE = 'GapWalk could not update this walk. Please try again.';
 
 const formatClock = (seconds: number): string => {
   const clamped = Math.max(0, Math.floor(seconds));
@@ -497,7 +496,6 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
   const [routeCoords, setRouteCoords] = useState<Coord[]>([]);
   const [liveLocation, setLiveLocation] = useState<Coord | null>(null);
   const [isMapFollowingUser, setIsMapFollowingUser] = useState(true);
-  const [extraMetricsHeight, setExtraMetricsHeight] = useState(0);
 
   const mapRef = useRef<MapView>(null);
   const isMountedRef = useRef(true);
@@ -521,6 +519,7 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
   const mapLocationSubscriptionRef = useRef<Location.LocationSubscription | null>(null);
   const appStateRef = useRef<AppStateStatus>(AppState.currentState);
   const lastFollowAnimateAtRef = useRef<number>(0);
+  const statusPulseAnim = useRef(new Animated.Value(0)).current;
   const completionBackdropAnim = useRef(new Animated.Value(0)).current;
   const completionCardAnim = useRef(new Animated.Value(0)).current;
   const completionGlowAnim = useRef(new Animated.Value(0)).current;
@@ -533,6 +532,7 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
   const stepScaleAnim = useRef(new Animated.Value(1)).current;
   const distanceScaleAnim = useRef(new Animated.Value(1)).current;
   const speedScaleAnim = useRef(new Animated.Value(1)).current;
+  const statusChangeAnim = useRef(new Animated.Value(1)).current;
   const clockColonAnim = useRef(new Animated.Value(1)).current;
   const dockGlowAnim = useRef(new Animated.Value(0)).current;
   const prevStepsRef = useRef(0);
@@ -715,6 +715,14 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
     }, duration);
   }, []);
 
+  const remainingSeconds = useMemo(() => {
+    const activeSeconds = isAndroidService
+      ? (activeWalkSnapshot?.elapsedSeconds ?? 0)
+      : fallbackState.activeSeconds;
+    if (!plan) return activeSeconds;
+    return Math.max(0, plan.suggestedDurationMinutes * 60 - activeSeconds);
+  }, [activeWalkSnapshot?.elapsedSeconds, fallbackState.activeSeconds, isAndroidService, plan]);
+
   const displayedSnapshot = isAndroidService ? activeWalkSnapshot : null;
   const hasLiveSession = isAndroidService
     ? Boolean(displayedSnapshot?.sessionId)
@@ -789,6 +797,80 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
   }, [distanceMeters, distanceScaleAnim]);
 
   // Speed value bounce animation
+  useEffect(() => {
+    const currentSpeed = activeSeconds > 0
+      ? ((distanceMeters / 1609.34) / (activeSeconds / 3600)).toFixed(1)
+      : '0.0';
+    if (currentSpeed === prevSpeedRef.current) return;
+    prevSpeedRef.current = currentSpeed;
+    speedScaleAnim.setValue(1.12);
+    Animated.spring(speedScaleAnim, { toValue: 1, tension: 280, friction: 9, useNativeDriver: true }).start();
+  }, [activeSeconds, distanceMeters, speedScaleAnim]);
+
+  // Blinking colon on duration timer while actively walking
+  useEffect(() => {
+    if (paused || displayState !== 'walking') {
+      clockColonAnim.setValue(1);
+      return undefined;
+    }
+    const anim = Animated.loop(
+      Animated.sequence([
+        Animated.timing(clockColonAnim, {
+          toValue: 0.3,
+          duration: 500,
+          easing: Easing.inOut(Easing.ease),
+          useNativeDriver: true,
+        }),
+        Animated.timing(clockColonAnim, {
+          toValue: 1,
+          duration: 500,
+          easing: Easing.inOut(Easing.ease),
+          useNativeDriver: true,
+        }),
+      ]),
+    );
+    anim.start();
+    return () => anim.stop();
+  }, [displayState, paused, clockColonAnim]);
+
+  // Milestone haptic feedback every 100 steps
+  useEffect(() => {
+    if (steps === 0) return;
+    const currentMilestone = Math.floor(steps / 100) * 100;
+    if (currentMilestone > lastMilestoneRef.current && currentMilestone > 0) {
+      lastMilestoneRef.current = currentMilestone;
+      if (Platform.OS !== 'web') {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+      }
+    }
+  }, [steps]);
+
+  // Dock border glow while walking
+  useEffect(() => {
+    if (displayState === 'walking' && !paused) {
+      const anim = Animated.loop(
+        Animated.sequence([
+          Animated.timing(dockGlowAnim, {
+            toValue: 1,
+            duration: 2000,
+            easing: Easing.inOut(Easing.ease),
+            useNativeDriver: false,
+          }),
+          Animated.timing(dockGlowAnim, {
+            toValue: 0,
+            duration: 2000,
+            easing: Easing.inOut(Easing.ease),
+            useNativeDriver: false,
+          }),
+        ]),
+      );
+      anim.start();
+      return () => anim.stop();
+    }
+    dockGlowAnim.setValue(0);
+    return undefined;
+  }, [displayState, paused, dockGlowAnim]);
+
   useEffect(() => {
     const currentSpeed = computeSpeedMph(distanceMeters, activeSeconds);
     if (currentSpeed === prevSpeedRef.current) return;
@@ -1095,6 +1177,62 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
     centerMapOnCoord(liveLocation, 650);
   }, [centerMapOnCoord, isMapFollowingUser, liveLocation]);
 
+  useEffect(() => {
+    if (!isAndroidService) {
+      mapLocationSubscriptionRef.current?.remove();
+      mapLocationSubscriptionRef.current = null;
+      return;
+    }
+
+    let cancelled = false;
+    mapLocationSubscriptionRef.current?.remove();
+    mapLocationSubscriptionRef.current = null;
+
+    void (async () => {
+      try {
+        const permission = await Location.getForegroundPermissionsAsync();
+        if (cancelled || !permission.granted) return;
+
+        const subscription = await Location.watchPositionAsync(
+          {
+            accuracy: Location.Accuracy.High,
+            timeInterval: 1000,
+            distanceInterval: 1,
+          },
+          (location) => {
+            if (cancelled) return;
+            setLiveLocation({
+              latitude: location.coords.latitude,
+              longitude: location.coords.longitude,
+            });
+          },
+        );
+
+        if (cancelled) {
+          subscription.remove();
+          return;
+        }
+        mapLocationSubscriptionRef.current = subscription;
+      } catch {
+        // Ignore errors here; map location is an enhancement on top of walk tracking.
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      mapLocationSubscriptionRef.current?.remove();
+      mapLocationSubscriptionRef.current = null;
+    };
+  }, [isAndroidService]);
+
+  useEffect(() => {
+    if (!isMapFollowingUser || !liveLocation) return;
+    const now = Date.now();
+    if (now - lastFollowAnimateAtRef.current < 450) return;
+    lastFollowAnimateAtRef.current = now;
+    centerMapOnCoord(liveLocation, 650);
+  }, [centerMapOnCoord, isMapFollowingUser, liveLocation]);
+
   const resolveFallbackPresentation = useCallback((state: FallbackState, nowMs: number) => {
     const recentStep = lastStepAtRef.current != null && nowMs - lastStepAtRef.current <= WALKING_LATCH_MS;
     const recentGpsMotion = lastGpsMotionAtRef.current != null && nowMs - lastGpsMotionAtRef.current <= WALKING_LATCH_MS;
@@ -1333,22 +1471,21 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
     applyFallbackPermissionResults(resolvedPermissions);
 
     if (resolvedPermissions.locationForeground) {
-      try {
-        locationSubscriptionRef.current = await Location.watchPositionAsync(
-          {
-            accuracy: Location.Accuracy.High,
-            timeInterval: 1000,
-            distanceInterval: 1,
-          },
-          (location) => {
-            const nextCoord: Coord = {
-              latitude: location.coords.latitude,
-              longitude: location.coords.longitude,
-            };
-            setLiveLocation(nextCoord);
-            const timestampMs = typeof location.timestamp === 'number' ? location.timestamp : Date.now();
-            const previous = lastCoordRef.current;
-            lastCoordRef.current = { coord: nextCoord, timestampMs };
+      locationSubscriptionRef.current = await Location.watchPositionAsync(
+        {
+          accuracy: Location.Accuracy.High,
+          timeInterval: 1000,
+          distanceInterval: 1,
+        },
+        (location) => {
+          const nextCoord: Coord = {
+            latitude: location.coords.latitude,
+            longitude: location.coords.longitude,
+          };
+          setLiveLocation(nextCoord);
+          const timestampMs = typeof location.timestamp === 'number' ? location.timestamp : Date.now();
+          const previous = lastCoordRef.current;
+          lastCoordRef.current = { coord: nextCoord, timestampMs };
 
             // Accumulate route for map polyline
             setRouteCoords((prev) => [...prev, nextCoord]);
@@ -2403,7 +2540,62 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
           </MapView>
 
           <View style={styles.heroOverlay}>
-            <Pressable
+            <Animated.View style={[styles.heroStatusRow, { opacity: statusChangeAnim, transform: [{ scale: statusChangeAnim }] }]}>
+              <View
+                style={[
+                  styles.statusPill,
+                  {
+                    backgroundColor: statusTint,
+                    borderColor: statusBorderColor,
+                  },
+                ]}
+              >
+                <View style={styles.statusDotWrap}>
+                  {(displayState === 'walking' || displayState === 'calibrating') && (
+                    <Animated.View
+                      style={[
+                        styles.statusDotPulse,
+                        {
+                          backgroundColor: statusColor,
+                          opacity: pulseOpacity,
+                          transform: [{ scale: pulseScale }],
+                        },
+                      ]}
+                    />
+                  )}
+                  <View style={[styles.statusDot, { backgroundColor: statusColor }]} />
+                </View>
+                <Ionicons
+                  name={
+                    displayState === 'walking' ? 'walk' :
+                    displayState === 'paused' ? 'pause-circle-outline' :
+                    displayState === 'not_moving' ? 'body-outline' :
+                    displayState === 'location_off' ? 'location-outline' :
+                    'radio-outline'
+                  }
+                  size={16}
+                  color={statusColor}
+                />
+                <Text variant="body" style={[styles.statusPillText, { color: statusColor }]}>{heroStatusLabel}</Text>
+              </View>
+              <Pressable
+                style={[
+                  styles.mapIcon,
+                  {
+                    backgroundColor: palette.bgSurfaceElevated,
+                    borderColor: isMapFollowingUser
+                      ? (themeMode === 'dark' ? 'rgba(46,233,166,0.30)' : 'rgba(5,150,105,0.24)')
+                      : palette.borderSoft,
+                  },
+                ]}
+                onPress={() => { void handleLocatePress(); }}
+              >
+                <Ionicons name={isMapFollowingUser ? 'locate' : 'locate-outline'} size={20} color={statusColor} />
+              </Pressable>
+            </Animated.View>
+
+          {showCompactWarning && (
+            <View
               style={[
                 styles.mapIcon,
                 {
@@ -2520,7 +2712,44 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
           </View>
 
           <View style={styles.metricGrid}>
-            {defaultCards.map(renderMetricCard)}
+            <View style={[styles.metricCard, { backgroundColor: palette.bgSurface, borderColor: palette.borderSoft }]}>
+              <Text variant="body">Time Remaining</Text>
+              {plan ? (
+                <View style={{ flexDirection: 'row', alignItems: 'baseline' }}>
+                  <Text style={styles.metricDigitalClock}>
+                    {formatClockDigital(remainingSeconds).split(':')[0]}
+                  </Text>
+                  <Animated.View style={{ opacity: clockColonAnim }}>
+                    <Text style={styles.metricDigitalClock}>:</Text>
+                  </Animated.View>
+                  <Text style={styles.metricDigitalClock}>
+                    {formatClockDigital(remainingSeconds).split(':').slice(1).join(':')}
+                  </Text>
+                </View>
+              ) : (
+                <Text variant="heading" style={styles.metricValue}>N/A</Text>
+              )}
+            </View>
+            <View style={[styles.metricCard, { backgroundColor: palette.bgSurface, borderColor: palette.borderSoft }]}>
+              <Text variant="body">Distance</Text>
+              <Animated.View style={{ transform: [{ scale: distanceScaleAnim }] }}>
+                <Text variant="heading" style={styles.metricValue}>{formatMiles(distanceMeters)}</Text>
+              </Animated.View>
+            </View>
+            <View style={[styles.metricCard, { backgroundColor: palette.bgSurface, borderColor: palette.borderSoft }]}>
+              <Text variant="body">Speed</Text>
+              <Animated.View style={{ transform: [{ scale: speedScaleAnim }] }}>
+                <Text variant="heading" style={styles.metricValue}>
+                  {activeSeconds > 0 ? ((distanceMeters / 1609.34) / (activeSeconds / 3600)).toFixed(1) : '0.0'} mph
+                </Text>
+              </Animated.View>
+            </View>
+            <View style={[styles.metricCard, { backgroundColor: palette.bgSurface, borderColor: palette.borderSoft }]}>
+              <Text variant="body">Steps</Text>
+              <Animated.View style={{ transform: [{ scale: stepScaleAnim }] }}>
+                <Text variant="heading" style={styles.metricValue}>{steps.toLocaleString()}</Text>
+              </Animated.View>
+            </View>
           </View>
 
           {hasExtraCards && (
@@ -2571,39 +2800,15 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
                 disabled={isStartingWalk || startCountdown != null}
                 testID="walking-pause-resume"
               />
-              <WalkActionButton
-                palette={palette}
-                label="End walk"
-                iconName="close-outline"
-                tone="danger"
-                onPress={() => setShowEndModal(true)}
-                disabled={isStartingWalk || startCountdown != null}
-                testID="walking-end"
-              />
-            </View>
-          ) : shouldShowRecoveryAction ? (
-            <View style={styles.recoveryActionRow}>
-              <Button
-                title="Retry start"
-                onPress={() => { void handleRetryStart(); }}
-                full
-                disabled={isStartingWalk || startCountdown != null}
-                style={styles.recoveryActionButton}
-                testID="walking-start-recovery"
-              />
-            </View>
-          ) : shouldShowStartAction ? (
-            <View style={styles.recoveryActionRow}>
-              <Button
-                title="Start walk"
-                onPress={() => { void handleRetryStart(); }}
-                full
-                disabled={isStartingWalk || startCountdown != null}
-                style={styles.recoveryActionButton}
-                testID="walking-start-manual"
-              />
-            </View>
-          ) : null}
+            </Pressable>
+            <Button
+              title="End"
+              onPress={() => setShowEndModal(true)}
+              variant="danger"
+              style={styles.actionButton}
+              testID="walking-end"
+            />
+          </View>
         </Animated.View>
       </View>
 
@@ -2914,6 +3119,40 @@ const styles = StyleSheet.create({
     borderWidth: 1.5,
     borderColor: '#ffffff',
   },
+  heroStatusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  statusPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  statusPillText: {
+    fontWeight: theme.fontWeight.semibold,
+  },
+  statusDotWrap: {
+    width: 14,
+    height: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(59,130,246,0.22)',
+    borderWidth: 1,
+    borderColor: 'rgba(59,130,246,0.48)',
+  },
+  userLocationDot: {
+    width: 9,
+    height: 9,
+    borderRadius: 4.5,
+    backgroundColor: '#3b82f6',
+    borderWidth: 1.5,
+    borderColor: '#ffffff',
+  },
   statusDot: {
     width: 10,
     height: 10,
@@ -3044,7 +3283,7 @@ const styles = StyleSheet.create({
   dock: {
     borderRadius: 22,
     borderWidth: 1,
-    paddingHorizontal: 16,
+    paddingHorizontal: 14,
     paddingTop: 8,
     paddingBottom: 8,
     gap: 8,
@@ -3089,7 +3328,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    flexShrink: 1,
+    paddingVertical: 3,
+    marginBottom: 2,
   },
   statusCapsuleLabel: {
     fontWeight: theme.fontWeight.semibold,
@@ -3114,64 +3354,19 @@ const styles = StyleSheet.create({
     paddingTop: 2,
   },
   metricCard: {
-    width: '48.5%',
-    flexBasis: '48.5%',
-    flexGrow: 0,
-    flexShrink: 0,
-    minHeight: 96,
-    borderRadius: 14,
-    borderWidth: 1,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    gap: 8,
-    alignItems: 'flex-start',
-    justifyContent: 'space-between',
-  },
-  metricLabel: {
-    letterSpacing: -0.1,
-  },
-  metricValueWrap: {
-    width: '100%',
-    minHeight: 44,
-    justifyContent: 'flex-end',
-  },
-  metricValueWrapCentered: {
     flex: 1,
-    minHeight: 0,
+    minWidth: '48%',
+    borderRadius: 12,
+    borderWidth: 1,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    gap: 2,
     alignItems: 'center',
-    justifyContent: 'center',
-  },
-  flipFace: {
-    width: '100%',
-    alignItems: 'flex-start',
-    justifyContent: 'space-between',
-    gap: 6,
-    backfaceVisibility: 'hidden',
-  },
-  flipFaceBack: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    alignItems: 'flex-start',
-    justifyContent: 'space-between',
-    gap: 6,
-  },
-  hintRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 4,
-    paddingTop: 6,
-    paddingBottom: 2,
-  },
-  hintText: {
-    fontSize: 11,
+    justifyContent: 'flex-start',
   },
   metricValue: {
-    fontSize: 22,
-    lineHeight: 26,
+    fontSize: 16,
+    lineHeight: 20,
     fontWeight: '600',
     fontVariant: ['tabular-nums' as const],
   },
@@ -3255,19 +3450,9 @@ const styles = StyleSheet.create({
     alignItems: 'center' as const,
     justifyContent: 'center' as const,
   },
-  walkActionButtonGlow: {
-    shadowColor: theme.colors.danger,
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.18,
-    shadowRadius: 10,
-    elevation: 4,
-  },
-  walkActionButtonLabel: {
-    fontWeight: theme.fontWeight.semibold,
-  },
   metricDigitalClock: {
-    fontSize: 26,
-    lineHeight: 32,
+    fontSize: 22,
+    lineHeight: 28,
     fontWeight: theme.fontWeight.bold,
     letterSpacing: -0.5,
     fontVariant: ['tabular-nums' as const],
