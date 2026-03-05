@@ -209,17 +209,16 @@ export const AboutHelpScreen: React.FC<Props> = ({ navigation }) => {
           {setupSteps.map((step, index) => {
             const isLast = index === setupSteps.length - 1;
             return (
-              <View
-                key={step}
-                style={[
-                  styles.stepRow,
-                  !isLast && { borderBottomColor: palette.borderSoft, borderBottomWidth: 1 },
-                ]}
-              >
-                <View style={[styles.stepBadge, { backgroundColor: palette.accentMuted }]}>
-                  <Text variant="bodySmall" style={[styles.stepBadgeText, { color: palette.accentPrimary }]}>
-                    {index + 1}
-                  </Text>
+              <View key={step} style={styles.stepRow}>
+                <View style={styles.stepIndicatorCol}>
+                  <View style={[styles.stepBadge, { backgroundColor: palette.accentPrimary }]}>
+                    <Text variant="bodySmall" style={[styles.stepBadgeText, { color: palette.pillSelectedText }]}>
+                      {index + 1}
+                    </Text>
+                  </View>
+                  {!isLast && (
+                    <View style={[styles.stepConnector, { backgroundColor: palette.accentMuted }]} />
+                  )}
                 </View>
                 <Text variant="bodySmall" color={palette.textMuted} style={styles.stepText}>
                   {step}
@@ -266,8 +265,15 @@ export const AboutHelpScreen: React.FC<Props> = ({ navigation }) => {
                 ]}
               >
                 <View style={styles.contributorTopRow}>
-                  <View style={[styles.contributorIcon, { backgroundColor: palette.inputBg }]}>
-                    <Ionicons name="person-outline" size={18} color={palette.accentPrimary} />
+                  <View style={[styles.contributorIcon, { backgroundColor: palette.accentMuted }]}>
+                    <Text variant="body" style={[styles.contributorInitials, { color: palette.accentPrimary }]}>
+                      {contributor.name
+                        .split(' ')
+                        .filter(Boolean)
+                        .slice(0, 2)
+                        .map((w) => w[0].toUpperCase())
+                        .join('')}
+                    </Text>
                   </View>
                   <View style={styles.contributorMeta}>
                     <Text variant="body" style={styles.contributorName}>
@@ -341,23 +347,34 @@ const styles = StyleSheet.create({
   stepRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    paddingVertical: 12,
-    gap: 12,
+  },
+  stepIndicatorCol: {
+    alignItems: 'center',
+    marginRight: 12,
   },
   stepBadge: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
+    width: 26,
+    height: 26,
+    borderRadius: 13,
     alignItems: 'center',
     justifyContent: 'center',
-    marginTop: 1,
   },
   stepBadgeText: {
-    fontWeight: theme.fontWeight.semibold,
+    fontWeight: theme.fontWeight.bold,
+    fontSize: theme.fontSize.sm,
+  },
+  stepConnector: {
+    width: 2,
+    flex: 1,
+    minHeight: 14,
+    borderRadius: 1,
+    marginVertical: 4,
   },
   stepText: {
     flex: 1,
     lineHeight: 20,
+    paddingTop: 3,
+    paddingBottom: 8,
   },
   faqItem: {
     paddingVertical: 4,
@@ -418,11 +435,15 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   contributorIcon: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  contributorInitials: {
+    fontWeight: theme.fontWeight.semibold,
+    fontSize: theme.fontSize.sm,
   },
   contributorMeta: {
     flex: 1,

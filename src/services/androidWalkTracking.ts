@@ -37,6 +37,7 @@ const normalizeSnapshot = (value: ActiveWalkSnapshot | null | undefined): Active
     lastMotionAtMs: value.lastMotionAtMs ?? null,
     lastStepAtMs: value.lastStepAtMs ?? null,
     lastGpsMotionAtMs: value.lastGpsMotionAtMs ?? null,
+    lastAccelMotionAtMs: value.lastAccelMotionAtMs ?? null,
     lastAcceptedLocationAtMs: value.lastAcceptedLocationAtMs ?? null,
   };
 };

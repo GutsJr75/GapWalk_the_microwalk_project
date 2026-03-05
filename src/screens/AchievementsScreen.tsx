@@ -9,6 +9,7 @@ import { ScreenHeader } from '../components/ScreenHeader';
 import { Card } from '../components/Card';
 import { Text } from '../components/Text';
 import { Button } from '../components/Button';
+import { ScreenState } from '../components/ScreenState';
 import { TwoActionBar } from '../components/TwoActionBar';
 import { theme } from '../theme';
 import { screenChrome } from '../theme/screenChrome';
@@ -146,20 +147,27 @@ export const AchievementsScreen: React.FC<Props> = ({ navigation, route }) => {
                 !isUnlocked && styles.lockedRow,
               ]}
             >
-              <View
-                style={[
-                  styles.badgeCircle,
-                  {
-                    borderColor: isUnlocked ? item.color : palette.textMuted,
-                    backgroundColor: isUnlocked ? palette.accentMuted : palette.inputBg,
-                  },
-                ]}
-              >
-                <Ionicons
-                  name={item.icon as any}
-                  size={18}
-                  color={isUnlocked ? item.color : palette.textMuted}
-                />
+              <View style={styles.badgeWrap}>
+                <View
+                  style={[
+                    styles.badgeCircle,
+                    {
+                      borderColor: isUnlocked ? item.color : palette.textMuted,
+                      backgroundColor: isUnlocked ? palette.accentMuted : palette.inputBg,
+                    },
+                  ]}
+                >
+                  <Ionicons
+                    name={item.icon as any}
+                    size={18}
+                    color={isUnlocked ? item.color : palette.textMuted}
+                  />
+                </View>
+                {!isUnlocked && (
+                  <View style={[styles.lockOverlay, { backgroundColor: palette.bgSurface }]}>
+                    <Ionicons name="lock-closed" size={10} color={palette.textMuted} />
+                  </View>
+                )}
               </View>
 
               <View style={styles.rowBody}>
@@ -237,21 +245,14 @@ export const AchievementsScreen: React.FC<Props> = ({ navigation, route }) => {
         </Card>
 
         {loading ? (
-          <Card elevated style={styles.statusCard}>
-            <Text variant="body" style={styles.statusTitle}>
-              Loading achievements...
-            </Text>
-          </Card>
+          <ScreenState variant="loading" title="Loading achievements…" />
         ) : loadError ? (
-          <Card elevated style={styles.statusCard}>
-            <Text variant="body" style={styles.statusTitle}>
-              Could not load achievements
-            </Text>
-            <Text variant="bodySmall" style={[styles.statusBody, { color: palette.textMuted }]}>
-              {loadError}
-            </Text>
-            <Button title="Try again" onPress={() => void load()} variant="outline" style={styles.retryBtn} />
-          </Card>
+          <ScreenState
+            variant="error"
+            title="Could not load achievements"
+            subtitle={loadError}
+            onRetry={() => void load()}
+          />
         ) : (
           <>
             {renderSection('Unlocked', unlockedDefs, 'unlocked', 'achievements-section-unlocked')}
@@ -352,6 +353,11 @@ const styles = StyleSheet.create({
   lockedRow: {
     opacity: 0.76,
   },
+  badgeWrap: {
+    position: 'relative',
+    marginRight: 12,
+    marginTop: 2,
+  },
   badgeCircle: {
     width: 38,
     height: 38,
@@ -359,8 +365,16 @@ const styles = StyleSheet.create({
     borderWidth: 1.8,
     alignItems: 'center',
     justifyContent: 'center',
-    marginRight: 12,
-    marginTop: 2,
+  },
+  lockOverlay: {
+    position: 'absolute',
+    bottom: -2,
+    right: -2,
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   rowBody: {
     flex: 1,
