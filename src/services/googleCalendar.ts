@@ -82,9 +82,9 @@ const FALLBACK_NATIVE_APP_ID = 'com.gapwalk.app';
  */
 
 // Prefer env vars so you can set in .env without editing code (restart app after changing).
-const GOOGLE_WEB_CLIENT_ID = (typeof process !== 'undefined' && process.env?.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID) || 'YOUR_GOOGLE_WEB_CLIENT_ID';
-const GOOGLE_IOS_CLIENT_ID = (typeof process !== 'undefined' && process.env?.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID) || 'YOUR_GOOGLE_IOS_CLIENT_ID';
-const GOOGLE_ANDROID_CLIENT_ID = (typeof process !== 'undefined' && process.env?.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID) || 'YOUR_GOOGLE_ANDROID_CLIENT_ID';
+const GOOGLE_WEB_CLIENT_ID = process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID || 'YOUR_GOOGLE_WEB_CLIENT_ID';
+const GOOGLE_IOS_CLIENT_ID = process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID || 'YOUR_GOOGLE_IOS_CLIENT_ID';
+const GOOGLE_ANDROID_CLIENT_ID = process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID || 'YOUR_GOOGLE_ANDROID_CLIENT_ID';
 
 const SCOPES = ['https://www.googleapis.com/auth/calendar.readonly'];
 
