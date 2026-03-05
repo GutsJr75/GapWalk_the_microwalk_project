@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Animated, AppState, AppStateStatus, Easing, PanResponder, Platform, Pressable, StyleSheet, View } from 'react-native';
+import { Animated, AppState, AppStateStatus, Easing, Linking, PanResponder, Platform, Pressable, StyleSheet, View } from 'react-native';
 import MapView, { Marker, Polyline } from 'react-native-maps';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { Ionicons } from '@expo/vector-icons';
@@ -213,6 +213,7 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
   const [showEndModal, setShowEndModal] = useState(false);
   const [showIdleModal, setShowIdleModal] = useState(false);
   const [showCompletion, setShowCompletion] = useState(false);
+  const [showBackgroundLimitModal, setShowBackgroundLimitModal] = useState(false);
   const [completionKind, setCompletionKind] = useState<CompletionKind>('completed');
   const [completionStats, setCompletionStats] = useState<{ activeSeconds: number; distanceMeters: number; steps: number }>({
     activeSeconds: 0,
@@ -252,6 +253,9 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
     new Animated.Value(0),
   ]).current;
   const completionDismissLockedRef = useRef(false);
+  const backgroundPromptTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const sessionStartedRef = useRef(sessionStarted);
+  const backgroundTrackingLimitedRef = useRef(false);
   const walkRhythmAnim = useRef(new Animated.Value(0)).current;
   const stepScaleAnim = useRef(new Animated.Value(1)).current;
   const distanceScaleAnim = useRef(new Animated.Value(1)).current;
@@ -278,8 +282,19 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
   }, [fallbackState]);
 
   useEffect(() => {
+    sessionStartedRef.current = sessionStarted;
+  }, [sessionStarted]);
+
+  useEffect(() => {
     lastAndroidSnapshotRef.current = activeWalkSnapshot;
   }, [activeWalkSnapshot]);
+
+  const clearBackgroundPromptTimer = useCallback(() => {
+    if (backgroundPromptTimerRef.current != null) {
+      clearTimeout(backgroundPromptTimerRef.current);
+      backgroundPromptTimerRef.current = null;
+    }
+  }, []);
 
   const clearStartCountdown = useCallback(() => {
     countdownTimerIdsRef.current.forEach((timerId) => clearTimeout(timerId));
@@ -359,12 +374,30 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
   const steps = isAndroidService
     ? (displayedSnapshot?.steps ?? 0)
     : fallbackState.steps;
+  const locationPermissionGranted = isAndroidService
+    ? !!displayedSnapshot?.locationPermissionGranted
+    : fallbackState.locationPermissionGranted;
+  const backgroundLocationGranted = isAndroidService
+    ? !!displayedSnapshot?.backgroundLocationGranted
+    : fallbackState.backgroundLocationGranted;
   const permissionDenied = isAndroidService
     ? displayedSnapshot?.displayState === 'location_off'
     : fallbackState.displayState === 'location_off';
-  const locationWarning = isAndroidService
-    ? (displayedSnapshot?.warning ?? null)
-    : fallbackState.warning;
+  const backgroundTrackingLimited = locationPermissionGranted && !backgroundLocationGranted;
+  const showCompactWarning = permissionDenied || backgroundTrackingLimited;
+
+  useEffect(() => {
+    backgroundTrackingLimitedRef.current = backgroundTrackingLimited;
+  }, [backgroundTrackingLimited]);
+
+  useEffect(() => {
+    if (!sessionStarted || !backgroundTrackingLimited) {
+      setShowBackgroundLimitModal(false);
+      clearBackgroundPromptTimer();
+      return;
+    }
+    setShowBackgroundLimitModal(true);
+  }, [backgroundTrackingLimited, clearBackgroundPromptTimer, sessionStarted]);
 
   useEffect(() => {
     statusPulseAnim.stopAnimation();
@@ -1243,6 +1276,44 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
     }, 800);
   }, []);
 
+  const openAppSettings = useCallback(async () => {
+    if (Platform.OS === 'ios') {
+      try {
+        await Linking.openURL('app-settings:');
+        return;
+      } catch {
+        // Fallback below.
+      }
+    }
+
+    try {
+      await Linking.openSettings();
+    } catch (error) {
+      if (__DEV__) console.warn('Failed to open app settings:', error);
+    }
+  }, []);
+
+  const dismissBackgroundLimitModal = useCallback(() => {
+    setShowBackgroundLimitModal(false);
+    clearBackgroundPromptTimer();
+    backgroundPromptTimerRef.current = setTimeout(() => {
+      if (sessionStartedRef.current && backgroundTrackingLimitedRef.current) {
+        setShowBackgroundLimitModal(true);
+      }
+    }, 15_000);
+  }, [clearBackgroundPromptTimer]);
+
+  const goToSettingsForBackgroundLocation = useCallback(() => {
+    dismissBackgroundLimitModal();
+    void openAppSettings();
+  }, [dismissBackgroundLimitModal, openAppSettings]);
+
+  useEffect(() => {
+    return () => {
+      clearBackgroundPromptTimer();
+    };
+  }, [clearBackgroundPromptTimer]);
+
   const statusColor = useMemo(() => {
     if (displayState === 'paused') return '#f59e0b';
     if (displayState === 'walking') return palette.accentPrimary;
@@ -1414,28 +1485,37 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
               </Pressable>
             </Animated.View>
 
-          {(permissionDenied || locationWarning) && (
+          {showCompactWarning && (
             <View
               style={[
-                styles.warningCard,
+                styles.warningBanner,
                 {
-                  backgroundColor: themeMode === 'dark' ? 'rgba(239,68,68,0.10)' : 'rgba(239,68,68,0.08)',
+                  backgroundColor: themeMode === 'dark' ? 'rgba(11,19,34,0.94)' : 'rgba(255,255,255,0.96)',
                   borderColor: themeMode === 'dark' ? 'rgba(239,68,68,0.26)' : 'rgba(239,68,68,0.22)',
                 },
               ]}
               testID="walking-location-deny"
             >
-              <Ionicons name={permissionDenied ? 'location-outline' : 'alert-circle-outline'} size={18} color="#ef4444" />
-              <View style={styles.warningCopy}>
-                <Text variant="body" style={styles.warningTitle}>
-                  {permissionDenied ? 'Location access is off' : 'Background tracking is limited'}
-                </Text>
-                <Text variant="bodySmall" color={palette.textMuted}>
-                  {permissionDenied
-                    ? 'Distance updates need location permission to stay accurate.'
-                    : locationWarning}
+              <Ionicons name={permissionDenied ? 'location-outline' : 'alert-circle-outline'} size={16} color="#ef4444" />
+              <View style={styles.warningBannerCopy}>
+                <Text variant="bodySmall" style={styles.warningBannerTitle} numberOfLines={1}>
+                  {permissionDenied ? 'Location access is off' : 'Set location to Allow all the time'}
                 </Text>
               </View>
+              <Pressable
+                style={[
+                  styles.warningAction,
+                  {
+                    borderColor: themeMode === 'dark' ? 'rgba(239,68,68,0.34)' : 'rgba(239,68,68,0.28)',
+                    backgroundColor: themeMode === 'dark' ? 'rgba(239,68,68,0.14)' : 'rgba(239,68,68,0.12)',
+                  },
+                ]}
+                onPress={goToSettingsForBackgroundLocation}
+              >
+                <Text variant="bodySmall" style={styles.warningActionText} color="#ef4444">
+                  Settings
+                </Text>
+              </Pressable>
             </View>
           )}
           </View>
@@ -1554,6 +1634,31 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
             onPress={() => { void saveForLater(); }}
             style={styles.modalButton}
             testID="walking-idle-later"
+          />
+        </View>
+      </Modal>
+
+      <Modal
+        visible={showBackgroundLimitModal}
+        onClose={() => {}}
+        title="Set location to Allow all the time"
+      >
+        <Text variant="body" style={styles.modalText}>
+          Set the location permission to "Allow all the time" so distance updates continue when GapWalk is in the background.
+        </Text>
+        <View style={styles.modalRow}>
+          <Button
+            title="Later"
+            onPress={dismissBackgroundLimitModal}
+            variant="outline"
+            style={styles.modalButton}
+            testID="walking-bg-limit-dismiss"
+          />
+          <Button
+            title="Go to Settings"
+            onPress={goToSettingsForBackgroundLocation}
+            style={styles.modalButton}
+            testID="walking-bg-limit-fix"
           />
         </View>
       </Modal>
@@ -1852,21 +1957,43 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 10,
   },
-  warningCard: {
+  warningBanner: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 12,
-    borderRadius: 18,
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 10,
+    borderRadius: 14,
     borderWidth: 1,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
   },
-  warningCopy: {
+  warningBannerCopy: {
     flex: 1,
-    gap: 4,
+    gap: 2,
   },
-  warningTitle: {
+  warningBannerTitle: {
     fontWeight: theme.fontWeight.semibold,
+    lineHeight: 18,
+  },
+  warningAction: {
+    minWidth: 52,
+    borderRadius: 999,
+    borderWidth: 1,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  warningActionText: {
+    lineHeight: 16,
+    fontWeight: theme.fontWeight.semibold,
+  },
+  warningDismiss: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   rhythmRow: {
     flexDirection: 'row',
