@@ -809,7 +809,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
     }
   };
 
-  const startGoogleAuth = async () => {
+  const startGoogleAuth = useCallback(async () => {
     const configError = getGoogleConfigurationError();
     if (configError || !isGoogleConfigured()) {
       showMessage(
@@ -834,7 +834,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
       showMessage('Sign-in Failed', toUserFriendlyError(error));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [googleResponse]);
+  }, [handleGoogleCalendarImport]);
 
   const currentSignature = useMemo(() => buildScheduleSignature(entriesByDay), [entriesByDay]);
   const hasUnsavedChanges = currentSignature !== initialSignature;

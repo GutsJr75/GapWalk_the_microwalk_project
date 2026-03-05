@@ -37,6 +37,7 @@ import { timeUtils } from '../utils/time';
 import { requestAllPermissions } from '../services/permissions';
 import { toUserFriendlyError } from '../utils/errorMessages';
 import { authStorage } from '../data/authStorage';
+import { guidanceStorage } from '../data/guidanceStorage';
 import { SuccessToast } from '../components/SuccessToast';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -162,7 +163,7 @@ export const DashboardScreen: React.FC<Props> = ({ navigation, route }) => {
     hasCompletedOnboarding,
     setIsAuthenticated,
     setAuthUser,
-    guidanceSeen,
+    guidanceSeen = {},
     setGuidanceSeen,
   } = useAppStore();
   const [refreshing, setRefreshing] = useState(false);

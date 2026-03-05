@@ -11,6 +11,7 @@ const LAST_NOTIF_KEY = 'gapwalk_last_notif_response_key';
 const SETTINGS_DISTANCE_UNIT_KEY = 'gapwalk_settings_distance_unit';
 const SETTINGS_FIRST_DAY_KEY = 'gapwalk_settings_first_day';
 const SETTINGS_VIBRATION_KEY = 'gapwalk_settings_vibration';
+const LAST_SYNCED_AT_KEY = 'gapwalk_last_synced_at';
 
 export interface StoredAuthUser {
   email?: string;
@@ -139,6 +140,16 @@ export const authStorage = {
     if (val === '1') return true;
     if (val === '0') return false;
     return null;
+  },
+
+  async saveLastSyncedAt(syncedAt: string): Promise<void> {
+    if (Platform.OS === 'web') return;
+    try { await SecureStore.setItemAsync(LAST_SYNCED_AT_KEY, syncedAt); } catch { /* ignore */ }
+  },
+
+  async getLastSyncedAt(): Promise<string | null> {
+    if (Platform.OS === 'web') return null;
+    try { return await SecureStore.getItemAsync(LAST_SYNCED_AT_KEY); } catch { return null; }
   },
 
   async clearAll(): Promise<void> {

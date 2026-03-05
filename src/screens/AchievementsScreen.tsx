@@ -41,7 +41,7 @@ const formatUnlockedDate = (iso: string, language: 'en' | 'es'): string => {
 
 export const AchievementsScreen: React.FC<Props> = ({ navigation, route }) => {
   const palette = useThemePalette();
-  const { themeMode, language, guidanceSeen, setGuidanceSeen } = useAppStore();
+  const { themeMode, language, guidanceSeen = {}, setGuidanceSeen } = useAppStore();
   const [unlockedAchievements, setUnlockedAchievements] = useState<UnlockedAchievement[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);

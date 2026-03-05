@@ -73,6 +73,11 @@ interface AppState {
   setFirstDayOfWeek: (day: 'sun' | 'mon') => void;
   vibrationEnabled: boolean;
   setVibrationEnabled: (val: boolean) => void;
+
+  // Guidance "seen" flags
+  guidanceSeen: Partial<Record<GuidanceKey, boolean>>;
+  setGuidanceSeen: (key: GuidanceKey, value: boolean) => void;
+  setAllGuidanceSeen: (flags: Record<GuidanceKey, boolean>) => void;
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -145,4 +150,10 @@ export const useAppStore = create<AppState>((set) => ({
   setFirstDayOfWeek: (day) => set({ firstDayOfWeek: day }),
   vibrationEnabled: true,
   setVibrationEnabled: (val) => set({ vibrationEnabled: val }),
+
+  // Guidance "seen" flags
+  guidanceSeen: {},
+  setGuidanceSeen: (key, value) =>
+    set((state) => ({ guidanceSeen: { ...state.guidanceSeen, [key]: value } })),
+  setAllGuidanceSeen: (flags) => set({ guidanceSeen: flags }),
 }));
