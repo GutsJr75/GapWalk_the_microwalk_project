@@ -17,9 +17,16 @@ export const StreakCard: React.FC<StreakCardProps> = ({ streak }) => {
   const { themeMode } = useAppStore();
   const palette = useThemePalette();
   const pulseAnim = useRef(new Animated.Value(1)).current;
+  const hasStreak = streak.currentStreak > 0;
+  const iconColor = hasStreak
+    ? (themeMode === 'dark' ? '#fdba74' : '#c2410c')
+    : palette.textPrimary;
+  const iconWrapBg = hasStreak
+    ? withAlpha('#f97316', themeMode === 'dark' ? 0.24 : 0.14)
+    : withAlpha(palette.textMuted, themeMode === 'dark' ? 0.22 : 0.12);
 
   useEffect(() => {
-    if (streak.currentStreak > 0) {
+    if (hasStreak) {
       const loop = Animated.loop(
         Animated.sequence([
           Animated.timing(pulseAnim, {
@@ -41,7 +48,7 @@ export const StreakCard: React.FC<StreakCardProps> = ({ streak }) => {
     } else {
       pulseAnim.setValue(1);
     }
-  }, [streak.currentStreak > 0]);
+  }, [hasStreak]);
 
   return (
     <Card
@@ -56,12 +63,12 @@ export const StreakCard: React.FC<StreakCardProps> = ({ streak }) => {
       ]}
     >
       <View style={styles.content}>
-        <View style={styles.iconWrap}>
+        <View style={[styles.iconWrap, { backgroundColor: iconWrapBg }]}>
           <Animated.View style={{ transform: [{ scale: pulseAnim }] }}>
             <Ionicons
-              name={streak.currentStreak > 0 ? 'flame' : 'flame-outline'}
-              size={28}
-              color={streak.currentStreak > 0 ? '#f97316' : palette.textMuted}
+              name={hasStreak ? 'flame' : 'flame-outline'}
+              size={26}
+              color={iconColor}
             />
           </Animated.View>
         </View>
@@ -96,7 +103,6 @@ const styles = StyleSheet.create({
     width: 44,
     height: 44,
     borderRadius: 22,
-    backgroundColor: 'rgba(249,115,22,0.12)',
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: 12,

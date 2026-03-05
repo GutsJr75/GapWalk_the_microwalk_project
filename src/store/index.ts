@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { ActiveWalkSnapshot, Preferences, ScheduleSource, NudgePlan, WalkPrompt, WalkSession } from '../types';
+import { ActiveWalkSnapshot, Preferences, ScheduleSource, NudgePlan, WalkPrompt, WalkSession, WalkDisplayCard, ALL_WALK_DISPLAY_CARDS } from '../types';
 
 interface AppState {
   // Onboarding state
@@ -77,6 +77,10 @@ interface AppState {
   setFirstDayOfWeek: (day: 'sun' | 'mon') => void;
   vibrationEnabled: boolean;
   setVibrationEnabled: (val: boolean) => void;
+
+  // Walk display cards
+  walkDisplayCards: WalkDisplayCard[];
+  setWalkDisplayCards: (cards: WalkDisplayCard[]) => void;
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -154,4 +158,8 @@ export const useAppStore = create<AppState>((set) => ({
   setFirstDayOfWeek: (day) => set({ firstDayOfWeek: day }),
   vibrationEnabled: true,
   setVibrationEnabled: (val) => set({ vibrationEnabled: val }),
+
+  // Walk display cards
+  walkDisplayCards: [...ALL_WALK_DISPLAY_CARDS],
+  setWalkDisplayCards: (cards) => set({ walkDisplayCards: cards }),
 }));

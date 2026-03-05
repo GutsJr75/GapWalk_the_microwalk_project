@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Animated, Easing, Pressable, StyleSheet, View } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
+import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { RootStackParamList } from '../../App';
 import { Text } from '../components/Text';
@@ -377,13 +378,24 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
             </View>
 
             <View style={styles.actionRow}>
-              <Button
-                title={paused ? 'Resume' : 'Pause'}
+              <Pressable
                 onPress={togglePause}
-                variant="secondary"
-                style={styles.actionBtn}
+                style={({ pressed }) => [
+                  styles.fabButton,
+                  {
+                    backgroundColor: palette.bgSurface,
+                    borderColor: palette.borderStrong,
+                  },
+                  pressed && { opacity: 0.7, transform: [{ scale: 0.92 }] },
+                ]}
                 testID="walking-pause-resume"
-              />
+              >
+                <Ionicons
+                  name={paused ? 'play' : 'pause'}
+                  size={26}
+                  color={palette.accentPrimary}
+                />
+              </Pressable>
               <Button
                 title="End"
                 onPress={() => setShowEndModal(true)}
@@ -572,7 +584,15 @@ const styles = StyleSheet.create({
   },
   actionRow: {
     flexDirection: 'row',
-    gap: 16,
+    gap: 10,
+  },
+  fabButton: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    borderWidth: 1.5,
+    alignItems: 'center' as const,
+    justifyContent: 'center' as const,
   },
   actionBtn: {
     flex: 1,

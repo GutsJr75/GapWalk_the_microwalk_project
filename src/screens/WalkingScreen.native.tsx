@@ -13,7 +13,7 @@ import { Button } from '../components/Button';
 import { Modal } from '../components/Modal';
 import { theme } from '../theme';
 import { useThemePalette } from '../theme/palette';
-import { SensorHealth, ActiveWalkSnapshot, NudgePlan, WalkDisplayState, WalkMotionConfidence, WalkMotionState, WalkSession, WalkStepSource } from '../types';
+import { SensorHealth, ActiveWalkSnapshot, NudgePlan, WalkDisplayState, WalkMotionConfidence, WalkMotionState, WalkSession, WalkStepSource, WalkDisplayCard } from '../types';
 import { plansRepo } from '../data/repositories/plansRepo';
 import { sessionsRepo } from '../data/repositories/sessionsRepo';
 import { analyticsService } from '../services/analytics';
@@ -92,6 +92,8 @@ const formatClockDigital = (seconds: number): string => {
 };
 
 const formatMiles = (distanceMeters: number): string => `${(distanceMeters / 1609.34).toFixed(2)} mi`;
+
+const ROW_HEIGHT = 76; // height per row of 2 metric cards (card height + gap)
 
 const displayLabel = (displayState: WalkDisplayState): string => {
   switch (displayState) {
@@ -207,6 +209,7 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
     setActiveWalkSnapshot,
     pendingWalkPrompt,
     setPendingWalkPrompt,
+    walkDisplayCards,
   } = useAppStore();
 
   const isAndroidService = Platform.OS === 'android' && androidWalkTracking.isSupported();
@@ -269,19 +272,15 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
   const prevSpeedRef = useRef('0.0');
   const lastMilestoneRef = useRef(0);
 
-  const dotsPanResponder = useRef(
-    PanResponder.create({
-      onStartShouldSetPanResponder: () => true,
-      onMoveShouldSetPanResponder: () => true,
-      onPanResponderRelease: (_, g) => {
-        if (g.dx < -40 || g.vx < -0.4) {
-          navigation.navigate('WalkingExpanded');
-        } else if (Math.abs(g.dx) < 10 && Math.abs(g.dy) < 10) {
-          navigation.navigate('WalkingExpanded');
-        }
-      },
-    }),
-  ).current;
+  // Flippable card state
+  const flipAnim = useRef(new Animated.Value(0)).current;
+  const [isFlipped, setIsFlipped] = useState(false);
+  const flipHintDone = useRef(false);
+
+  // Slidable frame state
+  const slideAnim = useRef(new Animated.Value(0)).current; // 0 = collapsed, 1 = expanded
+  const [dockExpanded, setDockExpanded] = useState(false);
+  const slideGestureRef = useRef(0);
 
   useEffect(() => {
     fallbackStateRef.current = fallbackState;
@@ -290,6 +289,72 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
   useEffect(() => {
     lastAndroidSnapshotRef.current = activeWalkSnapshot;
   }, [activeWalkSnapshot]);
+
+  // Flip hint: partial flip ~30° then bounce back on first mount
+  useEffect(() => {
+    if (flipHintDone.current) return;
+    flipHintDone.current = true;
+    const timer = setTimeout(() => {
+      Animated.sequence([
+        Animated.timing(flipAnim, {
+          toValue: 0.17,
+          duration: 400,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: true,
+        }),
+        Animated.spring(flipAnim, {
+          toValue: 0,
+          friction: 8,
+          tension: 60,
+          useNativeDriver: true,
+        }),
+      ]).start();
+    }, 1200);
+    return () => clearTimeout(timer);
+  }, [flipAnim]);
+
+  // Flip card toggle
+  const toggleFlip = useCallback(() => {
+    const toValue = isFlipped ? 0 : 1;
+    setIsFlipped(!isFlipped);
+    Animated.spring(flipAnim, {
+      toValue,
+      friction: 8,
+      tension: 80,
+      useNativeDriver: true,
+    }).start();
+  }, [flipAnim, isFlipped]);
+
+  // Determine cards
+  const defaultCards = walkDisplayCards.slice(0, 2);
+  const extraCards = walkDisplayCards.slice(2);
+  const hasExtraCards = extraCards.length > 0;
+
+  // Slide PanResponder for dock
+  const slidePanResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => false,
+      onMoveShouldSetPanResponder: (_, g) => Math.abs(g.dy) > 8,
+      onPanResponderGrant: () => {
+        slideAnim.stopAnimation((v) => { slideGestureRef.current = v; });
+      },
+      onPanResponderMove: (_, g) => {
+        const progress = slideGestureRef.current + (-g.dy / 150);
+        slideAnim.setValue(Math.max(0, Math.min(1, progress)));
+      },
+      onPanResponderRelease: (_, g) => {
+        const shouldExpand = g.vy < -0.3 || (g.vy >= -0.3 && g.vy <= 0.3 && -g.dy > 30);
+        const toValue = shouldExpand ? 1 : 0;
+        setDockExpanded(shouldExpand);
+        Animated.spring(slideAnim, {
+          toValue,
+          friction: 10,
+          tension: 65,
+          useNativeDriver: false,
+        }).start();
+      },
+    }),
+  ).current;
 
   const clearStartCountdown = useCallback(() => {
     countdownTimerIdsRef.current.forEach((timerId) => clearTimeout(timerId));
@@ -1619,52 +1684,161 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
             },
           ]}
         >
-          <View style={styles.dockDots} {...dotsPanResponder.panHandlers}>
-            <View style={[styles.dockDot, styles.dockDotActive, { backgroundColor: palette.accentPrimary }]} />
-            <View style={[styles.dockDot, { backgroundColor: palette.borderStrong }]} />
-          </View>
+          {/* Drag handle — only when there are extra cards */}
+          {hasExtraCards && (
+            <View style={styles.dragHandleArea} {...slidePanResponder.panHandlers}>
+              <View style={[styles.dragHandle, { backgroundColor: palette.borderStrong }]} />
+            </View>
+          )}
 
-          <View style={styles.metricGrid}>
-            <View style={[styles.metricCard, { backgroundColor: palette.bgSurface, borderColor: palette.borderSoft }]}>
-              <Text variant="body">Time Remaining</Text>
-              {plan ? (
-                <View style={{ flexDirection: 'row', alignItems: 'baseline' }}>
-                  <Text style={styles.metricDigitalClock}>
-                    {formatClockDigital(remainingSeconds).split(':')[0]}
-                  </Text>
-                  <Animated.View style={{ opacity: clockColonAnim }}>
-                    <Text style={styles.metricDigitalClock}>:</Text>
-                  </Animated.View>
-                  <Text style={styles.metricDigitalClock}>
-                    {formatClockDigital(remainingSeconds).split(':').slice(1).join(':')}
-                  </Text>
-                </View>
-              ) : (
-                <Text variant="heading" style={styles.metricValue}>N/A</Text>
-              )}
+          {/* Slidable metric area */}
+          <Animated.View
+            style={[
+              styles.metricSlideArea,
+              hasExtraCards && {
+                maxHeight: slideAnim.interpolate({
+                  inputRange: [0, 1],
+                  outputRange: [ROW_HEIGHT, ROW_HEIGHT * Math.ceil(walkDisplayCards.length / 2)],
+                }),
+              },
+            ]}
+            {...(hasExtraCards ? slidePanResponder.panHandlers : {})}
+          >
+            <View style={styles.metricGrid}>
+              {walkDisplayCards.map((cardId) => {
+                if (cardId === 'walkDuration') {
+                  // Flippable card: Walk Duration (front) / Time Remaining (back)
+                  const frontRotation = flipAnim.interpolate({
+                    inputRange: [0, 0.5, 1],
+                    outputRange: ['0deg', '90deg', '180deg'],
+                  });
+                  const backRotation = flipAnim.interpolate({
+                    inputRange: [0, 0.5, 1],
+                    outputRange: ['180deg', '270deg', '360deg'],
+                  });
+                  const frontOpacity = flipAnim.interpolate({
+                    inputRange: [0, 0.49, 0.51, 1],
+                    outputRange: [1, 1, 0, 0],
+                  });
+                  const backOpacity = flipAnim.interpolate({
+                    inputRange: [0, 0.49, 0.51, 1],
+                    outputRange: [0, 0, 1, 1],
+                  });
+                  return (
+                    <Pressable
+                      key={cardId}
+                      onPress={toggleFlip}
+                      style={[styles.metricCard, { backgroundColor: palette.bgSurface, borderColor: palette.borderSoft }]}
+                    >
+                      {/* Front: Walk Duration */}
+                      <Animated.View
+                        style={[
+                          styles.flipFace,
+                          { transform: [{ perspective: 800 }, { rotateY: frontRotation }], opacity: frontOpacity },
+                        ]}
+                        pointerEvents={isFlipped ? 'none' : 'auto'}
+                      >
+                        <Text variant="body">Walk Duration</Text>
+                        <Text variant="heading" style={styles.metricValue}>
+                          {formatClockDigital(activeSeconds)}
+                        </Text>
+                      </Animated.View>
+                      {/* Back: Time Remaining */}
+                      <Animated.View
+                        style={[
+                          styles.flipFace,
+                          styles.flipFaceBack,
+                          { transform: [{ perspective: 800 }, { rotateY: backRotation }], opacity: backOpacity },
+                        ]}
+                        pointerEvents={isFlipped ? 'auto' : 'none'}
+                      >
+                        <Text variant="body">Time Remaining</Text>
+                        {plan ? (
+                          <View style={{ flexDirection: 'row', alignItems: 'baseline' }}>
+                            <Text style={styles.metricDigitalClock}>
+                              {formatClockDigital(remainingSeconds).split(':')[0]}
+                            </Text>
+                            <Animated.View style={{ opacity: clockColonAnim }}>
+                              <Text style={styles.metricDigitalClock}>:</Text>
+                            </Animated.View>
+                            <Text style={styles.metricDigitalClock}>
+                              {formatClockDigital(remainingSeconds).split(':').slice(1).join(':')}
+                            </Text>
+                          </View>
+                        ) : (
+                          <Text variant="heading" style={styles.metricValue}>N/A</Text>
+                        )}
+                      </Animated.View>
+                    </Pressable>
+                  );
+                }
+                if (cardId === 'steps') {
+                  return (
+                    <View key={cardId} style={[styles.metricCard, { backgroundColor: palette.bgSurface, borderColor: palette.borderSoft }]}>
+                      <Text variant="body">Steps</Text>
+                      <Animated.View style={{ transform: [{ scale: stepScaleAnim }] }}>
+                        <Text variant="heading" style={styles.metricValue}>{steps.toLocaleString()}</Text>
+                      </Animated.View>
+                    </View>
+                  );
+                }
+                if (cardId === 'distance') {
+                  return (
+                    <View key={cardId} style={[styles.metricCard, { backgroundColor: palette.bgSurface, borderColor: palette.borderSoft }]}>
+                      <Text variant="body">Distance</Text>
+                      <Animated.View style={{ transform: [{ scale: distanceScaleAnim }] }}>
+                        <Text variant="heading" style={styles.metricValue}>{formatMiles(distanceMeters)}</Text>
+                      </Animated.View>
+                    </View>
+                  );
+                }
+                if (cardId === 'speed') {
+                  return (
+                    <View key={cardId} style={[styles.metricCard, { backgroundColor: palette.bgSurface, borderColor: palette.borderSoft }]}>
+                      <Text variant="body">Speed</Text>
+                      <Animated.View style={{ transform: [{ scale: speedScaleAnim }] }}>
+                        <Text variant="heading" style={styles.metricValue}>
+                          {activeSeconds > 0 ? ((distanceMeters / 1609.34) / (activeSeconds / 3600)).toFixed(1) : '0.0'} mph
+                        </Text>
+                      </Animated.View>
+                    </View>
+                  );
+                }
+                if (cardId === 'calories') {
+                  return (
+                    <View key={cardId} style={[styles.metricCard, { backgroundColor: palette.bgSurface, borderColor: palette.borderSoft }]}>
+                      <Text variant="body">Calories</Text>
+                      <Text variant="heading" style={styles.metricValue}>{Math.round(steps * 0.04)} kcal</Text>
+                    </View>
+                  );
+                }
+                if (cardId === 'goalProgress') {
+                  const goalPct = preferences?.stepGoalEnabled && preferences.stepGoal > 0
+                    ? `${Math.min(100, Math.round((steps / preferences.stepGoal) * 100))}%`
+                    : 'N/A';
+                  return (
+                    <View key={cardId} style={[styles.metricCard, { backgroundColor: palette.bgSurface, borderColor: palette.borderSoft }]}>
+                      <Text variant="body">Goal Progress</Text>
+                      <Text variant="heading" style={styles.metricValue}>{goalPct}</Text>
+                    </View>
+                  );
+                }
+                return null;
+              })}
             </View>
-            <View style={[styles.metricCard, { backgroundColor: palette.bgSurface, borderColor: palette.borderSoft }]}>
-              <Text variant="body">Distance</Text>
-              <Animated.View style={{ transform: [{ scale: distanceScaleAnim }] }}>
-                <Text variant="heading" style={styles.metricValue}>{formatMiles(distanceMeters)}</Text>
-              </Animated.View>
-            </View>
-            <View style={[styles.metricCard, { backgroundColor: palette.bgSurface, borderColor: palette.borderSoft }]}>
-              <Text variant="body">Speed</Text>
-              <Animated.View style={{ transform: [{ scale: speedScaleAnim }] }}>
-                <Text variant="heading" style={styles.metricValue}>
-                  {activeSeconds > 0 ? ((distanceMeters / 1609.34) / (activeSeconds / 3600)).toFixed(1) : '0.0'} mph
+
+            {/* Hint text — only visible when expanded */}
+            {hasExtraCards && dockExpanded && (
+              <View style={styles.hintRow}>
+                <Ionicons name="settings-outline" size={12} color={palette.textMuted} />
+                <Text variant="bodySmall" color={palette.textMuted} style={styles.hintText}>
+                  Customize in Settings
                 </Text>
-              </Animated.View>
-            </View>
-            <View style={[styles.metricCard, { backgroundColor: palette.bgSurface, borderColor: palette.borderSoft }]}>
-              <Text variant="body">Steps</Text>
-              <Animated.View style={{ transform: [{ scale: stepScaleAnim }] }}>
-                <Text variant="heading" style={styles.metricValue}>{steps.toLocaleString()}</Text>
-              </Animated.View>
-            </View>
-          </View>
+              </View>
+            )}
+          </Animated.View>
 
+          {/* Action buttons — always visible, never slidable */}
           <View style={styles.actionRow}>
             <Pressable
               onPress={() => {
@@ -2099,22 +2273,17 @@ const styles = StyleSheet.create({
     paddingBottom: 8,
     gap: 8,
   },
-  dockDots: {
-    flexDirection: 'row',
+  dragHandleArea: {
     alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    paddingVertical: 3,
-    marginBottom: 2,
+    paddingVertical: 6,
   },
-  dockDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
+  dragHandle: {
+    width: 36,
+    height: 4,
+    borderRadius: 2,
   },
-  dockDotActive: {
-    width: 20,
-    borderRadius: 4,
+  metricSlideArea: {
+    overflow: 'hidden',
   },
   metricGrid: {
     flexDirection: 'row',
@@ -2131,6 +2300,33 @@ const styles = StyleSheet.create({
     gap: 2,
     alignItems: 'center',
     justifyContent: 'flex-start',
+  },
+  flipFace: {
+    alignItems: 'center',
+    justifyContent: 'flex-start',
+    gap: 2,
+    backfaceVisibility: 'hidden',
+  },
+  flipFaceBack: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    alignItems: 'center',
+    justifyContent: 'flex-start',
+    gap: 2,
+  },
+  hintRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+    paddingTop: 6,
+    paddingBottom: 2,
+  },
+  hintText: {
+    fontSize: 11,
   },
   metricValue: {
     fontSize: 16,

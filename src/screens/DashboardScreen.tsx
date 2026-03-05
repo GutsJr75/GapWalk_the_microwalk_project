@@ -10,7 +10,7 @@ import { Button } from '../components/Button';
 import { StatCard } from '../components/StatCard';
 import { GapItem } from '../components/GapItem';
 import { Card } from '../components/Card';
-import { type AppIconName } from '../components/AppIcon';
+import { AppIcon, type AppIconName } from '../components/AppIcon';
 import { theme } from '../theme';
 import { withAlpha } from '../theme/colorUtils';
 import { getThemePalette } from '../theme/palette';
@@ -1129,9 +1129,16 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
                   <Pressable
                     onPress={() => { if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => { }); openAddWalkModal(); }}
                     hitSlop={12}
-                    style={({ pressed }) => [styles.addWalkBtn, { borderColor: palette.borderStrong }, pressed && { opacity: 0.7, transform: [{ scale: 0.92 }] }]}
+                    style={({ pressed }) => [
+                      styles.addWalkBtn,
+                      {
+                        borderColor: withAlpha(palette.accentPrimary, themeMode === 'dark' ? 0.5 : 0.3),
+                        backgroundColor: withAlpha(palette.accentPrimary, themeMode === 'dark' ? 0.16 : 0.1),
+                      },
+                      pressed && { opacity: 0.7, transform: [{ scale: 0.92 }] },
+                    ]}
                   >
-                    <Ionicons name="add" size={22} color={palette.accentPrimary} />
+                    <AppIcon name="plus" size={18} color={palette.accentOnTint} strokeWidth={2.4} />
                   </Pressable>
                 </View>
               </View>

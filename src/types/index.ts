@@ -104,6 +104,21 @@ export type WalkActionSource =
 
 export type WalkPrompt = 'end_confirmation';
 
+export type WalkDisplayCard = 'walkDuration' | 'steps' | 'distance' | 'calories' | 'speed' | 'goalProgress';
+
+export const ALL_WALK_DISPLAY_CARDS: WalkDisplayCard[] = [
+  'walkDuration', 'steps', 'distance', 'calories', 'speed', 'goalProgress',
+];
+
+export const WALK_DISPLAY_CARD_LABELS: Record<WalkDisplayCard, string> = {
+  walkDuration: 'Walk Duration',
+  steps: 'Steps',
+  distance: 'Distance',
+  calories: 'Calories',
+  speed: 'Speed',
+  goalProgress: 'Goal Progress',
+};
+
 export interface ActiveWalkSnapshot {
   sessionId: string;
   planId?: string;

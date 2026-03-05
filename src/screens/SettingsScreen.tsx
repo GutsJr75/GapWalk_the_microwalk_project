@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { View, StyleSheet, Alert, Platform, Pressable, Linking, Share } from 'react-native';
+import { View, StyleSheet, Alert, Platform, Pressable, Linking, Share, Switch } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import * as WebBrowser from 'expo-web-browser';
 import Constants from 'expo-constants';
@@ -19,6 +19,7 @@ import { theme } from '../theme';
 import { screenChrome } from '../theme/screenChrome';
 import { getThemePalette } from '../theme/palette';
 import { useAppStore } from '../store';
+import { WalkDisplayCard, ALL_WALK_DISPLAY_CARDS, WALK_DISPLAY_CARD_LABELS } from '../types';
 import { translateLiteral } from '../i18n';
 import { plansRepo } from '../data/repositories/plansRepo';
 import { notificationPlanActions } from '../services/notificationPlanActions';
@@ -92,6 +93,7 @@ export const SettingsScreen: React.FC<Props> = ({ navigation }) => {
     distanceUnit, setDistanceUnit,
     firstDayOfWeek, setFirstDayOfWeek,
     vibrationEnabled, setVibrationEnabled,
+    walkDisplayCards, setWalkDisplayCards,
     setHasSeenDashboardTour,
   } = useAppStore();
   const palette = getThemePalette(themeMode);
@@ -102,11 +104,13 @@ export const SettingsScreen: React.FC<Props> = ({ navigation }) => {
   const baselineDistanceUnitRef = useRef(distanceUnit);
   const baselineFirstDayRef = useRef(firstDayOfWeek);
   const baselineVibrationRef = useRef(vibrationEnabled);
+  const baselineWalkDisplayCardsRef = useRef(walkDisplayCards);
   const themeModeRef = useRef(themeMode);
   const languageRef = useRef(language);
   const distanceUnitRef = useRef(distanceUnit);
   const firstDayRef = useRef(firstDayOfWeek);
   const vibrationRef = useRef(vibrationEnabled);
+  const walkDisplayCardsRef = useRef(walkDisplayCards);
   const allowExitRef = useRef(false);
   const [showSaveToast, setShowSaveToast] = useState(false);
   const [saveToastMessage, setSaveToastMessage] = useState('Settings saved');
@@ -118,6 +122,7 @@ export const SettingsScreen: React.FC<Props> = ({ navigation }) => {
   useEffect(() => { distanceUnitRef.current = distanceUnit; }, [distanceUnit]);
   useEffect(() => { firstDayRef.current = firstDayOfWeek; }, [firstDayOfWeek]);
   useEffect(() => { vibrationRef.current = vibrationEnabled; }, [vibrationEnabled]);
+  useEffect(() => { walkDisplayCardsRef.current = walkDisplayCards; }, [walkDisplayCards]);
 
   const [focusKey, setFocusKey] = useState(0);
   useFocusEffect(
@@ -128,6 +133,7 @@ export const SettingsScreen: React.FC<Props> = ({ navigation }) => {
       baselineDistanceUnitRef.current = distanceUnitRef.current;
       baselineFirstDayRef.current = firstDayRef.current;
       baselineVibrationRef.current = vibrationRef.current;
+      baselineWalkDisplayCardsRef.current = walkDisplayCardsRef.current;
       hasUnsavedChangesRef.current = false;
       allowExitRef.current = false;
       return () => {};
@@ -147,7 +153,8 @@ export const SettingsScreen: React.FC<Props> = ({ navigation }) => {
     language !== baselineLanguageRef.current ||
     distanceUnit !== baselineDistanceUnitRef.current ||
     firstDayOfWeek !== baselineFirstDayRef.current ||
-    vibrationEnabled !== baselineVibrationRef.current;
+    vibrationEnabled !== baselineVibrationRef.current ||
+    JSON.stringify(walkDisplayCards) !== JSON.stringify(baselineWalkDisplayCardsRef.current);
 
   useEffect(() => {
     hasUnsavedChangesRef.current = hasUnsavedChanges;
@@ -171,6 +178,7 @@ export const SettingsScreen: React.FC<Props> = ({ navigation }) => {
         setDistanceUnit(baselineDistanceUnitRef.current);
         setFirstDayOfWeek(baselineFirstDayRef.current);
         setVibrationEnabled(baselineVibrationRef.current);
+        setWalkDisplayCards(baselineWalkDisplayCardsRef.current);
         hasUnsavedChangesRef.current = false;
         allowExitRef.current = true;
         navigation.dispatch(event.data.action);
@@ -189,7 +197,7 @@ export const SettingsScreen: React.FC<Props> = ({ navigation }) => {
     });
 
     return unsubscribe;
-  }, [navigation, setLanguage, setThemeMode, setDistanceUnit, setFirstDayOfWeek, setVibrationEnabled]);
+  }, [navigation, setLanguage, setThemeMode, setDistanceUnit, setFirstDayOfWeek, setVibrationEnabled, setWalkDisplayCards]);
 
   const handleBack = () => {
     navigation.navigate('Dashboard', { openMenu: true });
@@ -207,6 +215,7 @@ export const SettingsScreen: React.FC<Props> = ({ navigation }) => {
     baselineDistanceUnitRef.current = distanceUnitRef.current;
     baselineFirstDayRef.current = firstDayRef.current;
     baselineVibrationRef.current = vibrationRef.current;
+    baselineWalkDisplayCardsRef.current = walkDisplayCardsRef.current;
     hasUnsavedChangesRef.current = false;
     allowExitRef.current = true;
 
@@ -215,6 +224,7 @@ export const SettingsScreen: React.FC<Props> = ({ navigation }) => {
     await authStorage.saveDistanceUnit(distanceUnitRef.current);
     await authStorage.saveFirstDayOfWeek(firstDayRef.current);
     await authStorage.saveVibrationEnabled(vibrationRef.current);
+    await authStorage.saveWalkDisplayCards(walkDisplayCardsRef.current);
 
     setSaveToastMessage(t('Settings saved'));
     setShowSaveToast(true);
@@ -330,6 +340,22 @@ export const SettingsScreen: React.FC<Props> = ({ navigation }) => {
   };
 
   // --- UI helpers ---
+
+  const handleToggleWalkCard = (card: WalkDisplayCard) => {
+    if (card === 'walkDuration') return; // always on
+    const isOn = walkDisplayCards.includes(card);
+    if (isOn) {
+      if (walkDisplayCards.length <= 2) {
+        Alert.alert('Minimum Cards', 'At least 2 cards must be visible on the walking screen.');
+        return;
+      }
+      setWalkDisplayCards(walkDisplayCards.filter((c) => c !== card));
+    } else {
+      // Add in canonical order
+      const ordered = ALL_WALK_DISPLAY_CARDS.filter((c) => walkDisplayCards.includes(c) || c === card);
+      setWalkDisplayCards(ordered);
+    }
+  };
 
   const actionRipple = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(15,23,42,0.08)';
 
@@ -509,6 +535,59 @@ export const SettingsScreen: React.FC<Props> = ({ navigation }) => {
               />
             </View>
           </View>
+        </Card>
+
+        {/* ===== WALK DISPLAY ===== */}
+        <Text variant="bodySmall" style={[styles.sectionLabel, { color: palette.textMuted }]}>
+          {t('Walk Display')}
+        </Text>
+
+        <Card elevated style={styles.settingsCard}>
+          {ALL_WALK_DISPLAY_CARDS.map((card, idx) => {
+            const isOn = walkDisplayCards.includes(card);
+            const isMandatory = card === 'walkDuration';
+            return (
+              <React.Fragment key={card}>
+                {idx > 0 && <View style={[styles.divider, { backgroundColor: palette.borderSoft }]} />}
+                <View style={styles.walkCardToggleRow}>
+                  <View style={styles.settingLabelRow}>
+                    <Ionicons
+                      name={
+                        card === 'walkDuration' ? 'time-outline' :
+                        card === 'steps' ? 'footsteps-outline' :
+                        card === 'distance' ? 'navigate-outline' :
+                        card === 'calories' ? 'flame-outline' :
+                        card === 'speed' ? 'speedometer-outline' :
+                        'trophy-outline'
+                      }
+                      size={16}
+                      color={isMandatory ? palette.textMuted : palette.accentPrimary}
+                    />
+                    <Text
+                      variant="body"
+                      style={[
+                        styles.settingTitle,
+                        { color: isMandatory ? palette.textMuted : palette.textPrimary },
+                      ]}
+                    >
+                      {WALK_DISPLAY_CARD_LABELS[card]}
+                    </Text>
+                  </View>
+                  <Switch
+                    value={isOn}
+                    onValueChange={() => handleToggleWalkCard(card)}
+                    disabled={isMandatory}
+                    trackColor={{ false: palette.borderStrong, true: palette.accentPrimary }}
+                    thumbColor={isOn ? palette.accentOnSolid : palette.bgSurface}
+                    testID={`settings-walk-card-${card}`}
+                  />
+                </View>
+              </React.Fragment>
+            );
+          })}
+          <Text variant="bodySmall" style={[styles.walkCardHint, { color: palette.textMuted }]}>
+            {t('Choose which cards appear on the walking screen. First 2 are always visible.')}
+          </Text>
         </Card>
 
         {/* ===== DATA & STORAGE ===== */}
@@ -725,5 +804,16 @@ const styles = StyleSheet.create({
     marginTop: 'auto',
     paddingTop: screenChrome.FOOTER_PADDING_TOP,
     paddingBottom: screenChrome.FOOTER_PADDING_BOTTOM,
+  },
+  walkCardToggleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 2,
+  },
+  walkCardHint: {
+    marginTop: 4,
+    fontSize: 12,
+    lineHeight: 16,
   },
 });

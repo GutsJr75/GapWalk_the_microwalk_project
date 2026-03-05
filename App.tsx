@@ -9,6 +9,7 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { getDatabase } from './src/data/db';
 import { useAppStore } from './src/store';
+import { WalkDisplayCard, ALL_WALK_DISPLAY_CARDS } from './src/types';
 import { preferencesRepo } from './src/data/repositories/preferencesRepo';
 import { plansRepo } from './src/data/repositories/plansRepo';
 import { scheduleSourceRepo } from './src/data/repositories/scheduleSourceRepo';
@@ -40,7 +41,6 @@ import { ManualScheduleScreen } from './src/screens/ManualScheduleScreen';
 import { PreferencesScreen } from './src/screens/PreferencesScreen';
 import { DashboardScreen } from './src/screens/DashboardScreen';
 import { WalkingScreen } from './src/screens/WalkingScreen';
-import { WalkingExpandedScreen } from './src/screens/WalkingExpandedScreen';
 import { SettingsScreen } from './src/screens/SettingsScreen';
 import { WeeklyDataScreen } from './src/screens/WeeklyDataScreen';
 import { AchievementsScreen } from './src/screens/AchievementsScreen';
@@ -73,7 +73,6 @@ export type RootStackParamList = {
   | undefined;
   Dashboard: { openMenu?: boolean; showPostWalkSummary?: boolean } | undefined;
   Walking: { planId?: string; prompt?: 'end_confirmation' } | undefined;
-  WalkingExpanded: undefined;
   Settings: undefined;
   WeeklyData: undefined;
   Achievements:
@@ -174,6 +173,7 @@ function App() {
     setActiveWalkSnapshot,
     setPendingWalkPrompt,
     setHasSeenDashboardTour,
+    setWalkDisplayCards,
   } = useAppStore();
   const pendingWalkPlanIdRef = useRef<string | null>(null);
   const pendingWalkRouteRef = useRef<{ planId?: string; prompt?: 'end_confirmation' } | null>(null);
@@ -477,6 +477,13 @@ function App() {
         if (storedTheme) setThemeMode(storedTheme);
         const storedLang = await authStorage.getLanguage();
         if (storedLang) setLanguage(storedLang);
+        const storedCards = await authStorage.getWalkDisplayCards();
+        if (storedCards && storedCards.length >= 2) {
+          const valid = storedCards.filter((c): c is WalkDisplayCard =>
+            ALL_WALK_DISPLAY_CARDS.includes(c as WalkDisplayCard),
+          );
+          if (valid.length >= 2) setWalkDisplayCards(valid);
+        }
       } catch (e) {
         if (__DEV__) console.warn('Failed to restore UI settings:', e);
       }
@@ -716,7 +723,6 @@ function App() {
               <Stack.Screen name="Preferences" component={PreferencesScreen} />
               <Stack.Screen name="Dashboard" component={DashboardScreen} options={{ animation: 'fade_from_bottom' }} />
               <Stack.Screen name="Walking" component={WalkingScreen} options={{ animation: 'slide_from_bottom' }} />
-              <Stack.Screen name="WalkingExpanded" component={WalkingExpandedScreen} options={{ animation: 'slide_from_right' }} />
               <Stack.Screen name="Settings" component={SettingsScreen} />
               <Stack.Screen name="WeeklyData" component={WeeklyDataScreen} />
               <Stack.Screen name="Achievements" component={AchievementsScreen} />
