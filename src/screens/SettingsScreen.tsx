@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { View, StyleSheet, Alert, Platform, Pressable, Linking, Share } from 'react-native';
-import * as Haptics from 'expo-haptics';
+import { View, StyleSheet, Alert, Platform, Pressable, Linking } from 'react-native';
+import { File, Paths } from 'expo-file-system';
+import * as Sharing from 'expo-sharing';import * as Haptics from 'expo-haptics';
 import * as WebBrowser from 'expo-web-browser';
 import Constants from 'expo-constants';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
@@ -200,7 +201,21 @@ export const SettingsScreen: React.FC<Props> = ({ navigation }) => {
       });
 
       const csv = [header, ...rows].join('\n');
-      await Share.share({ message: csv, title: 'GapWalk Walk History' });
+
+      const filename = `gapwalk-walks-${format(new Date(), 'yyyy-MM-dd')}.csv`;
+      const file = new File(Paths.cache, filename);
+      await file.write(csv);
+
+      const isSharingAvailable = await Sharing.isAvailableAsync();
+      if (isSharingAvailable) {
+        await Sharing.shareAsync(file.uri, {
+          mimeType: 'text/csv',
+          dialogTitle: 'Export Walk History',
+          UTI: 'public.comma-separated-values-text',
+        });
+      } else {
+        Alert.alert('Sharing not available', 'Your device does not support file sharing.');
+      }
     } catch (error) {
       if (__DEV__) console.error('Export failed:', error);
     } finally {
@@ -234,18 +249,6 @@ export const SettingsScreen: React.FC<Props> = ({ navigation }) => {
         },
       ]
     );
-  };
-
-  const handleClearCache = async () => {
-    try {
-      const db = await getDatabase();
-      await db.runAsync('DELETE FROM analytics_events');
-      await db.runAsync('DELETE FROM crash_reports');
-      setSaveToastMessage('Cache cleared');
-      setShowSaveToast(true);
-    } catch (error) {
-      if (__DEV__) console.error('Clear cache failed:', error);
-    }
   };
 
   // --- E2E helpers ---
@@ -563,13 +566,6 @@ export const SettingsScreen: React.FC<Props> = ({ navigation }) => {
             onPress: handleClearWalkHistory,
             destructive: true,
             testID: 'settings-clear-history',
-          })}
-          <View style={[styles.settingDivider, { backgroundColor: palette.borderSoft }]} />
-          {renderActionRow({
-            icon: 'refresh-outline',
-            label: 'Clear Cache',
-            onPress: handleClearCache,
-            testID: 'settings-clear-cache',
           })}
         </Card>
 

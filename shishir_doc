@@ -70,7 +70,7 @@
 
 - Added a "Notifications" section that shows whether notification permissions are currently granted or denied, with a colored status dot. If notifications are disabled, an "Open Settings" button links directly to the device's app settings page. Also includes a vibration on/off toggle for walk reminders.
 
-- Added a "Data & Storage" section with three actions: export walk history (builds a CSV and opens the native share sheet), clear walk history (destructive action with confirmation alert that deletes all walk sessions, routes, and pause events), and clear cache (removes analytics events and crash reports).
+- Added a "Data & Storage" section with two actions: export walk history (writes a dated `.csv` file to the device cache and opens the native share sheet so the user can save or send it as a real file), and clear walk history (destructive action with confirmation alert that deletes all walk sessions, routes, and pause events).
 
 - Added an "About" section with the app version pulled from expo-constants, tappable rows for Privacy Policy and Terms of Service that open in an in-app browser, and a Rate GapWalk link that opens the App Store or Play Store listing.
 
