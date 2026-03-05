@@ -3,6 +3,8 @@ import { Animated, AppState, BackHandler, Image, Platform, StyleSheet, Text, Toa
 import { StatusBar } from 'expo-status-bar';
 import * as Font from 'expo-font';
 import * as SplashScreen from 'expo-splash-screen';
+import * as Device from 'expo-device';
+import Constants from 'expo-constants';
 import { NavigationContainer, createNavigationContainerRef } from '@react-navigation/native';
 import * as Notifications from 'expo-notifications';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
@@ -32,7 +34,7 @@ import { androidWalkTracking } from './src/services/androidWalkTracking';
 import { requestAllPermissions } from './src/services/permissions';
 import { authStorage } from './src/data/authStorage';
 import { guidanceStorage } from './src/data/guidanceStorage';
-import { runBackendSync } from './src/services/backendSync';
+import { runBackendSync, registerDevice } from './src/services/backendSync';
 
 // Screens
 import { IntroScreen } from './src/screens/IntroScreen';
@@ -542,6 +544,26 @@ function App() {
               setHasNotificationPermission(permResults.notifications);
               setHasActivityPermission(permResults.activityRecognition);
               setHasRequestedPermissions(true);
+
+              // Register device with backend after push permission is resolved
+              if (isNotificationsSupported && permResults.notifications) {
+                try {
+                  const tokenData = await Notifications.getExpoPushTokenAsync();
+                  if (tokenData?.data) {
+                    void registerDevice({
+                      expoPushToken: tokenData.data,
+                      platform: Platform.OS as 'ios' | 'android',
+                      appVersion: Constants.expoConfig?.version,
+                      osVersion: String(Platform.Version),
+                      deviceModel: Device.modelName ?? undefined,
+                      notificationPermissionGranted: permResults.notifications,
+                      activityPermissionGranted: permResults.activityRecognition,
+                    });
+                  }
+                } catch (e) {
+                  if (__DEV__) console.warn('Failed to obtain push token for device registration:', e);
+                }
+              }
             } catch (e) {
               if (__DEV__) console.warn('Permission request during init failed:', e);
             }

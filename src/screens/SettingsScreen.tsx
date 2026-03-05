@@ -276,7 +276,21 @@ export const SettingsScreen: React.FC<Props> = ({ navigation }) => {
       });
 
       const csv = [header, ...rows].join('\n');
-      await Share.share({ message: csv, title: 'GapWalk Walk History' });
+
+      const filename = `gapwalk-walks-${format(new Date(), 'yyyy-MM-dd')}.csv`;
+      const file = new File(Paths.cache, filename);
+      await file.write(csv);
+
+      const isSharingAvailable = await Sharing.isAvailableAsync();
+      if (isSharingAvailable) {
+        await Sharing.shareAsync(file.uri, {
+          mimeType: 'text/csv',
+          dialogTitle: 'Export Walk History',
+          UTI: 'public.comma-separated-values-text',
+        });
+      } else {
+        Alert.alert('Sharing not available', 'Your device does not support file sharing.');
+      }
     } catch (error) {
       if (__DEV__) console.error('Export failed:', error);
     } finally {
@@ -323,6 +337,7 @@ export const SettingsScreen: React.FC<Props> = ({ navigation }) => {
       if (__DEV__) console.error('Clear cache failed:', error);
     }
   };
+
 
   // --- E2E helpers ---
 
