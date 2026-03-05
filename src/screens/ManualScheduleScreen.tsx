@@ -811,7 +811,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
     }
   };
 
-  const startGoogleAuth = async () => {
+  const startGoogleAuth = useCallback(async () => {
     const configError = getGoogleConfigurationError();
     if (configError || !isGoogleConfigured()) {
       showMessage(

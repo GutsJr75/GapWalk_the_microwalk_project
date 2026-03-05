@@ -15,7 +15,7 @@ const SETTINGS_WALK_DISPLAY_CARDS_KEY = 'gapwalk_settings_walk_display_cards';
 const SETTINGS_NOTIFICATION_TIMER_MODE_KEY = 'gapwalk_settings_notification_timer_mode';
 const TOUR_SCHEDULE_SEEN_KEY = 'gapwalk_tour_schedule_seen';
 const TOUR_DASHBOARD_SEEN_KEY = 'gapwalk_tour_dashboard_seen';
-const LAST_SYNC_AT_KEY = 'gapwalk_last_sync_at';
+const LAST_SYNCED_AT_KEY = 'gapwalk_last_synced_at';
 
 export interface StoredAuthUser {
   email?: string;
@@ -174,14 +174,14 @@ export const authStorage = {
     return null;
   },
 
-  async saveLastSyncedAt(isoTimestamp: string): Promise<void> {
+  async saveLastSyncedAt(syncedAt: string): Promise<void> {
     if (Platform.OS === 'web') return;
-    await SecureStore.setItemAsync(LAST_SYNC_AT_KEY, isoTimestamp);
+    try { await SecureStore.setItemAsync(LAST_SYNCED_AT_KEY, syncedAt); } catch { /* ignore */ }
   },
 
   async getLastSyncedAt(): Promise<string | null> {
     if (Platform.OS === 'web') return null;
-    return SecureStore.getItemAsync(LAST_SYNC_AT_KEY);
+    try { return await SecureStore.getItemAsync(LAST_SYNCED_AT_KEY); } catch { return null; }
   },
 
   async clearAll(): Promise<void> {

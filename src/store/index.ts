@@ -96,7 +96,7 @@ interface AppState {
   setWalkDisplayCards: (cards: WalkDisplayCard[]) => void;
 
   // Guidance / new-user hints
-  guidanceSeen: Record<GuidanceKey, boolean>;
+  guidanceSeen: Partial<Record<GuidanceKey, boolean>>;
   setGuidanceSeen: (key: GuidanceKey, value: boolean) => void;
   setAllGuidanceSeen: (flags: Record<GuidanceKey, boolean>) => void;
 }
@@ -184,13 +184,7 @@ export const useAppStore = create<AppState>((set) => ({
   setWalkDisplayCards: (cards) => set({ walkDisplayCards: cards }),
 
   // Guidance
-  guidanceSeen: {
-    dashboard_welcome: false,
-    dashboard_opportunities_hint: false,
-    dashboard_manual_walk_hint: false,
-    weekly_data_hint: false,
-    achievements_hint: false,
-  },
+  guidanceSeen: {},
   setGuidanceSeen: (key, value) =>
     set((state) => ({ guidanceSeen: { ...state.guidanceSeen, [key]: value } })),
   setAllGuidanceSeen: (flags) => set({ guidanceSeen: flags }),

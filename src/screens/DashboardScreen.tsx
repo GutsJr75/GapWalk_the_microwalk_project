@@ -37,8 +37,8 @@ import { timeUtils } from '../utils/time';
 import { requestAllPermissions } from '../services/permissions';
 import { toUserFriendlyError } from '../utils/errorMessages';
 import { authStorage } from '../data/authStorage';
-import { SuccessToast } from '../components/SuccessToast';
 import { guidanceStorage } from '../data/guidanceStorage';
+import { SuccessToast } from '../components/SuccessToast';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
   DASHBOARD_TOUR_STEPS,

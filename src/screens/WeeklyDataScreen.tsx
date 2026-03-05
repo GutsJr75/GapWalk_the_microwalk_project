@@ -30,7 +30,7 @@ type Props = NativeStackScreenProps<RootStackParamList, 'WeeklyData'>;
 /*  Screen                                                            */
 /* ------------------------------------------------------------------ */
 export const WeeklyDataScreen: React.FC<Props> = ({ navigation }) => {
-  const { language, guidanceSeen, setGuidanceSeen } = useAppStore();
+  const { language, guidanceSeen = {}, setGuidanceSeen } = useAppStore();
   const palette = useThemePalette();
   const [weeklyHistory, setWeeklyHistory] = useState<WeeklyHistoryEntry[]>([]);
   const [loading, setLoading] = useState(true);
