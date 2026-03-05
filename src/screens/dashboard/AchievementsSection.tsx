@@ -15,7 +15,7 @@ interface AchievementsSectionProps {
 }
 
 export const AchievementsSection: React.FC<AchievementsSectionProps> = ({
-  unlockedAchievements,
+      unlockedAchievements,
 }) => {
   const palette = useThemePalette();
 
@@ -24,7 +24,7 @@ export const AchievementsSection: React.FC<AchievementsSectionProps> = ({
   return (
     <Card elevated style={styles.card}>
       <View style={styles.header}>
-        <Ionicons name="trophy-outline" size={18} color={theme.colors.accentPrimary} />
+        <Ionicons name="trophy-outline" size={18} color={palette.accentPrimary} />
         <Text variant="body" style={styles.title}>
           Achievements ({unlockedAchievements.length}/{ACHIEVEMENTS.length})
         </Text>
@@ -58,7 +58,6 @@ export const AchievementsSection: React.FC<AchievementsSectionProps> = ({
 
 const styles = StyleSheet.create({
   card: {
-    marginBottom: 16,
     paddingBottom: 10,
   },
   header: {

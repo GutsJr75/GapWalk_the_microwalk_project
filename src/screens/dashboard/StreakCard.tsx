@@ -4,6 +4,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Card } from '../../components/Card';
 import { Text } from '../../components/Text';
 import { theme } from '../../theme';
+import { withAlpha } from '../../theme/colorUtils';
 import { useThemePalette } from '../../theme/palette';
 import { useAppStore } from '../../store';
 import { StreakData } from '../../utils/statsUtils';
@@ -49,7 +50,8 @@ export const StreakCard: React.FC<StreakCardProps> = ({ streak }) => {
       style={[
         styles.card,
         {
-          borderColor: themeMode === 'dark' ? 'rgba(46,233,166,0.2)' : 'rgba(46,233,166,0.12)',
+          borderColor: withAlpha(palette.accentPrimary, themeMode === 'dark' ? 0.2 : 0.12),
+          backgroundColor: withAlpha(palette.accentPrimary, themeMode === 'dark' ? 0.1 : 0.08),
         },
       ]}
     >
@@ -84,8 +86,6 @@ export const StreakCard: React.FC<StreakCardProps> = ({ streak }) => {
 
 const styles = StyleSheet.create({
   card: {
-    marginBottom: 16,
-    backgroundColor: 'rgba(46,233,166,0.1)',
     borderWidth: 1,
   },
   content: {

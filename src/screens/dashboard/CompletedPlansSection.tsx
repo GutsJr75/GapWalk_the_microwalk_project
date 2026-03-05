@@ -70,10 +70,7 @@ export const CompletedPlansSection: React.FC<CompletedPlansSectionProps> = ({ co
 };
 
 const styles = StyleSheet.create({
-  section: {
-    marginTop: theme.spacing.sm,
-    marginBottom: theme.spacing.md,
-  },
+  section: {},
   label: {
     fontWeight: theme.fontWeight.semibold,
     marginBottom: theme.spacing.sm,

@@ -13,6 +13,7 @@ interface CardProps {
   disabled?: boolean;
   elevated?: boolean;
   shadowed?: boolean;
+  accentBorder?: boolean;
   testID?: string;
 }
 
@@ -26,6 +27,7 @@ export const Card: React.FC<CardProps> = ({
   disabled = false,
   elevated = false,
   shadowed = true,
+  accentBorder = false,
   testID,
 }) => {
   const palette = useThemePalette();
@@ -36,9 +38,10 @@ export const Card: React.FC<CardProps> = ({
     styles.card,
     {
       backgroundColor: elevated ? palette.bgSurfaceElevated : palette.bgSurface,
-      borderColor: palette.borderSoft,
+      borderColor: accentBorder ? palette.accentBorder : palette.borderSoft,
+      borderWidth: accentBorder ? 2 : 1,
     },
-    selected && styles.selectedCard,
+    selected && { borderColor: palette.accentPrimary, borderWidth: 2 },
     disabled && styles.disabledCard,
     style,
   ];
@@ -46,27 +49,27 @@ export const Card: React.FC<CardProps> = ({
   const rippleColor = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(15,23,42,0.08)';
   const shadowStyle = elevated
     ? {
-        shadowColor: palette.shadow,
-        shadowOffset: { width: 0, height: isDark ? 6 : 3 },
-        shadowOpacity: isDark ? 0.20 : 0.14,
-        shadowRadius: isDark ? 16 : 10,
-        elevation: isDark ? 6 : 4,
-      }
+      shadowColor: palette.shadow,
+      shadowOffset: { width: 0, height: isDark ? 6 : 3 },
+      shadowOpacity: isDark ? 0.20 : 0.14,
+      shadowRadius: isDark ? 16 : 10,
+      elevation: isDark ? 6 : 4,
+    }
     : {
-        shadowColor: palette.shadow,
-        shadowOffset: { width: 0, height: 1 },
-        shadowOpacity: isDark ? 0.08 : 0.06,
-        shadowRadius: isDark ? 4 : 3,
-        elevation: isDark ? 2 : 1,
-      };
+      shadowColor: palette.shadow,
+      shadowOffset: { width: 0, height: 1 },
+      shadowOpacity: isDark ? 0.08 : 0.06,
+      shadowRadius: isDark ? 4 : 3,
+      elevation: isDark ? 2 : 1,
+    };
   const cardBaseStyleWithShadow = shadowed
     ? [
-        ...cardBaseStyle,
-        shadowStyle,
-      ]
+      ...cardBaseStyle,
+      shadowStyle,
+    ]
     : cardBaseStyle;
   const { isTapActive, handlePress, handlePressIn, handlePressOut } = useTapFeedbackAction({
-    onPress: onPress ?? (() => {}),
+    onPress: onPress ?? (() => { }),
     enabled: !!onPress && !disabled,
   });
 
@@ -134,10 +137,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.04)',
     width: '100%',
-  },
-  selectedCard: {
-    borderColor: theme.colors.accentPrimary,
-    borderWidth: 2,
   },
   disabledCard: {
     opacity: 0.4,

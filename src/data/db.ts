@@ -104,6 +104,7 @@ const initializeTables = async () => {
       gap_end TEXT NOT NULL,
       walk_start TEXT NOT NULL,
       suggested_duration_minutes INTEGER NOT NULL,
+      manual_notify_lead_minutes INTEGER NOT NULL DEFAULT 0,
       status TEXT NOT NULL DEFAULT 'planned',
       reason TEXT,
       created_at TEXT DEFAULT CURRENT_TIMESTAMP
@@ -281,6 +282,7 @@ const runMigrations = async () => {
   await ensureColumn('nudge_plans', 'status', "TEXT NOT NULL DEFAULT 'planned'");
   await ensureColumn('nudge_plans', 'reason', 'TEXT');
   await ensureColumn('nudge_plans', 'created_at', 'TEXT DEFAULT CURRENT_TIMESTAMP');
+  await ensureColumn('nudge_plans', 'manual_notify_lead_minutes', 'INTEGER NOT NULL DEFAULT 0');
 
   // manual_schedule_entries expansions
   await ensureColumn('manual_schedule_entries', 'created_at', 'TEXT DEFAULT CURRENT_TIMESTAMP');

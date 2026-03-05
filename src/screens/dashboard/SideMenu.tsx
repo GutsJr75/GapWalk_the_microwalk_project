@@ -15,6 +15,7 @@ import { Text } from '../../components/Text';
 import { Button } from '../../components/Button';
 import { AppIcon, type AppIconName } from '../../components/AppIcon';
 import { theme } from '../../theme';
+import { withAlpha } from '../../theme/colorUtils';
 import { useThemePalette } from '../../theme/palette';
 
 export interface SideMenuItem {
@@ -75,7 +76,7 @@ const AnimatedMenuItem: React.FC<{
       onPress={() => onAction(item.onPress)}
       onPressIn={onPressIn}
       onPressOut={onPressOut}
-      android_ripple={{ color: 'rgba(46,233,166,0.12)' }}
+      android_ripple={{ color: withAlpha(palette.accentPrimary, 0.12) }}
       testID={item.testID}
     >
       <View style={styles.menuItemRow}>
@@ -105,7 +106,7 @@ export const SideMenu: React.FC<SideMenuProps> = ({
 
   const runMenuAction = (action: () => void) => {
     if (Platform.OS !== 'web') {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => { });
     }
     action();
   };

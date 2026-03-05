@@ -12,6 +12,7 @@ import {
 import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { theme } from '../theme';
+import { withAlpha } from '../theme/colorUtils';
 import { useThemePalette } from '../theme/palette';
 import { useAppStore } from '../store';
 
@@ -91,7 +92,7 @@ export const Container: React.FC<ContainerProps> = ({
     };
   }, [resetScrollOnMount, scrollable]);
 
-  const topGlowColor = themeMode === 'dark' ? 'rgba(46,233,166,0.05)' : 'rgba(46,233,166,0.14)';
+  const topGlowColor = withAlpha(palette.accentPrimary, themeMode === 'dark' ? 0.05 : 0.14);
   const bottomGlowColor = themeMode === 'dark' ? 'rgba(56,189,248,0.06)' : 'rgba(56,189,248,0.11)';
   const centerGlowColor = themeMode === 'dark' ? 'rgba(99,102,241,0.04)' : 'rgba(37,99,235,0.08)';
   const meshLineColor = themeMode === 'dark' ? 'rgba(138,160,199,0.12)' : 'rgba(40,60,94,0.14)';
@@ -99,8 +100,8 @@ export const Container: React.FC<ContainerProps> = ({
     ? ['#040a16', '#071022', '#050b18']
     : ['#edf3fb', '#e3edf8', '#dce8f5'];
   const ambientGradientColors: [string, string, string] = themeMode === 'dark'
-    ? ['rgba(46,233,166,0.03)', 'rgba(56,189,248,0.025)', 'rgba(4,10,22,0)']
-    : ['rgba(5,150,105,0.10)', 'rgba(3,105,161,0.08)', 'rgba(237,243,251,0)'];
+    ? [withAlpha(palette.accentPrimary, 0.03), 'rgba(56,189,248,0.025)', 'rgba(4,10,22,0)']
+    : [withAlpha(palette.accentPrimary, 0.10), 'rgba(3,105,161,0.08)', 'rgba(237,243,251,0)'];
   const translateY = appearAnim.interpolate({
     inputRange: [0, 1],
     outputRange: [8, 0],

@@ -152,6 +152,7 @@ export interface NudgePlan {
   gapEnd: string; // ISO string
   walkStart: string; // ISO string (gapStart + bufferMinutes)
   suggestedDurationMinutes: number;
+  manualNotifyLeadMinutes?: number; // per-manual-plan reminder lead time in minutes
   status: NudgePlanStatus;
   reason?: string;
   createdAt: string;

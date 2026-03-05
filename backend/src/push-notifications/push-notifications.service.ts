@@ -149,12 +149,12 @@ export class PushNotificationsService {
         // Rotate body variant by day-of-month for daily variety
         const variant = walkStart.getDate() % 6;
         const bodies = [
-          `It's time! Head out for a ${dur}-min walk. Your body will thank you.`,
-          `Walk o'clock. ${dur} minutes is all it takes — let's go!`,
-          `Step outside for ${dur} min. A little movement goes a long way.`,
-          `Your ${dur}-min walking window is open. Time to move!`,
-          `Fresh air awaits. ${dur}-min walk starts now.`,
-          `A ${dur}-min walk is the reset your day needs. Let's do it!`,
+          `It's time! Head out for a ${dur}-minute walk. Your body will thank you.`,
+          `Walk o'clock. ${dur} minutes is all it takes. Let's go!`,
+          `Step outside for ${dur} minutes. A little movement goes a long way.`,
+          `Your ${dur}-minute walking window is open. Time to move!`,
+          `Fresh air awaits. Your ${dur}-minute walk starts now.`,
+          `A ${dur}-minute walk is the reset your day needs. Let's do it!`,
         ];
 
         await this.sendWalkNudge(

@@ -66,10 +66,13 @@ interface AppState {
   language: 'en' | 'es';
   setLanguage: (lang: 'en' | 'es') => void;
 
-  // Guidance / new-user hints
-  guidanceSeen: Record<GuidanceKey, boolean>;
-  setGuidanceSeen: (key: GuidanceKey, value: boolean) => void;
-  setAllGuidanceSeen: (flags: Record<GuidanceKey, boolean>) => void;
+  // Settings
+  distanceUnit: 'km' | 'mi';
+  setDistanceUnit: (unit: 'km' | 'mi') => void;
+  firstDayOfWeek: 'sun' | 'mon';
+  setFirstDayOfWeek: (day: 'sun' | 'mon') => void;
+  vibrationEnabled: boolean;
+  setVibrationEnabled: (val: boolean) => void;
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -135,15 +138,11 @@ export const useAppStore = create<AppState>((set) => ({
   language: 'en',
   setLanguage: (lang) => set({ language: lang }),
 
-  // Guidance
-  guidanceSeen: {
-    dashboard_welcome: false,
-    dashboard_opportunities_hint: false,
-    dashboard_manual_walk_hint: false,
-    weekly_data_hint: false,
-    achievements_hint: false,
-  },
-  setGuidanceSeen: (key, value) =>
-    set((state) => ({ guidanceSeen: { ...state.guidanceSeen, [key]: value } })),
-  setAllGuidanceSeen: (flags) => set({ guidanceSeen: flags }),
+  // Settings
+  distanceUnit: 'km',
+  setDistanceUnit: (unit) => set({ distanceUnit: unit }),
+  firstDayOfWeek: 'sun',
+  setFirstDayOfWeek: (day) => set({ firstDayOfWeek: day }),
+  vibrationEnabled: true,
+  setVibrationEnabled: (val) => set({ vibrationEnabled: val }),
 }));

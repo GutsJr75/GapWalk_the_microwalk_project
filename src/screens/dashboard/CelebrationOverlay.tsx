@@ -3,6 +3,7 @@ import { Animated, StyleSheet, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Text } from '../../components/Text';
 import { theme } from '../../theme';
+import { withAlpha } from '../../theme/colorUtils';
 import { useThemePalette } from '../../theme/palette';
 import { useAppStore } from '../../store';
 
@@ -46,11 +47,11 @@ export const CelebrationOverlay: React.FC<CelebrationOverlayProps> = ({
           styles.content,
           {
             backgroundColor: palette.bgSurfaceElevated,
-            borderColor: themeMode === 'dark' ? 'rgba(46,233,166,0.35)' : 'rgba(46,233,166,0.42)',
+            borderColor: withAlpha(palette.accentPrimary, themeMode === 'dark' ? 0.35 : 0.42),
           },
         ]}
       >
-        <Ionicons name="checkmark-circle" size={52} color={theme.colors.accentPrimary} />
+        <Ionicons name="checkmark-circle" size={52} color={palette.accentPrimary} />
         <Text variant="title" style={styles.text}>Daily goal achieved</Text>
         <Text variant="bodySmall" color={palette.textMuted} style={styles.subtext}>
           {currentStreak > 0

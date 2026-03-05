@@ -19,6 +19,7 @@ const mapThemeTokenColor = (candidate: string | undefined, mode: 'dark' | 'light
   const palette = getThemePalette(mode);
   if (candidate === theme.colors.textPrimary) return palette.textPrimary;
   if (candidate === theme.colors.textMuted) return palette.textMuted;
+  if (candidate === theme.colors.accentPrimary) return palette.accentPrimary;
   return candidate;
 };
 

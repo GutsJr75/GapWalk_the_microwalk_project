@@ -9,6 +9,7 @@ import { Text } from '../components/Text';
 import { Card } from '../components/Card';
 import { ScreenState } from '../components/ScreenState';
 import { ScreenHeader } from '../components/ScreenHeader';
+import { SuccessToast } from '../components/SuccessToast';
 import { TwoActionBar } from '../components/TwoActionBar';
 import { theme } from '../theme';
 import { screenChrome } from '../theme/screenChrome';
@@ -63,6 +64,7 @@ export const ProfileScreen: React.FC<Props> = ({ navigation }) => {
   const [draftName, setDraftName] = useState('');
   const [nameError, setNameError] = useState<string | null>(null);
   const [savingName, setSavingName] = useState(false);
+  const [showSaveToast, setShowSaveToast] = useState(false);
 
   const resolvedDisplayName = useMemo(() => {
     const localName = profileDisplayName?.trim();
@@ -157,6 +159,7 @@ export const ProfileScreen: React.FC<Props> = ({ navigation }) => {
       setProfileDisplayName(normalizedDraftName);
       setIsEditingName(false);
       setNameError(null);
+      setShowSaveToast(true);
     } catch (error) {
       setNameError(toUserFriendlyError(error));
     } finally {
@@ -277,8 +280,8 @@ export const ProfileScreen: React.FC<Props> = ({ navigation }) => {
                 style={({ pressed }) => [
                   styles.nameActionBtn,
                   {
-                    backgroundColor: canSaveName ? theme.colors.accentPrimary : palette.inputBg,
-                    borderColor: canSaveName ? theme.colors.accentPrimary : palette.borderStrong,
+                    backgroundColor: canSaveName ? palette.accentPrimary : palette.inputBg,
+                    borderColor: canSaveName ? palette.accentPrimary : palette.borderStrong,
                   },
                   pressed && canSaveName && styles.nameActionBtnPressed,
                 ]}
@@ -288,7 +291,7 @@ export const ProfileScreen: React.FC<Props> = ({ navigation }) => {
               >
                 <Text
                   variant="bodySmall"
-                  style={{ color: canSaveName ? theme.colors.bgApp : palette.textMuted }}
+                  style={{ color: canSaveName ? palette.accentOnSolid : palette.textMuted }}
                 >
                   {savingName ? 'Saving...' : 'Save'}
                 </Text>
@@ -412,6 +415,11 @@ export const ProfileScreen: React.FC<Props> = ({ navigation }) => {
           />
         </View>
       ) : null}
+      <SuccessToast
+        visible={showSaveToast}
+        message="Profile updated"
+        onDismiss={() => setShowSaveToast(false)}
+      />
     </Container>
   );
 };

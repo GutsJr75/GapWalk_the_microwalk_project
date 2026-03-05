@@ -1,0 +1,103 @@
+## Local Changes (ui-refresh branch, uncommitted)
+
+- Built a reusable screen that shows up when content is loading or something goes wrong. Instead of each screen having its own custom loading spinner or error message, they all share this one consistent design now.
+
+- Made cards support a highlighted border style. This gives certain cards a more prominent, accent-colored outline so they can stand out from the rest of the UI when needed.
+
+- Gave the app its own notification channel instead of using the generic system one. This means users can control GapWalk's notifications separately in their phone settings, which is a better experience on Android.
+
+- Rewrote all the nudge messages to sound more natural and less rushed. Shortened words like "min" were replaced with "minute" and awkward punctuation like em dashes were removed to make the copy feel cleaner.
+
+- Made the reminder tone friendlier across the board. The strict-mode nudges used to sound quite forceful, so the wording was softened to still feel motivating without being pushy.
+
+- Renamed "Not Now" to "Maybe later" on walk reminders. It's a small word change but it feels less dismissive and more in line with the encouraging tone of the app.
+
+- Swapped the Yes/No button order on the alternate walk prompt so No comes first. This is a UX pattern that reduces accidental confirmations when users are quickly dismissing a notification.
+
+- Changed the order of buttons on active walk notifications so End Walk appears before Pause. This makes the most important action easier to find without having to scan the buttons.
+
+- Added a custom reminder timing option when creating a manual MicroWalk. Users can now choose whether GapWalk reminds them at walk time, 5 minutes before, or 10 minutes before instead of being forced into the app-wide notification preference.
+
+- Made manual MicroWalk reminder timing persist with the walk itself. If a user edits or revisits that walk later, the chosen reminder time is kept and the dashboard now shows the exact notification time that will actually fire.
+
+- Cleaned up some messy formatting in a few files. No logic was changed, just indentation and spacing that was inconsistent with the rest of the codebase.
+
+- Removed the global view/edit mode toggle from the manage schedule screen. Instead of switching the whole screen into an edit state, tapping an event now opens an Event Info card that shows the event details in a clean read-only view first.
+
+- Added an Edit button to the Event Info card. When tapped, the card transitions into edit mode in place, letting the user modify just that one event without affecting the rest of the screen.
+
+- Added a crossfade animation between the "Event Info" and "Edit Event" titles in the modal header. The old title fades out while the new one fades in over about 300ms, making the mode switch feel smooth rather than abrupt.
+
+- Added a delete icon button to the top-left of the modal header that fades in when edit mode activates. This keeps the destructive action accessible without cluttering the read-only view.
+
+- Made the footer on the manage schedule screen always show a Change and Save button pair instead of toggling between view-only and edit modes. Save stays disabled until there are actual unsaved changes, and the back button guards against accidental exits.
+
+- Made all grid cells on the manage schedule screen always tappable. Previously, empty slots were locked in view-only mode. Now a single tap selects a cell and a double tap opens the add event form, consistent with the non-manage flow.
+
+- Applied the SofiaPro font to all text input fields across the schedule screens. Title, date, and time fields were previously falling back to the native system font, which looked inconsistent next to the rest of the app's typography.
+
+- Made the HH:MM time inputs and the colon separator bold and two sizes larger throughout the schedule modals. The larger weight makes the time values easier to read at a glance without having to squint at small numbers.
+
+- Made the AM/PM toggle button labels two sizes smaller than the HH:MM text. This creates a clear visual hierarchy where the time value is the focal point and the period label plays a supporting role.
+
+- Added a SuccessToast component that slides down from the top of the screen with a green banner and checkmark icon when any save or update succeeds. It auto-dismisses after two seconds and fires a haptic buzz so the user gets both visual and tactile confirmation without needing to tap anything.
+
+- Replaced the plain Alert.alert "Preferences saved" dialog on the preferences screen with the new SuccessToast. The old native alert required the user to tap OK, which felt unnecessary for a simple confirmation.
+
+- Added a SuccessToast on the manage schedule screen that appears after a schedule is saved successfully. Previously there was no feedback at all in manage mode — the save just happened silently.
+
+- Added SuccessToast to the dashboard screen for both walk time updates and manual walk creation. These two flows used to close their modals silently with no confirmation, leaving users unsure whether the action went through.
+
+- Added SuccessToast to the settings screen after saving theme and language changes. A short 1.2-second delay before navigating back gives the user time to see the confirmation before the screen transitions.
+
+- Added SuccessToast to the profile screen after saving a display name change. The edit mode closes and the toast confirms the name was persisted.
+
+- Widened the weekly grid by reducing the outer padding from 16px to 4px on each side, shrinking the time column from 46px to 32px, and tightening the event block gutter from 2px to 1px. On a 390px-wide phone this gives each day column roughly 50px instead of 44px, which is about 14% more room for event text.
+
+- Reduced the time axis label font from 10px to 9px and the month/year header fonts from 11–12px down to 9–10px so they fit comfortably in the narrower time column and month rail.
+
+- Made event block positioning pixel-accurate instead of snapping to 30-minute slot boundaries. The old code used Math.floor and Math.ceil to round start and end times to the nearest slot, so a 3:00–3:20 event looked like it filled the entire 3:00–3:30 row. Now the top offset and height are calculated from exact minutes, so blocks visually match their real time span.
+
+- Changed event block text layout rules based on duration. Events 30 minutes or longer show the title on line one, start time on line two, and end time on line three as separate Text elements. Events shorter than 30 minutes show only the title to avoid cramming unreadable text into a tiny block. Tall events (two hours or more) allow the title to wrap up to three lines.
+
+- Reduced event block text sizes across the board — title font from 11px to 9px, time font from 10px to 8px — with proportionally smaller line heights. The compact variants for short events drop to 8px and 7px respectively.
+
+- Reduced the event block border radius from 9px to 4px so the blocks sit more flush within their grid cells and waste less interior space on rounded corners. Padding was also tightened from 4–5px down to 2–3px to maximize the text area inside each block.
+
+- Expanded the Settings screen from two options (theme and language) to five full sections. The screen now feels like a complete professional app settings page rather than a placeholder.
+
+- Added a "Units & Display" section with a distance unit toggle (kilometers/miles) and a first day of week toggle (Sunday/Monday). Both persist to SecureStore and are available app-wide through the Zustand store.
+
+- Added a "Notifications" section that shows whether notification permissions are currently granted or denied, with a colored status dot. If notifications are disabled, an "Open Settings" button links directly to the device's app settings page. Also includes a vibration on/off toggle for walk reminders.
+
+- Added a "Data & Storage" section with three actions: export walk history (builds a CSV and opens the native share sheet), clear walk history (destructive action with confirmation alert that deletes all walk sessions, routes, and pause events), and clear cache (removes analytics events and crash reports).
+
+- Added an "About" section with the app version pulled from expo-constants, tappable rows for Privacy Policy and Terms of Service that open in an in-app browser, and a Rate GapWalk link that opens the App Store or Play Store listing.
+
+- Extended the authStorage module with three new SecureStore keys for distance unit, first day of week, and vibration preference, each with save and get methods following the existing pattern.
+
+- Extended the Zustand store with distanceUnit, firstDayOfWeek, and vibrationEnabled state fields so all new settings are accessible throughout the app without re-reading SecureStore.
+
+- Updated the Settings screen save flow to persist all five settings (theme, language, distance unit, first day of week, vibration) and detect unsaved changes across all of them. Discarding changes now reverts all five values to their baselines.
+
+- Added a small theme color helper that converts hex colors into RGBA values on demand. This lets the UI derive translucent accent backgrounds, borders, and glows from the active theme color instead of hardcoding the old mint values in dozens of places.
+
+- Extended the theme palette with an accentOnSolid token for text and icons that sit on top of a fully filled accent surface. In light mode this resolves to white, which fixes the readability issue that happened when dark text sat on a saturated green background.
+
+- Updated the shared text color mapping so anything still using the base accent token can resolve through the active light or dark palette. This prevents theme-aware text from accidentally staying stuck on the original bright mint when the app is in light mode.
+
+- Refactored shared buttons, cards, dashboard opportunity items, and background glows to pull accent fills and highlight colors from the live palette. Light mode now consistently uses the darker green accent instead of leaking the original neon mint through shared components.
+
+- Simplified the Settings appearance control so the Dark and Light options are now plain text only. The moon and sun icons were removed, and the selected state no longer prefixes the label with a checkmark — the filled pill styling now carries the selection on its own.
+
+- Reworked accent-heavy UI states across Settings, Preferences, Profile, Schedule Setup, About & Help, and the walk time modal so selected pills, radios, badges, and period toggles all use the darker light-mode green and proper on-accent text colors.
+
+- Fixed weekly grid readability in the manual schedule screen by moving selected headers, active chips, hover states, and event blocks onto palette-driven accent colors. Lit-up event cards in light mode now use white text on the solid green fill instead of low-contrast dark text or ad hoc color overrides.
+
+- Replaced the remaining bright-mint overlays in the weekly schedule source sheet and grid feedback states with palette-derived accent tints. This includes the month rail, selected day background, selected empty cell affordance, import badge, source selection cards, and tap feedback pulse.
+
+- Normalized the dashboard spacing system so the parent screen owns vertical rhythm instead of each child card adding its own random bottom margin. Major sections now use a consistent 16px gap, repeated items inside a section use an 8px gap, and hidden sections no longer leave awkward spacing behind.
+
+- Restructured the dashboard into explicit layout stacks for the intro area, quick status cards, walking opportunities, history sections, and footer actions. This made the spacing between cards and buttons consistent whether achievements, opportunities, completed walks, or missed walks are visible or not.
+
+- Verified the refactor with a full TypeScript pass using npx tsc --noEmit after the theme and layout changes were in place.
