@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Animated, AppState, AppStateStatus, Easing, PanResponder, Platform, Pressable, StyleSheet, View } from 'react-native';
+import { Animated, AppState, AppStateStatus, Easing, Linking, PanResponder, Platform, Pressable, StyleSheet, View } from 'react-native';
 import MapView, { Marker, Polyline } from 'react-native-maps';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { Ionicons } from '@expo/vector-icons';
@@ -479,6 +479,7 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
   const [showEndModal, setShowEndModal] = useState(false);
   const [showIdleModal, setShowIdleModal] = useState(false);
   const [showCompletion, setShowCompletion] = useState(false);
+  const [showBackgroundLimitModal, setShowBackgroundLimitModal] = useState(false);
   const [completionKind, setCompletionKind] = useState<CompletionKind>('completed');
   const [completionStats, setCompletionStats] = useState<{ activeSeconds: number; distanceMeters: number; steps: number }>({
     activeSeconds: 0,
@@ -556,6 +557,10 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
   useEffect(() => {
     fallbackStateRef.current = fallbackState;
   }, [fallbackState]);
+
+  useEffect(() => {
+    sessionStartedRef.current = sessionStarted;
+  }, [sessionStarted]);
 
   useEffect(() => {
     lastAndroidSnapshotRef.current = activeWalkSnapshot;
@@ -2022,6 +2027,44 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
     }
   }, [centerMapOnCoord]);
 
+  const openAppSettings = useCallback(async () => {
+    if (Platform.OS === 'ios') {
+      try {
+        await Linking.openURL('app-settings:');
+        return;
+      } catch {
+        // Fallback below.
+      }
+    }
+
+    try {
+      await Linking.openSettings();
+    } catch (error) {
+      if (__DEV__) console.warn('Failed to open app settings:', error);
+    }
+  }, []);
+
+  const dismissBackgroundLimitModal = useCallback(() => {
+    setShowBackgroundLimitModal(false);
+    clearBackgroundPromptTimer();
+    backgroundPromptTimerRef.current = setTimeout(() => {
+      if (sessionStartedRef.current && backgroundTrackingLimitedRef.current) {
+        setShowBackgroundLimitModal(true);
+      }
+    }, 15_000);
+  }, [clearBackgroundPromptTimer]);
+
+  const goToSettingsForBackgroundLocation = useCallback(() => {
+    dismissBackgroundLimitModal();
+    void openAppSettings();
+  }, [dismissBackgroundLimitModal, openAppSettings]);
+
+  useEffect(() => {
+    return () => {
+      clearBackgroundPromptTimer();
+    };
+  }, [clearBackgroundPromptTimer]);
+
   const statusColor = useMemo(() => {
     if (displayState === 'paused') return '#f59e0b';
     if (displayState === 'walking') return palette.accentPrimary;
@@ -2606,6 +2649,31 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
         </View>
       </Modal>
 
+      <Modal
+        visible={showBackgroundLimitModal}
+        onClose={() => {}}
+        title="Set location to Allow all the time"
+      >
+        <Text variant="body" style={styles.modalText}>
+          Set the location permission to "Allow all the time" so distance updates continue when GapWalk is in the background.
+        </Text>
+        <View style={styles.modalRow}>
+          <Button
+            title="Later"
+            onPress={dismissBackgroundLimitModal}
+            variant="outline"
+            style={styles.modalButton}
+            testID="walking-bg-limit-dismiss"
+          />
+          <Button
+            title="Go to Settings"
+            onPress={goToSettingsForBackgroundLocation}
+            style={styles.modalButton}
+            testID="walking-bg-limit-fix"
+          />
+        </View>
+      </Modal>
+
       {startCountdown != null && (
         <View style={[styles.countdownOverlay, { backgroundColor: palette.overlay }]}>
           <View
@@ -2904,12 +2972,13 @@ const styles = StyleSheet.create({
   },
   noticeCard: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 12,
-    borderRadius: 18,
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 10,
+    borderRadius: 14,
     borderWidth: 1,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
   },
   noticeCopy: {
     flex: 1,
@@ -2928,6 +2997,27 @@ const styles = StyleSheet.create({
   },
   noticeActionText: {
     fontWeight: theme.fontWeight.semibold,
+    lineHeight: 18,
+  },
+  warningAction: {
+    minWidth: 52,
+    borderRadius: 999,
+    borderWidth: 1,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  warningActionText: {
+    lineHeight: 16,
+    fontWeight: theme.fontWeight.semibold,
+  },
+  warningDismiss: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   rhythmRow: {
     flexDirection: 'row',
