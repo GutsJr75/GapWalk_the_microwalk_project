@@ -80,10 +80,12 @@ export const StatCard: React.FC<StatCardProps> = ({
   const isDark = themeMode === 'dark';
   const palette = useThemePalette();
 
-  const pct = target > 0 ? Math.min(current / target, 1) : 0;
+  const rawPct = target > 0 ? current / target : 0;
+  const pct = target > 0 ? Math.min(rawPct, 1) : 0;
 
   // --- Animated values ---
-  const animatedValue = useRef(new Animated.Value(0)).current;
+  const animatedProgress = useRef(new Animated.Value(0)).current;
+  const animatedCount = useRef(new Animated.Value(0)).current;
   const scaleAnim = useRef(new Animated.Value(1)).current;
   const entranceAnim = useRef(new Animated.Value(0)).current;
   const breatheAnim = useRef(new Animated.Value(0)).current;
@@ -148,17 +150,27 @@ export const StatCard: React.FC<StatCardProps> = ({
         }),
       ]).start();
     }
-  }, [current, pct]);
+  }, [animatedCount, animatedProgress, current, pct, scaleAnim]);
 
   useEffect(() => {
-    const id = animatedValue.addListener(({ value }) => {
-      setAnimState({
+    const progressId = animatedProgress.addListener(({ value }) => {
+      setAnimState((state) => ({
+        ...state,
         pct: value,
-        displayCount: Math.round(value * target),
-      });
+      }));
     });
-    return () => animatedValue.removeListener(id);
-  }, [animatedValue, target]);
+    const countId = animatedCount.addListener(({ value }) => {
+      setAnimState((state) => ({
+        ...state,
+        displayCount: Math.round(value),
+      }));
+    });
+
+    return () => {
+      animatedProgress.removeListener(progressId);
+      animatedCount.removeListener(countId);
+    };
+  }, [animatedCount, animatedProgress]);
 
   // --- 3. Breathing glow when pct > 0.75 ---
   useEffect(() => {
@@ -460,6 +472,12 @@ export const StatCard: React.FC<StatCardProps> = ({
             <Animated.View
               pointerEvents="none"
               style={[styles.checkmarkOverlay, {
+                backgroundColor: isDark ? 'rgba(12,22,38,0.92)' : 'rgba(255,255,255,0.96)',
+                borderColor: withAlpha(
+                  toneColor,
+                  isDark ? 0.38 : 0.24,
+                  isDark ? 'rgba(255,255,255,0.14)' : 'rgba(15,23,42,0.10)'
+                ),
                 opacity: celebrationAnim,
                 transform: [{
                   scale: celebrationAnim.interpolate({
@@ -469,7 +487,7 @@ export const StatCard: React.FC<StatCardProps> = ({
                 }],
               }]}
             >
-              <Svg width={28} height={28} viewBox="0 0 24 24">
+              <Svg width={16} height={16} viewBox="0 0 24 24">
                 <Path
                   d="M5 13l4 4L19 7"
                   stroke={toneColor}
@@ -740,6 +758,12 @@ const styles = StyleSheet.create({
   },
   checkmarkOverlay: {
     position: 'absolute',
+    top: 10,
+    right: 10,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    borderWidth: 1,
     justifyContent: 'center',
     alignItems: 'center',
   },
