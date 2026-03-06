@@ -1050,13 +1050,13 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
         </View>
       </View>
 
+      <CelebrationOverlay visible={showCelebration} animValue={celebrationAnim} currentStreak={streak.currentStreak} />
+
       <ScrollView
         ref={dashboardScrollRef}
         contentContainerStyle={[styles.scroll, { paddingHorizontal: Math.max(width * 0.1, 16), paddingTop: Math.max(height * 0.03, 12), paddingBottom: Math.max(height * 0.04, 20) }]}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={palette.accentPrimary} />}
       >
-        <CelebrationOverlay visible={showCelebration} animValue={celebrationAnim} currentStreak={streak.currentStreak} />
-
         <View style={styles.dashboardStack}>
           <Animated.View style={{ opacity: cardAnims[0], transform: [{ translateY: cardAnims[0].interpolate({ inputRange: [0, 1], outputRange: [12, 0] }) }] }}>
             <View style={styles.statusIntroStack}>

@@ -14,6 +14,10 @@ export interface WalkTrackingPermissionResults extends PermissionResults {
   locationBackground: boolean;
 }
 
+export interface WalkTrackingPermissionRequestOptions {
+  requestBackgroundLocation?: boolean;
+}
+
 /**
  * Request permissions needed for step counting and notifications.
  * On Android, activity recognition is requested directly because the active
@@ -71,7 +75,58 @@ async function confirmBackgroundLocationRationale(): Promise<boolean> {
   });
 }
 
-export async function requestWalkTrackingPermissions(): Promise<WalkTrackingPermissionResults> {
+export async function getWalkTrackingPermissionStatus(): Promise<WalkTrackingPermissionResults> {
+  const baseResults = await checkPermissions();
+  const foreground = await Location.getForegroundPermissionsAsync();
+  const locationForeground = foreground.status === 'granted';
+  const locationBackground = Platform.OS === 'android'
+    ? (await Location.getBackgroundPermissionsAsync()).status === 'granted'
+    : locationForeground;
+
+  return {
+    ...baseResults,
+    locationForeground,
+    locationBackground,
+  };
+}
+
+export async function requestBackgroundWalkTrackingPermission(): Promise<boolean> {
+  try {
+    const foreground = await Location.getForegroundPermissionsAsync();
+    if (foreground.status !== 'granted') {
+      return false;
+    }
+
+    if (Platform.OS !== 'android') {
+      return true;
+    }
+
+    const background = await Location.getBackgroundPermissionsAsync();
+    if (background.status === 'granted') {
+      return true;
+    }
+
+    const shouldRequest = await confirmBackgroundLocationRationale();
+    if (!shouldRequest) {
+      return false;
+    }
+
+    const response = await Location.requestBackgroundPermissionsAsync();
+    if (response.status === 'granted') {
+      return true;
+    }
+
+    const refreshed = await Location.getBackgroundPermissionsAsync();
+    return refreshed.status === 'granted';
+  } catch (e) {
+    if (__DEV__) console.warn('Background walk tracking permission request failed:', e);
+    return false;
+  }
+}
+
+export async function requestWalkTrackingPermissions(
+  options: WalkTrackingPermissionRequestOptions = {},
+): Promise<WalkTrackingPermissionResults> {
   const baseResults = await requestAllPermissions();
   const results: WalkTrackingPermissionResults = {
     ...baseResults,
@@ -91,19 +146,13 @@ export async function requestWalkTrackingPermissions(): Promise<WalkTrackingPerm
     results.locationForeground = foregroundGranted;
     if (!foregroundGranted) return results;
 
-    if (Platform.OS === 'android') {
-      const background = await Location.getBackgroundPermissionsAsync();
-      let backgroundGranted = background.status === 'granted';
-
-      if (!backgroundGranted && await confirmBackgroundLocationRationale()) {
-        const response = await Location.requestBackgroundPermissionsAsync();
-        backgroundGranted = response.status === 'granted';
-      }
-
-      results.locationBackground = backgroundGranted;
-    } else {
-      results.locationBackground = foregroundGranted;
+    if (options.requestBackgroundLocation) {
+      results.locationBackground = await requestBackgroundWalkTrackingPermission();
+      return results;
     }
+
+    const status = await getWalkTrackingPermissionStatus();
+    results.locationBackground = status.locationBackground;
   } catch (e) {
     if (__DEV__) console.warn('Walk tracking permission request failed:', e);
   }

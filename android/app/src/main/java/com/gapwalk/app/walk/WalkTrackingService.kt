@@ -16,6 +16,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import com.gapwalk.app.MainActivity
@@ -30,6 +31,7 @@ import java.util.Locale
 
 class WalkTrackingService : Service(), SensorEventListener {
   companion object {
+    private const val TAG = "WalkTrackingService"
     const val CHANNEL_ID = "gapwalk-walk-session"
     const val NOTIFICATION_ID = 2026
     const val ACTION_SYNC = "com.gapwalk.app.walk.SYNC"
@@ -56,33 +58,38 @@ class WalkTrackingService : Service(), SensorEventListener {
   private val mainHandler = Handler(Looper.getMainLooper())
   private val tickRunnable = object : Runnable {
     override fun run() {
-      var snapshot = WalkTrackingSessionController.refreshTick(applicationContext)
-      if (snapshot == null) {
-        stopSelf()
-        return
-      }
+      try {
+        var snapshot = WalkTrackingSessionController.refreshTick(applicationContext)
+        if (snapshot == null) {
+          stopSelf()
+          return
+        }
 
-      snapshot = syncSensors(snapshot)
+        snapshot = syncSensors(snapshot)
 
-      // Feed any detector timestamp that has not yet been applied to the session.
-      val detectorMotionAtMs = accelDetector?.lastMotionDetectedAtMs
-      if (!snapshot.paused && detectorMotionAtMs != null) {
-        val lastAppliedAccelMotionAtMs = snapshot.lastAccelMotionAtMs
-        if (lastAppliedAccelMotionAtMs == null || detectorMotionAtMs > lastAppliedAccelMotionAtMs) {
-          val accelSnapshot = WalkTrackingSessionController.applyAccelMotion(
-            context = applicationContext,
-            nowMs = detectorMotionAtMs,
-          )
-          if (accelSnapshot != null) {
-            snapshot = accelSnapshot
+        // Feed any detector timestamp that has not yet been applied to the session.
+        val detectorMotionAtMs = accelDetector?.lastMotionDetectedAtMs
+        if (!snapshot.paused && detectorMotionAtMs != null) {
+          val lastAppliedAccelMotionAtMs = snapshot.lastAccelMotionAtMs
+          if (lastAppliedAccelMotionAtMs == null || detectorMotionAtMs > lastAppliedAccelMotionAtMs) {
+            val accelSnapshot = WalkTrackingSessionController.applyAccelMotion(
+              context = applicationContext,
+              nowMs = detectorMotionAtMs,
+            )
+            if (accelSnapshot != null) {
+              snapshot = accelSnapshot
+            }
           }
         }
-      }
 
-      currentSnapshot = snapshot
-      emitSnapshot(snapshot)
-      updateNotification(snapshot)
-      mainHandler.postDelayed(this, 1_000L)
+        currentSnapshot = snapshot
+        emitSnapshot(snapshot)
+        updateNotification(snapshot)
+        mainHandler.postDelayed(this, 1_000L)
+      } catch (error: Throwable) {
+        Log.e(TAG, "Walk tracking tick failed", error)
+        stopSelf()
+      }
     }
   }
 
@@ -106,20 +113,26 @@ class WalkTrackingService : Service(), SensorEventListener {
   }
 
   override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-    var snapshot = WalkTrackingSessionController.refreshTick(applicationContext)
-    if (snapshot == null) {
-      stopForeground(STOP_FOREGROUND_REMOVE)
+    return try {
+      var snapshot = WalkTrackingSessionController.refreshTick(applicationContext)
+      if (snapshot == null) {
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        stopSelf()
+        START_NOT_STICKY
+      } else {
+        snapshot = syncSensors(snapshot)
+        currentSnapshot = snapshot
+        startForegroundCompat(buildNotification(snapshot))
+        emitSnapshot(snapshot)
+        mainHandler.removeCallbacks(tickRunnable)
+        mainHandler.post(tickRunnable)
+        START_STICKY
+      }
+    } catch (error: Throwable) {
+      Log.e(TAG, "Walk tracking service failed to start", error)
       stopSelf()
-      return START_NOT_STICKY
+      START_NOT_STICKY
     }
-
-    snapshot = syncSensors(snapshot)
-    currentSnapshot = snapshot
-    startForegroundCompat(buildNotification(snapshot))
-    emitSnapshot(snapshot)
-    mainHandler.removeCallbacks(tickRunnable)
-    mainHandler.post(tickRunnable)
-    return START_STICKY
   }
 
   override fun onDestroy() {
@@ -133,16 +146,20 @@ class WalkTrackingService : Service(), SensorEventListener {
   override fun onBind(intent: Intent?): IBinder? = null
 
   override fun onSensorChanged(event: SensorEvent?) {
-    if (event?.sensor?.type != Sensor.TYPE_STEP_COUNTER) return
-    val rawStepCount = event.values.firstOrNull() ?: return
-    val snapshot = WalkTrackingSessionController.applyStepCounter(
-      context = applicationContext,
-      rawStepCount = rawStepCount,
-    ) ?: return
+    try {
+      if (event?.sensor?.type != Sensor.TYPE_STEP_COUNTER) return
+      val rawStepCount = event.values.firstOrNull() ?: return
+      val snapshot = WalkTrackingSessionController.applyStepCounter(
+        context = applicationContext,
+        rawStepCount = rawStepCount,
+      ) ?: return
 
-    currentSnapshot = snapshot
-    emitSnapshot(snapshot)
-    updateNotification(snapshot)
+      currentSnapshot = snapshot
+      emitSnapshot(snapshot)
+      updateNotification(snapshot)
+    } catch (error: Throwable) {
+      Log.e(TAG, "Step sensor update failed", error)
+    }
   }
 
   override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {
@@ -208,13 +225,24 @@ class WalkTrackingService : Service(), SensorEventListener {
     }
 
     val callback = locationCallback ?: return
-    fusedLocationClient.requestLocationUpdates(request, callback, Looper.getMainLooper())
-    isLocationSubscribed = true
+    runCatching {
+      fusedLocationClient.requestLocationUpdates(request, callback, Looper.getMainLooper())
+    }.onSuccess {
+      isLocationSubscribed = true
+    }.onFailure { error ->
+      Log.e(TAG, "Location subscription failed", error)
+      locationCallback = null
+      isLocationSubscribed = false
+    }
   }
 
   private fun unsubscribeLocation() {
     val callback = locationCallback ?: return
-    fusedLocationClient.removeLocationUpdates(callback)
+    runCatching {
+      fusedLocationClient.removeLocationUpdates(callback)
+    }.onFailure { error ->
+      Log.w(TAG, "Location unsubscribe failed", error)
+    }
     locationCallback = null
     isLocationSubscribed = false
   }
@@ -222,7 +250,12 @@ class WalkTrackingService : Service(), SensorEventListener {
   private fun subscribeStepSensor(): Boolean {
     if (isSensorSubscribed) return true
     val sensor = stepCounterSensor ?: return false
-    val registered = sensorManager.registerListener(this, sensor, SensorManager.SENSOR_DELAY_NORMAL)
+    val registered = runCatching {
+      sensorManager.registerListener(this, sensor, SensorManager.SENSOR_DELAY_NORMAL)
+    }.getOrElse { error ->
+      Log.e(TAG, "Step sensor registration failed", error)
+      false
+    }
     isSensorSubscribed = registered
     return registered
   }
@@ -231,9 +264,17 @@ class WalkTrackingService : Service(), SensorEventListener {
     if (!isSensorSubscribed) return
     val sensor = stepCounterSensor
     if (sensor != null) {
-      sensorManager.unregisterListener(this, sensor)
+      runCatching {
+        sensorManager.unregisterListener(this, sensor)
+      }.onFailure { error ->
+        Log.w(TAG, "Step sensor unregister failed", error)
+      }
     } else {
-      sensorManager.unregisterListener(this)
+      runCatching {
+        sensorManager.unregisterListener(this)
+      }.onFailure { error ->
+        Log.w(TAG, "Step sensor unregister failed", error)
+      }
     }
     isSensorSubscribed = false
   }
@@ -252,19 +293,32 @@ class WalkTrackingService : Service(), SensorEventListener {
         return
       }
     }
-    val registered = accelDetector?.start() ?: false
+    val registered = runCatching {
+      accelDetector?.start() ?: false
+    }.getOrElse { error ->
+      Log.e(TAG, "Accelerometer detector registration failed", error)
+      false
+    }
     isAccelSubscribed = registered
   }
 
   private fun unsubscribeAccelDetector() {
     if (!isAccelSubscribed) return
-    accelDetector?.stop()
+    runCatching {
+      accelDetector?.stop()
+    }.onFailure { error ->
+      Log.w(TAG, "Accelerometer detector unregister failed", error)
+    }
     isAccelSubscribed = false
   }
 
   private fun updateNotification(snapshot: WalkTrackingSnapshot) {
-    val manager = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
-    manager.notify(NOTIFICATION_ID, buildNotification(snapshot))
+    runCatching {
+      val manager = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
+      manager.notify(NOTIFICATION_ID, buildNotification(snapshot))
+    }.onFailure { error ->
+      Log.e(TAG, "Walk notification update failed", error)
+    }
   }
 
   private fun emitSnapshot(snapshot: WalkTrackingSnapshot) {

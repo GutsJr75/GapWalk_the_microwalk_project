@@ -27,6 +27,46 @@ class WalkTrackingClassifierTest {
   }
 
   @Test
+  fun classifyReturnsLocationOffWhenForegroundLocationAndStepPathAreUnavailable() {
+    val classification = WalkTrackingClassifier.classify(
+      WalkTrackingSnapshot(
+        sessionId = "session-location-off",
+        startIso = "2026-02-28T10:00:00.000Z",
+        sessionStartMs = 1_000L,
+        locationPermissionGranted = false,
+        backgroundLocationGranted = false,
+        activityPermissionGranted = false,
+        stepCounterAvailable = false,
+      ),
+      9_000L,
+    )
+
+    assertEquals("location_off", classification.motionState)
+    assertEquals("location_off", classification.displayState)
+    assertEquals("Location needed", classification.statusReason)
+  }
+
+  @Test
+  fun classifyKeepsForegroundTrackingActiveWhenBackgroundLocationIsMissing() {
+    val classification = WalkTrackingClassifier.classify(
+      WalkTrackingSnapshot(
+        sessionId = "session-foreground-only",
+        startIso = "2026-02-28T10:00:00.000Z",
+        sessionStartMs = 1_000L,
+        locationPermissionGranted = true,
+        backgroundLocationGranted = false,
+        activityPermissionGranted = true,
+        stepCounterAvailable = true,
+      ),
+      6_500L,
+    )
+
+    assertEquals("starting", classification.motionState)
+    assertEquals("calibrating", classification.displayState)
+    assertEquals("stale", classification.locationHealth)
+  }
+
+  @Test
   fun classifyReturnsSensorIssueAfterCalibrationWithoutSignals() {
     val classification = WalkTrackingClassifier.classify(
       WalkTrackingSnapshot(
