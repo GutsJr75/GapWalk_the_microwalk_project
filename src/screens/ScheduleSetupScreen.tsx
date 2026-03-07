@@ -596,7 +596,7 @@ const ScheduleSetupScreenInner: React.FC<Props> = ({ navigation, route }) => {
         </Text>
       </View>
       <Modal visible={!!dialogState} onClose={closeDialog} title={dialogState?.title}>
-        <Text variant="body" style={[styles.dialogMessage, { color: palette.textSecondary }]}>
+        <Text variant="body" style={[styles.dialogMessage, { color: palette.textPrimary }]}>
           {dialogState?.message}
         </Text>
         <View style={styles.dialogActions}>
