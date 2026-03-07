@@ -393,9 +393,12 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
         )
       ).start();
 
-      // Auto-start tour for new users
+      // Auto-start tour for new users (mark seen immediately so back-button dismissal
+      // doesn't cause the tour to re-trigger on next app launch)
       if (hasCompletedOnboarding && !hasSeenDashboardTour && !tourStartedRef.current) {
         tourStartedRef.current = true;
+        setHasSeenDashboardTour(true);
+        void authStorage.saveDashboardTourSeen(true);
         setTimeout(() => setTourVisible(true), 1500);
       }
     }, [load, hasRequestedPermissions])
@@ -877,6 +880,12 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
     navigation.setParams({ openMenu: undefined });
   }, [navigation, openMenu, route.params?.openMenu]);
 
+  useEffect(() => {
+    if (!route.params?.startTour) return;
+    navigation.setParams({ startTour: undefined });
+    setTimeout(() => setTourVisible(true), 600);
+  }, [navigation, route.params?.startTour]);
+
   // Post-walk summary: scroll to Quick Status and pulse a highlight glow
   useEffect(() => {
     if (!route.params?.showPostWalkSummary) return;
@@ -911,8 +920,6 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
 
   const handleReplayTour = () => {
     closeMenu();
-    setHasSeenDashboardTour(false);
-    void authStorage.saveDashboardTourSeen(false);
     setTimeout(() => setTourVisible(true), 600);
   };
 

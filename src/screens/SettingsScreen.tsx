@@ -102,7 +102,6 @@ export const SettingsScreen: React.FC<Props> = ({ navigation }) => {
     vibrationEnabled, setVibrationEnabled,
     notificationTimerMode, setNotificationTimerMode,
     walkDisplayCards, setWalkDisplayCards,
-    setHasSeenDashboardTour,
   } = useAppStore();
   const palette = getThemePalette(themeMode);
   const isDark = themeMode === 'dark';
@@ -218,9 +217,7 @@ export const SettingsScreen: React.FC<Props> = ({ navigation }) => {
   };
 
   const handleReplayTour = () => {
-    setHasSeenDashboardTour(false);
-    void authStorage.saveDashboardTourSeen(false);
-    navigation.navigate('Dashboard', {});
+    navigation.navigate('Dashboard', { startTour: true });
   };
 
   const handleSave = async () => {

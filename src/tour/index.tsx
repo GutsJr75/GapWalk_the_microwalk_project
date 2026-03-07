@@ -609,7 +609,7 @@ export const TourOverlay: React.FC<TourOverlayProps> = ({
       : undefined;
 
   return (
-    <Modal transparent visible={visible} animationType="none" statusBarTranslucent>
+    <Modal transparent visible={visible} animationType="none" statusBarTranslucent onRequestClose={handleFinish}>
       {/* Calibration point: invisible View at Modal origin to compute offset */}
       <View
         ref={calibrationRef}

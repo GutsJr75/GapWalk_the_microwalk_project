@@ -74,7 +74,7 @@ export type RootStackParamList = {
     manageMode?: boolean;
   }
   | undefined;
-  Dashboard: { openMenu?: boolean; showPostWalkSummary?: boolean } | undefined;
+  Dashboard: { openMenu?: boolean; showPostWalkSummary?: boolean; startTour?: boolean } | undefined;
   Walking: { planId?: string; prompt?: 'end_confirmation'; startedFromNotification?: boolean } | undefined;
   Settings: undefined;
   WeeklyData: undefined;
