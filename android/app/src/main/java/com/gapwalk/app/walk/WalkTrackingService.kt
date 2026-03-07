@@ -27,7 +27,6 @@ import com.google.android.gms.location.LocationRequest
 import com.google.android.gms.location.LocationResult
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
-import java.util.Locale
 
 class WalkTrackingService : Service(), SensorEventListener {
   companion object {
@@ -357,15 +356,16 @@ class WalkTrackingService : Service(), SensorEventListener {
       PendingIntent.FLAG_UPDATE_CURRENT or pendingIntentImmutableFlag(),
     )
 
-    val primaryLine = primaryStatusLine(snapshot)
-    val summaryLine = buildSummaryLine(snapshot)
+    val timerLine = WalkNotificationContent.resolveTimerLine(snapshot)
+    val summaryLine = WalkNotificationContent.buildSummaryLine(snapshot)
+    val statsLine = WalkNotificationContent.buildStatsLine(snapshot)
     val notifTitle = if (snapshot.paused) "Walk paused" else "Walk in progress"
     val builder = NotificationCompat.Builder(this, CHANNEL_ID)
       .setSmallIcon(R.drawable.ic_notification_walk)
       .setColor(ContextCompat.getColor(this, R.color.gapwalk_accent))
       .setColorized(false)
       .setContentTitle(notifTitle)
-      .setContentText(primaryLine)
+      .setContentText(timerLine)
       .setStyle(NotificationCompat.BigTextStyle().bigText(summaryLine))
       .setContentIntent(openAppIntent)
       .setOngoing(true)
@@ -380,18 +380,8 @@ class WalkTrackingService : Service(), SensorEventListener {
         actionIntent,
       )
       .addAction(0, "End walk", endIntent)
-
-    if (snapshot.paused) {
-      builder
-        .setUsesChronometer(false)
-        .setSubText(formatElapsed(snapshot.elapsedSeconds))
-    } else {
-      builder
-        .setWhen(System.currentTimeMillis() - snapshot.elapsedSeconds * 1_000L)
-        .setUsesChronometer(true)
-        .setChronometerCountDown(false)
-        .setSubText(null)
-    }
+      .setUsesChronometer(false)
+      .setSubText(statsLine)
 
     return builder.build()
   }
@@ -427,30 +417,6 @@ class WalkTrackingService : Service(), SensorEventListener {
     }
 
     manager.createNotificationChannel(channel)
-  }
-
-  private fun formatElapsed(seconds: Int): String {
-    val mins = seconds / 60
-    val secs = seconds % 60
-    return String.format("%d:%02d", mins, secs)
-  }
-
-  private fun primaryStatusLine(snapshot: WalkTrackingSnapshot): String {
-    val distanceMiles = snapshot.distanceMeters / 1609.34
-    val dist = String.format(Locale.US, "%.2f mi", distanceMiles)
-    val steps = String.format(Locale.US, "%,d", snapshot.steps)
-    return "$steps steps · $dist"
-  }
-
-  private fun buildSummaryLine(snapshot: WalkTrackingSnapshot): String {
-    val distanceMiles = snapshot.distanceMeters / 1609.34
-    val dist = String.format(Locale.US, "%.2f mi", distanceMiles)
-    val steps = String.format(Locale.US, "%,d", snapshot.steps)
-    val base = "$steps steps · $dist"
-    val reason = snapshot.statusReason?.takeIf {
-      it.isNotBlank() && it != "Detecting movement…"
-    }
-    return if (reason != null) "$base\n$reason" else base
   }
 
   private fun pendingIntentImmutableFlag(): Int {

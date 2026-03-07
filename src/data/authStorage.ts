@@ -12,6 +12,7 @@ const SETTINGS_DISTANCE_UNIT_KEY = 'gapwalk_settings_distance_unit';
 const SETTINGS_FIRST_DAY_KEY = 'gapwalk_settings_first_day';
 const SETTINGS_VIBRATION_KEY = 'gapwalk_settings_vibration';
 const SETTINGS_WALK_DISPLAY_CARDS_KEY = 'gapwalk_settings_walk_display_cards';
+const SETTINGS_NOTIFICATION_TIMER_MODE_KEY = 'gapwalk_settings_notification_timer_mode';
 const TOUR_SCHEDULE_SEEN_KEY = 'gapwalk_tour_schedule_seen';
 const TOUR_DASHBOARD_SEEN_KEY = 'gapwalk_tour_dashboard_seen';
 
@@ -157,6 +158,18 @@ export const authStorage = {
       const parsed = JSON.parse(val);
       if (Array.isArray(parsed)) return parsed;
     } catch { /* ignore */ }
+    return null;
+  },
+
+  async saveNotificationTimerMode(mode: string): Promise<void> {
+    if (Platform.OS === 'web') return;
+    await SecureStore.setItemAsync(SETTINGS_NOTIFICATION_TIMER_MODE_KEY, mode);
+  },
+
+  async getNotificationTimerMode(): Promise<'smart' | 'elapsed' | 'remaining' | null> {
+    if (Platform.OS === 'web') return null;
+    const val = await SecureStore.getItemAsync(SETTINGS_NOTIFICATION_TIMER_MODE_KEY);
+    if (val === 'smart' || val === 'elapsed' || val === 'remaining') return val;
     return null;
   },
 

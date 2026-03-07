@@ -5,6 +5,9 @@ import kotlin.math.max
 data class WalkTrackingSnapshot(
   val sessionId: String,
   val planId: String? = null,
+  val targetDurationMinutes: Int? = null,
+  val startedFromNotification: Boolean = false,
+  val notificationTimerMode: String = "smart",
   val startIso: String,
   val sessionStartMs: Long,
   val totalPausedMs: Long = 0L,

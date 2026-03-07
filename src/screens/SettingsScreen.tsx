@@ -19,7 +19,13 @@ import { theme } from '../theme';
 import { screenChrome } from '../theme/screenChrome';
 import { getThemePalette } from '../theme/palette';
 import { useAppStore } from '../store';
-import { WalkDisplayCard, ALL_WALK_DISPLAY_CARDS, WALK_DISPLAY_CARD_LABELS } from '../types';
+import {
+  WalkDisplayCard,
+  ALL_WALK_DISPLAY_CARDS,
+  WALK_DISPLAY_CARD_LABELS,
+  NotificationTimerMode,
+  NOTIFICATION_TIMER_MODE_LABELS,
+} from '../types';
 import { translateLiteral } from '../i18n';
 import { plansRepo } from '../data/repositories/plansRepo';
 import { notificationPlanActions } from '../services/notificationPlanActions';
@@ -28,6 +34,7 @@ import { sessionsRepo } from '../data/repositories/sessionsRepo';
 import { getDatabase } from '../data/db';
 import { authStorage } from '../data/authStorage';
 import { format } from 'date-fns';
+import { androidWalkTracking } from '../services/androidWalkTracking';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Settings'>;
 
@@ -93,6 +100,7 @@ export const SettingsScreen: React.FC<Props> = ({ navigation }) => {
     distanceUnit, setDistanceUnit,
     firstDayOfWeek, setFirstDayOfWeek,
     vibrationEnabled, setVibrationEnabled,
+    notificationTimerMode, setNotificationTimerMode,
     walkDisplayCards, setWalkDisplayCards,
     setHasSeenDashboardTour,
   } = useAppStore();
@@ -104,12 +112,14 @@ export const SettingsScreen: React.FC<Props> = ({ navigation }) => {
   const baselineDistanceUnitRef = useRef(distanceUnit);
   const baselineFirstDayRef = useRef(firstDayOfWeek);
   const baselineVibrationRef = useRef(vibrationEnabled);
+  const baselineNotificationTimerModeRef = useRef(notificationTimerMode);
   const baselineWalkDisplayCardsRef = useRef(walkDisplayCards);
   const themeModeRef = useRef(themeMode);
   const languageRef = useRef(language);
   const distanceUnitRef = useRef(distanceUnit);
   const firstDayRef = useRef(firstDayOfWeek);
   const vibrationRef = useRef(vibrationEnabled);
+  const notificationTimerModeRef = useRef(notificationTimerMode);
   const walkDisplayCardsRef = useRef(walkDisplayCards);
   const allowExitRef = useRef(false);
   const [showSaveToast, setShowSaveToast] = useState(false);
@@ -122,6 +132,7 @@ export const SettingsScreen: React.FC<Props> = ({ navigation }) => {
   useEffect(() => { distanceUnitRef.current = distanceUnit; }, [distanceUnit]);
   useEffect(() => { firstDayRef.current = firstDayOfWeek; }, [firstDayOfWeek]);
   useEffect(() => { vibrationRef.current = vibrationEnabled; }, [vibrationEnabled]);
+  useEffect(() => { notificationTimerModeRef.current = notificationTimerMode; }, [notificationTimerMode]);
   useEffect(() => { walkDisplayCardsRef.current = walkDisplayCards; }, [walkDisplayCards]);
 
   const [focusKey, setFocusKey] = useState(0);
@@ -133,6 +144,7 @@ export const SettingsScreen: React.FC<Props> = ({ navigation }) => {
       baselineDistanceUnitRef.current = distanceUnitRef.current;
       baselineFirstDayRef.current = firstDayRef.current;
       baselineVibrationRef.current = vibrationRef.current;
+      baselineNotificationTimerModeRef.current = notificationTimerModeRef.current;
       baselineWalkDisplayCardsRef.current = walkDisplayCardsRef.current;
       hasUnsavedChangesRef.current = false;
       allowExitRef.current = false;
@@ -154,6 +166,7 @@ export const SettingsScreen: React.FC<Props> = ({ navigation }) => {
     distanceUnit !== baselineDistanceUnitRef.current ||
     firstDayOfWeek !== baselineFirstDayRef.current ||
     vibrationEnabled !== baselineVibrationRef.current ||
+    notificationTimerMode !== baselineNotificationTimerModeRef.current ||
     JSON.stringify(walkDisplayCards) !== JSON.stringify(baselineWalkDisplayCardsRef.current);
 
   useEffect(() => {
@@ -178,6 +191,7 @@ export const SettingsScreen: React.FC<Props> = ({ navigation }) => {
         setDistanceUnit(baselineDistanceUnitRef.current);
         setFirstDayOfWeek(baselineFirstDayRef.current);
         setVibrationEnabled(baselineVibrationRef.current);
+        setNotificationTimerMode(baselineNotificationTimerModeRef.current);
         setWalkDisplayCards(baselineWalkDisplayCardsRef.current);
         hasUnsavedChangesRef.current = false;
         allowExitRef.current = true;
@@ -197,7 +211,7 @@ export const SettingsScreen: React.FC<Props> = ({ navigation }) => {
     });
 
     return unsubscribe;
-  }, [navigation, setLanguage, setThemeMode, setDistanceUnit, setFirstDayOfWeek, setVibrationEnabled, setWalkDisplayCards]);
+  }, [navigation, setLanguage, setThemeMode, setDistanceUnit, setFirstDayOfWeek, setVibrationEnabled, setNotificationTimerMode, setWalkDisplayCards]);
 
   const handleBack = () => {
     navigation.navigate('Dashboard', { openMenu: true });
@@ -215,6 +229,7 @@ export const SettingsScreen: React.FC<Props> = ({ navigation }) => {
     baselineDistanceUnitRef.current = distanceUnitRef.current;
     baselineFirstDayRef.current = firstDayRef.current;
     baselineVibrationRef.current = vibrationRef.current;
+    baselineNotificationTimerModeRef.current = notificationTimerModeRef.current;
     baselineWalkDisplayCardsRef.current = walkDisplayCardsRef.current;
     hasUnsavedChangesRef.current = false;
     allowExitRef.current = true;
@@ -224,7 +239,12 @@ export const SettingsScreen: React.FC<Props> = ({ navigation }) => {
     await authStorage.saveDistanceUnit(distanceUnitRef.current);
     await authStorage.saveFirstDayOfWeek(firstDayRef.current);
     await authStorage.saveVibrationEnabled(vibrationRef.current);
+    await authStorage.saveNotificationTimerMode(notificationTimerModeRef.current);
     await authStorage.saveWalkDisplayCards(walkDisplayCardsRef.current);
+
+    if (androidWalkTracking.isSupported()) {
+      await androidWalkTracking.updateNotificationTimerMode(notificationTimerModeRef.current);
+    }
 
     setSaveToastMessage(t('Settings saved'));
     setShowSaveToast(true);
@@ -317,7 +337,7 @@ export const SettingsScreen: React.FC<Props> = ({ navigation }) => {
       Alert.alert('Action blocked', 'The start action was blocked, likely because today\'s goal is already complete.');
       return;
     }
-    navigation.navigate('Walking', { planId: first.id });
+    navigation.navigate('Walking', { planId: first.id, startedFromNotification: true });
   };
 
   const simulateNotificationSkip = async () => {
@@ -355,6 +375,10 @@ export const SettingsScreen: React.FC<Props> = ({ navigation }) => {
       const ordered = ALL_WALK_DISPLAY_CARDS.filter((c) => walkDisplayCards.includes(c) || c === card);
       setWalkDisplayCards(ordered);
     }
+  };
+
+  const handleNotificationTimerMode = (mode: NotificationTimerMode) => {
+    setNotificationTimerMode(mode);
   };
 
   const actionRipple = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(15,23,42,0.08)';
@@ -534,6 +558,33 @@ export const SettingsScreen: React.FC<Props> = ({ navigation }) => {
                 themeMode={themeMode}
               />
             </View>
+          </View>
+
+          <View style={[styles.divider, { backgroundColor: palette.borderSoft }]} />
+
+          {/* Live notification timer */}
+          <View style={styles.settingRow}>
+            <View style={styles.settingLabelRow}>
+              <Ionicons name="notifications-outline" size={16} color={palette.accentPrimary} />
+              <Text variant="body" style={[styles.settingTitle, { color: palette.textPrimary }]}>
+                {t('Live Notification Timer')}
+              </Text>
+            </View>
+            <View style={styles.segmentRowStack}>
+              {(['smart', 'elapsed', 'remaining'] as NotificationTimerMode[]).map((mode) => (
+                <SegmentPill
+                  key={mode}
+                  selected={notificationTimerMode === mode}
+                  title={NOTIFICATION_TIMER_MODE_LABELS[mode]}
+                  onPress={() => handleNotificationTimerMode(mode)}
+                  testID={`settings-notification-timer-${mode}`}
+                  themeMode={themeMode}
+                />
+              ))}
+            </View>
+            <Text variant="bodySmall" style={[styles.walkCardHint, { color: palette.textMuted }]}>
+              {t('Choose what the live walk notification timer shows.')}
+            </Text>
           </View>
         </Card>
 
@@ -757,6 +808,10 @@ const styles = StyleSheet.create({
   },
   segmentRow: {
     flexDirection: 'row',
+    gap: 10,
+  },
+  segmentRowStack: {
+    flexDirection: 'column',
     gap: 10,
   },
   pill: {

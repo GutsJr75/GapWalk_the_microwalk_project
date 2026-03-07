@@ -7,6 +7,12 @@ interface UnsavedChangesGuardOptions {
   title: string;
   message: string;
   onConfirmDiscard?: () => void;
+  onRequestConfirm?: (options: {
+    title: string;
+    message: string;
+    onStay: () => void;
+    onLeave: () => void;
+  }) => void;
 }
 
 export const useUnsavedChangesGuard = ({
@@ -15,6 +21,7 @@ export const useUnsavedChangesGuard = ({
   title,
   message,
   onConfirmDiscard,
+  onRequestConfirm,
 }: UnsavedChangesGuardOptions) => {
   const allowNextBeforeRemoveRef = useRef(false);
 
@@ -43,6 +50,20 @@ export const useUnsavedChangesGuard = ({
         return;
       }
 
+      if (onRequestConfirm) {
+        onRequestConfirm({
+          title,
+          message,
+          onStay: () => undefined,
+          onLeave: () => {
+            onConfirmDiscard?.();
+            allowNextBeforeRemoveRef.current = true;
+            navigation.dispatch(e.data.action);
+          },
+        });
+        return;
+      }
+
       Alert.alert(
         title,
         message,
@@ -62,7 +83,7 @@ export const useUnsavedChangesGuard = ({
     });
 
     return unsubscribe;
-  }, [enabled, message, navigation, onConfirmDiscard, title]);
+  }, [enabled, message, navigation, onConfirmDiscard, onRequestConfirm, title]);
 
   return { runAllowedNavigation };
 };

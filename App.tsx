@@ -72,7 +72,7 @@ export type RootStackParamList = {
   }
   | undefined;
   Dashboard: { openMenu?: boolean; showPostWalkSummary?: boolean } | undefined;
-  Walking: { planId?: string; prompt?: 'end_confirmation' } | undefined;
+  Walking: { planId?: string; prompt?: 'end_confirmation'; startedFromNotification?: boolean } | undefined;
   Settings: undefined;
   WeeklyData: undefined;
   Achievements:
@@ -174,9 +174,10 @@ function App() {
     setPendingWalkPrompt,
     setHasSeenDashboardTour,
     setWalkDisplayCards,
+    setNotificationTimerMode,
   } = useAppStore();
-  const pendingWalkPlanIdRef = useRef<string | null>(null);
-  const pendingWalkRouteRef = useRef<{ planId?: string; prompt?: 'end_confirmation' } | null>(null);
+  const pendingWalkPlanIdRef = useRef<{ planId: string; startedFromNotification?: boolean } | null>(null);
+  const pendingWalkRouteRef = useRef<{ planId?: string; prompt?: 'end_confirmation'; startedFromNotification?: boolean } | null>(null);
   const lastHandledResponseRef = useRef<string | null>(null);
   const [isBootstrapDone, setIsBootstrapDone] = useState(false);
   const [isBootGreetingDone, setIsBootGreetingDone] = useState(false);
@@ -278,7 +279,7 @@ function App() {
     setUpcomingPlans(upcoming);
   }, [setTodayStats, setTodaySteps, setUpcomingPlans]);
 
-  const navigateToActiveWalk = useCallback((params: { planId?: string; prompt?: 'end_confirmation' }) => {
+  const navigateToActiveWalk = useCallback((params: { planId?: string; prompt?: 'end_confirmation'; startedFromNotification?: boolean }) => {
     if (navigationRef.isReady()) {
       navigationRef.navigate('Walking', params);
       return;
@@ -339,9 +340,9 @@ function App() {
       analyticsService.track('app_foreground_from_nudge', { planId: data.planId });
 
       if (navigationRef.isReady()) {
-        navigationRef.navigate('Walking', { planId: data.planId });
+        navigationRef.navigate('Walking', { planId: data.planId, startedFromNotification: true });
       } else {
-        pendingWalkPlanIdRef.current = data.planId;
+        pendingWalkPlanIdRef.current = { planId: data.planId, startedFromNotification: true };
       }
     } catch (error) {
       if (__DEV__) console.error('Failed to process notification response:', error);
@@ -417,6 +418,7 @@ function App() {
             pendingWalkRouteRef.current = {
               planId: snapshot.planId,
               prompt: snapshot.prompt,
+              startedFromNotification: snapshot.startedFromNotification ?? false,
             };
           } else {
             if (isNotificationsSupported) {
@@ -477,6 +479,8 @@ function App() {
         if (storedTheme) setThemeMode(storedTheme);
         const storedLang = await authStorage.getLanguage();
         if (storedLang) setLanguage(storedLang);
+        const storedNotificationTimerMode = await authStorage.getNotificationTimerMode();
+        if (storedNotificationTimerMode) setNotificationTimerMode(storedNotificationTimerMode);
         const storedCards = await authStorage.getWalkDisplayCards();
         if (storedCards && storedCards.length >= 2) {
           const valid = storedCards.filter((c): c is WalkDisplayCard =>
@@ -593,7 +597,11 @@ function App() {
         setActiveWalkSnapshot(snapshot);
         setPendingWalkPrompt(snapshot?.prompt ?? null);
         if (snapshot) {
-          navigateToActiveWalk({ planId: snapshot.planId, prompt: snapshot.prompt });
+          navigateToActiveWalk({
+            planId: snapshot.planId,
+            prompt: snapshot.prompt,
+            startedFromNotification: snapshot.startedFromNotification ?? false,
+          });
         }
       })();
     });
@@ -683,9 +691,9 @@ function App() {
                 navigationRef.navigate('Walking', pendingWalkRoute);
                 pendingWalkRouteRef.current = null;
               }
-              const pendingPlanId = pendingWalkPlanIdRef.current;
-              if (pendingPlanId && navigationRef.isReady()) {
-                navigationRef.navigate('Walking', { planId: pendingPlanId });
+              const pendingPlan = pendingWalkPlanIdRef.current;
+              if (pendingPlan && navigationRef.isReady()) {
+                navigationRef.navigate('Walking', pendingPlan);
                 pendingWalkPlanIdRef.current = null;
               }
             }}

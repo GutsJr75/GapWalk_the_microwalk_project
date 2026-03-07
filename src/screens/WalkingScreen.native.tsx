@@ -372,17 +372,17 @@ const WalkingBackButton: React.FC<WalkingBackButtonProps> = ({
 const displayLabel = (displayState: WalkDisplayState): string => {
   switch (displayState) {
     case 'walking':
-      return 'Walking now';
+      return 'Great pace';
     case 'paused':
       return 'Paused';
     case 'location_off':
-      return 'Tracking limited';
+      return 'Tracking is limited';
     case 'not_moving':
-      return 'Not moving';
+      return 'Ready when you are';
     case 'sensor_issue':
-      return 'Step sensor not responding';
+      return 'Step sensor is warming up';
     default:
-      return 'Detecting movement...';
+      return 'Checking movement...';
   }
 };
 
@@ -393,28 +393,28 @@ const displayDetail = (
 ): string => {
   if (displayState === 'walking') {
     if (statusReason === 'Using GPS step backup') {
-      return 'Motion is locked in. GapWalk is using GPS step backup until the device step sensor catches up.';
+      return 'You are moving well. GapWalk is using GPS for steps until your sensor catches up.';
     }
     if (statusReason === 'Step sensor waiting') {
-      return 'Walking is confirmed from movement. The device step sensor is still warming up.';
+      return 'Movement is confirmed. Your step sensor is still warming up.';
     }
     return hasPlan
-      ? 'Movement is locked in. Keep the pace steady and this window stays on track.'
-      : 'Live steps and distance are flowing in as you move.';
+      ? 'Nice work. Keep a steady pace and this walk stays on track.'
+      : 'Nice work. Steps and distance update live while you move.';
   }
   if (displayState === 'paused') {
-    return 'Your walk is paused. Resume whenever you are ready to keep going.';
+    return 'Your walk is paused. Resume anytime when you feel ready.';
   }
   if (displayState === 'location_off') {
-    return 'Location is off. GapWalk can still run your walk timer and steps, but distance and map guidance stay limited.';
+    return 'Location is off. GapWalk can still track time and steps, and distance will be limited.';
   }
   if (displayState === 'not_moving') {
-    return 'Tracking is still active. Start moving again to keep the session alive.';
+    return 'You can take a short break. Start moving again whenever you are ready.';
   }
   if (displayState === 'sensor_issue') {
-    return statusReason ?? 'The device step sensor is not responding yet. Keep moving or let GPS backup take over.';
+    return statusReason ?? 'Your step sensor is still getting ready. Keep walking and GapWalk will keep up.';
   }
-  return statusReason ?? 'Take a few steps so GapWalk can calibrate your live movement signal.';
+  return statusReason ?? 'Take a few steps and GapWalk will tune in to your movement.';
 };
 
 const haversineMeters = (a: Coord, b: Coord): number => {
@@ -459,6 +459,7 @@ const createFallbackState = (): FallbackState => {
 export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
   const planId = route.params?.planId;
   const prompt = route.params?.prompt;
+  const startedFromNotification = route.params?.startedFromNotification === true;
   const insets = useSafeAreaInsets();
   const palette = useThemePalette();
   const {
@@ -469,6 +470,7 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
     pendingWalkPrompt,
     setPendingWalkPrompt,
     walkDisplayCards,
+    notificationTimerMode,
   } = useAppStore();
 
   const isAndroidService = Platform.OS === 'android' && androidWalkTracking.isSupported();
@@ -678,6 +680,23 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
     if (!found) return;
     setPlan(found);
   }, [planId]);
+
+  const startAndroidSession = useCallback(async () => {
+    let targetDurationMinutes = plan?.suggestedDurationMinutes ?? null;
+    if (!targetDurationMinutes && planId) {
+      const found = await plansRepo.getById(planId);
+      if (found) {
+        targetDurationMinutes = found.suggestedDurationMinutes;
+        setPlan((current) => current ?? found);
+      }
+    }
+    return androidWalkTracking.startSession({
+      planId,
+      targetDurationMinutes,
+      startedFromNotification,
+      notificationTimerMode,
+    });
+  }, [notificationTimerMode, plan, planId, startedFromNotification]);
 
   useEffect(() => {
     void loadPlan();
@@ -960,7 +979,7 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
           if (cancelled) return;
           void (async () => {
             try {
-              const freshSnapshot = await androidWalkTracking.startSession({ planId });
+              const freshSnapshot = await startAndroidSession();
               if (!freshSnapshot) {
                 throw new Error('Walk tracking session did not start.');
               }
@@ -1013,7 +1032,7 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
       subscription.remove();
       appStateSubscription.remove();
     };
-  }, [applyAndroidSnapshot, clearStartCountdown, isAndroidService, markPlanStarted, planId, prompt, refreshAndroidSnapshot, runStartCountdown]);
+  }, [applyAndroidSnapshot, clearStartCountdown, isAndroidService, markPlanStarted, prompt, refreshAndroidSnapshot, runStartCountdown, startAndroidSession]);
 
   useEffect(() => {
     if (!isAndroidService) {
@@ -1419,9 +1438,24 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
 
     if (isNotificationsSupported && Platform.OS !== 'android') {
       await notificationService.setupWalkSessionCategories();
-      await notificationService.showWalkSessionNotification(formatClock(0), false);
+      await notificationService.showWalkSessionNotification({
+        elapsedSeconds: 0,
+        isPaused: false,
+        targetDurationMinutes: plan?.suggestedDurationMinutes ?? null,
+        startedFromNotification,
+        timerMode: notificationTimerMode,
+      });
     }
-  }, [applyFallbackPermissionResults, hydrateFallbackState, subscribeFallbackPedometer, unsubscribeFallbackSensors, updateFallbackState]);
+  }, [
+    applyFallbackPermissionResults,
+    hydrateFallbackState,
+    notificationTimerMode,
+    plan?.suggestedDurationMinutes,
+    startedFromNotification,
+    subscribeFallbackPedometer,
+    unsubscribeFallbackSensors,
+    updateFallbackState,
+  ]);
 
   const beginAndroidWalk = useCallback(async () => {
     if (!isAndroidService || startFlowLockedRef.current) return;
@@ -1431,13 +1465,13 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
     setIsStartingWalk(true);
 
     try {
-      const permissionResults = await requestWalkTrackingPermissions();
+      await requestWalkTrackingPermissions();
       if (!isMountedRef.current) return;
 
       runStartCountdown(() => {
         void (async () => {
           try {
-            const freshSnapshot = await androidWalkTracking.startSession({ planId });
+            const freshSnapshot = await startAndroidSession();
             if (!freshSnapshot) {
               throw new Error('Walk tracking session did not start.');
             }
@@ -1459,7 +1493,7 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
     } catch (error) {
       handleStartupFailure(error);
     }
-  }, [applyAndroidSnapshot, handleStartupFailure, isAndroidService, markPlanStarted, planId, runStartCountdown]);
+  }, [applyAndroidSnapshot, handleStartupFailure, isAndroidService, markPlanStarted, runStartCountdown, startAndroidSession]);
 
   const beginFallbackWalk = useCallback(async () => {
     if (isAndroidService || startFlowLockedRef.current) return;
@@ -1469,7 +1503,7 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
     setIsStartingWalk(true);
 
     try {
-      await requestWalkTrackingPermissions();
+      const permissionResults = await requestWalkTrackingPermissions();
       if (!isMountedRef.current) return;
 
       applyFallbackPermissionResults(permissionResults);
@@ -1572,10 +1606,13 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
       });
 
       if (isNotificationsSupported && Platform.OS !== 'android') {
-        void notificationService.showWalkSessionNotification(
-          formatClock(fallbackStateRef.current.activeSeconds),
-          fallbackStateRef.current.paused,
-        );
+        void notificationService.showWalkSessionNotification({
+          elapsedSeconds: fallbackStateRef.current.activeSeconds,
+          isPaused: fallbackStateRef.current.paused,
+          targetDurationMinutes: plan?.suggestedDurationMinutes ?? null,
+          startedFromNotification,
+          timerMode: notificationTimerMode,
+        });
       }
 
       if (!fallbackStateRef.current.paused) {
@@ -1590,7 +1627,17 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
     return () => {
       clearInterval(timer);
     };
-  }, [computeFallbackElapsedSeconds, hydrateFallbackState, isAndroidService, sessionStarted, updateFallbackCheckpoint, updateFallbackState]);
+  }, [
+    computeFallbackElapsedSeconds,
+    hydrateFallbackState,
+    isAndroidService,
+    notificationTimerMode,
+    plan?.suggestedDurationMinutes,
+    sessionStarted,
+    startedFromNotification,
+    updateFallbackCheckpoint,
+    updateFallbackState,
+  ]);
 
   useEffect(() => {
     if (isAndroidService) return;
@@ -1731,7 +1778,7 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
 
     if (options?.showCompletion === false) {
       allowLeaveRef.current = true;
-      navigation.navigate('Dashboard');
+      navigation.navigate('Dashboard', { showPostWalkSummary: true });
       return;
     }
 
@@ -1938,13 +1985,21 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
 
   const confirmEnd = useCallback(async () => {
     setShowEndModal(false);
+    const endedFromNotificationPrompt =
+      prompt === 'end_confirmation' ||
+      pendingWalkPrompt === 'end_confirmation' ||
+      activeWalkSnapshot?.prompt === 'end_confirmation';
     if (isAndroidService) {
       const snapshot = await androidWalkTracking.confirmEndSession();
-      await saveAndroidSession(snapshot);
+      await saveAndroidSession(snapshot, {
+        showCompletion: !endedFromNotificationPrompt,
+      });
       return;
     }
-    await saveFallbackSession();
-  }, [isAndroidService, saveAndroidSession, saveFallbackSession]);
+    await saveFallbackSession({
+      showCompletion: !endedFromNotificationPrompt,
+    });
+  }, [activeWalkSnapshot?.prompt, isAndroidService, pendingWalkPrompt, prompt, saveAndroidSession, saveFallbackSession]);
 
   const closeEndModal = useCallback(async () => {
     if (isAndroidService && activeWalkSnapshot?.prompt === 'end_confirmation') {
@@ -2511,18 +2566,18 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
 
       <Modal visible={showEndModal} onClose={() => { void closeEndModal(); }} title="End this walk?">
         <Text variant="body" style={styles.modalText}>
-          Your walk progress will be saved to today&apos;s stats.
+          Your progress is safe and will be added to your dashboard.
         </Text>
         <View style={styles.modalRow}>
           <Button
-            title="Keep Walking"
+            title="Keep walking"
             onPress={() => { void closeEndModal(); }}
             variant="outline"
             style={styles.modalButton}
             testID="walking-end-cancel"
           />
           <Button
-            title="Yes, End"
+            title="End walk"
             onPress={() => { void confirmEnd(); }}
             style={styles.modalButton}
             testID="walking-end-confirm"
@@ -2532,18 +2587,18 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
 
       <Modal visible={showIdleModal} onClose={() => {}} title="No walking detected">
         <Text variant="body" style={styles.modalText}>
-          You are not walking right now. You can continue this session later.
+          Looks like you paused for now. You can continue this walk anytime.
         </Text>
         <View style={styles.modalRow}>
           <Button
-            title="No, Continue"
+            title="Keep this walk"
             onPress={() => { void continueAfterIdlePause(); }}
             variant="outline"
             style={styles.modalButton}
             testID="walking-idle-continue"
           />
           <Button
-            title="Yes, later"
+            title="Save for later"
             onPress={() => { void saveForLater(); }}
             style={styles.modalButton}
             testID="walking-idle-later"

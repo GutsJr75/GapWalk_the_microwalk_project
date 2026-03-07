@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, StyleSheet, Alert, ActivityIndicator, Platform, LayoutAnimation, UIManager, Animated, Easing } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+import { View, StyleSheet, ActivityIndicator, Platform, LayoutAnimation, UIManager, Animated, Easing } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import * as AuthSession from 'expo-auth-session';
 import * as DocumentPicker from 'expo-document-picker';
@@ -9,6 +8,7 @@ import { Container } from '../components/Container';
 import { Text } from '../components/Text';
 import { Button } from '../components/Button';
 import { Card } from '../components/Card';
+import { Modal } from '../components/Modal';
 import { AppIcon } from '../components/AppIcon';
 import { ScreenHeader } from '../components/ScreenHeader';
 import { theme } from '../theme';
@@ -30,7 +30,6 @@ import { authStorage } from '../data/authStorage';
 import {
   googleCalendarService,
   getGoogleAuthConfig,
-  getGoogleRedirectUri,
   isGoogleConfigured,
 } from '../services/googleCalendar';
 import { toUserFriendlyError } from '../utils/errorMessages';
@@ -38,6 +37,17 @@ import { useUnsavedChangesGuard } from '../hooks/useUnsavedChangesGuard';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'ScheduleSetup'>;
 type ScheduleOption = 'google' | 'import' | 'manual' | null;
+type DialogAction = {
+  label: string;
+  variant?: 'primary' | 'secondary' | 'outline' | 'muted' | 'danger';
+  onPress?: () => void;
+};
+
+type DialogState = {
+  title: string;
+  message: string;
+  actions: DialogAction[];
+};
 
 const discovery = {
   authorizationEndpoint: 'https://accounts.google.com/o/oauth2/v2/auth',
@@ -57,10 +67,16 @@ const ScheduleSetupScreenInner: React.FC<Props> = ({ navigation, route }) => {
   const [selectedOption, setSelectedOption] = useState<ScheduleOption>(null);
   const [loading, setLoading] = useState(false);
   const [syncStatus, setSyncStatus] = useState<string | null>(null);
+  const [dialogState, setDialogState] = useState<DialogState | null>(null);
   const { setScheduleSource, scheduleSource, preferences, setUpcomingPlans } = useAppStore();
   const palette = useThemePalette();
   const manageMode = !!route.params?.manageMode;
   const isE2E = process.env.EXPO_PUBLIC_E2E === '1';
+
+  const closeDialog = () => setDialogState(null);
+  const showDialog = (title: string, message: string, actions: DialogAction[]) => {
+    setDialogState({ title, message, actions });
+  };
 
   const exitScreen = () => {
     if (navigation.canGoBack()) {
@@ -108,11 +124,7 @@ const ScheduleSetupScreenInner: React.FC<Props> = ({ navigation, route }) => {
       onAcknowledge?.();
       return;
     }
-    if (onAcknowledge) {
-      Alert.alert(title, message, [{ text: 'OK', onPress: onAcknowledge }]);
-      return;
-    }
-    Alert.alert(title, message);
+    showDialog(title, message, [{ label: 'OK', onPress: onAcknowledge }]);
   };
 
   // expo-auth-session hook for Google OAuth
@@ -137,7 +149,7 @@ const ScheduleSetupScreenInner: React.FC<Props> = ({ navigation, route }) => {
     } else if (response?.type === 'error') {
       setLoading(false);
       const msg = toUserFriendlyError(response.error ?? new Error('Could not sign in with Google'));
-      Alert.alert('Sign-in Failed', msg);
+      showMessage('Sign-in failed', msg);
     } else if (response?.type === 'dismiss') {
       setLoading(false);
     }
@@ -161,7 +173,7 @@ const ScheduleSetupScreenInner: React.FC<Props> = ({ navigation, route }) => {
   };
 
   const onGoogleCardPress = () => {
-    Alert.alert('Coming soon', 'Google Calendar linking is coming soon. For now, use Import or Enter manually.');
+    showMessage('Coming soon', 'Google Calendar linking is coming soon. For now, use Import or Enter manually.');
   };
 
   /* ── Google Calendar sync ── */
@@ -173,12 +185,26 @@ const ScheduleSetupScreenInner: React.FC<Props> = ({ navigation, route }) => {
       const events = await googleCalendarService.fetchEvents(accessToken, 14);
 
       if (events.length === 0) {
-        Alert.alert(
+        showDialog(
           'No Events Found',
           'Your Google Calendar has no events in the next 14 days. You can add events manually instead.',
           [
-            { text: 'Enter manually', onPress: () => { setLoading(false); setSyncStatus(null); navigateToManualSchedule(); } },
-            { text: 'OK', style: 'cancel', onPress: () => { setLoading(false); setSyncStatus(null); } },
+            {
+              label: 'Enter manually',
+              variant: 'secondary',
+              onPress: () => {
+                setLoading(false);
+                setSyncStatus(null);
+                navigateToManualSchedule();
+              },
+            },
+            {
+              label: 'OK',
+              onPress: () => {
+                setLoading(false);
+                setSyncStatus(null);
+              },
+            },
           ]
         );
         return;
@@ -203,27 +229,26 @@ const ScheduleSetupScreenInner: React.FC<Props> = ({ navigation, route }) => {
       setSyncStatus(null);
       setLoading(false);
 
-      Alert.alert(
+      showDialog(
         manageMode ? 'Schedule Updated' : 'Calendar Linked',
         `Imported ${events.length} events from Google Calendar.`,
-        [{ text: manageMode ? 'Done' : 'Continue', onPress: completeFlow }]
+        [{ label: manageMode ? 'Done' : 'Continue', onPress: completeFlow }]
       );
     } catch (error) {
       if (__DEV__) console.error('Google Calendar sync error:', error);
       const msg = toUserFriendlyError(error);
       setLoading(false);
       setSyncStatus(null);
-      Alert.alert('Sync Failed', msg);
+      showMessage('Sync failed', msg);
     }
   };
 
   const startGoogleAuth = async () => {
     if (!isGoogleConfigured()) {
-      const redirectUri = getGoogleRedirectUri();
-      Alert.alert(
+      showDialog(
         'Google Calendar',
         'Google Calendar integration is coming soon. Please use Import or Enter manually for now.',
-        [{ text: 'OK' }]
+        [{ label: 'OK' }]
       );
       return;
     }
@@ -391,6 +416,12 @@ const ScheduleSetupScreenInner: React.FC<Props> = ({ navigation, route }) => {
     enabled: hasUnsavedSourceSelection,
     title: 'Leave without saving source change?',
     message: 'You changed your schedule source but have not saved it yet. If you leave now, your change will be lost.',
+    onRequestConfirm: ({ title, message, onLeave }) => {
+      showDialog(title, message, [
+        { label: 'Stay', variant: 'secondary' },
+        { label: 'Leave', variant: 'danger', onPress: onLeave },
+      ]);
+    },
   });
 
   const handleContinue = () => {
@@ -426,12 +457,12 @@ const ScheduleSetupScreenInner: React.FC<Props> = ({ navigation, route }) => {
       return;
     }
 
-    Alert.alert(
+    showDialog(
       'Update schedule source?',
       message,
       [
-        { text: SAVE_CONFIRM_DECLINE, style: 'cancel' },
-        { text: 'Yes, Update', onPress: () => { void runSelectedOption(); } },
+        { label: SAVE_CONFIRM_DECLINE, variant: 'secondary' },
+        { label: 'Yes, update', onPress: () => { void runSelectedOption(); } },
       ]
     );
   };
@@ -479,7 +510,7 @@ const ScheduleSetupScreenInner: React.FC<Props> = ({ navigation, route }) => {
             <Card
               selected={selectedOption === 'import'}
               onPress={() => toggle('import')}
-              style={[selectedOption === 'import' && styles.selectedHalfCard]}
+              style={[styles.halfCardContent, selectedOption === 'import' && styles.selectedHalfCard]}
               testID="schedule-option-import"
             >
               <View style={styles.cardTitleRow}>
@@ -489,11 +520,6 @@ const ScheduleSetupScreenInner: React.FC<Props> = ({ navigation, route }) => {
               <Text variant="bodySmall" color={palette.textMuted} style={styles.cardDesc}>
                 Upload a .ics file so GapWalk can see when you're busy.
               </Text>
-              {selectedOption === 'import' && (
-                <View style={styles.checkmarkWrap}>
-                  <Ionicons name="checkmark-circle" size={20} color={palette.accentPrimary} />
-                </View>
-              )}
             </Card>
           </View>
 
@@ -501,7 +527,7 @@ const ScheduleSetupScreenInner: React.FC<Props> = ({ navigation, route }) => {
             <Card
               selected={selectedOption === 'manual'}
               onPress={() => toggle('manual')}
-              style={[selectedOption === 'manual' && styles.selectedHalfCard]}
+              style={[styles.halfCardContent, selectedOption === 'manual' && styles.selectedHalfCard]}
               testID="schedule-option-manual"
             >
               <View style={styles.cardTitleRow}>
@@ -511,11 +537,6 @@ const ScheduleSetupScreenInner: React.FC<Props> = ({ navigation, route }) => {
               <Text variant="bodySmall" color={palette.textMuted} style={styles.cardDesc}>
                 Build your weekly schedule and one-time events with a simple calendar.
               </Text>
-              {selectedOption === 'manual' && (
-                <View style={styles.checkmarkWrap}>
-                  <Ionicons name="checkmark-circle" size={20} color={palette.accentPrimary} />
-                </View>
-              )}
             </Card>
           </View>
         </View>
@@ -574,6 +595,25 @@ const ScheduleSetupScreenInner: React.FC<Props> = ({ navigation, route }) => {
           Your schedule stays private. Privacy is our top priority.
         </Text>
       </View>
+      <Modal visible={!!dialogState} onClose={closeDialog} title={dialogState?.title}>
+        <Text variant="body" style={[styles.dialogMessage, { color: palette.textSecondary }]}>
+          {dialogState?.message}
+        </Text>
+        <View style={styles.dialogActions}>
+          {(dialogState?.actions ?? []).map((action, index) => (
+            <Button
+              key={`${action.label}-${index}`}
+              title={action.label}
+              variant={action.variant ?? 'primary'}
+              onPress={() => {
+                closeDialog();
+                action.onPress?.();
+              }}
+              style={styles.dialogButton}
+            />
+          ))}
+        </View>
+      </Modal>
     </Container>
   );
 };
@@ -593,8 +633,9 @@ const styles = StyleSheet.create({
   },
   sectionLabel: { marginBottom: 16, fontWeight: theme.fontWeight.semibold, textAlign: 'center' },
   googleCard: { marginBottom: 12 },
-  row: { flexDirection: 'row', gap: 12 },
+  row: { flexDirection: 'row', gap: 12, alignItems: 'stretch' },
   halfCard: { flex: 1 },
+  halfCardContent: { flex: 1 },
   selectedHalfCard: {
     paddingHorizontal: theme.spacing.md - 1,
     paddingVertical: theme.spacing.md - 1,
@@ -637,11 +678,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
   },
   syncOverlayText: { fontWeight: theme.fontWeight.medium, textAlign: 'center' },
-  checkmarkWrap: {
-    position: 'absolute',
-    top: 8,
-    right: 8,
-  },
   cardMicrocopy: {
     fontSize: theme.fontSize.xs,
     marginTop: 6,
@@ -666,4 +702,16 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   privacy: { textAlign: 'center', marginTop: screenChrome.FOOTER_NOTE_MARGIN_TOP },
+  dialogMessage: {
+    lineHeight: 22,
+    marginBottom: theme.spacing.lg,
+  },
+  dialogActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 10,
+  },
+  dialogButton: {
+    minWidth: 110,
+  },
 });
