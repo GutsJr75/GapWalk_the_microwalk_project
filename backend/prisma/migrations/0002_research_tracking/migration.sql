@@ -90,7 +90,7 @@ ALTER TABLE "walk_pause_events" ADD CONSTRAINT "walk_pause_events_session_id_fke
 -- ─── WALK ROUTE POINTS ──────────────────────────────────────
 
 CREATE TABLE "walk_route_points" (
-    "id" SERIAL NOT NULL,
+    "id" BIGSERIAL NOT NULL,
     "user_id" UUID NOT NULL,
     "session_id" UUID NOT NULL,
     "latitude" DOUBLE PRECISION NOT NULL,
@@ -119,6 +119,7 @@ ALTER TABLE "crash_reports"
     ADD COLUMN "app_state" TEXT;
 
 -- ─── BEHAVIOR LOG ENUM ADDITIONS ────────────────────────────
+-- Note: PostgreSQL requires separate ALTER TYPE statements for each ADD VALUE
 
 ALTER TYPE "BehaviorEventType" ADD VALUE IF NOT EXISTS 'nudge_scheduled';
 ALTER TYPE "BehaviorEventType" ADD VALUE IF NOT EXISTS 'nudge_tapped';
