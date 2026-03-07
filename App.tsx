@@ -11,6 +11,7 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { getDatabase } from './src/data/db';
 import { useAppStore } from './src/store';
+import { WalkDisplayCard, ALL_WALK_DISPLAY_CARDS } from './src/types';
 import { preferencesRepo } from './src/data/repositories/preferencesRepo';
 import { plansRepo } from './src/data/repositories/plansRepo';
 import { scheduleSourceRepo } from './src/data/repositories/scheduleSourceRepo';
@@ -43,7 +44,6 @@ import { ManualScheduleScreen } from './src/screens/ManualScheduleScreen';
 import { PreferencesScreen } from './src/screens/PreferencesScreen';
 import { DashboardScreen } from './src/screens/DashboardScreen';
 import { WalkingScreen } from './src/screens/WalkingScreen';
-import { WalkingExpandedScreen } from './src/screens/WalkingExpandedScreen';
 import { SettingsScreen } from './src/screens/SettingsScreen';
 import { WeeklyDataScreen } from './src/screens/WeeklyDataScreen';
 import { AchievementsScreen } from './src/screens/AchievementsScreen';
@@ -53,37 +53,36 @@ export type RootStackParamList = {
   Intro: undefined;
   ScheduleSetup: { manageMode?: boolean } | undefined;
   ManualSchedule:
-    | {
-      manageMode?: boolean;
-      importedFilename?: string;
-      importedEventCount?: number;
-      prefillTemplate?: {
-        id: string;
-        title: string;
-        dayOfWeek: number;
-        startTime: string;
-        endTime: string;
-      }[];
-      requireSaveBeforeContinue?: boolean;
-      startWithEmpty?: boolean;
-    }
-    | undefined;
+  | {
+    manageMode?: boolean;
+    importedFilename?: string;
+    importedEventCount?: number;
+    prefillTemplate?: {
+      id: string;
+      title: string;
+      dayOfWeek: number;
+      startTime: string;
+      endTime: string;
+    }[];
+    requireSaveBeforeContinue?: boolean;
+    startWithEmpty?: boolean;
+  }
+  | undefined;
   Preferences:
-    | {
-      skipScheduleSource?: boolean;
-      manageMode?: boolean;
-    }
-    | undefined;
-  Dashboard: { openMenu?: boolean; showPostWalkSummary?: boolean } | undefined;
-  Walking: { planId?: string; prompt?: 'end_confirmation' } | undefined;
-  WalkingExpanded: undefined;
+  | {
+    skipScheduleSource?: boolean;
+    manageMode?: boolean;
+  }
+  | undefined;
+  Dashboard: { openMenu?: boolean; showPostWalkSummary?: boolean; startTour?: boolean } | undefined;
+  Walking: { planId?: string; prompt?: 'end_confirmation'; startedFromNotification?: boolean } | undefined;
   Settings: undefined;
   WeeklyData: undefined;
   Achievements:
-    | {
-      source?: 'profile' | 'options';
-    }
-    | undefined;
+  | {
+    source?: 'profile' | 'options';
+  }
+  | undefined;
   AboutHelp: undefined;
   Profile: undefined;
 };
@@ -176,10 +175,13 @@ function App() {
     setProfileDisplayName,
     setActiveWalkSnapshot,
     setPendingWalkPrompt,
+    setHasSeenDashboardTour,
+    setWalkDisplayCards,
+    setNotificationTimerMode,
     setAllGuidanceSeen,
   } = useAppStore();
-  const pendingWalkPlanIdRef = useRef<string | null>(null);
-  const pendingWalkRouteRef = useRef<{ planId?: string; prompt?: 'end_confirmation' } | null>(null);
+  const pendingWalkPlanIdRef = useRef<{ planId: string; startedFromNotification?: boolean } | null>(null);
+  const pendingWalkRouteRef = useRef<{ planId?: string; prompt?: 'end_confirmation'; startedFromNotification?: boolean } | null>(null);
   const lastHandledResponseRef = useRef<string | null>(null);
   const [isBootstrapDone, setIsBootstrapDone] = useState(false);
   const [isBootGreetingDone, setIsBootGreetingDone] = useState(false);
@@ -198,7 +200,7 @@ function App() {
   // Hide native splash immediately so the app starts from our UI (no splash screen).
   useEffect(() => {
     if (Platform.OS !== 'web') {
-      SplashScreen.hideAsync().catch(() => {});
+      SplashScreen.hideAsync().catch(() => { });
     }
   }, []);
 
@@ -281,7 +283,7 @@ function App() {
     setUpcomingPlans(upcoming);
   }, [setTodayStats, setTodaySteps, setUpcomingPlans]);
 
-  const navigateToActiveWalk = useCallback((params: { planId?: string; prompt?: 'end_confirmation' }) => {
+  const navigateToActiveWalk = useCallback((params: { planId?: string; prompt?: 'end_confirmation'; startedFromNotification?: boolean }) => {
     if (navigationRef.isReady()) {
       navigationRef.navigate('Walking', params);
       return;
@@ -342,9 +344,9 @@ function App() {
       analyticsService.track('app_foreground_from_nudge', { planId: data.planId });
 
       if (navigationRef.isReady()) {
-        navigationRef.navigate('Walking', { planId: data.planId });
+        navigationRef.navigate('Walking', { planId: data.planId, startedFromNotification: true });
       } else {
-        pendingWalkPlanIdRef.current = data.planId;
+        pendingWalkPlanIdRef.current = { planId: data.planId, startedFromNotification: true };
       }
     } catch (error) {
       if (__DEV__) console.error('Failed to process notification response:', error);
@@ -420,6 +422,7 @@ function App() {
             pendingWalkRouteRef.current = {
               planId: snapshot.planId,
               prompt: snapshot.prompt,
+              startedFromNotification: snapshot.startedFromNotification ?? false,
             };
           } else {
             if (isNotificationsSupported) {
@@ -444,7 +447,7 @@ function App() {
       } catch (e) {
         if (__DEV__) console.warn('Failed to recover orphaned session:', e);
       }
-      
+
       // Restore auth session.
       // Always load the stored user profile (email/name) so it appears in the
       // Profile screen regardless of the "Remember me" setting.
@@ -480,8 +483,25 @@ function App() {
         if (storedTheme) setThemeMode(storedTheme);
         const storedLang = await authStorage.getLanguage();
         if (storedLang) setLanguage(storedLang);
+        const storedNotificationTimerMode = await authStorage.getNotificationTimerMode();
+        if (storedNotificationTimerMode) setNotificationTimerMode(storedNotificationTimerMode);
+        const storedCards = await authStorage.getWalkDisplayCards();
+        if (storedCards && storedCards.length >= 2) {
+          const valid = storedCards.filter((c): c is WalkDisplayCard =>
+            ALL_WALK_DISPLAY_CARDS.includes(c as WalkDisplayCard),
+          );
+          if (valid.length >= 2) setWalkDisplayCards(valid);
+        }
       } catch (e) {
         if (__DEV__) console.warn('Failed to restore UI settings:', e);
+      }
+
+      // Restore tour state
+      try {
+        const dashTourSeen = await authStorage.getDashboardTourSeen();
+        if (dashTourSeen) setHasSeenDashboardTour(true);
+      } catch (e) {
+        if (__DEV__) console.warn('Failed to restore tour state:', e);
       }
 
       // Load guidance "seen" flags so hint cards render correctly on first frame
@@ -609,7 +629,11 @@ function App() {
         setActiveWalkSnapshot(snapshot);
         setPendingWalkPrompt(snapshot?.prompt ?? null);
         if (snapshot) {
-          navigateToActiveWalk({ planId: snapshot.planId, prompt: snapshot.prompt });
+          navigateToActiveWalk({
+            planId: snapshot.planId,
+            prompt: snapshot.prompt,
+            startedFromNotification: snapshot.startedFromNotification ?? false,
+          });
         }
       })();
     });
@@ -699,9 +723,9 @@ function App() {
                 navigationRef.navigate('Walking', pendingWalkRoute);
                 pendingWalkRouteRef.current = null;
               }
-              const pendingPlanId = pendingWalkPlanIdRef.current;
-              if (pendingPlanId && navigationRef.isReady()) {
-                navigationRef.navigate('Walking', { planId: pendingPlanId });
+              const pendingPlan = pendingWalkPlanIdRef.current;
+              if (pendingPlan && navigationRef.isReady()) {
+                navigationRef.navigate('Walking', pendingPlan);
                 pendingWalkPlanIdRef.current = null;
               }
             }}
@@ -739,7 +763,6 @@ function App() {
               <Stack.Screen name="Preferences" component={PreferencesScreen} />
               <Stack.Screen name="Dashboard" component={DashboardScreen} options={{ animation: 'fade_from_bottom' }} />
               <Stack.Screen name="Walking" component={WalkingScreen} options={{ animation: 'slide_from_bottom' }} />
-              <Stack.Screen name="WalkingExpanded" component={WalkingExpandedScreen} options={{ animation: 'slide_from_right' }} />
               <Stack.Screen name="Settings" component={SettingsScreen} />
               <Stack.Screen name="WeeklyData" component={WeeklyDataScreen} />
               <Stack.Screen name="Achievements" component={AchievementsScreen} />

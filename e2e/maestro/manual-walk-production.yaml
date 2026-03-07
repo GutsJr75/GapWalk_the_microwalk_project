@@ -1,0 +1,27 @@
+appId: com.gapwalk.app
+name: manual-walk-production
+---
+- launchApp:
+    clearState: true
+- runFlow:
+    file: helpers/bootstrap-onboarding-manual.yaml
+- tapOn:
+    id: dashboard-start-manual-walk
+- extendedWaitUntil:
+    visible:
+      id: walking-pause-resume
+    timeout: 20000
+- waitForAnimationToEnd
+- tapOn:
+    id: walking-pause-resume
+- waitForAnimationToEnd
+- tapOn:
+    id: walking-pause-resume
+- tapOn:
+    id: walking-end
+- tapOn:
+    id: walking-end-confirm
+- extendedWaitUntil:
+    visible:
+      id: dashboard-open-menu
+    timeout: 30000

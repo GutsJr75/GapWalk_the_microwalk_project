@@ -1,13 +1,19 @@
 import { NativeEventEmitter, NativeModules, Platform } from 'react-native';
-import { ActiveWalkSnapshot, WalkActionSource } from '../types';
+import { ActiveWalkSnapshot, NotificationTimerMode, WalkActionSource } from '../types';
 
 type NativeWalkTrackingModule = {
-  startSession(planId?: string | null): Promise<ActiveWalkSnapshot | null>;
+  startSession(
+    planId?: string | null,
+    targetDurationMinutes?: number | null,
+    startedFromNotification?: boolean,
+    notificationTimerMode?: NotificationTimerMode,
+  ): Promise<ActiveWalkSnapshot | null>;
   pauseSession(source: WalkActionSource): Promise<ActiveWalkSnapshot | null>;
   resumeSession(source: WalkActionSource): Promise<ActiveWalkSnapshot | null>;
   requestEndConfirmation(): Promise<ActiveWalkSnapshot | null>;
   confirmEndSession(): Promise<ActiveWalkSnapshot | null>;
   cancelEndConfirmation(): Promise<ActiveWalkSnapshot | null>;
+  updateNotificationTimerMode(mode: NotificationTimerMode): Promise<ActiveWalkSnapshot | null>;
   getSnapshot(): Promise<ActiveWalkSnapshot | null>;
   addListener(eventName: string): void;
   removeListeners(count: number): void;
@@ -24,6 +30,9 @@ const normalizeSnapshot = (value: ActiveWalkSnapshot | null | undefined): Active
   return {
     ...value,
     planId: value.planId || undefined,
+    targetDurationMinutes: value.targetDurationMinutes ?? null,
+    startedFromNotification: !!value.startedFromNotification,
+    notificationTimerMode: (value.notificationTimerMode as NotificationTimerMode | undefined) ?? 'smart',
     pauseStartedAtMs: value.pauseStartedAtMs ?? null,
     displayState: value.displayState ?? (value.paused ? 'paused' : 'calibrating'),
     pedometerHealth: value.pedometerHealth ?? 'stale',
@@ -47,9 +56,19 @@ export const androidWalkTracking = {
     return Platform.OS === 'android' && !!nativeModule;
   },
 
-  async startSession(options?: { planId?: string }): Promise<ActiveWalkSnapshot | null> {
+  async startSession(options?: {
+    planId?: string;
+    targetDurationMinutes?: number | null;
+    startedFromNotification?: boolean;
+    notificationTimerMode?: NotificationTimerMode;
+  }): Promise<ActiveWalkSnapshot | null> {
     if (!nativeModule) return null;
-    return normalizeSnapshot(await nativeModule.startSession(options?.planId ?? null));
+    return normalizeSnapshot(await nativeModule.startSession(
+      options?.planId ?? null,
+      options?.targetDurationMinutes ?? null,
+      options?.startedFromNotification ?? false,
+      options?.notificationTimerMode ?? 'smart',
+    ));
   },
 
   async pauseSession(source: WalkActionSource): Promise<ActiveWalkSnapshot | null> {
@@ -75,6 +94,11 @@ export const androidWalkTracking = {
   async cancelEndConfirmation(): Promise<ActiveWalkSnapshot | null> {
     if (!nativeModule) return null;
     return normalizeSnapshot(await nativeModule.cancelEndConfirmation());
+  },
+
+  async updateNotificationTimerMode(mode: NotificationTimerMode): Promise<ActiveWalkSnapshot | null> {
+    if (!nativeModule) return null;
+    return normalizeSnapshot(await nativeModule.updateNotificationTimerMode(mode));
   },
 
   async getSnapshot(): Promise<ActiveWalkSnapshot | null> {

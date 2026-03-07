@@ -104,9 +104,34 @@ export type WalkActionSource =
 
 export type WalkPrompt = 'end_confirmation';
 
+export type WalkDisplayCard = 'walkDuration' | 'steps' | 'distance' | 'calories' | 'speed' | 'goalProgress';
+export type NotificationTimerMode = 'smart' | 'elapsed' | 'remaining';
+
+export const ALL_WALK_DISPLAY_CARDS: WalkDisplayCard[] = [
+  'walkDuration', 'steps', 'distance', 'calories', 'speed', 'goalProgress',
+];
+
+export const WALK_DISPLAY_CARD_LABELS: Record<WalkDisplayCard, string> = {
+  walkDuration: 'Walk Duration',
+  steps: 'Steps',
+  distance: 'Distance',
+  calories: 'Calories',
+  speed: 'Speed',
+  goalProgress: 'Goal Progress',
+};
+
+export const NOTIFICATION_TIMER_MODE_LABELS: Record<NotificationTimerMode, string> = {
+  smart: 'Smart',
+  elapsed: 'Minutes walked',
+  remaining: 'Minutes left',
+};
+
 export interface ActiveWalkSnapshot {
   sessionId: string;
   planId?: string;
+  targetDurationMinutes?: number | null;
+  startedFromNotification?: boolean;
+  notificationTimerMode?: NotificationTimerMode;
   startIso: string;
   sessionStartMs: number;
   totalPausedMs: number;

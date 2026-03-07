@@ -31,9 +31,21 @@ class WalkTrackingModule(
   }
 
   @ReactMethod
-  fun startSession(planId: String?, promise: Promise) {
+  fun startSession(
+    planId: String?,
+    targetDurationMinutes: Double?,
+    startedFromNotification: Boolean,
+    notificationTimerMode: String?,
+    promise: Promise,
+  ) {
     try {
-      val snapshot = WalkTrackingSessionController.startSession(reactApplicationContext, planId)
+      val snapshot = WalkTrackingSessionController.startSession(
+        context = reactApplicationContext,
+        planId = planId,
+        targetDurationMinutes = targetDurationMinutes?.toInt()?.takeIf { it > 0 },
+        startedFromNotification = startedFromNotification,
+        notificationTimerMode = notificationTimerMode,
+      )
       WalkTrackingService.startOrSync(reactApplicationContext)
       emitWalkUpdate(snapshot)
       promise.resolve(WalkTrackingStorage.toWritableMap(snapshot))
@@ -99,6 +111,23 @@ class WalkTrackingModule(
       promise.resolve(WalkTrackingStorage.toWritableMap(snapshot))
     } catch (error: Throwable) {
       promise.reject("walk_cancel_end_failed", error)
+    }
+  }
+
+  @ReactMethod
+  fun updateNotificationTimerMode(mode: String, promise: Promise) {
+    try {
+      val snapshot = WalkTrackingSessionController.updateNotificationTimerMode(
+        reactApplicationContext,
+        mode,
+      )
+      if (snapshot != null) {
+        WalkTrackingService.startOrSync(reactApplicationContext)
+      }
+      emitWalkUpdate(snapshot)
+      promise.resolve(WalkTrackingStorage.toWritableMap(snapshot))
+    } catch (error: Throwable) {
+      promise.reject("walk_update_notification_timer_mode_failed", error)
     }
   }
 

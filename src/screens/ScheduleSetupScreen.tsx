@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, StyleSheet, Alert, ActivityIndicator, Platform, LayoutAnimation, UIManager, Animated, Easing } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+import { View, StyleSheet, ActivityIndicator, Platform, LayoutAnimation, UIManager, Animated, Easing } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import * as DocumentPicker from 'expo-document-picker';
 import { RootStackParamList } from '../../App';
@@ -8,6 +7,7 @@ import { Container } from '../components/Container';
 import { Text } from '../components/Text';
 import { Button } from '../components/Button';
 import { Card } from '../components/Card';
+import { Modal } from '../components/Modal';
 import { AppIcon } from '../components/AppIcon';
 import { ScreenHeader } from '../components/ScreenHeader';
 import { theme } from '../theme';
@@ -25,6 +25,7 @@ import {
 } from '../utils/confirmMessages';
 import { analyticsService } from '../services/analytics';
 import { useAppStore } from '../store';
+import { authStorage } from '../data/authStorage';
 import {
   googleCalendarService,
   signInWithGoogle,
@@ -37,6 +38,17 @@ import { useUnsavedChangesGuard } from '../hooks/useUnsavedChangesGuard';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'ScheduleSetup'>;
 type ScheduleOption = 'google' | 'import' | 'manual' | null;
+type DialogAction = {
+  label: string;
+  variant?: 'primary' | 'secondary' | 'outline' | 'muted' | 'danger';
+  onPress?: () => void;
+};
+
+type DialogState = {
+  title: string;
+  message: string;
+  actions: DialogAction[];
+};
 
 const isFabric = !!(globalThis as any).nativeFabricUIManager;
 
@@ -44,14 +56,22 @@ if (Platform.OS === 'android' && !isFabric && UIManager.setLayoutAnimationEnable
   UIManager.setLayoutAnimationEnabledExperimental(true);
 }
 
-export const ScheduleSetupScreen: React.FC<Props> = ({ navigation, route }) => {
+
+
+const ScheduleSetupScreenInner: React.FC<Props> = ({ navigation, route }) => {
   const [selectedOption, setSelectedOption] = useState<ScheduleOption>(null);
   const [loading, setLoading] = useState(false);
   const [syncStatus, setSyncStatus] = useState<string | null>(null);
+  const [dialogState, setDialogState] = useState<DialogState | null>(null);
   const { setScheduleSource, scheduleSource, preferences, setUpcomingPlans } = useAppStore();
   const palette = useThemePalette();
   const manageMode = !!route.params?.manageMode;
   const isE2E = process.env.EXPO_PUBLIC_E2E === '1';
+
+  const closeDialog = () => setDialogState(null);
+  const showDialog = (title: string, message: string, actions: DialogAction[]) => {
+    setDialogState({ title, message, actions });
+  };
 
   const exitScreen = () => {
     if (navigation.canGoBack()) {
@@ -99,11 +119,7 @@ export const ScheduleSetupScreen: React.FC<Props> = ({ navigation, route }) => {
       onAcknowledge?.();
       return;
     }
-    if (onAcknowledge) {
-      Alert.alert(title, message, [{ text: 'OK', onPress: onAcknowledge }]);
-      return;
-    }
-    Alert.alert(title, message);
+    showDialog(title, message, [{ label: 'OK', onPress: onAcknowledge }]);
   };
 
 
@@ -132,12 +148,26 @@ export const ScheduleSetupScreen: React.FC<Props> = ({ navigation, route }) => {
       const events = await googleCalendarService.fetchEvents(accessToken, 14);
 
       if (events.length === 0) {
-        Alert.alert(
+        showDialog(
           'No Events Found',
           'Your Google Calendar has no events in the next 14 days. You can add events manually instead.',
           [
-            { text: 'Enter manually', onPress: () => { setLoading(false); setSyncStatus(null); navigateToManualSchedule(); } },
-            { text: 'OK', style: 'cancel', onPress: () => { setLoading(false); setSyncStatus(null); } },
+            {
+              label: 'Enter manually',
+              variant: 'secondary',
+              onPress: () => {
+                setLoading(false);
+                setSyncStatus(null);
+                navigateToManualSchedule();
+              },
+            },
+            {
+              label: 'OK',
+              onPress: () => {
+                setLoading(false);
+                setSyncStatus(null);
+              },
+            },
           ]
         );
         return;
@@ -162,17 +192,17 @@ export const ScheduleSetupScreen: React.FC<Props> = ({ navigation, route }) => {
       setSyncStatus(null);
       setLoading(false);
 
-      Alert.alert(
+      showDialog(
         manageMode ? 'Schedule Updated' : 'Calendar Linked',
         `Imported ${events.length} events from Google Calendar.`,
-        [{ text: manageMode ? 'Done' : 'Continue', onPress: completeFlow }]
+        [{ label: manageMode ? 'Done' : 'Continue', onPress: completeFlow }]
       );
     } catch (error) {
       if (__DEV__) console.error('Google Calendar sync error:', error);
       const msg = toUserFriendlyError(error);
       setLoading(false);
       setSyncStatus(null);
-      Alert.alert('Sync Failed', msg);
+      showMessage('Sync failed', msg);
     }
   };
 
@@ -366,6 +396,12 @@ export const ScheduleSetupScreen: React.FC<Props> = ({ navigation, route }) => {
     enabled: hasUnsavedSourceSelection,
     title: 'Leave without saving source change?',
     message: 'You changed your schedule source but have not saved it yet. If you leave now, your change will be lost.',
+    onRequestConfirm: ({ title, message, onLeave }) => {
+      showDialog(title, message, [
+        { label: 'Stay', variant: 'secondary' },
+        { label: 'Leave', variant: 'danger', onPress: onLeave },
+      ]);
+    },
   });
 
   const handleContinue = () => {
@@ -401,12 +437,12 @@ export const ScheduleSetupScreen: React.FC<Props> = ({ navigation, route }) => {
       return;
     }
 
-    Alert.alert(
+    showDialog(
       'Update schedule source?',
       message,
       [
-        { text: SAVE_CONFIRM_DECLINE, style: 'cancel' },
-        { text: 'Yes, Update', onPress: () => { void runSelectedOption(); } },
+        { label: SAVE_CONFIRM_DECLINE, variant: 'secondary' },
+        { label: 'Yes, update', onPress: () => { void runSelectedOption(); } },
       ]
     );
   };
@@ -452,47 +488,49 @@ export const ScheduleSetupScreen: React.FC<Props> = ({ navigation, route }) => {
 
         {/* Import & Manual – side by side */}
         <View style={styles.row}>
-          <Card
-            selected={selectedOption === 'import'}
-            onPress={() => toggle('import')}
-            style={[styles.halfCard, selectedOption === 'import' && styles.selectedHalfCard]}
-            testID="schedule-option-import"
-          >
-            <View style={styles.cardTitleRow}>
-              <AppIcon name="calendar" size={15} color={palette.accentPrimary} />
-              <Text variant="body" style={styles.cardTitle}>Import</Text>
-            </View>
-            <Text variant="bodySmall" color={palette.textMuted} style={styles.cardDesc}>
-              Upload a .ics file so GapWalk can see when you're busy.
-            </Text>
-            {selectedOption === 'import' && (
-              <View style={styles.checkmarkWrap}>
-                <Ionicons name="checkmark-circle" size={20} color={palette.accentPrimary} />
+          <View style={styles.halfCard}>
+            <Card
+              selected={selectedOption === 'import'}
+              onPress={() => toggle('import')}
+              style={[selectedOption === 'import' && styles.selectedHalfCard]}
+              testID="schedule-option-import"
+            >
+              <View style={styles.cardTitleRow}>
+                <AppIcon name="calendar" size={15} color={palette.accentPrimary} />
+                <Text variant="body" style={styles.cardTitle}>Import</Text>
               </View>
-            )}
-            <Text variant="muted" style={styles.cardMicrocopy}>Parses event times from .ics files</Text>
-          </Card>
+              <Text variant="bodySmall" color={palette.textMuted} style={styles.cardDesc}>
+                Upload a .ics file so GapWalk can see when you're busy.
+              </Text>
+              {selectedOption === 'import' && (
+                <View style={styles.checkmarkWrap}>
+                  <Ionicons name="checkmark-circle" size={20} color={palette.accentPrimary} />
+                </View>
+              )}
+            </Card>
+          </View>
 
-          <Card
-            selected={selectedOption === 'manual'}
-            onPress={() => toggle('manual')}
-            style={[styles.halfCard, selectedOption === 'manual' && styles.selectedHalfCard]}
-            testID="schedule-option-manual"
-          >
-            <View style={styles.cardTitleRow}>
-              <AppIcon name="adjust" size={15} color={palette.accentPrimary} />
-              <Text variant="body" style={styles.cardTitle}>Input manually</Text>
-            </View>
-            <Text variant="bodySmall" color={palette.textMuted} style={styles.cardDesc}>
-              Build your weekly schedule and one-time events with a simple calendar.
-            </Text>
-            {selectedOption === 'manual' && (
-              <View style={styles.checkmarkWrap}>
-                <Ionicons name="checkmark-circle" size={20} color={palette.accentPrimary} />
+          <View style={styles.halfCard}>
+            <Card
+              selected={selectedOption === 'manual'}
+              onPress={() => toggle('manual')}
+              style={[selectedOption === 'manual' && styles.selectedHalfCard]}
+              testID="schedule-option-manual"
+            >
+              <View style={styles.cardTitleRow}>
+                <AppIcon name="adjust" size={15} color={palette.accentPrimary} />
+                <Text variant="body" style={styles.cardTitle}>Input manually</Text>
               </View>
-            )}
-            <Text variant="muted" style={styles.cardMicrocopy}>No data leaves your device</Text>
-          </Card>
+              <Text variant="bodySmall" color={palette.textMuted} style={styles.cardDesc}>
+                Build your weekly schedule and one-time events with a simple calendar.
+              </Text>
+              {selectedOption === 'manual' && (
+                <View style={styles.checkmarkWrap}>
+                  <Ionicons name="checkmark-circle" size={20} color={palette.accentPrimary} />
+                </View>
+              )}
+            </Card>
+          </View>
         </View>
 
         {/* Sync status overlay */}
@@ -549,8 +587,31 @@ export const ScheduleSetupScreen: React.FC<Props> = ({ navigation, route }) => {
           Your schedule stays private. Privacy is our top priority.
         </Text>
       </View>
+      <Modal visible={!!dialogState} onClose={closeDialog} title={dialogState?.title}>
+        <Text variant="body" style={[styles.dialogMessage, { color: palette.textPrimary }]}>
+          {dialogState?.message}
+        </Text>
+        <View style={styles.dialogActions}>
+          {(dialogState?.actions ?? []).map((action, index) => (
+            <Button
+              key={`${action.label}-${index}`}
+              title={action.label}
+              variant={action.variant ?? 'primary'}
+              onPress={() => {
+                closeDialog();
+                action.onPress?.();
+              }}
+              style={styles.dialogButton}
+            />
+          ))}
+        </View>
+      </Modal>
     </Container>
   );
+};
+
+export const ScheduleSetupScreen: React.FC<Props> = (props) => {
+  return <ScheduleSetupScreenInner {...props} />;
 };
 
 const styles = StyleSheet.create({
@@ -564,8 +625,9 @@ const styles = StyleSheet.create({
   },
   sectionLabel: { marginBottom: 16, fontWeight: theme.fontWeight.semibold, textAlign: 'center' },
   googleCard: { marginBottom: 12 },
-  row: { flexDirection: 'row', gap: 12 },
+  row: { flexDirection: 'row', gap: 12, alignItems: 'stretch' },
   halfCard: { flex: 1 },
+  halfCardContent: { flex: 1 },
   selectedHalfCard: {
     paddingHorizontal: theme.spacing.md - 1,
     paddingVertical: theme.spacing.md - 1,
@@ -608,11 +670,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
   },
   syncOverlayText: { fontWeight: theme.fontWeight.medium, textAlign: 'center' },
-  checkmarkWrap: {
-    position: 'absolute',
-    top: 8,
-    right: 8,
-  },
   cardMicrocopy: {
     fontSize: theme.fontSize.xs,
     marginTop: 6,
@@ -637,4 +694,16 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   privacy: { textAlign: 'center', marginTop: screenChrome.FOOTER_NOTE_MARGIN_TOP },
+  dialogMessage: {
+    lineHeight: 22,
+    marginBottom: theme.spacing.lg,
+  },
+  dialogActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 10,
+  },
+  dialogButton: {
+    minWidth: 110,
+  },
 });

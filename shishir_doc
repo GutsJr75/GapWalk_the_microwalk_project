@@ -101,3 +101,22 @@
 - Restructured the dashboard into explicit layout stacks for the intro area, quick status cards, walking opportunities, history sections, and footer actions. This made the spacing between cards and buttons consistent whether achievements, opportunities, completed walks, or missed walks are visible or not.
 
 - Verified the refactor with a full TypeScript pass using npx tsc --noEmit after the theme and layout changes were in place.
+- Fixed a runtime map error spam in the walking screen (`Unsupported top level event type "topUserLocationChange" dispatched`) by removing the `react-native-maps` built-in user location event path and replacing it with app-managed location UI.
+
+- Added a custom live user-location marker on the walking map and a camera-follow flow driven by the existing Expo location stream, so the user still gets live position and follow behavior without the event crash.
+
+- Added follow-state interaction on the walking map: dragging the map disables follow mode, and pressing the locate button re-enables follow and recenters the camera.
+
+- Reworked the Quick Status flip cards to remove decorative-only indicators and tighten alignment consistency between front and back faces.
+
+- Fixed flip-card visual overlap/bleed by enforcing shared face sizing and clipping the flip shell so back-face content does not spill into the next card.
+
+- Refined the back side of the Quick Status cards to use a symmetric top row (`title` on left, capsule on right) and moved subtitle text into its own line so it is not squeezed by the capsule.
+
+- Removed the temporary bottom preference frame and rebalanced the internal card spacing so content fills the card naturally without empty gaps.
+
+- Added a bottom guidance sentence on each back-face card explaining where that preference can be edited, then updated the wording to a friendlier, step-style instruction.
+
+- Tuned typography and spacing for final polish based on review feedback: left-aligned the bottom guidance text to match the subtitle style and adjusted subtitle vertical offset for better visual hierarchy between title and percentage.
+
+- Verified the updated card/map changes with TypeScript checks (`npx tsc --noEmit`) during implementation.

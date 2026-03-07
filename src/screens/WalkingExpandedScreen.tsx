@@ -1,81 +1,82 @@
-import React, { useCallback, useEffect, useRef } from 'react';
-import {
-  PanResponder,
-  Pressable,
-  StyleSheet,
-  View,
-} from 'react-native';
+import React, { useRef } from 'react';
+import { PanResponder, Pressable, StyleSheet, View } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { Ionicons } from '@expo/vector-icons';
-import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { RootStackParamList } from '../../App';
 import { Text } from '../components/Text';
-import { Button } from '../components/Button';
 import { theme } from '../theme';
 import { useThemePalette } from '../theme/palette';
-import { androidWalkTracking } from '../services/androidWalkTracking';
 import { useAppStore } from '../store';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'WalkingExpanded'>;
 
-const fmtClock = (s: number): string => {
-  const clamped = Math.max(0, Math.floor(s));
-  const m = Math.floor(clamped / 60);
-  const ss = String(clamped % 60).padStart(2, '0');
-  return `${m}:${ss}`;
+const formatClockDigital = (seconds: number): string => {
+  const clamped = Math.max(0, Math.floor(seconds));
+  const hrs = Math.floor(clamped / 3600);
+  const mins = Math.floor((clamped % 3600) / 60);
+  const secs = clamped % 60;
+  if (hrs > 0) {
+    return `${hrs}:${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+  }
+  return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
 };
 
-const fmtMiles = (d: number): string => `${(d / 1609.34).toFixed(2)} mi`;
+const formatMiles = (distanceMeters: number): string =>
+  `${(distanceMeters / 1609.34).toFixed(2)} mi`;
 
-const fmtSpeed = (distanceMeters: number, seconds: number): string => {
-  if (seconds === 0) return '0.0 mph';
-  return `${((distanceMeters / 1609.34) / (seconds / 3600)).toFixed(1)} mph`;
+const confidenceLabel = (confidence: string | undefined): string => {
+  if (confidence === 'high') return 'High';
+  if (confidence === 'medium') return 'Medium';
+  if (confidence === 'low') return 'Low';
+  return '--';
 };
 
-const fmtPace = (seconds: number, distanceMeters: number): string => {
-  if (distanceMeters < 10) return '—';
-  const pace = (seconds / 60) / (distanceMeters / 1609.34);
-  const mins = Math.floor(pace);
-  const secs = String(Math.round((pace - mins) * 60)).padStart(2, '00');
-  return `${mins}:${secs} /mi`;
+const sensorHealthLabel = (health: string | undefined): string => {
+  if (health === 'active') return 'Active';
+  if (health === 'stale') return 'Warming up';
+  if (health === 'unsupported') return 'Unavailable';
+  if (health === 'denied') return 'Permission needed';
+  return '--';
 };
 
 export const WalkingExpandedScreen: React.FC<Props> = ({ navigation }) => {
-  const palette = useThemePalette();
   const insets = useSafeAreaInsets();
-  const { activeWalkSnapshot, setActiveWalkSnapshot, setPendingWalkPrompt } = useAppStore();
+  const palette = useThemePalette();
+  const { activeWalkSnapshot } = useAppStore();
 
-  const snapshot = activeWalkSnapshot;
-  const elapsedSeconds = snapshot?.elapsedSeconds ?? 0;
-  const distanceMeters = snapshot?.distanceMeters ?? 0;
-  const steps = snapshot?.steps ?? 0;
-  const paused = !!snapshot?.paused;
+  const steps = activeWalkSnapshot?.steps ?? 0;
+  const distanceMeters = activeWalkSnapshot?.distanceMeters ?? 0;
+  // DB: active_seconds
+  const activeSeconds = activeWalkSnapshot?.elapsedSeconds ?? 0;
+  // DB: paused_seconds
+  const pausedSeconds = activeWalkSnapshot
+    ? Math.floor(activeWalkSnapshot.totalPausedMs / 1000)
+    : 0;
+  const displayState = activeWalkSnapshot?.displayState ?? 'calibrating';
+  const stepSource = activeWalkSnapshot?.stepSource ?? 'none';
+  // DB: sensor_health_at_start (live proxy)
+  const pedometerHealth = activeWalkSnapshot?.pedometerHealth ?? 'stale';
+  // DB: motion_confidence
+  const motionConfidence = activeWalkSnapshot?.motionConfidence;
 
-  useEffect(() => {
-    const sub = androidWalkTracking.subscribe((s) => {
-      setActiveWalkSnapshot(s);
-    });
-    return () => sub.remove();
-  }, [setActiveWalkSnapshot]);
+  const speedMph =
+    activeSeconds > 0
+      ? ((distanceMeters / 1609.34) / (activeSeconds / 3600))
+      : 0;
 
-  const handlePauseResume = useCallback(async () => {
-    const s = paused
-      ? await androidWalkTracking.resumeSession('screen')
-      : await androidWalkTracking.pauseSession('screen');
-    setActiveWalkSnapshot(s);
-  }, [paused, setActiveWalkSnapshot]);
+  const stepSourceLabel = (): string => {
+    if (stepSource === 'gps_fallback') return 'GPS step backup';
+    if (pedometerHealth === 'active') return 'Step sensor';
+    if (pedometerHealth === 'stale') return 'Sensor warming up';
+    if (pedometerHealth === 'unsupported') return 'Sensor unavailable';
+    return 'Sensor permission needed';
+  };
 
-  const handleFinish = useCallback(() => {
-    setPendingWalkPrompt('end_confirmation');
-    navigation.goBack();
-  }, [navigation, setPendingWalkPrompt]);
-
-  const accentColor = palette.accentPrimary;
-
-  const dotsPanResponder = useRef(
+  const panResponder = useRef(
     PanResponder.create({
-      onStartShouldSetPanResponder: () => false,
-      onMoveShouldSetPanResponder: (_, g) => Math.abs(g.dx) > 6 && Math.abs(g.dx) > Math.abs(g.dy),
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: (_, g) => Math.abs(g.dx) > Math.abs(g.dy),
       onPanResponderRelease: (_, g) => {
         if (g.dx > 40 || g.vx > 0.4) {
           navigation.goBack();
@@ -84,108 +85,159 @@ export const WalkingExpandedScreen: React.FC<Props> = ({ navigation }) => {
     }),
   ).current;
 
-  // 3 rows × 2 cols so each row can flex vertically
-  const statRows = [
-    [
-      { label: 'Distance', value: fmtMiles(distanceMeters) },
-      { label: 'Speed',    value: fmtSpeed(distanceMeters, elapsedSeconds) },
-    ],
-    [
-      { label: 'Steps',    value: steps.toLocaleString() },
-      { label: 'Pace',     value: fmtPace(elapsedSeconds, distanceMeters) },
-    ],
-    [
-      { label: 'Elevation', value: '—' },
-      { label: 'Calories',  value: `${Math.round(steps * 0.04)} kcal` },
-    ],
+  const stats = [
+    {
+      label: 'Active Time',
+      value: formatClockDigital(activeSeconds),
+      icon: 'timer-outline' as const,
+    },
+    {
+      label: 'Distance',
+      value: formatMiles(distanceMeters),
+      icon: 'navigate-outline' as const,
+    },
+    {
+      label: 'Steps',
+      value: steps.toLocaleString(),
+      icon: 'footsteps' as const,
+    },
+    {
+      label: 'Speed',
+      value: `${speedMph.toFixed(1)} mph`,
+      icon: 'speedometer-outline' as const,
+    },
+    {
+      label: 'Paused Time',
+      value: formatClockDigital(pausedSeconds),
+      icon: 'pause-circle-outline' as const,
+    },
+    {
+      label: 'Motion Confidence',
+      value: confidenceLabel(motionConfidence),
+      icon: 'pulse-outline' as const,
+    },
   ];
 
   return (
-    <SafeAreaView style={[styles.root, { backgroundColor: palette.bgApp }]} edges={['top', 'left', 'right']} {...dotsPanResponder.panHandlers}>
-      {/* Top bar */}
-      <View style={[styles.topBar, { backgroundColor: palette.bgSurfaceElevated, borderBottomColor: palette.borderSoft }]}>
-        <Pressable onPress={() => navigation.goBack()} style={styles.topBarBtn} hitSlop={10}>
-          <Ionicons name="arrow-back" size={22} color={palette.textPrimary} />
-        </Pressable>
-        <Text variant="title" style={styles.topBarTitle}>Walking</Text>
-        {/* Spacer to balance the back button and keep title centered */}
-        <View style={styles.topBarBtn} />
-      </View>
-
-      {/* Content — fills all space between top bar and action strip */}
-      <View style={styles.content}>
-        {/* Timer card — grows to fill space above stat rows */}
-        <View style={[styles.timerCard, { backgroundColor: palette.bgSurface, borderColor: palette.borderSoft }]}>
-          <Text variant="bodySmall" color={palette.textMuted} style={styles.timerLabel}>Duration</Text>
-          <Text style={[styles.timerValue, { color: palette.textPrimary }]}>{fmtClock(elapsedSeconds)}</Text>
-        </View>
-
-        {/* Stat grid — 3 equal-height rows, each with 2 equal-width cards */}
-        <View style={styles.statsGrid}>
-          {statRows.map((row) => (
-            <View key={row[0].label} style={styles.statsRow}>
-              {row.map((card) => (
-                <View
-                  key={card.label}
-                  style={[styles.statCard, { backgroundColor: palette.bgSurface, borderColor: palette.borderSoft }]}
-                >
-                  <Text variant="bodySmall" color={palette.textMuted}>{card.label}</Text>
-                  <Text variant="heading" style={[styles.statValue, { color: palette.textPrimary }]}>
-                    {card.value}
-                  </Text>
-                </View>
-              ))}
-            </View>
-          ))}
-        </View>
-      </View>
-
-      {/* Bottom action strip */}
+    <View style={[styles.container, { backgroundColor: palette.bgApp }]} {...panResponder.panHandlers}>
       <View
         style={[
-          styles.actionStrip,
+          styles.topBar,
           {
-            backgroundColor: palette.bgSurfaceElevated,
-            borderTopColor: palette.borderSoft,
-            paddingBottom: Math.max(insets.bottom, 12),
+            backgroundColor: palette.bgSurface,
+            borderBottomColor: palette.borderSoft,
+            paddingTop: insets.top + 8,
           },
         ]}
       >
-        <View style={styles.dotsRow}>
-          <Pressable onPress={() => navigation.goBack()} hitSlop={12}>
-            <View style={[styles.dot, { width: 8, backgroundColor: palette.borderStrong }]} />
-          </Pressable>
-          <View style={[styles.dot, { width: 20, backgroundColor: accentColor }]} />
-        </View>
+        <Pressable onPress={() => navigation.goBack()} style={styles.topBarBtn} hitSlop={10}>
+          <Ionicons name="arrow-back" size={22} color={palette.textPrimary} />
+        </Pressable>
+        <Text variant="title" style={styles.topBarTitle}>Session Details</Text>
+        <View style={styles.topBarBtn} />
+      </View>
 
-        <View style={styles.actionsRow}>
-          <Button
-            title={paused ? 'Resume' : 'Pause'}
-            onPress={() => { void handlePauseResume(); }}
-            variant="secondary"
-            style={styles.actionBtn}
-          />
-          <Button
-            title="Finish"
-            onPress={handleFinish}
-            variant="danger"
-            style={styles.actionBtn}
-          />
+      <View style={[styles.body, { paddingBottom: Math.max(insets.bottom + 10, 22) }]}>
+        <View
+          style={[
+            styles.dock,
+            {
+              backgroundColor: palette.bgSurfaceElevated,
+              borderColor: palette.borderSoft,
+            },
+          ]}
+        >
+          <View style={styles.dockDots}>
+            <View style={[styles.dockDot, { backgroundColor: palette.borderStrong }]} />
+            <View style={[styles.dockDot, styles.dockDotActive, { backgroundColor: palette.accentPrimary }]} />
+          </View>
+
+          <View style={styles.grid}>
+            {stats.map((stat) => (
+              <View
+                key={stat.label}
+                style={[
+                  styles.statCard,
+                  { backgroundColor: palette.bgSurface, borderColor: palette.borderSoft },
+                ]}
+              >
+                <View style={styles.statHeader}>
+                  <Ionicons name={stat.icon} size={15} color={palette.textMuted} />
+                  <Text variant="bodySmall" color={palette.textMuted} style={styles.statLabel}>
+                    {stat.label}
+                  </Text>
+                </View>
+                <Text style={[styles.statValue, { color: palette.textPrimary }]}>
+                  {stat.value}
+                </Text>
+              </View>
+            ))}
+          </View>
+
+          {activeWalkSnapshot == null && (
+            <View style={styles.emptyRow}>
+              <Ionicons name="walk-outline" size={16} color={palette.textMuted} />
+              <Text variant="bodySmall" color={palette.textMuted}>
+                Live data syncs during an active walk
+              </Text>
+            </View>
+          )}
+
+          <View
+            style={[
+              styles.sourceRow,
+              { backgroundColor: palette.bgSurface, borderColor: palette.borderSoft },
+            ]}
+          >
+            <Ionicons
+              name={stepSource === 'gps_fallback' ? 'location-outline' : 'body-outline'}
+              size={14}
+              color={palette.textMuted}
+            />
+            <Text variant="bodySmall" color={palette.textMuted}>
+              {stepSourceLabel()}
+            </Text>
+            <Text variant="bodySmall" color={palette.borderStrong}>·</Text>
+            <Text variant="bodySmall" color={palette.textMuted}>
+              {sensorHealthLabel(pedometerHealth)}
+            </Text>
+            <View style={styles.stateSpacer} />
+            <View
+              style={[
+                styles.stateDot,
+                {
+                  backgroundColor:
+                    displayState === 'walking'
+                      ? palette.accentPrimary
+                      : displayState === 'paused'
+                      ? '#f59e0b'
+                      : palette.borderStrong,
+                },
+              ]}
+            />
+            <Text variant="bodySmall" color={palette.textMuted}>
+              {displayState === 'walking'
+                ? 'Walking'
+                : displayState === 'paused'
+                ? 'Paused'
+                : 'Detecting'}
+            </Text>
+          </View>
         </View>
       </View>
-    </SafeAreaView>
+    </View>
   );
 };
 
 const styles = StyleSheet.create({
-  root: {
+  container: {
     flex: 1,
   },
   topBar: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 8,
-    paddingVertical: 10,
+    paddingBottom: 10,
     borderBottomWidth: 1,
   },
   topBarBtn: {
@@ -198,77 +250,87 @@ const styles = StyleSheet.create({
     flex: 1,
     textAlign: 'center',
   },
-  // Fills all space between top bar and action strip
-  content: {
+  body: {
     flex: 1,
-    padding: 10,
-    gap: 8,
+    paddingHorizontal: 12,
+    paddingTop: 12,
+    justifyContent: 'flex-end',
   },
-  // Timer takes 2 flex units (≈40%), stat grid takes 3 (≈60%)
-  timerCard: {
-    flex: 2,
-    borderRadius: 16,
+  dock: {
+    borderRadius: 20,
     borderWidth: 1,
+    paddingHorizontal: 14,
+    paddingTop: 8,
+    paddingBottom: 12,
+    gap: 10,
+  },
+  dockDots: {
+    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 4,
-  },
-  timerLabel: {
-    letterSpacing: 0.4,
-    textTransform: 'uppercase',
-  },
-  timerValue: {
-    fontSize: 54,
-    lineHeight: 62,
-    fontWeight: theme.fontWeight.bold,
-    letterSpacing: -1,
-    fontVariant: ['tabular-nums'],
-  },
-  statsGrid: {
-    flex: 3,
     gap: 8,
+    paddingVertical: 3,
+    marginBottom: 2,
   },
-  statsRow: {
-    flex: 1,
+  dockDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  dockDotActive: {
+    width: 20,
+    borderRadius: 4,
+  },
+  grid: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: 8,
   },
   statCard: {
     flex: 1,
-    borderRadius: 14,
+    minWidth: '48%',
+    borderRadius: 12,
     borderWidth: 1,
-    paddingHorizontal: 14,
-    justifyContent: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
     gap: 4,
   },
+  statHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+  },
+  statLabel: {
+    lineHeight: 18,
+  },
   statValue: {
-    fontSize: 18,
-    lineHeight: 24,
-    fontWeight: '600',
+    fontSize: 17,
+    lineHeight: 22,
+    fontWeight: theme.fontWeight.semibold,
+    fontVariant: ['tabular-nums'],
   },
-  actionStrip: {
-    borderTopWidth: 1,
-    paddingTop: 8,
-    paddingHorizontal: 14,
-    gap: 8,
-  },
-  dotsRow: {
+  emptyRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 8,
-    paddingVertical: 2,
+    gap: 6,
+    paddingVertical: 4,
   },
-  dot: {
-    height: 8,
-    borderRadius: 4,
-  },
-  actionsRow: {
+  sourceRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
+    gap: 6,
+    borderRadius: 12,
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
   },
-  actionBtn: {
+  stateSpacer: {
     flex: 1,
+  },
+  stateDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 3.5,
   },
 });

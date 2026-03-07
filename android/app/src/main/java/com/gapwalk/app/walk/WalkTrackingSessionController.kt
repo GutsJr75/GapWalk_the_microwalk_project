@@ -22,13 +22,24 @@ object WalkTrackingSessionController {
   private const val BACKGROUND_WARNING =
     "Background location is off. Distance updates may pause when the app is not visible."
 
-  fun startSession(context: Context, planId: String?): WalkTrackingSnapshot {
+  fun startSession(
+    context: Context,
+    planId: String?,
+    targetDurationMinutes: Int?,
+    startedFromNotification: Boolean,
+    notificationTimerMode: String?,
+  ): WalkTrackingSnapshot {
     val nowMs = System.currentTimeMillis()
+    val normalizedTimerMode = WalkNotificationContent.normalizeTimerMode(notificationTimerMode)
+    val normalizedTargetDuration = targetDurationMinutes?.takeIf { it > 0 }
     val existing = WalkTrackingStorage.load(context)
     val snapshot = refreshPermissions(
       existing ?: WalkTrackingSnapshot(
         sessionId = "s-$nowMs",
         planId = planId,
+        targetDurationMinutes = normalizedTargetDuration,
+        startedFromNotification = startedFromNotification,
+        notificationTimerMode = normalizedTimerMode,
         startIso = isoTimestamp(nowMs),
         sessionStartMs = nowMs,
         stepFallbackBlockedUntilMs = WalkTrackingClassifier.fallbackBlockedUntilMs(nowMs),
@@ -40,6 +51,9 @@ object WalkTrackingSessionController {
       context,
       snapshot.copy(
         planId = snapshot.planId ?: planId,
+        targetDurationMinutes = normalizedTargetDuration ?: snapshot.targetDurationMinutes,
+        startedFromNotification = startedFromNotification || snapshot.startedFromNotification,
+        notificationTimerMode = normalizedTimerMode,
         stepFallbackBlockedUntilMs = snapshot.stepFallbackBlockedUntilMs ?: WalkTrackingClassifier.fallbackBlockedUntilMs(nowMs),
       ),
       nowMs,
@@ -82,6 +96,14 @@ object WalkTrackingSessionController {
   fun cancelEndConfirmation(context: Context): WalkTrackingSnapshot? {
     val snapshot = WalkTrackingStorage.load(context) ?: return null
     return refreshAndSave(context, snapshot.copy(prompt = null))
+  }
+
+  fun updateNotificationTimerMode(context: Context, notificationTimerMode: String?): WalkTrackingSnapshot? {
+    val snapshot = WalkTrackingStorage.load(context) ?: return null
+    return refreshAndSave(
+      context,
+      snapshot.copy(notificationTimerMode = WalkNotificationContent.normalizeTimerMode(notificationTimerMode)),
+    )
   }
 
   fun confirmEndSession(context: Context): WalkTrackingSnapshot? {

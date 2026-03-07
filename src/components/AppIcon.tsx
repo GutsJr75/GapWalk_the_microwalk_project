@@ -17,7 +17,8 @@ export type AppIconName =
   | 'trash'
   | 'close'
   | 'chevronRight'
-  | 'chevronDown';
+  | 'chevronDown'
+  | 'plus';
 
 interface AppIconProps {
   name: AppIconName;
@@ -141,6 +142,12 @@ export const AppIcon: React.FC<AppIconProps> = ({
       )}
       {name === 'chevronRight' && <Path d="M10 6L16 12L10 18" {...common} />}
       {name === 'chevronDown' && <Path d="M6 9L12 15L18 9" {...common} />}
+      {name === 'plus' && (
+        <>
+          <Path d="M12 5V19" {...common} />
+          <Path d="M5 12H19" {...common} />
+        </>
+      )}
       {name === 'google' && (
         <Path
           d="M21.35 11.1H12v3.1h5.55c-.52 2.67-2.84 4.4-5.55 4.4A6.1 6.1 0 0 1 5.9 12 6.1 6.1 0 0 1 12 5.9c1.47 0 2.8.53 3.84 1.39l2.2-2.2A9.5 9.5 0 0 0 12 2.5C6.75 2.5 2.5 6.75 2.5 12S6.75 21.5 12 21.5c5.47 0 9.5-3.84 9.5-9.5 0-.63-.07-1.25-.15-1.9z"

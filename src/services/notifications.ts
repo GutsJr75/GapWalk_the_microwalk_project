@@ -2,7 +2,7 @@ import * as Notifications from 'expo-notifications';
 import * as Device from 'expo-device';
 import Constants from 'expo-constants';
 import { Platform } from 'react-native';
-import { NudgePlan, Preferences } from '../types';
+import { NudgePlan, NotificationTimerMode, Preferences } from '../types';
 import { addMinutes, format, parseISO, subMinutes, isBefore } from 'date-fns';
 import { timeUtils } from '../utils/time';
 import { sessionsRepo } from '../data/repositories/sessionsRepo';
@@ -66,35 +66,35 @@ const noopSubscription: Notifications.Subscription = {
 
 function buildNudgeTitle(walkStart: Date, _isManual = false): string {
   const startTime = format(walkStart, 'h:mm a');
-  return `Your ${startTime} walk \uD83D\uDEB6`;
+  return `Your ${startTime} walk`;
 }
 
 const NUDGE_BODIES_NOW_RELAXED = [
-  (dur: number) => `It's time! Head out for a ${dur}-minute walk. Your body will thank you.`,
-  (dur: number) => `Walk o'clock. ${dur} minutes is all it takes. Let's go!`,
-  (dur: number) => `Step outside for ${dur} minutes. A little movement goes a long way.`,
-  (dur: number) => `Your ${dur}-minute walking window is open. Time to move!`,
-  (dur: number) => `Fresh air awaits. Your ${dur}-minute walk starts now.`,
-  (dur: number) => `A ${dur}-minute walk is the reset your day needs. Let's do it!`,
+  (dur: number) => `It is a great time for a ${dur} minute walk if you are up for it.`,
+  (dur: number) => `Your ${dur} minute walk window is open.`,
+  (dur: number) => `A quick ${dur} minute walk can give your day a nice boost.`,
+  (dur: number) => `If now works for you, this is a good moment for your ${dur} minute walk.`,
+  (dur: number) => `Fresh air break. ${dur} minutes can make a real difference.`,
+  (dur: number) => `Your next ${dur} minute walk is ready when you are.`,
 ];
 
 const NUDGE_BODIES_NOW_STRICT = [
-  (dur: number, time: string) => `Your ${dur}-minute walk is at ${time}. Ready when you are.`,
-  (dur: number) => `${dur} minutes is all you need. Let's go!`,
-  (dur: number, time: string) => `It's ${time}. Time for your ${dur}-minute walk.`,
-  (dur: number) => `Time for your ${dur}-minute walk. You've got this.`,
+  (dur: number, time: string) => `Your ${dur} minute walk is scheduled for ${time}.`,
+  (dur: number) => `You have a ${dur} minute walk planned right now.`,
+  (dur: number, time: string) => `It is ${time}. This is your planned ${dur} minute walk window.`,
+  (dur: number) => `Your ${dur} minute walk is ready to start.`,
 ];
 
 const NUDGE_BODIES_SOON_RELAXED = [
-  (dur: number, time: string, mins: number) => `Your ${dur}-minute walk starts in ${mins} minutes at ${time}. Wrap up and get ready.`,
-  (dur: number, time: string, mins: number) => `In ${mins} minutes, a ${dur}-minute walk at ${time}. Almost time to move!`,
-  (dur: number, time: string, mins: number) => `Walking window opens at ${time} in ${mins} minutes for a ${dur}-minute walk.`,
-  (dur: number, time: string, mins: number) => `${mins}-minute heads-up: your ${dur}-minute walk is at ${time}.`,
+  (dur: number, time: string, mins: number) => `Your ${dur} minute walk starts in ${mins} minutes at ${time}.`,
+  (dur: number, time: string, mins: number) => `In ${mins} minutes you have a ${dur} minute walk at ${time}.`,
+  (dur: number, time: string, mins: number) => `Heads up. Your ${dur} minute walk window opens at ${time}.`,
+  (dur: number, time: string, mins: number) => `${mins} minute reminder for your ${dur} minute walk at ${time}.`,
 ];
 
 const NUDGE_BODIES_SOON_STRICT = [
-  (dur: number, time: string, mins: number) => `Be ready: your ${dur}-minute walk starts at ${time} in ${mins} minutes.`,
-  (dur: number, time: string, mins: number) => `${mins} minutes until your ${dur}-minute walk at ${time}. Almost time to head out.`,
+  (dur: number, time: string, mins: number) => `Your ${dur} minute walk starts at ${time} in ${mins} minutes.`,
+  (dur: number, time: string, mins: number) => `${mins} minutes until your ${dur} minute walk at ${time}.`,
 ];
 
 function pickVariant<T>(variants: T[], walkStart: Date): T {
@@ -191,36 +191,36 @@ export const notificationService = {
 
     await Notifications.setNotificationCategoryAsync(WALK_NUDGE_CATEGORY_ID, [
       {
-        identifier: WALK_NUDGE_ACTION_SKIP,
-        buttonTitle: 'Maybe later',
+        identifier: WALK_NUDGE_ACTION_START,
+        buttonTitle: 'Start walk',
         options: {
           opensAppToForeground: true,
-          isDestructive: true,
         },
       },
       {
-        identifier: WALK_NUDGE_ACTION_START,
-        buttonTitle: 'Yes',
+        identifier: WALK_NUDGE_ACTION_SKIP,
+        buttonTitle: 'Not right now',
         options: {
           opensAppToForeground: true,
+          isDestructive: true,
         },
       },
     ]);
 
     await Notifications.setNotificationCategoryAsync(ALT_GAP_CATEGORY_ID, [
       {
-        identifier: ALT_GAP_ACTION_DECLINE,
-        buttonTitle: 'No',
+        identifier: ALT_GAP_ACTION_ACCEPT,
+        buttonTitle: 'Add it',
         options: {
           opensAppToForeground: false,
-          isDestructive: true,
         },
       },
       {
-        identifier: ALT_GAP_ACTION_ACCEPT,
-        buttonTitle: 'Yes',
+        identifier: ALT_GAP_ACTION_DECLINE,
+        buttonTitle: 'Not now',
         options: {
           opensAppToForeground: false,
+          isDestructive: true,
         },
       },
     ]);
@@ -252,7 +252,7 @@ export const notificationService = {
             const stepsToday = await sessionsRepo.getTodaySteps();
             if (stepsToday >= prefs.stepGoal) return null;
           }
-        } catch { /* ok — schedule anyway if DB read fails */ }
+        } catch { /* ok - schedule anyway if DB read fails */ }
       }
 
       let notifyTime = getPlanNotifyTime(plan, prefs);
@@ -399,7 +399,7 @@ export const notificationService = {
           alreadyScheduled.add(data.planId);
         }
       }
-    } catch { /* ok — schedule all */ }
+    } catch { /* ok - schedule all */ }
 
     for (const plan of plans) {
       if (!alreadyScheduled.has(plan.id)) {
@@ -506,7 +506,7 @@ export const notificationService = {
    * Uses a DATE trigger so the notification content is generated at
    * delivery time by the OS. We schedule a lightweight reminder
    * and re-schedule from the dashboard so stats stay reasonably current.
-   * Respects quiet hours — if 20:30 falls inside quiet hours the summary
+   * Respects quiet hours - if 20:30 falls inside quiet hours the summary
    * is skipped for that day.
    */
   async scheduleDailySummary(prefs: Preferences): Promise<void> {
@@ -525,7 +525,7 @@ export const notificationService = {
     const summaryTime = new Date(now);
     summaryTime.setHours(20, 30, 0, 0);
 
-    // If it's already past 20:30, skip — we don't backfill.
+    // If it's already past 20:30, skip - we don't backfill.
     if (summaryTime <= now) return;
 
     // Respect quiet hours
@@ -539,7 +539,7 @@ export const notificationService = {
     try {
       minutes = await sessionsRepo.getTodayMinutes();
       steps = await sessionsRepo.getTodaySteps();
-    } catch { /* ok — send a generic summary */ }
+    } catch { /* ok - send a generic summary */ }
 
     const target = prefs.dailyTargetMinutes;
     const pct = target > 0 ? Math.min(Math.round((minutes / target) * 100), 100) : 0;
@@ -630,19 +630,42 @@ export const notificationService = {
    * Show or update the ongoing walk session notification.
    * Uses a fixed identifier so repeated calls replace the previous notification.
    */
-  async showWalkSessionNotification(timeText: string, isPaused: boolean): Promise<void> {
+  async showWalkSessionNotification(options: {
+    elapsedSeconds: number;
+    isPaused: boolean;
+    targetDurationMinutes?: number | null;
+    startedFromNotification?: boolean;
+    timerMode?: NotificationTimerMode;
+  }): Promise<void> {
     if (!isNotificationsSupported) return;
 
     try {
+      const {
+        elapsedSeconds,
+        isPaused,
+        targetDurationMinutes,
+        startedFromNotification = false,
+        timerMode = 'smart',
+      } = options;
       const categoryId = isPaused ? WALK_SESSION_PAUSED_CATEGORY : WALK_SESSION_ACTIVE_CATEGORY;
-      const statusEmoji = isPaused ? '\u23F8\uFE0F' : '\uD83D\uDEB6';
-      const statusText = isPaused ? 'Paused' : 'Walking';
+      const elapsedMinutes = Math.max(0, Math.floor(elapsedSeconds / 60));
+      const remainingSeconds = Math.max(0, (targetDurationMinutes ?? 0) * 60 - elapsedSeconds);
+      const remainingMinutes = Math.ceil(remainingSeconds / 60);
+
+      let timerText = `${elapsedMinutes} min walked`;
+      if (timerMode === 'remaining') {
+        timerText = targetDurationMinutes ? `${remainingMinutes} min left` : `${elapsedMinutes} min walked`;
+      } else if (timerMode === 'smart' && startedFromNotification && targetDurationMinutes) {
+        timerText = `${remainingMinutes} min left`;
+      }
+      const title = isPaused ? 'Walk paused' : 'Walk in progress';
+      const body = isPaused ? `${timerText}. Tap Resume when you are ready.` : timerText;
 
       await Notifications.scheduleNotificationAsync({
         identifier: WALK_SESSION_NOTIFICATION_ID,
         content: {
-          title: `${statusEmoji} ${statusText}`,
-          body: `${timeText} elapsed`,
+          title,
+          body,
           data: { type: 'walk_session' },
           categoryIdentifier: categoryId,
           sound: false,
@@ -658,7 +681,7 @@ export const notificationService = {
 
   /**
    * Show an immediate notification suggesting an alternative gap after a skip/miss.
-   * Actions (Yes/No) do not open the app — acceptance is handled in the background.
+   * Actions (Yes/No) do not open the app - acceptance is handled in the background.
    */
   async scheduleAlternativeGapNotification(
     planId: string,
@@ -672,8 +695,8 @@ export const notificationService = {
       const timeStr = format(gapStartTime, 'h:mm a');
       const notificationId = await Notifications.scheduleNotificationAsync({
         content: {
-          title: "Don't worry! We found another gap",
-          body: `There's a suitable ${suggestedDurationMinutes}-min gap at ${timeStr}. Would you like to add this?`,
+          title: 'We found another walk window',
+          body: `There is a ${suggestedDurationMinutes} min window at ${timeStr}. Want to add it?`,
           categoryIdentifier: ALT_GAP_CATEGORY_ID,
           data: {
             planId,
@@ -700,7 +723,7 @@ export const notificationService = {
     try {
       await Notifications.dismissNotificationAsync(WALK_SESSION_NOTIFICATION_ID);
     } catch {
-      // ignore — notification may already be dismissed
+      // ignore - notification may already be dismissed
     }
   },
 };

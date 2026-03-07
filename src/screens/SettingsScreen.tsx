@@ -1,7 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { View, StyleSheet, Alert, Platform, Pressable, Linking } from 'react-native';
-import { File, Paths } from 'expo-file-system';
-import * as Sharing from 'expo-sharing';import * as Haptics from 'expo-haptics';
+import { View, StyleSheet, Alert, Platform, Pressable, Linking, Share, Switch } from 'react-native';
+import * as Haptics from 'expo-haptics';
 import * as WebBrowser from 'expo-web-browser';
 import Constants from 'expo-constants';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
@@ -20,6 +19,13 @@ import { theme } from '../theme';
 import { screenChrome } from '../theme/screenChrome';
 import { getThemePalette } from '../theme/palette';
 import { useAppStore } from '../store';
+import {
+  WalkDisplayCard,
+  ALL_WALK_DISPLAY_CARDS,
+  WALK_DISPLAY_CARD_LABELS,
+  NotificationTimerMode,
+  NOTIFICATION_TIMER_MODE_LABELS,
+} from '../types';
 import { translateLiteral } from '../i18n';
 import { plansRepo } from '../data/repositories/plansRepo';
 import { notificationPlanActions } from '../services/notificationPlanActions';
@@ -28,20 +34,65 @@ import { sessionsRepo } from '../data/repositories/sessionsRepo';
 import { getDatabase } from '../data/db';
 import { authStorage } from '../data/authStorage';
 import { format } from 'date-fns';
+import { androidWalkTracking } from '../services/androidWalkTracking';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Settings'>;
-
-const SETTINGS_BLOCK_GAP = 18;
-const SETTINGS_GROUP_RADIUS = 14;
-const SETTINGS_GROUP_PADDING_X = 14;
-const SETTINGS_ITEM_PADDING_Y = 14;
-const SETTINGS_SEGMENT_GAP = 10;
-const SETTINGS_SECTION_LABEL_MARGIN_BOTTOM = 10;
 
 const APP_VERSION = Constants.expoConfig?.version ?? '1.0.0';
 const PRIVACY_POLICY_URL = 'https://gapwalk.com/privacy';
 const TERMS_URL = 'https://gapwalk.com/terms';
 
+/* ------------------------------------------------------------------ */
+/*  SegmentPill                                                        */
+/*  Self-contained themed pill. Computes ALL colours from themeMode    */
+/*  prop so Android's native ripple layer never caches stale values.   */
+/*  Background lives on a View; Pressable only handles ripple + tap.   */
+/* ------------------------------------------------------------------ */
+const SegmentPill: React.FC<{
+  selected: boolean;
+  title: string;
+  onPress: () => void;
+  testID: string;
+  themeMode: 'dark' | 'light';
+}> = React.memo(({ selected, title, onPress, testID, themeMode }) => {
+  const palette = getThemePalette(themeMode);
+  const isDark = themeMode === 'dark';
+
+  const bg = selected ? palette.accentPrimary : palette.bgSurface;
+  const border = selected ? 'transparent' : palette.borderStrong;
+  const textColor = selected ? palette.pillSelectedText : palette.textPrimary;
+  const ripple = selected
+    ? (isDark ? 'rgba(255,255,255,0.18)' : 'rgba(15,23,42,0.18)')
+    : palette.inputBg;
+
+  return (
+    <View
+      key={`${testID}-${themeMode}`}
+      style={[styles.pill, { backgroundColor: bg, borderColor: border }]}
+    >
+      <Pressable
+        onPress={() => {
+          if (Platform.OS !== 'web')
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+          onPress();
+        }}
+        testID={testID}
+        accessibilityLabel={testID}
+        accessibilityRole="button"
+        android_ripple={{ color: ripple }}
+        style={styles.pillInner}
+      >
+        <Text variant="body" style={[styles.pillLabel, { color: textColor }]}>
+          {title}
+        </Text>
+      </Pressable>
+    </View>
+  );
+});
+
+/* ------------------------------------------------------------------ */
+/*  SettingsScreen                                                     */
+/* ------------------------------------------------------------------ */
 export const SettingsScreen: React.FC<Props> = ({ navigation }) => {
   const {
     themeMode, setThemeMode,
@@ -49,20 +100,26 @@ export const SettingsScreen: React.FC<Props> = ({ navigation }) => {
     distanceUnit, setDistanceUnit,
     firstDayOfWeek, setFirstDayOfWeek,
     vibrationEnabled, setVibrationEnabled,
-    hasNotificationPermission,
+    notificationTimerMode, setNotificationTimerMode,
+    walkDisplayCards, setWalkDisplayCards,
   } = useAppStore();
   const palette = getThemePalette(themeMode);
+  const isDark = themeMode === 'dark';
 
   const baselineThemeModeRef = useRef(themeMode);
   const baselineLanguageRef = useRef(language);
   const baselineDistanceUnitRef = useRef(distanceUnit);
   const baselineFirstDayRef = useRef(firstDayOfWeek);
   const baselineVibrationRef = useRef(vibrationEnabled);
+  const baselineNotificationTimerModeRef = useRef(notificationTimerMode);
+  const baselineWalkDisplayCardsRef = useRef(walkDisplayCards);
   const themeModeRef = useRef(themeMode);
   const languageRef = useRef(language);
   const distanceUnitRef = useRef(distanceUnit);
   const firstDayRef = useRef(firstDayOfWeek);
   const vibrationRef = useRef(vibrationEnabled);
+  const notificationTimerModeRef = useRef(notificationTimerMode);
+  const walkDisplayCardsRef = useRef(walkDisplayCards);
   const allowExitRef = useRef(false);
   const [showSaveToast, setShowSaveToast] = useState(false);
   const [saveToastMessage, setSaveToastMessage] = useState('Settings saved');
@@ -74,6 +131,8 @@ export const SettingsScreen: React.FC<Props> = ({ navigation }) => {
   useEffect(() => { distanceUnitRef.current = distanceUnit; }, [distanceUnit]);
   useEffect(() => { firstDayRef.current = firstDayOfWeek; }, [firstDayOfWeek]);
   useEffect(() => { vibrationRef.current = vibrationEnabled; }, [vibrationEnabled]);
+  useEffect(() => { notificationTimerModeRef.current = notificationTimerMode; }, [notificationTimerMode]);
+  useEffect(() => { walkDisplayCardsRef.current = walkDisplayCards; }, [walkDisplayCards]);
 
   const [focusKey, setFocusKey] = useState(0);
   useFocusEffect(
@@ -84,6 +143,8 @@ export const SettingsScreen: React.FC<Props> = ({ navigation }) => {
       baselineDistanceUnitRef.current = distanceUnitRef.current;
       baselineFirstDayRef.current = firstDayRef.current;
       baselineVibrationRef.current = vibrationRef.current;
+      baselineNotificationTimerModeRef.current = notificationTimerModeRef.current;
+      baselineWalkDisplayCardsRef.current = walkDisplayCardsRef.current;
       hasUnsavedChangesRef.current = false;
       allowExitRef.current = false;
       return () => {};
@@ -91,11 +152,6 @@ export const SettingsScreen: React.FC<Props> = ({ navigation }) => {
   );
 
   const isE2E = process.env.EXPO_PUBLIC_E2E === '1';
-  const selectedPillTextColor = palette.accentOnSolid;
-  const unselectedPillBg = palette.bgSurface;
-  const unselectedPillBorder = palette.borderStrong;
-  const pillRipple = palette.inputBg;
-  const pillRippleSelected = 'rgba(255,255,255,0.18)';
 
   const t = (key: string) => translateLiteral(key, language);
   const darkLabel = t('Dark');
@@ -108,7 +164,9 @@ export const SettingsScreen: React.FC<Props> = ({ navigation }) => {
     language !== baselineLanguageRef.current ||
     distanceUnit !== baselineDistanceUnitRef.current ||
     firstDayOfWeek !== baselineFirstDayRef.current ||
-    vibrationEnabled !== baselineVibrationRef.current;
+    vibrationEnabled !== baselineVibrationRef.current ||
+    notificationTimerMode !== baselineNotificationTimerModeRef.current ||
+    JSON.stringify(walkDisplayCards) !== JSON.stringify(baselineWalkDisplayCardsRef.current);
 
   useEffect(() => {
     hasUnsavedChangesRef.current = hasUnsavedChanges;
@@ -132,6 +190,8 @@ export const SettingsScreen: React.FC<Props> = ({ navigation }) => {
         setDistanceUnit(baselineDistanceUnitRef.current);
         setFirstDayOfWeek(baselineFirstDayRef.current);
         setVibrationEnabled(baselineVibrationRef.current);
+        setNotificationTimerMode(baselineNotificationTimerModeRef.current);
+        setWalkDisplayCards(baselineWalkDisplayCardsRef.current);
         hasUnsavedChangesRef.current = false;
         allowExitRef.current = true;
         navigation.dispatch(event.data.action);
@@ -150,10 +210,14 @@ export const SettingsScreen: React.FC<Props> = ({ navigation }) => {
     });
 
     return unsubscribe;
-  }, [navigation, setLanguage, setThemeMode, setDistanceUnit, setFirstDayOfWeek, setVibrationEnabled]);
+  }, [navigation, setLanguage, setThemeMode, setDistanceUnit, setFirstDayOfWeek, setVibrationEnabled, setNotificationTimerMode, setWalkDisplayCards]);
 
   const handleBack = () => {
     navigation.navigate('Dashboard', { openMenu: true });
+  };
+
+  const handleReplayTour = () => {
+    navigation.navigate('Dashboard', { startTour: true });
   };
 
   const handleSave = async () => {
@@ -162,6 +226,8 @@ export const SettingsScreen: React.FC<Props> = ({ navigation }) => {
     baselineDistanceUnitRef.current = distanceUnitRef.current;
     baselineFirstDayRef.current = firstDayRef.current;
     baselineVibrationRef.current = vibrationRef.current;
+    baselineNotificationTimerModeRef.current = notificationTimerModeRef.current;
+    baselineWalkDisplayCardsRef.current = walkDisplayCardsRef.current;
     hasUnsavedChangesRef.current = false;
     allowExitRef.current = true;
 
@@ -170,8 +236,14 @@ export const SettingsScreen: React.FC<Props> = ({ navigation }) => {
     await authStorage.saveDistanceUnit(distanceUnitRef.current);
     await authStorage.saveFirstDayOfWeek(firstDayRef.current);
     await authStorage.saveVibrationEnabled(vibrationRef.current);
+    await authStorage.saveNotificationTimerMode(notificationTimerModeRef.current);
+    await authStorage.saveWalkDisplayCards(walkDisplayCardsRef.current);
 
-    setSaveToastMessage('Settings saved');
+    if (androidWalkTracking.isSupported()) {
+      await androidWalkTracking.updateNotificationTimerMode(notificationTimerModeRef.current);
+    }
+
+    setSaveToastMessage(t('Settings saved'));
     setShowSaveToast(true);
     setTimeout(() => navigation.goBack(), 1200);
   };
@@ -239,7 +311,7 @@ export const SettingsScreen: React.FC<Props> = ({ navigation }) => {
               await db.runAsync('DELETE FROM walk_routes');
               await db.runAsync('DELETE FROM walk_pause_events');
               await db.runAsync('DELETE FROM walk_checkpoint');
-              setSaveToastMessage('Walk history cleared');
+              setSaveToastMessage(t('Walk history cleared'));
               setShowSaveToast(true);
             } catch (error) {
               if (__DEV__) console.error('Clear walk history failed:', error);
@@ -250,6 +322,19 @@ export const SettingsScreen: React.FC<Props> = ({ navigation }) => {
       ]
     );
   };
+
+  const handleClearCache = async () => {
+    try {
+      const db = await getDatabase();
+      await db.runAsync('DELETE FROM analytics_events');
+      await db.runAsync('DELETE FROM crash_reports');
+      setSaveToastMessage(t('Cache cleared'));
+      setShowSaveToast(true);
+    } catch (error) {
+      if (__DEV__) console.error('Clear cache failed:', error);
+    }
+  };
+
 
   // --- E2E helpers ---
 
@@ -264,7 +349,7 @@ export const SettingsScreen: React.FC<Props> = ({ navigation }) => {
       Alert.alert('Action blocked', 'The start action was blocked, likely because today\'s goal is already complete.');
       return;
     }
-    navigation.navigate('Walking', { planId: first.id });
+    navigation.navigate('Walking', { planId: first.id, startedFromNotification: true });
   };
 
   const simulateNotificationSkip = async () => {
@@ -288,46 +373,27 @@ export const SettingsScreen: React.FC<Props> = ({ navigation }) => {
 
   // --- UI helpers ---
 
-  const renderSegmentPill = ({
-    selected,
-    title,
-    onPress,
-    testID,
-  }: {
-    selected: boolean;
-    title: string;
-    onPress: () => void;
-    testID: string;
-  }) => (
-    <Pressable
-      onPress={() => {
-        if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-        onPress();
-      }}
-      testID={testID}
-      accessibilityLabel={testID}
-      accessibilityRole="button"
-      android_ripple={{ color: selected ? pillRippleSelected : pillRipple }}
-      style={({ pressed }) => [
-        styles.pill,
-        {
-          backgroundColor: selected ? palette.accentPrimary : unselectedPillBg,
-          borderColor: selected ? 'transparent' : unselectedPillBorder,
-        },
-        pressed && styles.pillPressed,
-      ]}
-    >
-      <Text
-        variant="body"
-        style={[
-          styles.pillLabel,
-          { color: selected ? selectedPillTextColor : palette.textPrimary },
-        ]}
-      >
-        {title}
-      </Text>
-    </Pressable>
-  );
+  const handleToggleWalkCard = (card: WalkDisplayCard) => {
+    if (card === 'walkDuration') return; // always on
+    const isOn = walkDisplayCards.includes(card);
+    if (isOn) {
+      if (walkDisplayCards.length <= 2) {
+        Alert.alert('Minimum Cards', 'At least 2 cards must be visible on the walking screen.');
+        return;
+      }
+      setWalkDisplayCards(walkDisplayCards.filter((c) => c !== card));
+    } else {
+      // Add in canonical order
+      const ordered = ALL_WALK_DISPLAY_CARDS.filter((c) => walkDisplayCards.includes(c) || c === card);
+      setWalkDisplayCards(ordered);
+    }
+  };
+
+  const handleNotificationTimerMode = (mode: NotificationTimerMode) => {
+    setNotificationTimerMode(mode);
+  };
+
+  const actionRipple = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(15,23,42,0.08)';
 
   const renderActionRow = ({
     icon,
@@ -348,7 +414,7 @@ export const SettingsScreen: React.FC<Props> = ({ navigation }) => {
       onPress={onPress}
       testID={testID}
       style={({ pressed }) => [styles.actionRow, pressed && styles.actionRowPressed]}
-      android_ripple={{ color: pillRipple }}
+      android_ripple={{ color: actionRipple }}
     >
       <Ionicons
         name={icon}
@@ -375,231 +441,278 @@ export const SettingsScreen: React.FC<Props> = ({ navigation }) => {
     </Pressable>
   );
 
-  const contentKey = `settings-${focusKey}`;
-
-  const notifStatusText = hasNotificationPermission ? 'Enabled' : 'Disabled';
-  const notifStatusColor = hasNotificationPermission ? palette.accentPrimary : '#ef4444';
+  // Force full remount when theme changes so every native view is recreated.
+  const contentKey = `settings-${themeMode}-${focusKey}`;
 
   return (
     <Container scrollable key={contentKey}>
       <View style={styles.content}>
         <ScreenHeader
-          title="Settings"
-          subtitle="Customize your GapWalk experience."
+          title={t('Settings')}
+          subtitle={t('Customize your GapWalk experience.')}
           onBack={handleBack}
           backTestID="settings-back"
           align="center"
           themeMode={themeMode}
         />
 
-        {/* ===== VIEWER SETTINGS ===== */}
+        {/* ===== GENERAL ===== */}
         <Text variant="bodySmall" style={[styles.sectionLabel, { color: palette.textMuted }]}>
-          {t('Viewer Settings')}
+          {t('General')}
         </Text>
 
-        <Card elevated style={styles.settingsListCard}>
-          <View style={styles.settingGroup}>
+        <Card elevated style={styles.settingsCard}>
+          {/* Appearance */}
+          <View style={styles.settingRow}>
             <View style={styles.settingLabelRow}>
-              <AppIcon name="settings" size={14} color={palette.accentPrimary} />
-              <Text variant="bodySmall" style={[styles.settingTitle, { color: palette.textMuted }]}>Appearance</Text>
-            </View>
-            <View style={styles.segmentRow}>
-              {renderSegmentPill({
-                selected: themeMode === 'dark',
-                title: darkLabel,
-                onPress: () => setThemeMode('dark'),
-                testID: 'settings-theme-dark',
-              })}
-              {renderSegmentPill({
-                selected: themeMode === 'light',
-                title: lightLabel,
-                onPress: () => setThemeMode('light'),
-                testID: 'settings-theme-light',
-              })}
-            </View>
-          </View>
-
-          <View style={[styles.settingDivider, { backgroundColor: palette.borderSoft }]} />
-
-          <View style={styles.settingGroup}>
-            <View style={styles.settingLabelRow}>
-              <AppIcon name="adjust" size={14} color={palette.accentPrimary} />
-              <Text variant="bodySmall" style={[styles.settingTitle, { color: palette.textMuted }]}>Language</Text>
-            </View>
-            <View style={styles.segmentRow}>
-              {renderSegmentPill({
-                selected: language === 'en',
-                title: englishLabel,
-                onPress: () => setLanguage('en'),
-                testID: 'settings-lang-en',
-              })}
-              {renderSegmentPill({
-                selected: language === 'es',
-                title: espanolLabel,
-                onPress: () => setLanguage('es'),
-                testID: 'settings-lang-es',
-              })}
-            </View>
-          </View>
-        </Card>
-
-        {/* ===== UNITS & DISPLAY ===== */}
-        <Text variant="bodySmall" style={[styles.sectionLabel, { color: palette.textMuted }]}>
-          Units & Display
-        </Text>
-
-        <Card elevated style={styles.settingsListCard}>
-          <View style={styles.settingGroup}>
-            <View style={styles.settingLabelRow}>
-              <Ionicons name="speedometer-outline" size={14} color={palette.accentPrimary} />
-              <Text variant="bodySmall" style={[styles.settingTitle, { color: palette.textMuted }]}>Distance Unit</Text>
-            </View>
-            <View style={styles.segmentRow}>
-              {renderSegmentPill({
-                selected: distanceUnit === 'km',
-                title: 'Kilometers',
-                onPress: () => setDistanceUnit('km'),
-                testID: 'settings-unit-km',
-              })}
-              {renderSegmentPill({
-                selected: distanceUnit === 'mi',
-                title: 'Miles',
-                onPress: () => setDistanceUnit('mi'),
-                testID: 'settings-unit-mi',
-              })}
-            </View>
-          </View>
-
-          <View style={[styles.settingDivider, { backgroundColor: palette.borderSoft }]} />
-
-          <View style={styles.settingGroup}>
-            <View style={styles.settingLabelRow}>
-              <Ionicons name="calendar-outline" size={14} color={palette.accentPrimary} />
-              <Text variant="bodySmall" style={[styles.settingTitle, { color: palette.textMuted }]}>First Day of Week</Text>
-            </View>
-            <View style={styles.segmentRow}>
-              {renderSegmentPill({
-                selected: firstDayOfWeek === 'sun',
-                title: 'Sunday',
-                onPress: () => setFirstDayOfWeek('sun'),
-                testID: 'settings-firstday-sun',
-              })}
-              {renderSegmentPill({
-                selected: firstDayOfWeek === 'mon',
-                title: 'Monday',
-                onPress: () => setFirstDayOfWeek('mon'),
-                testID: 'settings-firstday-mon',
-              })}
-            </View>
-          </View>
-        </Card>
-
-        {/* ===== NOTIFICATIONS ===== */}
-        <Text variant="bodySmall" style={[styles.sectionLabel, { color: palette.textMuted }]}>
-          Notifications
-        </Text>
-
-        <Card elevated style={styles.settingsListCard}>
-          <View style={styles.settingGroup}>
-            <View style={styles.settingLabelRow}>
-              <Ionicons name="notifications-outline" size={14} color={palette.accentPrimary} />
-              <Text variant="bodySmall" style={[styles.settingTitle, { color: palette.textMuted }]}>Permission Status</Text>
-            </View>
-            <View style={styles.notifStatusRow}>
-              <View style={[styles.statusDot, { backgroundColor: notifStatusColor }]} />
-              <Text variant="body" style={{ color: notifStatusColor, fontWeight: theme.fontWeight.semibold as any }}>
-                {notifStatusText}
+              <Ionicons name="moon-outline" size={16} color={palette.accentPrimary} />
+              <Text variant="body" style={[styles.settingTitle, { color: palette.textPrimary }]}>
+                {t('Appearance')}
               </Text>
-              {!hasNotificationPermission && Platform.OS !== 'web' && (
-                <Pressable
-                  onPress={() => Linking.openSettings()}
-                  style={[styles.openSettingsBtn, { borderColor: palette.accentBorder }]}
-                >
-                  <Text variant="bodySmall" style={{ color: palette.accentPrimary, fontWeight: theme.fontWeight.semibold as any }}>
-                    Open Settings
-                  </Text>
-                </Pressable>
-              )}
-            </View>
-          </View>
-
-          <View style={[styles.settingDivider, { backgroundColor: palette.borderSoft }]} />
-
-          <View style={styles.settingGroup}>
-            <View style={styles.settingLabelRow}>
-              <Ionicons name="phone-portrait-outline" size={14} color={palette.accentPrimary} />
-              <Text variant="bodySmall" style={[styles.settingTitle, { color: palette.textMuted }]}>Vibration on Reminders</Text>
             </View>
             <View style={styles.segmentRow}>
-              {renderSegmentPill({
-                selected: vibrationEnabled,
-                title: 'On',
-                onPress: () => setVibrationEnabled(true),
-                testID: 'settings-vibration-on',
-              })}
-              {renderSegmentPill({
-                selected: !vibrationEnabled,
-                title: 'Off',
-                onPress: () => setVibrationEnabled(false),
-                testID: 'settings-vibration-off',
-              })}
+              <SegmentPill
+                selected={themeMode === 'dark'}
+                title={darkLabel}
+                onPress={() => setThemeMode('dark')}
+                testID="settings-theme-dark"
+                themeMode={themeMode}
+              />
+              <SegmentPill
+                selected={themeMode === 'light'}
+                title={lightLabel}
+                onPress={() => setThemeMode('light')}
+                testID="settings-theme-light"
+                themeMode={themeMode}
+              />
             </View>
           </View>
+
+          <View style={[styles.divider, { backgroundColor: palette.borderSoft }]} />
+
+          {/* Language */}
+          <View style={styles.settingRow}>
+            <View style={styles.settingLabelRow}>
+              <Ionicons name="language-outline" size={16} color={palette.accentPrimary} />
+              <Text variant="body" style={[styles.settingTitle, { color: palette.textPrimary }]}>
+                {t('Language')}
+              </Text>
+            </View>
+            <View style={styles.segmentRow}>
+              <SegmentPill
+                selected={language === 'en'}
+                title={englishLabel}
+                onPress={() => setLanguage('en')}
+                testID="settings-lang-en"
+                themeMode={themeMode}
+              />
+              <SegmentPill
+                selected={language === 'es'}
+                title={espanolLabel}
+                onPress={() => setLanguage('es')}
+                testID="settings-lang-es"
+                themeMode={themeMode}
+              />
+            </View>
+          </View>
+
+          <View style={[styles.divider, { backgroundColor: palette.borderSoft }]} />
+
+          {/* Distance unit */}
+          <View style={styles.settingRow}>
+            <View style={styles.settingLabelRow}>
+              <Ionicons name="speedometer-outline" size={16} color={palette.accentPrimary} />
+              <Text variant="body" style={[styles.settingTitle, { color: palette.textPrimary }]}>
+                {t('Distance Unit')}
+              </Text>
+            </View>
+            <View style={styles.segmentRow}>
+              <SegmentPill
+                selected={distanceUnit === 'km'}
+                title={t('Kilometers')}
+                onPress={() => setDistanceUnit('km')}
+                testID="settings-unit-km"
+                themeMode={themeMode}
+              />
+              <SegmentPill
+                selected={distanceUnit === 'mi'}
+                title={t('Miles')}
+                onPress={() => setDistanceUnit('mi')}
+                testID="settings-unit-mi"
+                themeMode={themeMode}
+              />
+            </View>
+          </View>
+
+          <View style={[styles.divider, { backgroundColor: palette.borderSoft }]} />
+
+          {/* Vibration */}
+          <View style={styles.settingRow}>
+            <View style={styles.settingLabelRow}>
+              <Ionicons name="phone-portrait-outline" size={16} color={palette.accentPrimary} />
+              <Text variant="body" style={[styles.settingTitle, { color: palette.textPrimary }]}>
+                {t('Vibration')}
+              </Text>
+            </View>
+            <View style={styles.segmentRow}>
+              <SegmentPill
+                selected={vibrationEnabled}
+                title={t('On')}
+                onPress={() => setVibrationEnabled(true)}
+                testID="settings-vibration-on"
+                themeMode={themeMode}
+              />
+              <SegmentPill
+                selected={!vibrationEnabled}
+                title={t('Off')}
+                onPress={() => setVibrationEnabled(false)}
+                testID="settings-vibration-off"
+                themeMode={themeMode}
+              />
+            </View>
+          </View>
+
+          <View style={[styles.divider, { backgroundColor: palette.borderSoft }]} />
+
+          {/* Live notification timer */}
+          <View style={styles.settingRow}>
+            <View style={styles.settingLabelRow}>
+              <Ionicons name="notifications-outline" size={16} color={palette.accentPrimary} />
+              <Text variant="body" style={[styles.settingTitle, { color: palette.textPrimary }]}>
+                {t('Live Notification Timer')}
+              </Text>
+            </View>
+            <View style={styles.segmentRowStack}>
+              {(['smart', 'elapsed', 'remaining'] as NotificationTimerMode[]).map((mode) => (
+                <SegmentPill
+                  key={mode}
+                  selected={notificationTimerMode === mode}
+                  title={NOTIFICATION_TIMER_MODE_LABELS[mode]}
+                  onPress={() => handleNotificationTimerMode(mode)}
+                  testID={`settings-notification-timer-${mode}`}
+                  themeMode={themeMode}
+                />
+              ))}
+            </View>
+            <Text variant="bodySmall" style={[styles.walkCardHint, { color: palette.textMuted }]}>
+              {t('Choose what the live walk notification timer shows.')}
+            </Text>
+          </View>
+        </Card>
+
+        {/* ===== WALK DISPLAY ===== */}
+        <Text variant="bodySmall" style={[styles.sectionLabel, { color: palette.textMuted }]}>
+          {t('Walk Display')}
+        </Text>
+
+        <Card elevated style={styles.settingsCard}>
+          {ALL_WALK_DISPLAY_CARDS.map((card, idx) => {
+            const isOn = walkDisplayCards.includes(card);
+            const isMandatory = card === 'walkDuration';
+            return (
+              <React.Fragment key={card}>
+                {idx > 0 && <View style={[styles.divider, { backgroundColor: palette.borderSoft }]} />}
+                <View style={styles.walkCardToggleRow}>
+                  <View style={styles.settingLabelRow}>
+                    <Ionicons
+                      name={
+                        card === 'walkDuration' ? 'time-outline' :
+                        card === 'steps' ? 'footsteps-outline' :
+                        card === 'distance' ? 'navigate-outline' :
+                        card === 'calories' ? 'flame-outline' :
+                        card === 'speed' ? 'speedometer-outline' :
+                        'trophy-outline'
+                      }
+                      size={16}
+                      color={isMandatory ? palette.textMuted : palette.accentPrimary}
+                    />
+                    <Text
+                      variant="body"
+                      style={[
+                        styles.settingTitle,
+                        { color: isMandatory ? palette.textMuted : palette.textPrimary },
+                      ]}
+                    >
+                      {WALK_DISPLAY_CARD_LABELS[card]}
+                    </Text>
+                  </View>
+                  <Switch
+                    value={isOn}
+                    onValueChange={() => handleToggleWalkCard(card)}
+                    disabled={isMandatory}
+                    trackColor={{ false: palette.borderStrong, true: palette.accentPrimary }}
+                    thumbColor={isOn ? palette.accentOnSolid : palette.bgSurface}
+                    testID={`settings-walk-card-${card}`}
+                  />
+                </View>
+              </React.Fragment>
+            );
+          })}
+          <Text variant="bodySmall" style={[styles.walkCardHint, { color: palette.textMuted }]}>
+            {t('Choose which cards appear on the walking screen. First 2 are always visible.')}
+          </Text>
         </Card>
 
         {/* ===== DATA & STORAGE ===== */}
         <Text variant="bodySmall" style={[styles.sectionLabel, { color: palette.textMuted }]}>
-          Data & Storage
+          {t('Data & Storage')}
         </Text>
 
-        <Card elevated style={styles.settingsListCard}>
+        <Card elevated style={styles.settingsCard}>
           {renderActionRow({
             icon: 'download-outline',
-            label: 'Export Walk History',
+            label: t('Export Walk History'),
             onPress: handleExportWalkHistory,
             testID: 'settings-export',
           })}
-          <View style={[styles.settingDivider, { backgroundColor: palette.borderSoft }]} />
+          <View style={[styles.divider, { backgroundColor: palette.borderSoft }]} />
           {renderActionRow({
             icon: 'trash-outline',
-            label: 'Clear Walk History',
+            label: t('Clear Walk History'),
             onPress: handleClearWalkHistory,
             destructive: true,
             testID: 'settings-clear-history',
+          })}
+          <View style={[styles.divider, { backgroundColor: palette.borderSoft }]} />
+          {renderActionRow({
+            icon: 'refresh-outline',
+            label: t('Clear Cache'),
+            onPress: handleClearCache,
+            testID: 'settings-clear-cache',
           })}
         </Card>
 
         {/* ===== ABOUT ===== */}
         <Text variant="bodySmall" style={[styles.sectionLabel, { color: palette.textMuted }]}>
-          About
+          {t('About')}
         </Text>
 
-        <Card elevated style={styles.settingsListCard}>
+        <Card elevated style={styles.settingsCard}>
           {renderActionRow({
             icon: 'information-circle-outline',
-            label: 'App Version',
+            label: t('App Version'),
             onPress: () => {},
             rightText: `v${APP_VERSION}`,
             testID: 'settings-version',
           })}
-          <View style={[styles.settingDivider, { backgroundColor: palette.borderSoft }]} />
+          <View style={[styles.divider, { backgroundColor: palette.borderSoft }]} />
           {renderActionRow({
             icon: 'shield-checkmark-outline',
-            label: 'Privacy Policy',
+            label: t('Privacy Policy'),
             onPress: () => { void WebBrowser.openBrowserAsync(PRIVACY_POLICY_URL); },
             testID: 'settings-privacy',
           })}
-          <View style={[styles.settingDivider, { backgroundColor: palette.borderSoft }]} />
+          <View style={[styles.divider, { backgroundColor: palette.borderSoft }]} />
           {renderActionRow({
             icon: 'document-text-outline',
-            label: 'Terms of Service',
+            label: t('Terms of Service'),
             onPress: () => { void WebBrowser.openBrowserAsync(TERMS_URL); },
             testID: 'settings-terms',
           })}
-          <View style={[styles.settingDivider, { backgroundColor: palette.borderSoft }]} />
+          <View style={[styles.divider, { backgroundColor: palette.borderSoft }]} />
           {renderActionRow({
             icon: 'star-outline',
-            label: 'Rate GapWalk',
+            label: t('Rate GapWalk'),
             onPress: () => {
               const storeUrl = Platform.OS === 'ios'
                 ? 'https://apps.apple.com/app/gapwalk/id0000000000'
@@ -607,6 +720,13 @@ export const SettingsScreen: React.FC<Props> = ({ navigation }) => {
               Linking.openURL(storeUrl).catch(() => {});
             },
             testID: 'settings-rate',
+          })}
+          <View style={[styles.divider, { backgroundColor: palette.borderSoft }]} />
+          {renderActionRow({
+            icon: 'help-circle-outline',
+            label: t('Replay Tour'),
+            onPress: handleReplayTour,
+            testID: 'settings-replay-tour',
           })}
         </Card>
 
@@ -646,7 +766,7 @@ export const SettingsScreen: React.FC<Props> = ({ navigation }) => {
         <TwoActionBar
           style={styles.footer}
           primaryAction={{
-            title: 'Save',
+            title: t('Save'),
             onPress: handleSave,
             testID: 'settings-done',
           }}
@@ -672,19 +792,19 @@ const styles = StyleSheet.create({
   },
   sectionLabel: {
     marginLeft: 2,
-    marginBottom: SETTINGS_SECTION_LABEL_MARGIN_BOTTOM,
+    marginBottom: 10,
     fontWeight: theme.fontWeight.semibold,
     letterSpacing: 0.8,
     textTransform: 'uppercase',
   },
-  settingsListCard: {
-    marginBottom: SETTINGS_BLOCK_GAP,
-    borderRadius: SETTINGS_GROUP_RADIUS,
-    paddingHorizontal: SETTINGS_GROUP_PADDING_X,
-    paddingVertical: SETTINGS_ITEM_PADDING_Y,
-    gap: SETTINGS_ITEM_PADDING_Y,
+  settingsCard: {
+    marginBottom: 18,
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+    gap: 14,
   },
-  settingGroup: {
+  settingRow: {
     gap: 10,
   },
   settingLabelRow: {
@@ -695,46 +815,32 @@ const styles = StyleSheet.create({
   settingTitle: {
     fontWeight: theme.fontWeight.semibold,
   },
-  settingDivider: {
+  divider: {
     height: 1,
   },
   segmentRow: {
     flexDirection: 'row',
-    gap: SETTINGS_SEGMENT_GAP,
+    gap: 10,
+  },
+  segmentRowStack: {
+    flexDirection: 'column',
+    gap: 10,
   },
   pill: {
     flex: 1,
     minHeight: theme.layout.buttonHeight,
     borderRadius: theme.borderRadius.md,
     borderWidth: 1,
+    overflow: 'hidden',
+  },
+  pillInner: {
+    flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 18,
   },
-  pillPressed: {
-    transform: [{ scale: 0.97 }],
-    opacity: 0.85,
-  },
   pillLabel: {
     fontWeight: theme.fontWeight.semibold,
-  },
-  notifStatusRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    paddingLeft: 2,
-  },
-  statusDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-  },
-  openSettingsBtn: {
-    marginLeft: 'auto',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 8,
-    borderWidth: 1,
   },
   actionRow: {
     flexDirection: 'row',
@@ -756,7 +862,7 @@ const styles = StyleSheet.create({
   },
   e2eCard: {
     marginTop: 0,
-    marginBottom: SETTINGS_BLOCK_GAP,
+    marginBottom: 18,
   },
   stack: {
     gap: 10,
@@ -765,5 +871,16 @@ const styles = StyleSheet.create({
     marginTop: 'auto',
     paddingTop: screenChrome.FOOTER_PADDING_TOP,
     paddingBottom: screenChrome.FOOTER_PADDING_BOTTOM,
+  },
+  walkCardToggleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 2,
+  },
+  walkCardHint: {
+    marginTop: 4,
+    fontSize: 12,
+    lineHeight: 16,
   },
 });

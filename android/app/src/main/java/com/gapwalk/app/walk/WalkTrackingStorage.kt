@@ -18,6 +18,9 @@ object WalkTrackingStorage {
       WalkTrackingSnapshot(
         sessionId = json.getString("sessionId"),
         planId = json.optStringOrNull("planId"),
+        targetDurationMinutes = json.optIntOrNull("targetDurationMinutes"),
+        startedFromNotification = json.optBoolean("startedFromNotification", false),
+        notificationTimerMode = WalkNotificationContent.normalizeTimerMode(json.optStringOrNull("notificationTimerMode")),
         startIso = json.getString("startIso"),
         sessionStartMs = json.getLong("sessionStartMs"),
         totalPausedMs = json.optLong("totalPausedMs", 0L),
@@ -80,10 +83,13 @@ object WalkTrackingStorage {
       .put("backgroundLocationGranted", snapshot.backgroundLocationGranted)
       .put("activityPermissionGranted", snapshot.activityPermissionGranted)
       .put("hadWalkingSignal", snapshot.hadWalkingSignal)
+      .put("startedFromNotification", snapshot.startedFromNotification)
+      .put("notificationTimerMode", WalkNotificationContent.normalizeTimerMode(snapshot.notificationTimerMode))
       .put("stepCounterAvailable", snapshot.stepCounterAvailable)
       .put("stepCounterDisabledForSession", snapshot.stepCounterDisabledForSession)
 
     json.putNullable("planId", snapshot.planId)
+    json.putNullable("targetDurationMinutes", snapshot.targetDurationMinutes)
     json.putNullable("lastActionSource", snapshot.lastActionSource)
     json.putNullable("pauseStartedAtMs", snapshot.pauseStartedAtMs)
     json.putNullable("prompt", snapshot.prompt)
@@ -121,6 +127,13 @@ object WalkTrackingStorage {
     return Arguments.createMap().apply {
       putString("sessionId", snapshot.sessionId)
       putString("planId", snapshot.planId)
+      if (snapshot.targetDurationMinutes != null) {
+        putDouble("targetDurationMinutes", snapshot.targetDurationMinutes.toDouble())
+      } else {
+        putNull("targetDurationMinutes")
+      }
+      putBoolean("startedFromNotification", snapshot.startedFromNotification)
+      putString("notificationTimerMode", WalkNotificationContent.normalizeTimerMode(snapshot.notificationTimerMode))
       putString("startIso", snapshot.startIso)
       putDouble("sessionStartMs", snapshot.sessionStartMs.toDouble())
       putDouble("totalPausedMs", snapshot.totalPausedMs.toDouble())
@@ -178,5 +191,9 @@ object WalkTrackingStorage {
 
   private fun JSONObject.optDoubleOrNull(key: String): Double? {
     return if (has(key) && !isNull(key)) getDouble(key) else null
+  }
+
+  private fun JSONObject.optIntOrNull(key: String): Int? {
+    return if (has(key) && !isNull(key)) getInt(key) else null
   }
 }

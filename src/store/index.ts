@@ -1,22 +1,32 @@
 import { create } from 'zustand';
-import { ActiveWalkSnapshot, Preferences, ScheduleSource, NudgePlan, WalkPrompt, WalkSession } from '../types';
+import {
+  ActiveWalkSnapshot,
+  Preferences,
+  ScheduleSource,
+  NudgePlan,
+  WalkPrompt,
+  WalkSession,
+  WalkDisplayCard,
+  ALL_WALK_DISPLAY_CARDS,
+  NotificationTimerMode,
+} from '../types';
 import { type GuidanceKey } from '../data/guidanceStorage';
 
 interface AppState {
   // Onboarding state
   hasCompletedOnboarding: boolean;
   setHasCompletedOnboarding: (value: boolean) => void;
-  
+
   // Schedule source
   scheduleSource: ScheduleSource | null;
   setScheduleSource: (source: ScheduleSource | null) => void;
-  
+
   // Preferences
   preferences: Preferences | null;
   setPreferences: (prefs: Preferences | null) => void;
   hasSetPreferences: boolean;
   setHasSetPreferences: (value: boolean) => void;
-  
+
   // Dashboard stats
   todayMinutesWalked: number;
   todayNotificationCount: number;
@@ -25,7 +35,7 @@ interface AppState {
   setTodayStats: (minutes: number, notifCount: number, steps?: number) => void;
   setTodaySteps: (steps: number) => void;
   setUpcomingPlans: (plans: NudgePlan[]) => void;
-  
+
   // Active walk session
   activeWalkSession: WalkSession | null;
   setActiveWalkSession: (session: WalkSession | null) => void;
@@ -33,11 +43,11 @@ interface AppState {
   setActiveWalkSnapshot: (snapshot: ActiveWalkSnapshot | null) => void;
   pendingWalkPrompt: WalkPrompt | null;
   setPendingWalkPrompt: (prompt: WalkPrompt | null) => void;
-  
+
   // Location permission
   hasLocationPermission: boolean;
   setHasLocationPermission: (value: boolean) => void;
-  
+
   // Notification permission
   hasNotificationPermission: boolean;
   setHasNotificationPermission: (value: boolean) => void;
@@ -49,7 +59,7 @@ interface AppState {
   // Whether initial permissions have been requested
   hasRequestedPermissions: boolean;
   setHasRequestedPermissions: (value: boolean) => void;
-  
+
   // Auth state
   isAuthenticated: boolean;
   setIsAuthenticated: (value: boolean) => void;
@@ -59,6 +69,11 @@ interface AppState {
   setProfileDisplayName: (name: string | null) => void;
   rememberMe: boolean;
   setRememberMe: (value: boolean) => void;
+
+  // Tour state
+
+  hasSeenDashboardTour: boolean;
+  setHasSeenDashboardTour: (value: boolean) => void;
 
   // UI settings
   themeMode: 'dark' | 'light';
@@ -73,8 +88,14 @@ interface AppState {
   setFirstDayOfWeek: (day: 'sun' | 'mon') => void;
   vibrationEnabled: boolean;
   setVibrationEnabled: (val: boolean) => void;
+  notificationTimerMode: NotificationTimerMode;
+  setNotificationTimerMode: (mode: NotificationTimerMode) => void;
 
-  // Guidance "seen" flags
+  // Walk display cards
+  walkDisplayCards: WalkDisplayCard[];
+  setWalkDisplayCards: (cards: WalkDisplayCard[]) => void;
+
+  // Guidance / new-user hints
   guidanceSeen: Partial<Record<GuidanceKey, boolean>>;
   setGuidanceSeen: (key: GuidanceKey, value: boolean) => void;
   setAllGuidanceSeen: (flags: Record<GuidanceKey, boolean>) => void;
@@ -84,23 +105,23 @@ export const useAppStore = create<AppState>((set) => ({
   // Onboarding
   hasCompletedOnboarding: false,
   setHasCompletedOnboarding: (value) => set({ hasCompletedOnboarding: value }),
-  
+
   // Schedule source
   scheduleSource: null,
   setScheduleSource: (source) => set({ scheduleSource: source }),
-  
+
   // Preferences
   preferences: null,
   setPreferences: (prefs) => set({ preferences: prefs }),
   hasSetPreferences: false,
   setHasSetPreferences: (value) => set({ hasSetPreferences: value }),
-  
+
   // Dashboard stats
   todayMinutesWalked: 0,
   todayNotificationCount: 0,
   todaySteps: 0,
   upcomingPlans: [],
-  setTodayStats: (minutes, notifCount, steps) => 
+  setTodayStats: (minutes, notifCount, steps) =>
     set((state) => ({
       todayMinutesWalked: minutes,
       todayNotificationCount: notifCount,
@@ -108,7 +129,7 @@ export const useAppStore = create<AppState>((set) => ({
     })),
   setTodaySteps: (steps) => set({ todaySteps: steps }),
   setUpcomingPlans: (plans) => set({ upcomingPlans: plans }),
-  
+
   // Active walk
   activeWalkSession: null,
   setActiveWalkSession: (session) => set({ activeWalkSession: session }),
@@ -116,7 +137,7 @@ export const useAppStore = create<AppState>((set) => ({
   setActiveWalkSnapshot: (snapshot) => set({ activeWalkSnapshot: snapshot }),
   pendingWalkPrompt: null,
   setPendingWalkPrompt: (prompt) => set({ pendingWalkPrompt: prompt }),
-  
+
   // Permissions
   hasLocationPermission: false,
   setHasLocationPermission: (value) => set({ hasLocationPermission: value }),
@@ -126,7 +147,7 @@ export const useAppStore = create<AppState>((set) => ({
   setHasActivityPermission: (value) => set({ hasActivityPermission: value }),
   hasRequestedPermissions: false,
   setHasRequestedPermissions: (value) => set({ hasRequestedPermissions: value }),
-  
+
   // Auth
   isAuthenticated: false,
   setIsAuthenticated: (value) => set({ isAuthenticated: value }),
@@ -136,6 +157,11 @@ export const useAppStore = create<AppState>((set) => ({
   setProfileDisplayName: (name) => set({ profileDisplayName: name }),
   rememberMe: false,
   setRememberMe: (value) => set({ rememberMe: value }),
+
+  // Tour state
+
+  hasSeenDashboardTour: false,
+  setHasSeenDashboardTour: (value) => set({ hasSeenDashboardTour: value }),
 
   // UI settings
   themeMode: 'dark',
@@ -150,8 +176,14 @@ export const useAppStore = create<AppState>((set) => ({
   setFirstDayOfWeek: (day) => set({ firstDayOfWeek: day }),
   vibrationEnabled: true,
   setVibrationEnabled: (val) => set({ vibrationEnabled: val }),
+  notificationTimerMode: 'smart',
+  setNotificationTimerMode: (mode) => set({ notificationTimerMode: mode }),
 
-  // Guidance "seen" flags
+  // Walk display cards
+  walkDisplayCards: [...ALL_WALK_DISPLAY_CARDS],
+  setWalkDisplayCards: (cards) => set({ walkDisplayCards: cards }),
+
+  // Guidance
   guidanceSeen: {},
   setGuidanceSeen: (key, value) =>
     set((state) => ({ guidanceSeen: { ...state.guidanceSeen, [key]: value } })),
