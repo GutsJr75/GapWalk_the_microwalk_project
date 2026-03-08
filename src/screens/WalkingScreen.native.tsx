@@ -3403,6 +3403,17 @@ const styles = StyleSheet.create({
     alignItems: 'center' as const,
     justifyContent: 'center' as const,
   },
+  walkActionButtonGlow: {
+    shadowColor: theme.colors.accentPrimary,
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.28,
+    shadowRadius: 10,
+    elevation: 4,
+  },
+  walkActionButtonLabel: {
+    fontWeight: theme.fontWeight.semibold,
+    letterSpacing: -0.1,
+  },
   metricDigitalClock: {
     fontSize: 24,
     lineHeight: 28,

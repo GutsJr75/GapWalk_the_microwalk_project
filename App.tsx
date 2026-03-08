@@ -20,6 +20,9 @@ import { appFontAssets, appFontFamily } from './src/theme';
 import { getThemePalette } from './src/theme/palette';
 import {
   isNotificationsSupported,
+  getExpoPushProjectId,
+  getRemotePushRegistrationError,
+  isAndroidFirebaseInitializationError,
   notificationService,
   WALK_NUDGE_ACTION_SKIP,
   WALK_NUDGE_ACTION_START,
@@ -76,6 +79,7 @@ export type RootStackParamList = {
   | undefined;
   Dashboard: { openMenu?: boolean; showPostWalkSummary?: boolean; startTour?: boolean } | undefined;
   Walking: { planId?: string; prompt?: 'end_confirmation'; startedFromNotification?: boolean } | undefined;
+  WalkingExpanded: undefined;
   Settings: undefined;
   WeeklyData: undefined;
   Achievements:
@@ -402,6 +406,8 @@ function App() {
 
   const initializeApp = async () => {
     try {
+      let hasRestoredAuthenticatedSession = false;
+
       try {
         await Font.loadAsync(appFontAssets);
       } catch (e) {
@@ -462,6 +468,7 @@ function App() {
           const storedToken = await authStorage.getToken();
           if (storedToken) {
             setIsAuthenticated(true);
+            hasRestoredAuthenticatedSession = true;
           }
         }
       } catch (e) {
@@ -546,9 +553,22 @@ function App() {
               setHasRequestedPermissions(true);
 
               // Register device with backend after push permission is resolved
-              if (isNotificationsSupported && permResults.notifications) {
+              if (
+                isNotificationsSupported &&
+                permResults.notifications &&
+                hasRestoredAuthenticatedSession
+              ) {
+                const remotePushRegistrationError = getRemotePushRegistrationError();
+                if (remotePushRegistrationError) {
+                  if (__DEV__) console.info(remotePushRegistrationError);
+                  return;
+                }
+
                 try {
-                  const tokenData = await Notifications.getExpoPushTokenAsync();
+                  const projectId = getExpoPushProjectId();
+                  const tokenData = projectId
+                    ? await Notifications.getExpoPushTokenAsync({ projectId })
+                    : await Notifications.getExpoPushTokenAsync();
                   if (tokenData?.data) {
                     void registerDevice({
                       expoPushToken: tokenData.data,
@@ -561,7 +581,15 @@ function App() {
                     });
                   }
                 } catch (e) {
-                  if (__DEV__) console.warn('Failed to obtain push token for device registration:', e);
+                  if (__DEV__) {
+                    if (isAndroidFirebaseInitializationError(e)) {
+                      console.info(
+                        'Skipping backend device registration because Android Firebase push is not configured. Add google-services.json and rebuild if you need server push notifications.'
+                      );
+                    } else {
+                      console.warn('Failed to obtain push token for device registration:', e);
+                    }
+                  }
                 }
               }
             } catch (e) {

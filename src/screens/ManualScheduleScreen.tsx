@@ -8,6 +8,7 @@ import {
   Animated,
   Easing,
   Alert,
+  ToastAndroid,
   TextInput,
   ActivityIndicator,
   useWindowDimensions,
@@ -16,6 +17,7 @@ import {
   NativeSyntheticEvent,
   NativeScrollEvent,
   AccessibilityActionEvent,
+  InteractionManager,
 } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useFocusEffect } from '@react-navigation/native';
@@ -32,7 +34,6 @@ import { Text } from '../components/Text';
 import { Button } from '../components/Button';
 import { Modal as AppModal } from '../components/Modal';
 import { ScreenHeader } from '../components/ScreenHeader';
-import { SuccessToast } from '../components/SuccessToast';
 import { TwoDigitTimeInput } from '../components/TwoDigitTimeInput';
 import { TwoActionBar } from '../components/TwoActionBar';
 import { AppIcon } from '../components/AppIcon';
@@ -472,7 +473,6 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
   const [editingEventId, setEditingEventId] = useState<string | null>(null);
   const [editingSeriesId, setEditingSeriesId] = useState<string | null>(null);
   const [savingDone, setSavingDone] = useState(false);
-  const [showSaveToast, setShowSaveToast] = useState(false);
   const [hasSavedSchedule, setHasSavedSchedule] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [selectedDay, setSelectedDay] = useState<number | null>(todayIndex);
@@ -493,6 +493,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
   const [sheetImportedFilename, setSheetImportedFilename] = useState<string | undefined>(routeImportedFilename);
   const [sheetImportedTemplate, setSheetImportedTemplate] = useState<Record<number, TemplateEvent[]> | null>(null);
   const [slotFeedback, setSlotFeedback] = useState<{ dayIndex: number; slotIndex: number } | null>(null);
+  const [selectedCellAffordance, setSelectedCellAffordance] = useState<{ dayIndex: number; slotIndex: number } | null>(null);
   const [clearArmedDay, setClearArmedDay] = useState<number | null>(null);
   const [poppingEventKey, setPoppingEventKey] = useState<string | null>(null);
   const [viewOnlyEventInfo, setViewOnlyEventInfo] = useState<{ event: TemplateEvent; dayIndex: number } | null>(null);
@@ -513,12 +514,20 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
   const oneTimeYearRef = useRef<TextInput>(null);
   const startMinuteRef = useRef<TextInput>(null);
   const endMinuteRef = useRef<TextInput>(null);
-  const appearAnim = useRef(new Animated.Value(0)).current;
+  const appearAnim = useRef(new Animated.Value(1)).current;
   const slotFeedbackScaleAnim = useRef(new Animated.Value(0.92)).current;
   const slotFeedbackOpacityAnim = useRef(new Animated.Value(0)).current;
+  const selectedCellScaleAnim = useRef(new Animated.Value(0.92)).current;
+  const selectedCellOpacityAnim = useRef(new Animated.Value(0)).current;
   const eventPopAnim = useRef(new Animated.Value(0)).current;
-  const closeInfoBtnScale = useRef(new Animated.Value(1)).current;
-  const closeInfoBtnRotate = useRef(new Animated.Value(0)).current;
+  const eventPulseTokenRef = useRef(0);
+  const selectedCellAnimTokenRef = useRef(0);
+  const weekHeaderUserDraggingRef = useRef(false);
+  const weekHeaderShiftCommittedRef = useRef(false);
+  const prevWeekNavScale = useRef(new Animated.Value(1)).current;
+  const nextWeekNavScale = useRef(new Animated.Value(1)).current;
+  const prevWeekNavGlow = useRef(new Animated.Value(0)).current;
+  const nextWeekNavGlow = useRef(new Animated.Value(0)).current;
   const infoTitleFadeOut = useRef(new Animated.Value(1)).current;
   const infoTitleFadeIn = useRef(new Animated.Value(0)).current;
   const infoDeleteIconOpacity = useRef(new Animated.Value(0)).current;
@@ -560,39 +569,22 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
     }
   }, []);
 
-  // Ensure the current-time red line is visible whenever the grid editor appears.
-  useEffect(() => {
-    const t = setTimeout(() => {
-      try {
+  // Re-position the grid after navigation interactions finish so screen-enter stays smooth.
+  useFocusEffect(
+    useCallback(() => {
+      const interactionTask = InteractionManager.runAfterInteractions(() => {
         if (Platform.OS === 'web') {
           const node = (gridScrollRef.current as any)?.getScrollableNode?.();
           if (node) node.setAttribute('data-gapwalk-schedule-scroll', 'true');
         }
-        scrollGridToNow(true);
-      } catch (_) {
-        // Ignore scroll errors (e.g. ref not ready on web)
-      }
-    }, 120);
-    return () => clearTimeout(t);
-  }, [scrollGridToNow]);
-
-  // Re-position the grid to current time each time the screen gains focus.
-  useFocusEffect(
-    useCallback(() => {
-      const t = setTimeout(() => {
         scrollGridToNow(false);
-      }, 120);
-      return () => clearTimeout(t);
+      });
+      return () => interactionTask.cancel();
     }, [scrollGridToNow])
   );
 
   useEffect(() => {
-    Animated.timing(appearAnim, {
-      toValue: 1,
-      duration: 260,
-      easing: Easing.out(Easing.cubic),
-      useNativeDriver: true,
-    }).start();
+    appearAnim.setValue(1);
   }, [appearAnim]);
 
   const scheduleSourceRef = useRef(scheduleSource);
@@ -700,9 +692,13 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
           if (__DEV__) console.error('Failed to load saved manual schedule:', error);
         }
       };
-      void loadSavedTemplate();
+      const interactionTask = InteractionManager.runAfterInteractions(() => {
+        if (!active) return;
+        void loadSavedTemplate();
+      });
       return () => {
         active = false;
+        interactionTask.cancel();
       };
     }, [prefillTemplate, requireSaveBeforeContinue, routeImportedFilename, startWithEmpty])
   );
@@ -1052,6 +1048,86 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
     ]).start(() => setSlotFeedback(null));
   }, [slotFeedbackOpacityAnim, slotFeedbackScaleAnim]);
 
+  useEffect(() => {
+    const target = selectedGridTarget?.kind === 'empty'
+      ? { dayIndex: selectedGridTarget.dayIndex, slotIndex: selectedGridTarget.slotIndex }
+      : null;
+
+    if (target) {
+      const isSameTarget =
+        selectedCellAffordance?.dayIndex === target.dayIndex &&
+        selectedCellAffordance?.slotIndex === target.slotIndex;
+      if (isSameTarget) return;
+      selectedCellAnimTokenRef.current += 1;
+      setSelectedCellAffordance(target);
+      selectedCellScaleAnim.stopAnimation();
+      selectedCellOpacityAnim.stopAnimation();
+      selectedCellScaleAnim.setValue(0.92);
+      selectedCellOpacityAnim.setValue(0);
+      Animated.parallel([
+        Animated.spring(selectedCellScaleAnim, {
+          toValue: 1,
+          tension: 130,
+          friction: 10,
+          useNativeDriver: true,
+        }),
+        Animated.timing(selectedCellOpacityAnim, {
+          toValue: 1,
+          duration: 180,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: true,
+        }),
+      ]).start();
+      return;
+    }
+
+    if (!selectedCellAffordance) return;
+    const token = ++selectedCellAnimTokenRef.current;
+    selectedCellScaleAnim.stopAnimation();
+    selectedCellOpacityAnim.stopAnimation();
+    Animated.parallel([
+      Animated.timing(selectedCellScaleAnim, {
+        toValue: 0.94,
+        duration: 130,
+        easing: Easing.in(Easing.quad),
+        useNativeDriver: true,
+      }),
+      Animated.timing(selectedCellOpacityAnim, {
+        toValue: 0,
+        duration: 120,
+        easing: Easing.in(Easing.quad),
+        useNativeDriver: true,
+      }),
+    ]).start(({ finished }) => {
+      if (!finished || selectedCellAnimTokenRef.current !== token) return;
+      setSelectedCellAffordance(null);
+    });
+  }, [
+    selectedCellAffordance,
+    selectedCellOpacityAnim,
+    selectedCellScaleAnim,
+    selectedGridTarget,
+  ]);
+
+  const triggerEventPulse = useCallback((eventKey: string, onComplete?: () => void) => {
+    const token = ++eventPulseTokenRef.current;
+    setPoppingEventKey(eventKey);
+    eventPopAnim.stopAnimation();
+    eventPopAnim.setValue(0);
+    Animated.timing(eventPopAnim, {
+      toValue: 1,
+      duration: 170,
+      easing: Easing.out(Easing.back(1.45)),
+      useNativeDriver: true,
+    }).start(({ finished }) => {
+      if (eventPulseTokenRef.current !== token) return;
+      setPoppingEventKey(null);
+      eventPopAnim.setValue(0);
+      if (!finished) return;
+      onComplete?.();
+    });
+  }, [eventPopAnim]);
+
   const handleSlotClick = (dayIndex: number, slotIndex: number) => {
     openModalFromSlot(dayIndex, slotIndex);
   };
@@ -1128,12 +1204,28 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
     setShowAdd(true);
   };
 
-  const closeEventModal = useCallback(() => {
+  const buildEventSelectionTarget = useCallback(
+    (eventId: string, dayIndex: number, startTime24: string): GridSelectionTarget => {
+      const startMinute = hhmmToMinutes(startTime24);
+      const startInRow = normalizeToRowMinutes(startMinute);
+      const sameDayStart = Math.max(GRID_START_MIN, Math.min(GRID_END_MIN - 1, startInRow));
+      const slotIndexRaw = Math.floor((sameDayStart - GRID_START_MIN) / SLOT_MINUTES);
+      return {
+        dayIndex,
+        slotIndex: Math.max(0, Math.min(NUM_SLOTS - 1, slotIndexRaw)),
+        kind: 'event',
+        eventKey: `${eventId}-${dayIndex}-base-${sameDayStart}`,
+      };
+    },
+    []
+  );
+
+  const closeEventModal = useCallback((nextSelectedTarget: GridSelectionTarget | null = null) => {
     setShowAdd(false);
     setEditingEventId(null);
     setEditingSeriesId(null);
     setEventFormInitialSignature('');
-    setSelectedGridTarget(null);
+    setSelectedGridTarget(nextSelectedTarget);
     setForm(createDefaultFormState(todayIndex));
     // Also close event info modal if it was the source of the edit
     if (eventInfoEditMode) {
@@ -1537,13 +1629,24 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
         return updated;
       };
 
+      let focusedDayIndex: number | null = null;
+      let focusedEventId: string | null = null;
+
       if (editingEventId) {
         const id = editingEventId;
+        const oneTimeDate = resolvedOneTimeDate || getPreferredOneTimeDateForDay(form.dayOfWeek);
+        const oneTimeDay = getDayOfWeekFromDateKey(oneTimeDate);
+        const daysToUpdate = form.repeatDays.length > 0 ? form.repeatDays : [form.dayOfWeek];
+        const seriesId = editingSeriesId ?? createRecurringSeriesId();
+
+        focusedDayIndex = form.repeatMode === 'one_time' ? oneTimeDay : daysToUpdate[0];
+        focusedEventId = form.repeatMode === 'one_time'
+          ? id
+          : buildRecurringEventId(seriesId, focusedDayIndex);
+
         setEntriesByDay((prev) => {
           const next = removeEditingTargets(prev);
           if (form.repeatMode === 'one_time') {
-            const oneTimeDate = resolvedOneTimeDate || getPreferredOneTimeDateForDay(form.dayOfWeek);
-            const oneTimeDay = getDayOfWeekFromDateKey(oneTimeDate);
             const event: TemplateEvent = {
               id,
               title,
@@ -1555,8 +1658,6 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
             next[oneTimeDay] = [...(next[oneTimeDay] ?? []), event];
             return next;
           }
-          const daysToUpdate = form.repeatDays.length > 0 ? form.repeatDays : [form.dayOfWeek];
-          const seriesId = editingSeriesId ?? createRecurringSeriesId();
           for (let i = 0; i < daysToUpdate.length; i++) {
             const d = daysToUpdate[i];
             const eventId = buildRecurringEventId(seriesId, d);
@@ -1566,12 +1667,20 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
           return next;
         });
       } else {
+        const baseId = `m-${Date.now()}`;
+        const oneTimeDate = resolvedOneTimeDate || getPreferredOneTimeDateForDay(form.dayOfWeek);
+        const oneTimeDay = getDayOfWeekFromDateKey(oneTimeDate);
+        const daysToAdd = form.repeatDays.length > 0 ? form.repeatDays : [form.dayOfWeek];
+        const seriesId = createRecurringSeriesId();
+
+        focusedDayIndex = form.repeatMode === 'one_time' ? oneTimeDay : daysToAdd[0];
+        focusedEventId = form.repeatMode === 'one_time'
+          ? `${baseId}-0`
+          : buildRecurringEventId(seriesId, focusedDayIndex);
+
         setEntriesByDay((prev) => {
           const next = { ...prev };
-          const baseId = `m-${Date.now()}`;
           if (form.repeatMode === 'one_time') {
-            const oneTimeDate = resolvedOneTimeDate || getPreferredOneTimeDateForDay(form.dayOfWeek);
-            const oneTimeDay = getDayOfWeekFromDateKey(oneTimeDate);
             const event: TemplateEvent = {
               id: `${baseId}-0`,
               title,
@@ -1583,8 +1692,6 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
             next[oneTimeDay] = [...(next[oneTimeDay] ?? []), event];
             return next;
           }
-          const daysToAdd = form.repeatDays.length > 0 ? form.repeatDays : [form.dayOfWeek];
-          const seriesId = createRecurringSeriesId();
           for (let i = 0; i < daysToAdd.length; i++) {
             const d = daysToAdd[i];
             const event: TemplateEvent = {
@@ -1599,11 +1706,20 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
           return next;
         });
       }
-      if (form.repeatMode === 'one_time') {
-        const oneTimeDay = getDayOfWeekFromDateKey(resolvedOneTimeDate || getPreferredOneTimeDateForDay(form.dayOfWeek));
-        setSelectedDay(oneTimeDay);
+
+      if (focusedDayIndex !== null) {
+        setSelectedDay(focusedDayIndex);
       }
-      closeEventModal();
+
+      const oneTimeDateToCheck = resolvedOneTimeDate || getPreferredOneTimeDateForDay(form.dayOfWeek);
+      const oneTimeVisibleInActiveWeek = form.repeatMode !== 'one_time' ||
+        (oneTimeDateToCheck >= toDateKey(activeWeekStart) && oneTimeDateToCheck <= toDateKey(addDays(activeWeekStart, 6)));
+
+      const selectedTarget = focusedDayIndex !== null && focusedEventId && oneTimeVisibleInActiveWeek
+        ? buildEventSelectionTarget(focusedEventId, focusedDayIndex, start)
+        : null;
+
+      closeEventModal(selectedTarget);
     };
 
     const confirmTitle = editingEventId ? 'Update this event?' : 'Save this event?';
@@ -1882,7 +1998,13 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
         setSavingDone(false);
 
         if (manageMode) {
-          setShowSaveToast(true);
+          if (Platform.OS === 'android') {
+            ToastAndroid.show('Schedule saved', ToastAndroid.SHORT);
+          } else if (Platform.OS === 'ios') {
+            Alert.alert('Saved', 'Schedule saved');
+          } else {
+            showMessage('Saved', 'Schedule saved');
+          }
           return;
         }
 
@@ -2125,68 +2247,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
     };
   }, []);
 
-  const handleGridCellPress = useCallback((dayIndex: number, slotIndex: number, daySlices: GridDisplaySlice[]) => {
-    const eventAtSlot = daySlices.find((slice) => {
-      const bounds = getSliceSlotBounds(slice);
-      return slotIndex >= bounds.startSlot && slotIndex < bounds.endSlotExclusive;
-    });
-
-    if (eventAtSlot) {
-      setSelectedDay(dayIndex);
-      setClearArmedDay(null);
-      animateSlotFeedback(dayIndex, slotIndex);
-      const isSecondTapOnSameEvent =
-        selectedGridTarget?.kind === 'event' &&
-        selectedGridTarget.dayIndex === dayIndex &&
-        selectedGridTarget.eventKey === eventAtSlot.key;
-      if (isSecondTapOnSameEvent && manageMode) {
-        // In manage mode, double-tap opens Event Info modal (with Edit button inside)
-        setPoppingEventKey(eventAtSlot.key);
-        eventPopAnim.stopAnimation();
-        eventPopAnim.setValue(0);
-        Animated.timing(eventPopAnim, {
-          toValue: 1,
-          duration: 180,
-          easing: Easing.out(Easing.back(1.5)),
-          useNativeDriver: true,
-        }).start(({ finished }) => {
-          setPoppingEventKey(null);
-          eventPopAnim.setValue(0);
-          if (!finished) return;
-          // Reset crossfade so "Event Info" is fully visible on open
-          infoTitleFadeOut.setValue(1);
-          infoTitleFadeIn.setValue(0);
-          infoDeleteIconOpacity.setValue(0);
-          setViewOnlyEventInfo({ event: eventAtSlot.event, dayIndex: eventAtSlot.sourceDayIndex });
-        });
-        return;
-      }
-      if (isSecondTapOnSameEvent && !manageMode) {
-        setPoppingEventKey(eventAtSlot.key);
-        eventPopAnim.stopAnimation();
-        eventPopAnim.setValue(0);
-        Animated.timing(eventPopAnim, {
-          toValue: 1,
-          duration: 180,
-          easing: Easing.out(Easing.back(1.5)),
-          useNativeDriver: true,
-        }).start(({ finished }) => {
-          setPoppingEventKey(null);
-          eventPopAnim.setValue(0);
-          if (!finished) return;
-          openModalFromEvent(eventAtSlot.event, eventAtSlot.sourceDayIndex);
-        });
-        return;
-      }
-      setSelectedGridTarget({
-        dayIndex,
-        slotIndex,
-        kind: 'event',
-        eventKey: eventAtSlot.key,
-      });
-      return;
-    }
-
+  const handleGridCellPress = useCallback((dayIndex: number, slotIndex: number) => {
     setSelectedDay(dayIndex);
     setClearArmedDay(null);
     animateSlotFeedback(dayIndex, slotIndex);
@@ -2209,19 +2270,45 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
     });
   }, [
     animateSlotFeedback,
-    eventPopAnim,
-    getSliceSlotBounds,
     handleSlotClick,
-    manageMode,
-    openModalFromEvent,
     selectedGridTarget,
   ]);
 
-  const selectedEventSlice = useMemo(() => {
-    if (selectedGridTarget?.kind !== 'event') return null;
-    const daySlices = displaySlicesByDay[selectedGridTarget.dayIndex] ?? [];
-    return daySlices.find((slice) => slice.key === selectedGridTarget.eventKey) ?? null;
-  }, [displaySlicesByDay, selectedGridTarget]);
+  const handleEventPress = useCallback((slice: GridDisplaySlice, dayIndex: number) => {
+    const bounds = getSliceSlotBounds(slice);
+    const isSecondTapOnSameEvent =
+      selectedGridTarget?.kind === 'event' &&
+      selectedGridTarget.dayIndex === dayIndex &&
+      selectedGridTarget.eventKey === slice.key;
+
+    setSelectedDay(dayIndex);
+    setClearArmedDay(null);
+
+    if (isSecondTapOnSameEvent) {
+      triggerEventPulse(slice.key, () => {
+        infoTitleFadeOut.setValue(1);
+        infoTitleFadeIn.setValue(0);
+        infoDeleteIconOpacity.setValue(0);
+        setViewOnlyEventInfo({ event: slice.event, dayIndex: slice.sourceDayIndex });
+      });
+      return;
+    }
+
+    setSelectedGridTarget({
+      dayIndex,
+      slotIndex: bounds.startSlot,
+      kind: 'event',
+      eventKey: slice.key,
+    });
+    triggerEventPulse(slice.key);
+  }, [
+    getSliceSlotBounds,
+    infoDeleteIconOpacity,
+    infoTitleFadeIn,
+    infoTitleFadeOut,
+    selectedGridTarget,
+    triggerEventPulse,
+  ]);
 
   const applyE2ESampleSchedule = () => {
     const targetDayIndex = selectedDay ?? todayIndex;
@@ -2350,6 +2437,8 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
   }, [weekHeaderPagerWidth]);
 
   const commitWeekShift = useCallback((direction: -1 | 1) => {
+    weekHeaderUserDraggingRef.current = false;
+    weekHeaderShiftCommittedRef.current = false;
     setSelectedDay(null);
     setSelectedGridTarget(null);
     setClearArmedDay(null);
@@ -2359,12 +2448,58 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
     });
   }, [centerWeekHeaderPager]);
 
-  const handleWeekHeaderMomentumScrollEnd = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
-    const x = event.nativeEvent.contentOffset.x;
+  const settleWeekHeaderPager = useCallback((x: number) => {
+    if (!weekHeaderUserDraggingRef.current || weekHeaderShiftCommittedRef.current) return;
     const page = Math.round(x / weekHeaderPagerWidth);
-    if (page === 0) commitWeekShift(-1);
-    else if (page === 2) commitWeekShift(1);
+    weekHeaderUserDraggingRef.current = false;
+    if (page === 0 || page === 2) {
+      weekHeaderShiftCommittedRef.current = true;
+      commitWeekShift(page === 0 ? -1 : 1);
+      return;
+    }
+    weekHeaderShiftCommittedRef.current = false;
   }, [commitWeekShift, weekHeaderPagerWidth]);
+
+  const handleWeekHeaderScrollBeginDrag = useCallback(() => {
+    weekHeaderUserDraggingRef.current = true;
+    weekHeaderShiftCommittedRef.current = false;
+  }, []);
+
+  const handleWeekHeaderScrollEndDrag = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    const velocity = event.nativeEvent.velocity?.x ?? 0;
+    const velocityX = Math.abs(velocity);
+    if (velocityX > 0.1) {
+      weekHeaderShiftCommittedRef.current = true;
+      commitWeekShift(velocity > 0 ? -1 : 1);
+      return;
+    }
+    settleWeekHeaderPager(event.nativeEvent.contentOffset.x);
+  }, [commitWeekShift, settleWeekHeaderPager]);
+
+  const handleWeekHeaderMomentumScrollEnd = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    settleWeekHeaderPager(event.nativeEvent.contentOffset.x);
+  }, [settleWeekHeaderPager]);
+
+  const animateWeekHeaderNavPress = useCallback((direction: -1 | 1, pressed: boolean) => {
+    const scaleAnim = direction < 0 ? prevWeekNavScale : nextWeekNavScale;
+    const glowAnim = direction < 0 ? prevWeekNavGlow : nextWeekNavGlow;
+    scaleAnim.stopAnimation();
+    glowAnim.stopAnimation();
+    Animated.parallel([
+      Animated.spring(scaleAnim, {
+        toValue: pressed ? 0.9 : 1,
+        tension: pressed ? 220 : 260,
+        friction: pressed ? 11 : 18,
+        useNativeDriver: true,
+      }),
+      Animated.timing(glowAnim, {
+        toValue: pressed ? 1 : 0,
+        duration: pressed ? 95 : 140,
+        easing: pressed ? Easing.out(Easing.cubic) : Easing.in(Easing.cubic),
+        useNativeDriver: true,
+      }),
+    ]).start();
+  }, [nextWeekNavGlow, nextWeekNavScale, prevWeekNavGlow, prevWeekNavScale]);
 
   const handleWeekHeaderAccessibilityAction = useCallback((event: AccessibilityActionEvent) => {
     if (event.nativeEvent.actionName === 'increment') {
@@ -2488,27 +2623,81 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
               >
                 <Pressable
                   onPress={() => commitWeekShift(-1)}
-                  style={styles.weekHeaderNavBtn}
+                  onPressIn={() => animateWeekHeaderNavPress(-1, true)}
+                  onPressOut={() => animateWeekHeaderNavPress(-1, false)}
+                  style={styles.weekHeaderNavBtnPressable}
                   accessibilityLabel="Previous week"
                   hitSlop={6}
                 >
-                  <View style={{ transform: [{ rotate: '180deg' }] }}>
-                    <AppIcon name="chevronDown" size={11} color={palette.accentPrimary} />
-                  </View>
+                  <Animated.View
+                    style={[
+                      styles.weekHeaderNavBtn,
+                      {
+                        backgroundColor: accentSurfaceSoft,
+                      },
+                    ]}
+                  >
+                    <Animated.View
+                      pointerEvents="none"
+                      style={[
+                        styles.weekHeaderNavBtnGlow,
+                        {
+                          backgroundColor: withAlpha(palette.accentPrimary, isDark ? 0.34 : 0.24),
+                          opacity: prevWeekNavGlow,
+                        },
+                      ]}
+                    />
+                    <Animated.View style={{ transform: [{ rotate: '180deg' }, { scale: prevWeekNavScale }] }}>
+                      <AppIcon name="chevronDown" size={11} color={palette.accentPrimary} />
+                    </Animated.View>
+                  </Animated.View>
                 </Pressable>
-                <Text variant="bodySmall" style={[styles.weekHeaderMonthRailMonthText, { color: palette.accentPrimary }]}>
-                  {activeWeekMonthLabel}
-                </Text>
-                <Text variant="bodySmall" style={[styles.weekHeaderMonthRailYearText, { color: palette.accentPrimary }]}>
-                  {activeWeekYearLabel}
-                </Text>
+                <View
+                  style={[
+                    styles.weekHeaderMonthRailMiddle,
+                    {
+                      borderTopColor: accentBorderSoft,
+                      borderBottomColor: accentBorderSoft,
+                    },
+                  ]}
+                >
+                  <Text variant="bodySmall" style={[styles.weekHeaderMonthRailMonthText, { color: palette.accentPrimary }]}>
+                    {activeWeekMonthLabel}
+                  </Text>
+                  <Text variant="bodySmall" style={[styles.weekHeaderMonthRailYearText, { color: palette.accentPrimary }]}>
+                    {activeWeekYearLabel}
+                  </Text>
+                </View>
                 <Pressable
                   onPress={() => commitWeekShift(1)}
-                  style={styles.weekHeaderNavBtn}
+                  onPressIn={() => animateWeekHeaderNavPress(1, true)}
+                  onPressOut={() => animateWeekHeaderNavPress(1, false)}
+                  style={styles.weekHeaderNavBtnPressable}
                   accessibilityLabel="Next week"
                   hitSlop={6}
                 >
-                  <AppIcon name="chevronDown" size={11} color={palette.accentPrimary} />
+                  <Animated.View
+                    style={[
+                      styles.weekHeaderNavBtn,
+                      {
+                        backgroundColor: accentSurfaceSoft,
+                      },
+                    ]}
+                  >
+                    <Animated.View
+                      pointerEvents="none"
+                      style={[
+                        styles.weekHeaderNavBtnGlow,
+                        {
+                          backgroundColor: withAlpha(palette.accentPrimary, isDark ? 0.34 : 0.24),
+                          opacity: nextWeekNavGlow,
+                        },
+                      ]}
+                    />
+                    <Animated.View style={{ transform: [{ scale: nextWeekNavScale }] }}>
+                      <AppIcon name="chevronDown" size={11} color={palette.accentPrimary} />
+                    </Animated.View>
+                  </Animated.View>
                 </Pressable>
               </View>
               <ScrollView
@@ -2516,12 +2705,16 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
                 horizontal
                 pagingEnabled
                 bounces={false}
+                disableIntervalMomentum
                 directionalLockEnabled
                 showsHorizontalScrollIndicator={false}
                 scrollEventThrottle={16}
+                decelerationRate="fast"
                 contentOffset={{ x: weekHeaderPagerWidth, y: 0 }}
                 style={[styles.weekHeaderPager, { width: weekHeaderPagerWidth }]}
                 contentContainerStyle={styles.weekHeaderPagerContent}
+                onScrollBeginDrag={handleWeekHeaderScrollBeginDrag}
+                onScrollEndDrag={handleWeekHeaderScrollEndDrag}
                 onMomentumScrollEnd={handleWeekHeaderMomentumScrollEnd}
                 accessibilityRole="adjustable"
                 accessibilityLabel="Weekly schedule header"
@@ -2745,7 +2938,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
                               return (
                                 <Pressable
                                   key={`cell-touch-v-${dayIndex}-${slotIndex}`}
-                                  onPress={() => handleGridCellPress(dayIndex, slotIndex, daySlices)}
+                                  onPress={() => handleGridCellPress(dayIndex, slotIndex)}
                                   style={({ pressed }) => [
                                     styles.gridCellPressableV,
                                     {
@@ -2763,7 +2956,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
                               );
                             })}
 
-                            <View style={StyleSheet.absoluteFill} pointerEvents="none">
+                            <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
                               {daySlices.map((slice) => {
                                 const bounds = getSliceSlotBounds(slice);
                                 const durationMinutes = slice.endMinuteInRow - slice.startMinuteInRow;
@@ -2776,60 +2969,77 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
                                   selectedGridTarget?.kind === 'event' &&
                                   selectedGridTarget.dayIndex === dayIndex &&
                                   selectedGridTarget.eventKey === slice.key;
+                                const isPoppingEvent = poppingEventKey === slice.key;
+                                const pulseScale = isPoppingEvent
+                                  ? eventPopAnim.interpolate({
+                                    inputRange: [0, 1],
+                                    outputRange: [1, 1.05],
+                                  })
+                                  : 1;
                                 const startTimeStr = formatTime12(slice.event.startTime);
                                 const endTimeStr = formatTime12(slice.event.endTime);
                                 return (
-                                  <View
+                                  <Animated.View
                                     key={slice.key}
                                     style={[
-                                      styles.gridEventBlockV,
-                                      isShortEvent && styles.gridEventBlockVCompact,
-                                      isSelectedEventTarget
-                                        ? styles.gridEventBlockHTargeted
-                                        : (isSelectedDay && !hasFocusedEventOnDay)
-                                          ? styles.gridEventBlockHSelected
-                                          : styles.gridEventBlockHFaded,
+                                      styles.gridEventBlockWrap,
                                       {
                                         top: bounds.top,
                                         left: DAY_COLUMN_GUTTER,
                                         width: dayColumnWidth - DAY_COLUMN_GUTTER * 2,
                                         height: bounds.height,
-                                        backgroundColor: palette.accentPrimary,
-                                        borderColor: eventBorderColor,
-                                        borderLeftColor: withAlpha(palette.accentOnSolid, 0.38),
-                                        shadowColor: isSelectedEventTarget || (isSelectedDay && !hasFocusedEventOnDay)
-                                          ? palette.accentPrimary
-                                          : palette.shadow,
+                                        transform: [{ scale: pulseScale }],
                                       },
                                     ]}
                                   >
-                                    <Text
-                                      variant="bodySmall"
-                                      style={[styles.gridEventTitleH, isShortEvent && styles.gridEventTitleHCompact, { color: accentSolidText }]}
-                                      numberOfLines={isTallEvent ? 3 : 1}
-                                      ellipsizeMode="tail"
+                                    <Pressable
+                                      onPress={() => handleEventPress(slice, dayIndex)}
+                                      style={({ pressed }) => [
+                                        styles.gridEventBlockV,
+                                        isShortEvent && styles.gridEventBlockVCompact,
+                                        isSelectedEventTarget
+                                          ? styles.gridEventBlockHTargeted
+                                          : (isSelectedDay && !hasFocusedEventOnDay)
+                                            ? styles.gridEventBlockHSelected
+                                            : styles.gridEventBlockHFaded,
+                                        {
+                                          backgroundColor: palette.accentPrimary,
+                                          borderColor: eventBorderColor,
+                                          shadowColor: isSelectedEventTarget || (isSelectedDay && !hasFocusedEventOnDay)
+                                            ? palette.accentPrimary
+                                            : palette.shadow,
+                                        },
+                                        pressed && styles.gridEventBlockPressed,
+                                      ]}
                                     >
-                                      {slice.event.title}
-                                    </Text>
-                                    {!isShortEvent && (
-                                      <>
-                                        <Text
-                                          variant="bodySmall"
-                                          style={[styles.gridEventTimeH, { color: accentSolidTextMuted }]}
-                                          numberOfLines={1}
-                                        >
-                                          {startTimeStr}
-                                        </Text>
-                                        <Text
-                                          variant="bodySmall"
-                                          style={[styles.gridEventTimeH, { color: accentSolidTextMuted }]}
-                                          numberOfLines={1}
-                                        >
-                                          {endTimeStr}
-                                        </Text>
-                                      </>
-                                    )}
-                                  </View>
+                                      <Text
+                                        variant="bodySmall"
+                                        style={[styles.gridEventTitleH, isShortEvent && styles.gridEventTitleHCompact, { color: accentSolidText }]}
+                                        numberOfLines={isTallEvent ? 3 : 1}
+                                        ellipsizeMode="tail"
+                                      >
+                                        {slice.event.title}
+                                      </Text>
+                                      {!isShortEvent && (
+                                        <>
+                                          <Text
+                                            variant="bodySmall"
+                                            style={[styles.gridEventTimeH, { color: accentSolidTextMuted }]}
+                                            numberOfLines={1}
+                                          >
+                                            {startTimeStr}
+                                          </Text>
+                                          <Text
+                                            variant="bodySmall"
+                                            style={[styles.gridEventTimeH, { color: accentSolidTextMuted }]}
+                                            numberOfLines={1}
+                                          >
+                                            {endTimeStr}
+                                          </Text>
+                                        </>
+                                      )}
+                                    </Pressable>
+                                  </Animated.View>
                                 );
                               })}
                             </View>
@@ -2856,16 +3066,18 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
                         ]}
                       />
                     )}
-                    {selectedGridTarget?.kind === 'empty' && (
-                      <View
+                    {selectedCellAffordance && (
+                      <Animated.View
                         pointerEvents="none"
                         style={[
                           styles.selectedCellAffordance,
                           {
-                            left: selectedGridTarget.dayIndex * dayColumnWidth + 1,
-                            top: selectedGridTarget.slotIndex * SLOT_HEIGHT + 1,
+                            left: selectedCellAffordance.dayIndex * dayColumnWidth + 1,
+                            top: selectedCellAffordance.slotIndex * SLOT_HEIGHT + 1,
                             width: dayColumnWidth - 2,
                             height: SLOT_HEIGHT - 2,
+                            opacity: selectedCellOpacityAnim,
+                            transform: [{ scale: selectedCellScaleAnim }],
                           },
                         ]}
                       >
@@ -2880,7 +3092,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
                         >
                           <Text variant="body" style={[styles.selectedCellPlusText, { color: palette.accentPrimary }]}>+</Text>
                         </View>
-                      </View>
+                      </Animated.View>
                     )}
                   </View>
                 </View>
@@ -3513,7 +3725,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
         </View>
       </AppModal>
 
-      {/* Event Info modal — shown on double-tap of an event in manage mode.
+      {/* Event Info modal — shown on double-tap of an event.
            Supports read-only view + inline edit mode with crossfade title transition. */}
       <AppModal
         visible={viewOnlyEventInfo !== null}
@@ -3560,55 +3772,12 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
                 borderColor: 'rgba(220,38,38,0.28)',
               },
             ]}
-            onPress={() => {
-              closeInfoBtnScale.setValue(1);
-              closeInfoBtnRotate.setValue(0);
-              Animated.sequence([
-                Animated.spring(closeInfoBtnScale, {
-                  toValue: 1.35,
-                  friction: 4,
-                  tension: 200,
-                  useNativeDriver: true,
-                }),
-                Animated.parallel([
-                  Animated.timing(closeInfoBtnScale, {
-                    toValue: 0,
-                    duration: 160,
-                    easing: Easing.in(Easing.cubic),
-                    useNativeDriver: true,
-                  }),
-                  Animated.timing(closeInfoBtnRotate, {
-                    toValue: 1,
-                    duration: 160,
-                    easing: Easing.in(Easing.cubic),
-                    useNativeDriver: true,
-                  }),
-                ]),
-              ]).start(() => {
-                closeInfoBtnScale.setValue(1);
-                closeInfoBtnRotate.setValue(0);
-                closeEventInfoModal();
-              });
-            }}
-            activeOpacity={1}
+            onPress={closeEventInfoModal}
+            activeOpacity={0.75}
             accessibilityRole="button"
             accessibilityLabel="Close"
           >
-            <Animated.View
-              style={{
-                transform: [
-                  { scale: closeInfoBtnScale },
-                  {
-                    rotate: closeInfoBtnRotate.interpolate({
-                      inputRange: [0, 1],
-                      outputRange: ['0deg', '90deg'],
-                    }),
-                  },
-                ],
-              }}
-            >
-              <AppIcon name="close" size={17} color={theme.colors.error} />
-            </Animated.View>
+            <AppIcon name="close" size={17} color={theme.colors.error} />
           </TouchableOpacity>
         }
       >
@@ -3990,12 +4159,6 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
           );
         })()}
       </AppModal>
-
-      <SuccessToast
-        visible={showSaveToast}
-        message="Schedule saved"
-        onDismiss={() => setShowSaveToast(false)}
-      />
     </SafeAreaView>
   );
 };
@@ -4390,11 +4553,20 @@ const styles = StyleSheet.create({
   },
   weekHeaderMonthRail: {
     flexShrink: 0,
-    alignItems: 'center',
-    justifyContent: 'center',
+    alignItems: 'stretch',
+    justifyContent: 'flex-start',
     borderWidth: 1,
     borderRadius: 0,
     marginLeft: -GRID_PADDING,
+    overflow: 'hidden',
+  },
+  weekHeaderMonthRailMiddle: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    paddingVertical: 2,
   },
   weekHeaderMonthRailMonthText: {
     fontSize: 9,
@@ -4460,10 +4632,18 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: '700' as any,
   },
+  weekHeaderNavBtnPressable: {
+    flex: 1,
+    alignSelf: 'stretch',
+  },
   weekHeaderNavBtn: {
+    flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 2,
+    overflow: 'hidden',
+  },
+  weekHeaderNavBtnGlow: {
+    ...StyleSheet.absoluteFillObject,
   },
   gridToolbar: {
     flexDirection: 'row',
@@ -4751,8 +4931,6 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     borderWidth: 1,
     borderColor: 'rgba(6,38,29,0.28)',
-    borderLeftWidth: 4,
-    borderLeftColor: 'rgba(6,38,29,0.38)',
     paddingHorizontal: 6,
     paddingVertical: 6,
     justifyContent: 'flex-start',
@@ -4767,14 +4945,15 @@ const styles = StyleSheet.create({
     paddingHorizontal: 5,
     paddingVertical: 5,
   },
-  gridEventBlockV: {
+  gridEventBlockWrap: {
     position: 'absolute',
     zIndex: 12,
+  },
+  gridEventBlockV: {
+    flex: 1,
     backgroundColor: theme.colors.accentPrimary,
     borderRadius: 4,
     borderWidth: 1,
-    borderLeftWidth: 3,
-    borderLeftColor: 'rgba(6,38,29,0.38)',
     paddingHorizontal: 3,
     paddingVertical: 2,
     overflow: 'hidden',
@@ -4787,6 +4966,9 @@ const styles = StyleSheet.create({
   gridEventBlockVCompact: {
     paddingHorizontal: 2,
     paddingVertical: 1,
+  },
+  gridEventBlockPressed: {
+    opacity: 0.93,
   },
   gridEventBlockHSelected: {
     shadowColor: theme.colors.accentPrimary,
@@ -4804,7 +4986,7 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(255,255,255,0.62)',
   },
   gridEventBlockHFaded: {
-    opacity: 0.55,
+    opacity: 0.72,
     shadowOpacity: 0.08,
     shadowRadius: 2,
     elevation: 1,
