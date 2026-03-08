@@ -380,16 +380,8 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
   const quietStartMinuteRef = useRef<TextInput>(null);
   const quietEndMinuteRef = useRef<TextInput>(null);
   const preferredMinuteRefs = useRef<Record<string, TextInput | null>>({});
-  const [viewOnlyTappedField, setViewOnlyTappedField] = useState<string | null>(null);
   const isManageViewOnly = manageMode && manageScreenMode === 'view';
 
-  const handleViewOnlyFieldTap = (fieldId: string) => {
-    setViewOnlyTappedField(fieldId);
-    setTimeout(
-      () => setViewOnlyTappedField((prev) => (prev === fieldId ? null : prev)),
-      2500,
-    );
-  };
   const palette = getThemePalette(themeMode);
   const isDark = themeMode === 'dark';
   const themedInput = {
@@ -476,13 +468,13 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
   }, [initialPrefsSignature, prefs]);
 
   const update = <K extends keyof Preferences>(key: K, value: Preferences[K]) => {
-    if (isManageViewOnly) return;
+    if (isManageViewOnly) setManageScreenMode('edit');
     setPrefs(prev => ({ ...prev, [key]: value }));
   };
 
   /** Helper: update multiple prefs at once */
   const updateMany = (changes: Partial<Preferences>) => {
-    if (isManageViewOnly) return;
+    if (isManageViewOnly) setManageScreenMode('edit');
     setPrefs(prev => ({ ...prev, ...changes }));
   };
 
@@ -533,7 +525,7 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
 
   /* â”€â”€ quiet hours â”€â”€ */
   const openQuietModal = () => {
-    if (isManageViewOnly) return;
+    if (isManageViewOnly) setManageScreenMode('edit');
     closeInfoOverlay();
     const start = to12HourParts(prefs.quietHoursStart);
     const end = to12HourParts(prefs.quietHoursEnd);
@@ -554,7 +546,7 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
   };
 
   const openPreferredModal = () => {
-    if (isManageViewOnly) return;
+    if (isManageViewOnly) setManageScreenMode('edit');
     closeInfoOverlay();
     const seed = prefs.preferredWalkingPeriods.length > 0
       ? prefs.preferredWalkingPeriods
@@ -907,7 +899,7 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
               title="Preferences"
               subtitle={manageMode
                 ? (isManageViewOnly
-                  ? 'View your preferences. Tap Update to edit.'
+                  ? 'View your preferences. Tap any option to start editing.'
                   : 'Change preferences and tap Save when ready.')
                 : 'Choose what GapWalk should optimize for you.'}
               onBack={manageMode ? handleManageBackToOptions : undefined}
@@ -956,12 +948,9 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
                   />
                   <Text variant="muted" style={styles.unit}>min</Text>
                   {isManageViewOnly && (
-                    <Pressable style={StyleSheet.absoluteFillObject} onPress={() => handleViewOnlyFieldTap('dailyTargetMinutes')} />
+                    <Pressable style={StyleSheet.absoluteFillObject} onPress={handleManageStartEdit} />
                   )}
                 </View>
-                {isManageViewOnly && viewOnlyTappedField === 'dailyTargetMinutes' && (
-                  <Text variant="bodySmall" style={styles.viewOnlyFieldHint}>Tap Update to start editing.</Text>
-                )}
                 {dailyTargetError && <Text variant="bodySmall" style={styles.errorText}>{dailyTargetError}</Text>}
               </View>
 
@@ -986,12 +975,9 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
                   />
                   <Text variant="muted" style={styles.unit}>min</Text>
                   {isManageViewOnly && (
-                    <Pressable style={StyleSheet.absoluteFillObject} onPress={() => handleViewOnlyFieldTap('bufferMinutes')} />
+                    <Pressable style={StyleSheet.absoluteFillObject} onPress={handleManageStartEdit} />
                   )}
                 </View>
-                {isManageViewOnly && viewOnlyTappedField === 'bufferMinutes' && (
-                  <Text variant="bodySmall" style={styles.viewOnlyFieldHint}>Tap Update to start editing.</Text>
-                )}
                 {bufferError && <Text variant="bodySmall" style={styles.errorText}>{bufferError}</Text>}
               </View>
 
@@ -1016,12 +1002,9 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
                   />
                   <Text variant="muted" style={styles.unit}>per day</Text>
                   {isManageViewOnly && (
-                    <Pressable style={StyleSheet.absoluteFillObject} onPress={() => handleViewOnlyFieldTap('notificationCountPerDay')} />
+                    <Pressable style={StyleSheet.absoluteFillObject} onPress={handleManageStartEdit} />
                   )}
                 </View>
-                {isManageViewOnly && viewOnlyTappedField === 'notificationCountPerDay' && (
-                  <Text variant="bodySmall" style={styles.viewOnlyFieldHint}>Tap Update to start editing.</Text>
-                )}
                 {notifError && <Text variant="bodySmall" style={styles.errorText}>{notifError}</Text>}
               </View>
             </Section>
@@ -1081,12 +1064,9 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
                   />
                   <Text variant="muted" style={styles.unit}>min</Text>
                   {isManageViewOnly && (
-                    <Pressable style={StyleSheet.absoluteFillObject} onPress={() => handleViewOnlyFieldTap('notificationMinGapMinutes')} />
+                    <Pressable style={StyleSheet.absoluteFillObject} onPress={handleManageStartEdit} />
                   )}
                 </View>
-                {isManageViewOnly && viewOnlyTappedField === 'notificationMinGapMinutes' && (
-                  <Text variant="bodySmall" style={styles.viewOnlyFieldHint}>Tap Update to start editing.</Text>
-                )}
                 {reminderGapError && <Text variant="bodySmall" style={styles.errorText}>{reminderGapError}</Text>}
               </View>
 
@@ -1226,12 +1206,9 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
                       />
                       <Text variant="muted" style={styles.unit}>steps</Text>
                       {isManageViewOnly && (
-                        <Pressable style={StyleSheet.absoluteFillObject} onPress={() => handleViewOnlyFieldTap('stepGoal')} />
+                        <Pressable style={StyleSheet.absoluteFillObject} onPress={handleManageStartEdit} />
                       )}
                     </View>
-                    {isManageViewOnly && viewOnlyTappedField === 'stepGoal' && (
-                      <Text variant="bodySmall" style={styles.viewOnlyFieldHint}>Tap Update to start editing.</Text>
-                    )}
                   </>
                 ) : (
                   <Text variant="muted" style={styles.note}>Step goal is currently off.</Text>
