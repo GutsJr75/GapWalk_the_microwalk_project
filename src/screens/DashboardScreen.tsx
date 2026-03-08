@@ -998,7 +998,7 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
       });
   }, [activeTodayPlans, goalReached, preferences]);
 
-  const horizontalPadding = Math.max(width * 0.1, 16);
+  const horizontalPadding = width >= 768 ? 32 : width >= 480 ? 20 : 16;
   const verticalPadding = Math.max(height * 0.05, 16);
   const palette = getThemePalette(themeMode);
   const topGlowColor = withAlpha(palette.accentPrimary, themeMode === 'dark' ? 0.08 : 0.13);
@@ -1040,7 +1040,7 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: palette.bgApp }]}>
       {renderBackdrop}
-      <View style={[styles.headerFrame, { backgroundColor: palette.bgSurfaceElevated, paddingHorizontal: Math.max(width * 0.075, 16) }]}>
+      <View style={[styles.headerFrame, { backgroundColor: palette.bgSurfaceElevated, paddingHorizontal: horizontalPadding }]}>
         <View style={styles.header}>
           <View style={styles.headerCenter}>
             <Text variant="title" style={dashboardHeadingStyle}>{resolvedDashboardHeading}</Text>
@@ -1056,7 +1056,7 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
 
       <ScrollView
         ref={dashboardScrollRef}
-        contentContainerStyle={[styles.scroll, { paddingHorizontal: Math.max(width * 0.1, 16), paddingTop: Math.max(height * 0.03, 12), paddingBottom: Math.max(height * 0.04, 20) }]}
+        contentContainerStyle={[styles.scroll, { paddingHorizontal: horizontalPadding, paddingTop: Math.max(height * 0.03, 12), paddingBottom: Math.max(height * 0.04, 20) }]}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={palette.accentPrimary} />}
       >
         <View style={styles.dashboardStack}>
