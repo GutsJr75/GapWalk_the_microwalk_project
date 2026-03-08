@@ -2,6 +2,7 @@ import React, { useRef, useCallback } from 'react';
 import { Pressable, StyleSheet, ActivityIndicator, ViewStyle, TextStyle, StyleProp, Platform, Animated } from 'react-native';
 import { theme } from '../theme';
 import { useThemePalette } from '../theme/palette';
+import { withAlpha } from '../theme/colorUtils';
 import { Text } from './Text';
 import { useTapFeedbackAction } from '../hooks/useTapFeedbackAction';
 import { toDisplayTitleCase } from '../utils/textCase';
@@ -33,14 +34,18 @@ export const Button: React.FC<ButtonProps> = ({
 }) => {
   const palette = useThemePalette();
   const scaleAnim = useRef(new Animated.Value(1)).current;
-  const isPrimaryLike = variant === 'primary' || variant === 'danger';
+  const isPrimaryLike = variant === 'primary';
+  const isDanger = variant === 'danger';
   const showPressGlow = isPrimaryLike;
+  const dangerTone = theme.colors.danger;
+  const dangerBg = withAlpha(dangerTone, 0.12);
+  const dangerBorder = withAlpha(dangerTone, 0.38);
   const labelColor = disabled
     ? palette.textMuted
     : variant === 'primary'
       ? palette.accentOnSolid
-      : variant === 'danger'
-        ? theme.colors.white
+    : variant === 'danger'
+        ? dangerTone
         : variant === 'muted'
           ? palette.textMuted
           : palette.textPrimary;
@@ -89,7 +94,13 @@ export const Button: React.FC<ButtonProps> = ({
           { borderColor: palette.borderStrong },
         ],
         variant === 'muted' && styles.mutedButton,
-        variant === 'danger' && styles.dangerButton,
+        variant === 'danger' && [
+          styles.dangerButton,
+          {
+            backgroundColor: dangerBg,
+            borderColor: dangerBorder,
+          },
+        ],
         disabled && styles.disabledButton,
         full && styles.fullWidth,
         showPressGlow && isTapActive && !disabled && !loading && {
@@ -110,7 +121,11 @@ export const Button: React.FC<ButtonProps> = ({
       testID={testID}
       accessibilityLabel={testID}
       android_ripple={{
-        color: isPrimaryLike ? 'rgba(255,255,255,0.18)' : palette.inputBg,
+        color: isPrimaryLike
+          ? 'rgba(255,255,255,0.18)'
+          : isDanger
+            ? withAlpha(dangerTone, 0.18)
+            : palette.inputBg,
       }}
     >
       {loading ? (
@@ -151,7 +166,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'transparent',
   },
   dangerButton: {
-    backgroundColor: theme.colors.danger,
+    borderWidth: 1,
   },
   disabledButton: {
     opacity: 0.55,
