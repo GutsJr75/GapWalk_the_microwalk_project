@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>GapWalk — The Microwalk App</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0b1220;
+      --surface: #121a2c;
+      --accent: #4a90d9;
+      --accent2: #5cb8a0;
+      --text: #e8edf5;
+      --muted: #8a99b3;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+    }
+
+    /* NAV */
+    nav {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 1.2rem 2rem;
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+    }
+    .logo { font-size: 1.4rem; font-weight: 700; letter-spacing: -0.5px; }
+    .logo span { color: var(--accent); }
+    nav a { color: var(--muted); text-decoration: none; font-size: 0.9rem; }
+    nav a:hover { color: var(--text); }
+
+    /* HERO */
+    .hero {
+      text-align: center;
+      padding: 5rem 2rem 4rem;
+      background: radial-gradient(ellipse at 50% 0%, rgba(74,144,217,0.15) 0%, transparent 70%);
+    }
+    .badge {
+      display: inline-block;
+      background: rgba(74,144,217,0.15);
+      border: 1px solid rgba(74,144,217,0.35);
+      color: var(--accent);
+      padding: 0.3rem 0.9rem;
+      border-radius: 999px;
+      font-size: 0.8rem;
+      font-weight: 600;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+      margin-bottom: 1.5rem;
+    }
+    .hero h1 {
+      font-size: clamp(2.2rem, 6vw, 3.8rem);
+      font-weight: 800;
+      letter-spacing: -1px;
+      line-height: 1.15;
+      margin-bottom: 1.2rem;
+    }
+    .hero h1 em { color: var(--accent); font-style: normal; }
+    .hero p {
+      font-size: 1.15rem;
+      color: var(--muted);
+      max-width: 540px;
+      margin: 0 auto 2.5rem;
+    }
+    .btn-group { display: flex; gap: 1rem; justify-content: center; flex-wrap: wrap; }
+    .btn {
+      padding: 0.8rem 1.8rem;
+      border-radius: 10px;
+      font-size: 0.95rem;
+      font-weight: 600;
+      cursor: pointer;
+      text-decoration: none;
+      transition: opacity 0.15s;
+    }
+    .btn:hover { opacity: 0.85; }
+    .btn-primary { background: var(--accent); color: #fff; }
+    .btn-outline {
+      background: transparent;
+      border: 1px solid rgba(255,255,255,0.2);
+      color: var(--text);
+    }
+
+    /* FEATURES */
+    .section { padding: 5rem 2rem; max-width: 1100px; margin: 0 auto; }
+    .section-label {
+      text-align: center;
+      color: var(--accent2);
+      font-size: 0.8rem;
+      font-weight: 700;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      margin-bottom: 0.8rem;
+    }
+    .section h2 {
+      text-align: center;
+      font-size: clamp(1.6rem, 4vw, 2.4rem);
+      font-weight: 700;
+      margin-bottom: 0.6rem;
+    }
+    .section .sub {
+      text-align: center;
+      color: var(--muted);
+      margin-bottom: 3.5rem;
+      max-width: 500px;
+      margin-left: auto;
+      margin-right: auto;
+    }
+
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 1.5rem; }
+    .card {
+      background: var(--surface);
+      border: 1px solid rgba(255,255,255,0.07);
+      border-radius: 16px;
+      padding: 1.8rem;
+    }
+    .icon {
+      font-size: 2rem;
+      margin-bottom: 1rem;
+      display: block;
+    }
+    .card h3 { font-size: 1.05rem; font-weight: 700; margin-bottom: 0.5rem; }
+    .card p { color: var(--muted); font-size: 0.92rem; }
+
+    /* HOW IT WORKS */
+    .steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 2rem; counter-reset: step; }
+    .step { text-align: center; }
+    .step-num {
+      width: 52px; height: 52px;
+      border-radius: 50%;
+      background: rgba(74,144,217,0.15);
+      border: 2px solid rgba(74,144,217,0.4);
+      color: var(--accent);
+      font-weight: 800;
+      font-size: 1.2rem;
+      display: flex; align-items: center; justify-content: center;
+      margin: 0 auto 1rem;
+    }
+    .step h3 { font-size: 1rem; font-weight: 700; margin-bottom: 0.4rem; }
+    .step p { color: var(--muted); font-size: 0.88rem; }
+
+    /* DIVIDER */
+    hr { border: none; border-top: 1px solid rgba(255,255,255,0.06); }
+
+    /* FOOTER */
+    footer {
+      text-align: center;
+      padding: 2.5rem 2rem;
+      color: var(--muted);
+      font-size: 0.85rem;
+    }
+    footer a { color: var(--muted); text-decoration: underline; }
+    footer a:hover { color: var(--text); }
+  </style>
+</head>
+<body>
+
+  <nav>
+    <span class="logo">Gap<span>Walk</span></span>
+    <a href="privacy.html">Privacy Policy</a>
+  </nav>
+
+  <!-- HERO -->
+  <section class="hero">
+    <div class="badge">Available on iOS & Android</div>
+    <h1>Walk more.<br><em>Even for 5 minutes.</em></h1>
+    <p>GapWalk turns the gaps in your day into healthy microwalks — with live GPS tracking, step counting, and route maps.</p>
+    <div class="btn-group">
+      <a href="#features" class="btn btn-primary">See Features</a>
+      <a href="#how" class="btn btn-outline">How It Works</a>
+    </div>
+  </section>
+
+  <hr />
+
+  <!-- FEATURES -->
+  <section class="section" id="features">
+    <p class="section-label">Features</p>
+    <h2>Everything you need to move more</h2>
+    <p class="sub">Simple, focused tools that make it easy to track every walk — big or small.</p>
+
+    <div class="grid">
+      <div class="card">
+        <span class="icon">🗺️</span>
+        <h3>Live Route Map</h3>
+        <p>Watch your path draw in real time as you walk. Review your route after every session.</p>
+      </div>
+      <div class="card">
+        <span class="icon">👟</span>
+        <h3>Step Counter</h3>
+        <p>Accurate step counting using your phone's motion sensors — no wearable needed.</p>
+      </div>
+      <div class="card">
+        <span class="icon">📍</span>
+        <h3>GPS Distance</h3>
+        <p>Precise distance tracking with background GPS so you never miss a metre.</p>
+      </div>
+      <div class="card">
+        <span class="icon">📊</span>
+        <h3>Walk History</h3>
+        <p>Browse all your past sessions, view stats, and see how your habits build over time.</p>
+      </div>
+      <div class="card">
+        <span class="icon">🌙</span>
+        <h3>Dark Mode</h3>
+        <p>Comfortable on the eyes at any time of day — full dark and light theme support.</p>
+      </div>
+      <div class="card">
+        <span class="icon">🔒</span>
+        <h3>Private by Default</h3>
+        <p>Your walk data stays on your device. We never sell your information to third parties.</p>
+      </div>
+    </div>
+  </section>
+
+  <hr />
+
+  <!-- HOW IT WORKS -->
+  <section class="section" id="how">
+    <p class="section-label">How It Works</p>
+    <h2>Start walking in seconds</h2>
+    <p class="sub">No setup. No goals to configure. Just open the app and go.</p>
+
+    <div class="steps">
+      <div class="step">
+        <div class="step-num">1</div>
+        <h3>Sign In</h3>
+        <p>Log in with your Google account — takes under 10 seconds.</p>
+      </div>
+      <div class="step">
+        <div class="step-num">2</div>
+        <h3>Tap Start</h3>
+        <p>Hit the start button and put your phone in your pocket.</p>
+      </div>
+      <div class="step">
+        <div class="step-num">3</div>
+        <h3>Walk</h3>
+        <p>GapWalk tracks your steps, distance, and route in the background.</p>
+      </div>
+      <div class="step">
+        <div class="step-num">4</div>
+        <h3>Review</h3>
+        <p>Tap stop to save your walk and see your route and stats.</p>
+      </div>
+    </div>
+  </section>
+
+  <hr />
+
+  <footer>
+    <p>&copy; 2025 GapWalk. All rights reserved.</p>
+    <p style="margin-top:0.5rem;">
+      <a href="privacy.html">Privacy Policy</a>
+      &nbsp;·&nbsp;
+      <a href="mailto:support@gapwalk.com">Contact</a>
+    </p>
+  </footer>
+
+</body>
+</html>

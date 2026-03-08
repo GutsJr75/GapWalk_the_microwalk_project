@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Privacy Policy — GapWalk</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0b1220;
+      --surface: #121a2c;
+      --accent: #4a90d9;
+      --text: #e8edf5;
+      --muted: #8a99b3;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.7;
+    }
+
+    nav {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 1.2rem 2rem;
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+    }
+    .logo { font-size: 1.4rem; font-weight: 700; letter-spacing: -0.5px; text-decoration: none; color: var(--text); }
+    .logo span { color: var(--accent); }
+    nav a.back { color: var(--muted); text-decoration: none; font-size: 0.9rem; }
+    nav a.back:hover { color: var(--text); }
+
+    .container {
+      max-width: 760px;
+      margin: 0 auto;
+      padding: 3.5rem 2rem 5rem;
+    }
+
+    .page-label {
+      color: var(--accent);
+      font-size: 0.8rem;
+      font-weight: 700;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      margin-bottom: 0.8rem;
+    }
+
+    h1 {
+      font-size: clamp(1.8rem, 4vw, 2.6rem);
+      font-weight: 800;
+      letter-spacing: -0.5px;
+      margin-bottom: 0.5rem;
+    }
+
+    .meta {
+      color: var(--muted);
+      font-size: 0.88rem;
+      margin-bottom: 3rem;
+      padding-bottom: 2rem;
+      border-bottom: 1px solid rgba(255,255,255,0.07);
+    }
+
+    h2 {
+      font-size: 1.15rem;
+      font-weight: 700;
+      margin: 2.5rem 0 0.8rem;
+      color: var(--text);
+    }
+
+    p { color: #bdc8dc; margin-bottom: 1rem; font-size: 0.97rem; }
+
+    ul {
+      list-style: none;
+      padding: 0;
+      margin-bottom: 1rem;
+    }
+    ul li {
+      color: #bdc8dc;
+      font-size: 0.97rem;
+      padding: 0.35rem 0 0.35rem 1.4rem;
+      position: relative;
+    }
+    ul li::before {
+      content: "–";
+      position: absolute;
+      left: 0;
+      color: var(--accent);
+    }
+
+    .callout {
+      background: var(--surface);
+      border: 1px solid rgba(255,255,255,0.07);
+      border-left: 3px solid var(--accent);
+      border-radius: 0 10px 10px 0;
+      padding: 1.2rem 1.5rem;
+      margin: 2rem 0;
+      color: #bdc8dc;
+      font-size: 0.95rem;
+    }
+
+    a { color: var(--accent); }
+    a:hover { text-decoration: underline; }
+
+    footer {
+      text-align: center;
+      padding: 2.5rem 2rem;
+      color: var(--muted);
+      font-size: 0.85rem;
+      border-top: 1px solid rgba(255,255,255,0.06);
+    }
+  </style>
+</head>
+<body>
+
+  <nav>
+    <a href="index.html" class="logo">Gap<span>Walk</span></a>
+    <a href="index.html" class="back">← Back to Home</a>
+  </nav>
+
+  <div class="container">
+    <p class="page-label">Legal</p>
+    <h1>Privacy Policy</h1>
+    <p class="meta">Last updated: March 2025 &nbsp;·&nbsp; Effective: March 2025</p>
+
+    <p>
+      GapWalk ("we", "our", or "us") is a mobile walking tracker app for iOS and Android.
+      This Privacy Policy explains what information we collect, how we use it, and your rights
+      regarding your data. We are committed to keeping your information private and secure.
+    </p>
+
+    <div class="callout">
+      We do not sell, rent, or share your personal data with advertisers or third-party data brokers.
+    </div>
+
+    <!-- 1 -->
+    <h2>1. Information We Collect</h2>
+    <p>We collect the following types of information when you use GapWalk:</p>
+
+    <p><strong>Account information</strong> (via Google Sign-In):</p>
+    <ul>
+      <li>Your name and email address</li>
+      <li>Your Google profile picture</li>
+      <li>A unique user ID provided by Google</li>
+    </ul>
+
+    <p><strong>Walk data</strong> (collected during walk sessions):</p>
+    <ul>
+      <li>GPS coordinates and route path</li>
+      <li>Walk distance and duration</li>
+      <li>Step count (via device motion sensors)</li>
+      <li>Start and end timestamps of each session</li>
+    </ul>
+
+    <p><strong>Device information</strong> (collected automatically):</p>
+    <ul>
+      <li>Device operating system and version</li>
+      <li>App version</li>
+    </ul>
+
+    <!-- 2 -->
+    <h2>2. How We Use Your Information</h2>
+    <p>We use the information we collect to:</p>
+    <ul>
+      <li>Authenticate you and maintain your account</li>
+      <li>Record, display, and store your walk sessions and history</li>
+      <li>Sync your walk data across your devices via our backend service</li>
+      <li>Show your walking route on the in-app map</li>
+      <li>Improve the performance and reliability of the app</li>
+    </ul>
+
+    <!-- 3 -->
+    <h2>3. Location Data</h2>
+    <p>
+      GapWalk uses your device's GPS to track your walk route and calculate distance.
+      Location access is only active while you are recording a walk session.
+      We request background location permission so tracking continues if you lock your screen mid-walk.
+    </p>
+    <p>
+      Your GPS coordinates are stored locally on your device using SQLite and may be synced
+      to our secure backend server. We do not share your location data with any third party.
+    </p>
+
+    <!-- 4 -->
+    <h2>4. Data Storage</h2>
+    <ul>
+      <li><strong>On-device:</strong> Walk sessions and routes are stored in a local SQLite database on your phone.</li>
+      <li><strong>Backend server:</strong> Session data may be synced to our secure server at <code>api.gapwalk.com</code> for backup and cross-device access.</li>
+      <li><strong>Google services:</strong> Authentication is handled by Google OAuth. We do not store your Google password.</li>
+    </ul>
+
+    <!-- 5 -->
+    <h2>5. Data Sharing</h2>
+    <p>We do not sell or share your personal data. The only third-party services involved are:</p>
+    <ul>
+      <li><strong>Google Sign-In</strong> — for authentication. Governed by <a href="https://policies.google.com/privacy" target="_blank" rel="noopener">Google's Privacy Policy</a>.</li>
+      <li><strong>Google Maps</strong> — to display the map background in the walking screen. No walk data is sent to Google Maps.</li>
+    </ul>
+
+    <!-- 6 -->
+    <h2>6. Data Retention</h2>
+    <p>
+      Your walk data is retained as long as your account exists and you have the app installed.
+      You may delete individual sessions from within the app at any time.
+      To delete your account and all associated data, contact us at the email below.
+    </p>
+
+    <!-- 7 -->
+    <h2>7. Children's Privacy</h2>
+    <p>
+      GapWalk is not directed at children under the age of 13. We do not knowingly collect
+      personal information from children. If you believe a child has provided us with their
+      information, please contact us and we will delete it promptly.
+    </p>
+
+    <!-- 8 -->
+    <h2>8. Your Rights</h2>
+    <p>You have the right to:</p>
+    <ul>
+      <li>Access the personal data we hold about you</li>
+      <li>Request correction of inaccurate data</li>
+      <li>Request deletion of your account and all associated data</li>
+      <li>Withdraw consent for location access at any time via your device settings</li>
+    </ul>
+    <p>To exercise any of these rights, contact us at <a href="mailto:support@gapwalk.com">support@gapwalk.com</a>.</p>
+
+    <!-- 9 -->
+    <h2>9. Security</h2>
+    <p>
+      We take reasonable measures to protect your data, including encrypted connections (HTTPS)
+      between the app and our backend server. However, no method of transmission over the internet
+      is 100% secure and we cannot guarantee absolute security.
+    </p>
+
+    <!-- 10 -->
+    <h2>10. Changes to This Policy</h2>
+    <p>
+      We may update this Privacy Policy from time to time. We will notify you of significant
+      changes by updating the "Last updated" date at the top of this page. Continued use of
+      GapWalk after changes constitutes your acceptance of the updated policy.
+    </p>
+
+    <!-- 11 -->
+    <h2>11. Contact Us</h2>
+    <p>
+      If you have any questions or concerns about this Privacy Policy or your data, please contact us:
+    </p>
+    <ul>
+      <li>Email: <a href="mailto:support@gapwalk.com">support@gapwalk.com</a></li>
+      <li>App: com.gapwalk.app</li>
+    </ul>
+  </div>
+
+  <footer>
+    <p>&copy; 2025 GapWalk. All rights reserved.</p>
+    <p style="margin-top:0.5rem;">
+      <a href="index.html">Home</a>
+      &nbsp;·&nbsp;
+      <a href="mailto:support@gapwalk.com">Contact</a>
+    </p>
+  </footer>
+
+</body>
+</html>
