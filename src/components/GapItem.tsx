@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, StyleSheet, Pressable } from 'react-native';
+import { View, StyleSheet, Pressable, Platform } from 'react-native';
 import { Text } from './Text';
 import { theme } from '../theme';
 import { useAppStore } from '../store';
@@ -115,9 +115,10 @@ export const GapItem: React.FC<GapItemProps> = ({
               shadowOffset: { width: 0, height: 0 },
               elevation: 4,
             },
+            (pressed || isChangeTapActive) && styles.actionBtnActive,
             pressed && styles.actionBtnPressed,
           ]}
-          android_ripple={{ color: 'rgba(56,189,248,0.25)', borderless: false }}
+          android_ripple={{ color: 'rgba(56,189,248,0.22)', borderless: false }}
         >
           <Text variant="bodySmall" style={[styles.changeText, { color: changeTextColor }]}>Change</Text>
         </Pressable>
@@ -136,9 +137,10 @@ export const GapItem: React.FC<GapItemProps> = ({
               shadowOffset: { width: 0, height: 0 },
               elevation: 4,
             },
+            (pressed || isCancelTapActive) && styles.actionBtnActive,
             pressed && styles.actionBtnPressed,
           ]}
-          android_ripple={{ color: 'rgba(239,68,68,0.25)', borderless: false }}
+          android_ripple={{ color: 'rgba(239,68,68,0.22)', borderless: false }}
         >
           <Text variant="bodySmall" style={styles.cancelText}>Cancel</Text>
         </Pressable>
@@ -158,9 +160,12 @@ const styles = StyleSheet.create({
     // native depth
     ...theme.shadow.card,
   },
+  actionBtnActive: {
+    opacity: Platform.OS === 'ios' ? 0.94 : 0.98,
+  },
   actionBtnPressed: {
-    transform: [{ scale: 0.93 }],
-    opacity: 0.8,
+    transform: [{ scale: 0.97 }],
+    opacity: Platform.OS === 'ios' ? 0.92 : 0.95,
   },
   left: { flex: 1 },
   time: { fontWeight: theme.fontWeight.semibold, marginBottom: 2 },

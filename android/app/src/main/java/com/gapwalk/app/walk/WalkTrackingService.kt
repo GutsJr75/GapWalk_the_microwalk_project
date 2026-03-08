@@ -358,8 +358,7 @@ class WalkTrackingService : Service(), SensorEventListener {
 
     val timerLine = WalkNotificationContent.resolveTimerLine(snapshot)
     val summaryLine = WalkNotificationContent.buildSummaryLine(snapshot)
-    val statsLine = WalkNotificationContent.buildStatsLine(snapshot)
-    val notifTitle = if (snapshot.paused) "Walk paused" else "Walk in progress"
+    val notifTitle = "MicroWalk Session"
     val builder = NotificationCompat.Builder(this, CHANNEL_ID)
       .setSmallIcon(R.drawable.ic_notification_walk)
       .setColor(ContextCompat.getColor(this, R.color.gapwalk_accent))
@@ -381,7 +380,6 @@ class WalkTrackingService : Service(), SensorEventListener {
       )
       .addAction(0, "End walk", endIntent)
       .setUsesChronometer(false)
-      .setSubText(statsLine)
 
     return builder.build()
   }

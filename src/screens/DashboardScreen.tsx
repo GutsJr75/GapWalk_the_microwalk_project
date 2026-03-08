@@ -917,11 +917,6 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
   const navigateToAchievements = () => { closeMenu(); navigation.navigate('Achievements', { source: 'options' }); };
   const navigateToAboutHelp = () => { closeMenu(); navigation.navigate('AboutHelp'); };
 
-  const handleReplayTour = () => {
-    closeMenu();
-    setTimeout(() => setTourVisible(true), 600);
-  };
-
   const menuItems: SideMenuItem[] = [
     { key: 'profile', label: 'Profile', icon: 'person', onPress: navigateToProfile, testID: 'dashboard-menu-profile' },
     { key: 'schedule', label: 'Manage schedule', icon: 'calendar', onPress: navigateToManageSchedule, testID: 'dashboard-menu-schedule' },
@@ -930,7 +925,6 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
     { key: 'achievements', label: 'Achievements', icon: 'trophy', onPress: navigateToAchievements, testID: 'dashboard-menu-achievements' },
     { key: 'settings', label: 'Settings', icon: 'settings', onPress: navigateToSettings, testID: 'dashboard-menu-settings' },
     { key: 'about-help', label: 'About & Help', icon: 'info', onPress: navigateToAboutHelp, testID: 'dashboard-menu-about-help' },
-    { key: 'replay-tour', label: 'Replay Tour', icon: 'info', onPress: handleReplayTour, testID: 'dashboard-menu-replay-tour' },
   ];
 
   const handleLogoutFromMenu = () => {

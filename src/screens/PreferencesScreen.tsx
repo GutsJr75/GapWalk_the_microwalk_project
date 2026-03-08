@@ -12,6 +12,7 @@ import {
   UIManager,
   Modal as RNModal,
   useWindowDimensions,
+  Easing,
 } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useFocusEffect } from '@react-navigation/native';
@@ -256,6 +257,90 @@ const InfoTip: React.FC<{
           <Text style={[styles.infoLetter, { color: palette.accentPrimary }]}>i</Text>
         </View>
       </TouchableOpacity>
+    </View>
+  );
+};
+
+const PeriodToggle: React.FC<{
+  value: TimePeriod;
+  onChange: (period: TimePeriod) => void;
+  activeBackgroundColor: string;
+  activeTextColor: string;
+  inactiveTextColor: string;
+  containerStyle: {
+    backgroundColor: string;
+    borderColor: string;
+    borderWidth: number;
+  };
+  testIDPrefix: string;
+}> = ({
+  value,
+  onChange,
+  activeBackgroundColor,
+  activeTextColor,
+  inactiveTextColor,
+  containerStyle,
+  testIDPrefix,
+}) => {
+  const slideAnim = useRef(new Animated.Value(value === 'PM' ? 1 : 0)).current;
+  const [containerWidth, setContainerWidth] = useState(0);
+
+  useEffect(() => {
+    Animated.timing(slideAnim, {
+      toValue: value === 'PM' ? 1 : 0,
+      duration: 180,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }).start();
+  }, [slideAnim, value]);
+
+  const travel = Math.max(0, containerWidth / 2);
+  const translateX = slideAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0, travel],
+  });
+
+  return (
+    <View
+      style={[styles.periodToggleContainer, containerStyle]}
+      onLayout={(event) => {
+        const nextWidth = event.nativeEvent.layout.width;
+        if (Math.abs(nextWidth - containerWidth) > 0.5) {
+          setContainerWidth(nextWidth);
+        }
+      }}
+    >
+      {travel > 0 && (
+        <Animated.View
+          pointerEvents="none"
+          style={[
+            styles.periodActivePill,
+            {
+              width: travel,
+              backgroundColor: activeBackgroundColor,
+              transform: [{ translateX }],
+            },
+          ]}
+        />
+      )}
+      {(['AM', 'PM'] as const).map((period) => (
+        <TouchableOpacity
+          key={`${testIDPrefix}-${period}`}
+          style={styles.periodBtn}
+          onPress={() => onChange(period)}
+          delayPressIn={0}
+        >
+          <Text
+            variant="bodySmall"
+            style={[
+              styles.periodBtnText,
+              { color: value === period ? activeTextColor : inactiveTextColor },
+            ]}
+          >
+            {period}
+          </Text>
+        </TouchableOpacity>
+      ))}
     </View>
   );
 };
@@ -1253,23 +1338,13 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
           <View style={styles.btnRow}>
             {manageMode ? (
               isManageViewOnly ? (
-                <>
-                  <Button
-                    title="Back"
-                    onPress={handleManageBackToOptions}
-                    variant="secondary"
-                    style={styles.btnHalf}
-                    disabled={savingPrefs}
-                    testID="preferences-back"
-                  />
-                  <Button
-                    title="Update"
-                    onPress={handleManageStartEdit}
-                    style={styles.btnHalf}
-                    disabled={savingPrefs}
-                    testID="preferences-edit"
-                  />
-                </>
+                <Button
+                  title="Update"
+                  onPress={handleManageStartEdit}
+                  style={styles.btnHalf}
+                  disabled={savingPrefs}
+                  testID="preferences-edit"
+                />
               ) : (
                 <>
                   <Button
@@ -1332,85 +1407,100 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
       </RNModal>
 
       {/* quiet hours modal */}
-      <Modal visible={showQuietModal} onClose={() => setShowQuietModal(false)} title="Quiet Hours">
+      <Modal
+        visible={showQuietModal}
+        onClose={() => setShowQuietModal(false)}
+        title="Quiet Hours"
+        rightAccessory={(
+          <TouchableOpacity
+            style={[
+              styles.modalHeaderIconBtn,
+              {
+                backgroundColor: 'rgba(220,38,38,0.12)',
+                borderColor: 'rgba(220,38,38,0.28)',
+              },
+            ]}
+            onPress={() => setShowQuietModal(false)}
+            activeOpacity={0.75}
+            accessibilityRole="button"
+            accessibilityLabel="Close quiet hours"
+          >
+            <AppIcon name="close" size={17} color={theme.colors.error} />
+          </TouchableOpacity>
+        )}
+      >
         <Text variant="bodySmall" color={palette.textMuted} style={styles.qDesc}>Select the time frame when GapWalk will not send you notifications.</Text>
-        <View style={styles.qTimeGroup}>
-          <Text variant="muted">Start</Text>
-          <View style={styles.qTimeInputRow}>
-            <View style={styles.clockRow}>
-              <TwoDigitTimeInput
-                mode="hour"
-                style={[styles.input, styles.timeInput, themedInput]}
-                placeholderTextColor={palette.textMuted}
-                value={quietForm.startHourRaw}
-                onChange={(v) => setQuietForm((p) => ({ ...p, startHourRaw: v }))}
-                onBlurNormalize={(v) => setQuietForm((p) => ({ ...p, startHourRaw: v }))}
-                onAutoComplete={() => quietStartMinuteRef.current?.focus()}
-                placeholder="HH"
+        <View style={styles.qTimeStack}>
+          <View style={[styles.qTimeCard, themedSurface]}>
+            <Text variant="bodySmall" style={styles.qTimeCardLabel}>Start</Text>
+            <View style={styles.qTimeCardControls}>
+              <View style={[styles.qTimeDisplay, themedInput]}>
+                <TwoDigitTimeInput
+                  mode="hour"
+                  style={[styles.qTimeDisplayInput, { color: palette.textPrimary }]}
+                  value={quietForm.startHourRaw}
+                  onChange={(v) => setQuietForm((p) => ({ ...p, startHourRaw: v }))}
+                  onBlurNormalize={(v) => setQuietForm((p) => ({ ...p, startHourRaw: v }))}
+                  onAutoComplete={() => quietStartMinuteRef.current?.focus()}
+                  placeholder="HH"
+                />
+                <Text variant="body" style={styles.qTimeDisplaySeparator}>:</Text>
+                <TwoDigitTimeInput
+                  mode="minute"
+                  inputRef={quietStartMinuteRef}
+                  style={[styles.qTimeDisplayInput, { color: palette.textPrimary }]}
+                  value={quietForm.startMinuteRaw}
+                  onChange={(v) => setQuietForm((p) => ({ ...p, startMinuteRaw: v }))}
+                  onBlurNormalize={(v) => setQuietForm((p) => ({ ...p, startMinuteRaw: v }))}
+                  placeholder="MM"
+                  returnKeyType="done"
+                />
+              </View>
+              <PeriodToggle
+                value={quietForm.startPeriod}
+                onChange={(period) => setQuietForm((prev) => ({ ...prev, startPeriod: period }))}
+                activeBackgroundColor={palette.accentPrimary}
+                activeTextColor={palette.accentOnSolid}
+                inactiveTextColor={palette.textPrimary}
+                containerStyle={themedSurface}
+                testIDPrefix="qs"
               />
-              <Text variant="body">:</Text>
-              <TwoDigitTimeInput
-                mode="minute"
-                inputRef={quietStartMinuteRef}
-                style={[styles.input, styles.timeInput, themedInput]}
-                placeholderTextColor={palette.textMuted}
-                value={quietForm.startMinuteRaw}
-                onChange={(v) => setQuietForm((p) => ({ ...p, startMinuteRaw: v }))}
-                onBlurNormalize={(v) => setQuietForm((p) => ({ ...p, startMinuteRaw: v }))}
-                placeholder="MM"
-                returnKeyType="done"
-              />
-            </View>
-            <View style={[styles.periodToggleContainer, themedSurface]}>
-              {(['AM', 'PM'] as const).map(per => (
-                <TouchableOpacity
-                  key={`qs-${per}`}
-                  style={[styles.periodBtn, quietForm.startPeriod === per && { backgroundColor: palette.accentPrimary }]}
-                  onPress={() => setQuietForm(p => ({ ...p, startPeriod: per }))}
-                >
-                  <Text variant="bodySmall" color={quietForm.startPeriod === per ? palette.accentOnSolid : theme.colors.textPrimary}>{per}</Text>
-                </TouchableOpacity>
-              ))}
             </View>
           </View>
-        </View>
-        <View style={styles.qTimeGroup}>
-          <Text variant="muted">End</Text>
-          <View style={styles.qTimeInputRow}>
-            <View style={styles.clockRow}>
-              <TwoDigitTimeInput
-                mode="hour"
-                style={[styles.input, styles.timeInput, themedInput]}
-                placeholderTextColor={palette.textMuted}
-                value={quietForm.endHourRaw}
-                onChange={(v) => setQuietForm((p) => ({ ...p, endHourRaw: v }))}
-                onBlurNormalize={(v) => setQuietForm((p) => ({ ...p, endHourRaw: v }))}
-                onAutoComplete={() => quietEndMinuteRef.current?.focus()}
-                placeholder="HH"
+          <View style={[styles.qTimeCard, themedSurface]}>
+            <Text variant="bodySmall" style={styles.qTimeCardLabel}>End</Text>
+            <View style={styles.qTimeCardControls}>
+              <View style={[styles.qTimeDisplay, themedInput]}>
+                <TwoDigitTimeInput
+                  mode="hour"
+                  style={[styles.qTimeDisplayInput, { color: palette.textPrimary }]}
+                  value={quietForm.endHourRaw}
+                  onChange={(v) => setQuietForm((p) => ({ ...p, endHourRaw: v }))}
+                  onBlurNormalize={(v) => setQuietForm((p) => ({ ...p, endHourRaw: v }))}
+                  onAutoComplete={() => quietEndMinuteRef.current?.focus()}
+                  placeholder="HH"
+                />
+                <Text variant="body" style={styles.qTimeDisplaySeparator}>:</Text>
+                <TwoDigitTimeInput
+                  mode="minute"
+                  inputRef={quietEndMinuteRef}
+                  style={[styles.qTimeDisplayInput, { color: palette.textPrimary }]}
+                  value={quietForm.endMinuteRaw}
+                  onChange={(v) => setQuietForm((p) => ({ ...p, endMinuteRaw: v }))}
+                  onBlurNormalize={(v) => setQuietForm((p) => ({ ...p, endMinuteRaw: v }))}
+                  placeholder="MM"
+                  returnKeyType="done"
+                />
+              </View>
+              <PeriodToggle
+                value={quietForm.endPeriod}
+                onChange={(period) => setQuietForm((prev) => ({ ...prev, endPeriod: period }))}
+                activeBackgroundColor={palette.accentPrimary}
+                activeTextColor={palette.accentOnSolid}
+                inactiveTextColor={palette.textPrimary}
+                containerStyle={themedSurface}
+                testIDPrefix="qe"
               />
-              <Text variant="body">:</Text>
-              <TwoDigitTimeInput
-                mode="minute"
-                inputRef={quietEndMinuteRef}
-                style={[styles.input, styles.timeInput, themedInput]}
-                placeholderTextColor={palette.textMuted}
-                value={quietForm.endMinuteRaw}
-                onChange={(v) => setQuietForm((p) => ({ ...p, endMinuteRaw: v }))}
-                onBlurNormalize={(v) => setQuietForm((p) => ({ ...p, endMinuteRaw: v }))}
-                placeholder="MM"
-                returnKeyType="done"
-              />
-            </View>
-            <View style={[styles.periodToggleContainer, themedSurface]}>
-              {(['AM', 'PM'] as const).map(per => (
-                <TouchableOpacity
-                  key={`qe-${per}`}
-                  style={[styles.periodBtn, quietForm.endPeriod === per && { backgroundColor: palette.accentPrimary }]}
-                  onPress={() => setQuietForm(p => ({ ...p, endPeriod: per }))}
-                >
-                  <Text variant="bodySmall" color={quietForm.endPeriod === per ? palette.accentOnSolid : theme.colors.textPrimary}>{per}</Text>
-                </TouchableOpacity>
-              ))}
             </View>
           </View>
         </View>
@@ -1422,6 +1512,23 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
         visible={showPreferredModal}
         onClose={() => setShowPreferredModal(false)}
         title="Preferred Walking Periods"
+        rightAccessory={(
+          <TouchableOpacity
+            style={[
+              styles.modalHeaderIconBtn,
+              {
+                backgroundColor: 'rgba(220,38,38,0.12)',
+                borderColor: 'rgba(220,38,38,0.28)',
+              },
+            ]}
+            onPress={() => setShowPreferredModal(false)}
+            activeOpacity={0.75}
+            accessibilityRole="button"
+            accessibilityLabel="Close preferred walking periods"
+          >
+            <AppIcon name="close" size={17} color={theme.colors.error} />
+          </TouchableOpacity>
+        )}
       >
         <Text variant="bodySmall" color={palette.textMuted} style={styles.qDesc}>
           Add 1 to 5 preferred time periods. GapWalk will prioritize these windows, but other gaps will still be shown.
@@ -1437,84 +1544,78 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
               )}
             </View>
 
-            <View style={styles.qTimeGroup}>
-              <Text variant="muted">Start</Text>
-              <View style={styles.qTimeInputRow}>
-                <View style={styles.clockRow}>
-                  <TwoDigitTimeInput
-                    mode="hour"
-                    style={[styles.input, styles.timeInput, themedInput]}
-                    placeholderTextColor={palette.textMuted}
-                    value={period.startHourRaw}
-                    onChange={(v) => updatePreferredFormById(period.id, { startHourRaw: v })}
-                    onBlurNormalize={(v) => updatePreferredFormById(period.id, { startHourRaw: v })}
-                    onAutoComplete={() => preferredMinuteRefs.current[`${period.id}-start`]?.focus()}
-                    placeholder="HH"
+            <View style={styles.qTimeStack}>
+              <View style={[styles.qTimeCard, themedSurface]}>
+                <Text variant="bodySmall" style={styles.qTimeCardLabel}>Start</Text>
+                <View style={styles.qTimeCardControls}>
+                  <View style={[styles.qTimeDisplay, themedInput]}>
+                    <TwoDigitTimeInput
+                      mode="hour"
+                      style={[styles.qTimeDisplayInput, { color: palette.textPrimary }]}
+                      value={period.startHourRaw}
+                      onChange={(v) => updatePreferredFormById(period.id, { startHourRaw: v })}
+                      onBlurNormalize={(v) => updatePreferredFormById(period.id, { startHourRaw: v })}
+                      onAutoComplete={() => preferredMinuteRefs.current[`${period.id}-start`]?.focus()}
+                      placeholder="HH"
+                    />
+                    <Text variant="body" style={styles.qTimeDisplaySeparator}>:</Text>
+                    <TwoDigitTimeInput
+                      mode="minute"
+                      inputRef={(node) => { preferredMinuteRefs.current[`${period.id}-start`] = node; }}
+                      style={[styles.qTimeDisplayInput, { color: palette.textPrimary }]}
+                      value={period.startMinuteRaw}
+                      onChange={(v) => updatePreferredFormById(period.id, { startMinuteRaw: v })}
+                      onBlurNormalize={(v) => updatePreferredFormById(period.id, { startMinuteRaw: v })}
+                      placeholder="MM"
+                      returnKeyType="done"
+                    />
+                  </View>
+                  <PeriodToggle
+                    value={period.startPeriod}
+                    onChange={(nextPeriod) => updatePreferredFormById(period.id, { startPeriod: nextPeriod })}
+                    activeBackgroundColor={palette.accentPrimary}
+                    activeTextColor={palette.accentOnSolid}
+                    inactiveTextColor={palette.textPrimary}
+                    containerStyle={themedSurface}
+                    testIDPrefix={`${period.id}-start`}
                   />
-                  <Text variant="body">:</Text>
-                  <TwoDigitTimeInput
-                    mode="minute"
-                    inputRef={(node) => { preferredMinuteRefs.current[`${period.id}-start`] = node; }}
-                    style={[styles.input, styles.timeInput, themedInput]}
-                    placeholderTextColor={palette.textMuted}
-                    value={period.startMinuteRaw}
-                    onChange={(v) => updatePreferredFormById(period.id, { startMinuteRaw: v })}
-                    onBlurNormalize={(v) => updatePreferredFormById(period.id, { startMinuteRaw: v })}
-                    placeholder="MM"
-                    returnKeyType="done"
-                  />
-                </View>
-                <View style={[styles.periodToggleContainer, themedSurface]}>
-                  {(['AM', 'PM'] as const).map((per) => (
-                    <TouchableOpacity
-                      key={`${period.id}-start-${per}`}
-                      style={[styles.periodBtn, period.startPeriod === per && { backgroundColor: palette.accentPrimary }]}
-                      onPress={() => updatePreferredFormById(period.id, { startPeriod: per })}
-                    >
-                      <Text variant="bodySmall" color={period.startPeriod === per ? palette.accentOnSolid : theme.colors.textPrimary}>{per}</Text>
-                    </TouchableOpacity>
-                  ))}
                 </View>
               </View>
-            </View>
 
-            <View style={styles.qTimeGroup}>
-              <Text variant="muted">End</Text>
-              <View style={styles.qTimeInputRow}>
-                <View style={styles.clockRow}>
-                  <TwoDigitTimeInput
-                    mode="hour"
-                    style={[styles.input, styles.timeInput, themedInput]}
-                    placeholderTextColor={palette.textMuted}
-                    value={period.endHourRaw}
-                    onChange={(v) => updatePreferredFormById(period.id, { endHourRaw: v })}
-                    onBlurNormalize={(v) => updatePreferredFormById(period.id, { endHourRaw: v })}
-                    onAutoComplete={() => preferredMinuteRefs.current[`${period.id}-end`]?.focus()}
-                    placeholder="HH"
+              <View style={[styles.qTimeCard, themedSurface]}>
+                <Text variant="bodySmall" style={styles.qTimeCardLabel}>End</Text>
+                <View style={styles.qTimeCardControls}>
+                  <View style={[styles.qTimeDisplay, themedInput]}>
+                    <TwoDigitTimeInput
+                      mode="hour"
+                      style={[styles.qTimeDisplayInput, { color: palette.textPrimary }]}
+                      value={period.endHourRaw}
+                      onChange={(v) => updatePreferredFormById(period.id, { endHourRaw: v })}
+                      onBlurNormalize={(v) => updatePreferredFormById(period.id, { endHourRaw: v })}
+                      onAutoComplete={() => preferredMinuteRefs.current[`${period.id}-end`]?.focus()}
+                      placeholder="HH"
+                    />
+                    <Text variant="body" style={styles.qTimeDisplaySeparator}>:</Text>
+                    <TwoDigitTimeInput
+                      mode="minute"
+                      inputRef={(node) => { preferredMinuteRefs.current[`${period.id}-end`] = node; }}
+                      style={[styles.qTimeDisplayInput, { color: palette.textPrimary }]}
+                      value={period.endMinuteRaw}
+                      onChange={(v) => updatePreferredFormById(period.id, { endMinuteRaw: v })}
+                      onBlurNormalize={(v) => updatePreferredFormById(period.id, { endMinuteRaw: v })}
+                      placeholder="MM"
+                      returnKeyType="done"
+                    />
+                  </View>
+                  <PeriodToggle
+                    value={period.endPeriod}
+                    onChange={(nextPeriod) => updatePreferredFormById(period.id, { endPeriod: nextPeriod })}
+                    activeBackgroundColor={palette.accentPrimary}
+                    activeTextColor={palette.accentOnSolid}
+                    inactiveTextColor={palette.textPrimary}
+                    containerStyle={themedSurface}
+                    testIDPrefix={`${period.id}-end`}
                   />
-                  <Text variant="body">:</Text>
-                  <TwoDigitTimeInput
-                    mode="minute"
-                    inputRef={(node) => { preferredMinuteRefs.current[`${period.id}-end`] = node; }}
-                    style={[styles.input, styles.timeInput, themedInput]}
-                    placeholderTextColor={palette.textMuted}
-                    value={period.endMinuteRaw}
-                    onChange={(v) => updatePreferredFormById(period.id, { endMinuteRaw: v })}
-                    onBlurNormalize={(v) => updatePreferredFormById(period.id, { endMinuteRaw: v })}
-                    placeholder="MM"
-                    returnKeyType="done"
-                  />
-                </View>
-                <View style={[styles.periodToggleContainer, themedSurface]}>
-                  {(['AM', 'PM'] as const).map((per) => (
-                    <TouchableOpacity
-                      key={`${period.id}-end-${per}`}
-                      style={[styles.periodBtn, period.endPeriod === per && { backgroundColor: palette.accentPrimary }]}
-                      onPress={() => updatePreferredFormById(period.id, { endPeriod: per })}
-                    >
-                      <Text variant="bodySmall" color={period.endPeriod === per ? palette.accentOnSolid : theme.colors.textPrimary}>{per}</Text>
-                    </TouchableOpacity>
-                  ))}
                 </View>
               </View>
             </View>
@@ -1640,6 +1741,7 @@ const styles = StyleSheet.create({
     paddingVertical: Platform.OS === 'android' ? 8 : 10,
     paddingHorizontal: 12,
     color: theme.colors.textPrimary,
+    fontFamily: theme.fontFamily.regular,
     fontSize: theme.fontSize.md,
     lineHeight: 22,
     textAlignVertical: 'center',
@@ -1794,12 +1896,82 @@ const styles = StyleSheet.create({
 
   /* quiet modal */
   qDesc: { marginBottom: 16, textAlign: 'center' },
-  qTimeGroup: { marginBottom: 10 },
-  qTimeInputRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 },
-  clockRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  timeInput: { flex: 0, width: 56, textAlign: 'center' },
-  periodToggleContainer: { flexDirection: 'row', borderRadius: theme.borderRadius.sm, borderWidth: 1, overflow: 'hidden', alignSelf: 'center' },
-  periodBtn: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 4, paddingHorizontal: 8, minWidth: 38, minHeight: 28 },
+  modalHeaderIconBtn: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  qTimeStack: { flexDirection: 'row', gap: 12, marginBottom: 10 },
+  qTimeCard: {
+    flex: 1,
+    minWidth: 0,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: theme.borderRadius.sm,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+    gap: 8,
+  },
+  qTimeCardLabel: {
+    color: theme.colors.textMuted,
+    fontWeight: theme.fontWeight.medium,
+  },
+  qTimeCardControls: {
+    gap: 8,
+    alignItems: 'center',
+  },
+  qTimeDisplay: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'center',
+    gap: 4,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderRadius: theme.borderRadius.md,
+  },
+  qTimeDisplayInput: {
+    minWidth: 36,
+    fontFamily: theme.fontFamily.bold,
+    fontSize: 18,
+    textAlign: 'center',
+  },
+  qTimeDisplaySeparator: {
+    fontFamily: theme.fontFamily.bold,
+    fontSize: 18,
+  },
+  periodToggleContainer: {
+    flexDirection: 'row',
+    borderRadius: theme.borderRadius.sm,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.10)',
+    backgroundColor: theme.colors.bgApp,
+    overflow: 'hidden',
+    alignSelf: 'center',
+  },
+  periodActivePill: {
+    position: 'absolute',
+    left: 0,
+    top: 0,
+    bottom: 0,
+    borderRadius: theme.borderRadius.sm,
+  },
+  periodBtn: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 28,
+    paddingVertical: 4,
+    paddingHorizontal: 10,
+    minWidth: 38,
+    zIndex: 1,
+  },
+  periodBtnText: {
+    fontSize: 12,
+    fontFamily: theme.fontFamily.semibold,
+  },
   periodBtnActive: {},
   prefPeriodCard: {
     borderWidth: 1,

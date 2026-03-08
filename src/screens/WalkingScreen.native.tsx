@@ -465,6 +465,7 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
   const {
     preferences,
     themeMode,
+    distanceUnit,
     activeWalkSnapshot,
     setActiveWalkSnapshot,
     pendingWalkPrompt,
@@ -726,8 +727,9 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
       targetDurationMinutes,
       startedFromNotification,
       notificationTimerMode,
+      distanceUnit,
     });
-  }, [notificationTimerMode, plan, planId, startedFromNotification]);
+  }, [distanceUnit, notificationTimerMode, plan, planId, startedFromNotification]);
 
   useEffect(() => {
     void loadPlan();
@@ -1639,6 +1641,9 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
         targetDurationMinutes: plan?.suggestedDurationMinutes ?? null,
         startedFromNotification,
         timerMode: notificationTimerMode,
+        steps: 0,
+        distanceMeters: 0,
+        distanceUnit,
       });
     }
   }, [
@@ -1807,6 +1812,9 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
           targetDurationMinutes: plan?.suggestedDurationMinutes ?? null,
           startedFromNotification,
           timerMode: notificationTimerMode,
+          steps: fallbackStateRef.current.steps,
+          distanceMeters: fallbackStateRef.current.distanceMeters,
+          distanceUnit,
         });
       }
 
@@ -1830,6 +1838,7 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
     plan?.suggestedDurationMinutes,
     sessionStarted,
     startedFromNotification,
+    distanceUnit,
     updateFallbackCheckpoint,
     updateFallbackState,
   ]);

@@ -28,9 +28,11 @@ object WalkTrackingSessionController {
     targetDurationMinutes: Int?,
     startedFromNotification: Boolean,
     notificationTimerMode: String?,
+    distanceUnit: String?,
   ): WalkTrackingSnapshot {
     val nowMs = System.currentTimeMillis()
     val normalizedTimerMode = WalkNotificationContent.normalizeTimerMode(notificationTimerMode)
+    val normalizedDistanceUnit = WalkNotificationContent.normalizeDistanceUnit(distanceUnit)
     val normalizedTargetDuration = targetDurationMinutes?.takeIf { it > 0 }
     val existing = WalkTrackingStorage.load(context)
     val snapshot = refreshPermissions(
@@ -40,6 +42,7 @@ object WalkTrackingSessionController {
         targetDurationMinutes = normalizedTargetDuration,
         startedFromNotification = startedFromNotification,
         notificationTimerMode = normalizedTimerMode,
+        distanceUnit = normalizedDistanceUnit,
         startIso = isoTimestamp(nowMs),
         sessionStartMs = nowMs,
         stepFallbackBlockedUntilMs = WalkTrackingClassifier.fallbackBlockedUntilMs(nowMs),
@@ -54,6 +57,7 @@ object WalkTrackingSessionController {
         targetDurationMinutes = normalizedTargetDuration ?: snapshot.targetDurationMinutes,
         startedFromNotification = startedFromNotification || snapshot.startedFromNotification,
         notificationTimerMode = normalizedTimerMode,
+        distanceUnit = normalizedDistanceUnit,
         stepFallbackBlockedUntilMs = snapshot.stepFallbackBlockedUntilMs ?: WalkTrackingClassifier.fallbackBlockedUntilMs(nowMs),
       ),
       nowMs,

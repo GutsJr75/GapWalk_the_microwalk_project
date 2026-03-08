@@ -36,6 +36,7 @@ class WalkTrackingModule(
     targetDurationMinutes: Double?,
     startedFromNotification: Boolean,
     notificationTimerMode: String?,
+    distanceUnit: String?,
     promise: Promise,
   ) {
     try {
@@ -45,6 +46,7 @@ class WalkTrackingModule(
         targetDurationMinutes = targetDurationMinutes?.toInt()?.takeIf { it > 0 },
         startedFromNotification = startedFromNotification,
         notificationTimerMode = notificationTimerMode,
+        distanceUnit = distanceUnit,
       )
       WalkTrackingService.startOrSync(reactApplicationContext)
       emitWalkUpdate(snapshot)

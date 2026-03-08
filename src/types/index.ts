@@ -132,6 +132,7 @@ export interface ActiveWalkSnapshot {
   targetDurationMinutes?: number | null;
   startedFromNotification?: boolean;
   notificationTimerMode?: NotificationTimerMode;
+  distanceUnit?: 'km' | 'mi';
   startIso: string;
   sessionStartMs: number;
   totalPausedMs: number;

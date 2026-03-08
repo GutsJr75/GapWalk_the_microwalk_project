@@ -19,7 +19,7 @@ import {
   InteractionManager,
 } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { useFocusEffect } from '@react-navigation/native';
+import { CommonActions, useFocusEffect } from '@react-navigation/native';
 import * as DocumentPicker from 'expo-document-picker';
 import {
   googleCalendarService,
@@ -62,6 +62,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 type Props = NativeStackScreenProps<RootStackParamList, 'ManualSchedule'>;
 const DAY_TAB_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] as const;
 const DAY_FULL_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'] as const;
+type Meridiem = 'AM' | 'PM';
 // Full-day grid: 12:00 AM to 12:00 AM = 24 hours = 48 x 30-min slots
 const GRID_START_MIN = 0;   // 12:00 AM
 const GRID_END_MIN = 24 * 60;   // next day 12:00 AM (1440)
@@ -186,10 +187,10 @@ interface ManualFormState {
   oneTimeYearRaw: string;
   startHourRaw: string;
   startMinuteRaw: string;
-  startPeriod: 'AM' | 'PM';
+  startPeriod: Meridiem;
   endHourRaw: string;
   endMinuteRaw: string;
-  endPeriod: 'AM' | 'PM';
+  endPeriod: Meridiem;
 }
 
 const minutesToHHmm = (totalMinutes: number): string => {
@@ -452,6 +453,90 @@ const getVisibleEntriesByDayForWeek = (
   return out;
 };
 
+const PeriodToggle: React.FC<{
+  value: Meridiem;
+  onChange: (period: Meridiem) => void;
+  activeBackgroundColor: string;
+  activeTextColor: string;
+  inactiveTextColor: string;
+  containerStyle: {
+    backgroundColor: string;
+    borderColor: string;
+    borderWidth: number;
+  };
+  testIDPrefix: string;
+}> = ({
+  value,
+  onChange,
+  activeBackgroundColor,
+  activeTextColor,
+  inactiveTextColor,
+  containerStyle,
+  testIDPrefix,
+}) => {
+  const slideAnim = useRef(new Animated.Value(value === 'PM' ? 1 : 0)).current;
+  const [containerWidth, setContainerWidth] = useState(0);
+
+  useEffect(() => {
+    Animated.timing(slideAnim, {
+      toValue: value === 'PM' ? 1 : 0,
+      duration: 180,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }).start();
+  }, [slideAnim, value]);
+
+  const travel = Math.max(0, containerWidth / 2);
+  const translateX = slideAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0, travel],
+  });
+
+  return (
+    <View
+      style={[styles.periodToggleContainer, containerStyle]}
+      onLayout={(event) => {
+        const nextWidth = event.nativeEvent.layout.width;
+        if (Math.abs(nextWidth - containerWidth) > 0.5) {
+          setContainerWidth(nextWidth);
+        }
+      }}
+    >
+      {travel > 0 && (
+        <Animated.View
+          pointerEvents="none"
+          style={[
+            styles.periodActivePill,
+            {
+              width: travel,
+              backgroundColor: activeBackgroundColor,
+              transform: [{ translateX }],
+            },
+          ]}
+        />
+      )}
+      {(['AM', 'PM'] as const).map((period) => (
+        <TouchableOpacity
+          key={`${testIDPrefix}-${period}`}
+          style={styles.periodBtn}
+          onPress={() => onChange(period)}
+          delayPressIn={0}
+        >
+          <Text
+            variant="bodySmall"
+            style={[
+              styles.periodBtnText,
+              { color: value === period ? activeTextColor : inactiveTextColor },
+            ]}
+          >
+            {period}
+          </Text>
+        </TouchableOpacity>
+      ))}
+    </View>
+  );
+};
+
 
 
 export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => {
@@ -514,6 +599,8 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
   const [editorScrollEnabled, setEditorScrollEnabled] = useState(true);
   const { width: winWidth, height: winHeight } = useWindowDimensions();
   const allowNextBeforeRemoveRef = useRef(false);
+  const didApplyPrefillTemplateRef = useRef(false);
+  const didApplyStartWithEmptyRef = useRef(false);
 
   // navigate() reuses existing screens, so reset the source sheet when params change.
   useEffect(() => {
@@ -622,7 +709,8 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
           return { type: 'manual' };
         };
 
-        if (Array.isArray(prefillTemplate)) {
+        if (Array.isArray(prefillTemplate) && !didApplyPrefillTemplateRef.current) {
+          didApplyPrefillTemplateRef.current = true;
           const grouped = groupTemplateEntries(prefillTemplate);
           if (!active) return;
           setEntriesByDay(grouped);
@@ -642,7 +730,8 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
           setSheetImportedTemplate(null);
           return;
         }
-        if (startWithEmpty) {
+        if (startWithEmpty && !didApplyStartWithEmptyRef.current) {
+          didApplyStartWithEmptyRef.current = true;
           const empty = createEmptyEntriesByDay();
           if (!active) return;
           setEntriesByDay(empty);
@@ -1457,7 +1546,12 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
   };
 
   const handleManageBackToOptions = () => {
-    navigation.navigate('Dashboard', { openMenu: true });
+    navigation.dispatch(
+      CommonActions.reset({
+        index: 0,
+        routes: [{ name: 'Dashboard', params: { openMenu: true } }],
+      })
+    );
   };
 
   const toggleRepeatDay = (dayIndex: number) => {
@@ -2312,13 +2406,12 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
   const handleClearDay = (dayIndex?: number) => {
     const d = dayIndex ?? selectedDay;
     if (d === null || d === undefined) return;
-    const dayName = DAY_FULL_NAMES[d];
     const count = (entriesByDay[d] ?? []).filter(
       (event) => !event.isOneTime || isOneTimeEventVisibleInWeek(event, activeWeekStart)
     ).length;
     if (count === 0) return;
-    const title = `Clear ${dayName}?`;
-    const message = `Remove all ${count} visible event${count > 1 ? 's' : ''} from ${dayName}?`;
+    const title = 'Clear All Events';
+    const message = 'Are you sure you want to delete all events?';
     const clearVisibleEvents = () => {
       setEntriesByDay((prev) => ({
         ...prev,
@@ -2334,7 +2427,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
       }
       return;
     }
-    showBinaryConfirm(title, message, 'Clear', clearVisibleEvents, 'destructive');
+    showBinaryConfirm(title, message, 'Yes', clearVisibleEvents, 'destructive');
   };
 
   /* ── Current-time indicator (horizontal line in vertical-time grid) ── */
@@ -2399,7 +2492,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
   const manageSourceIcon: import('../components/AppIcon').AppIconName =
     sourceType === 'import' || sourceType === 'google' ? 'calendar' : 'adjust';
   const selectedDayVisibleCount = selectedDay !== null ? (visibleEntriesByDay[selectedDay] ?? []).length : 0;
-  const clearDayLabel = selectedDay === null ? 'Clear day' : `Clear ${DAY_TAB_LABELS[selectedDay]}`;
+  const clearDayLabel = 'Clear';
   const headerWeekPages = useMemo(() => {
     const offsets = [-7, 0, 7] as const;
     return offsets.map((offsetDays) => {
@@ -3659,22 +3752,15 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
                       returnKeyType="done"
                     />
                   </View>
-                  <View style={[styles.periodToggleContainer, themedChip]}>
-                    {(['AM', 'PM'] as const).map((p) => (
-                      <TouchableOpacity
-                        key={`start-${p}`}
-                        style={[
-                          styles.periodBtn,
-                          form.startPeriod === p && styles.periodBtnActive,
-                          form.startPeriod === p && { backgroundColor: palette.accentPrimary },
-                        ]}
-                        onPress={() => setForm((prev) => ({ ...prev, startPeriod: p }))}
-                        delayPressIn={0}
-                      >
-                        <Text variant="bodySmall" style={[styles.periodBtnText, { color: form.startPeriod === p ? palette.accentOnSolid : palette.textPrimary }]}>{p}</Text>
-                      </TouchableOpacity>
-                    ))}
-                  </View>
+                  <PeriodToggle
+                    value={form.startPeriod}
+                    onChange={(period) => setForm((prev) => ({ ...prev, startPeriod: period }))}
+                    activeBackgroundColor={palette.accentPrimary}
+                    activeTextColor={palette.accentOnSolid}
+                    inactiveTextColor={palette.textPrimary}
+                    containerStyle={themedChip}
+                    testIDPrefix="start"
+                  />
                 </View>
               </View>
 
@@ -3713,22 +3799,15 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
                       returnKeyType="done"
                     />
                   </View>
-                  <View style={[styles.periodToggleContainer, themedChip]}>
-                    {(['AM', 'PM'] as const).map((p) => (
-                      <TouchableOpacity
-                        key={`end-${p}`}
-                        style={[
-                          styles.periodBtn,
-                          form.endPeriod === p && styles.periodBtnActive,
-                          form.endPeriod === p && { backgroundColor: palette.accentPrimary },
-                        ]}
-                        onPress={() => setForm((prev) => ({ ...prev, endPeriod: p }))}
-                        delayPressIn={0}
-                      >
-                        <Text variant="bodySmall" style={[styles.periodBtnText, { color: form.endPeriod === p ? palette.accentOnSolid : palette.textPrimary }]}>{p}</Text>
-                      </TouchableOpacity>
-                    ))}
-                  </View>
+                  <PeriodToggle
+                    value={form.endPeriod}
+                    onChange={(period) => setForm((prev) => ({ ...prev, endPeriod: period }))}
+                    activeBackgroundColor={palette.accentPrimary}
+                    activeTextColor={palette.accentOnSolid}
+                    inactiveTextColor={palette.textPrimary}
+                    containerStyle={themedChip}
+                    testIDPrefix="end"
+                  />
                 </View>
               </View>
             </View>
@@ -4134,22 +4213,15 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
                           placeholder="MM"
                         />
                       </View>
-                      <View style={[styles.periodToggleContainer, themedChip]}>
-                        {(['AM', 'PM'] as const).map((p) => (
-                          <TouchableOpacity
-                            key={`info-start-${p}`}
-                            style={[
-                              styles.periodBtn,
-                              form.startPeriod === p && styles.periodBtnActive,
-                              form.startPeriod === p && { backgroundColor: palette.accentPrimary },
-                            ]}
-                            onPress={() => setForm((prev) => ({ ...prev, startPeriod: p }))}
-                            delayPressIn={0}
-                          >
-                            <Text variant="bodySmall" style={[styles.periodBtnText, { color: form.startPeriod === p ? palette.accentOnSolid : palette.textPrimary }]}>{p}</Text>
-                          </TouchableOpacity>
-                        ))}
-                      </View>
+                      <PeriodToggle
+                        value={form.startPeriod}
+                        onChange={(period) => setForm((prev) => ({ ...prev, startPeriod: period }))}
+                        activeBackgroundColor={palette.accentPrimary}
+                        activeTextColor={palette.accentOnSolid}
+                        inactiveTextColor={palette.textPrimary}
+                        containerStyle={themedChip}
+                        testIDPrefix="info-start"
+                      />
                     </View>
                   </View>
 
@@ -4182,22 +4254,15 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
                           returnKeyType="done"
                         />
                       </View>
-                      <View style={[styles.periodToggleContainer, themedChip]}>
-                        {(['AM', 'PM'] as const).map((p) => (
-                          <TouchableOpacity
-                            key={`info-end-${p}`}
-                            style={[
-                              styles.periodBtn,
-                              form.endPeriod === p && styles.periodBtnActive,
-                              form.endPeriod === p && { backgroundColor: palette.accentPrimary },
-                            ]}
-                            onPress={() => setForm((prev) => ({ ...prev, endPeriod: p }))}
-                            delayPressIn={0}
-                          >
-                            <Text variant="bodySmall" style={[styles.periodBtnText, { color: form.endPeriod === p ? palette.accentOnSolid : palette.textPrimary }]}>{p}</Text>
-                          </TouchableOpacity>
-                        ))}
-                      </View>
+                      <PeriodToggle
+                        value={form.endPeriod}
+                        onChange={(period) => setForm((prev) => ({ ...prev, endPeriod: period }))}
+                        activeBackgroundColor={palette.accentPrimary}
+                        activeTextColor={palette.accentOnSolid}
+                        inactiveTextColor={palette.textPrimary}
+                        containerStyle={themedChip}
+                        testIDPrefix="info-end"
+                      />
                     </View>
                   </View>
                 </View>
@@ -5398,6 +5463,13 @@ const styles = StyleSheet.create({
   },
   timeInput: { flex: 0, width: 60, textAlign: 'center' },
   periodToggleContainer: { flexDirection: 'row', borderRadius: theme.borderRadius.sm, borderWidth: 1, borderColor: 'rgba(255,255,255,0.10)', backgroundColor: theme.colors.bgApp, overflow: 'hidden', alignSelf: 'center' },
+  periodActivePill: {
+    position: 'absolute',
+    left: 0,
+    top: 0,
+    bottom: 0,
+    borderRadius: theme.borderRadius.sm,
+  },
   periodBtn: {
     flex: 1,
     alignItems: 'center',
@@ -5406,8 +5478,8 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
     paddingHorizontal: 10,
     minWidth: 38,
+    zIndex: 1,
   },
-  periodBtnActive: {},
   timeError: {
     color: theme.colors.warning,
     marginTop: 2,
