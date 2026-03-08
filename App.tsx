@@ -578,6 +578,7 @@ function App() {
                       deviceModel: Device.modelName ?? undefined,
                       notificationPermissionGranted: permResults.notifications,
                       activityPermissionGranted: permResults.activityRecognition,
+                      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
                     });
                   }
                 } catch (e) {

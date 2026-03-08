@@ -44,4 +44,9 @@ export class RegisterDeviceDto {
   @IsOptional()
   @IsBoolean()
   batterySaverDetected?: boolean;
+
+  @ApiPropertyOptional({ description: 'IANA timezone, e.g. America/Chicago' })
+  @IsOptional()
+  @IsString()
+  timezone?: string;
 }
