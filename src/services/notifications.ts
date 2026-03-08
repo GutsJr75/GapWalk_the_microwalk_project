@@ -43,6 +43,45 @@ export const isNotificationsSupported =
   !isExpoGo &&
   hasNativeNotificationApis;
 
+type ExpoExtraConfig = {
+  eas?: {
+    projectId?: string;
+  };
+  hasAndroidGoogleServices?: boolean;
+};
+
+const expoExtra = (Constants.expoConfig?.extra ?? {}) as ExpoExtraConfig;
+const easProjectId =
+  ((Constants as typeof Constants & { easConfig?: { projectId?: string } }).easConfig
+    ?.projectId ??
+    expoExtra.eas?.projectId ??
+    '')
+    .trim();
+
+const hasAndroidRemotePushConfig =
+  Platform.OS !== 'android' || expoExtra.hasAndroidGoogleServices === true;
+
+export const getExpoPushProjectId = (): string | undefined => {
+  return easProjectId || undefined;
+};
+
+export const getRemotePushRegistrationError = (): string | null => {
+  if (!isNotificationsSupported) {
+    return 'Remote push registration is unavailable in Expo Go or on web.';
+  }
+
+  if (!hasAndroidRemotePushConfig) {
+    return 'Android remote push is not configured. Add google-services.json (or expo.android.googleServicesFile) and rebuild the app.';
+  }
+
+  return null;
+};
+
+export const isAndroidFirebaseInitializationError = (error: unknown): boolean => {
+  if (!(error instanceof Error)) return false;
+  return error.message.includes('Default FirebaseApp is not initialized');
+};
+
 if (isNotificationsSupported) {
   Notifications.setNotificationHandler({
     handleNotification: async (notification) => {

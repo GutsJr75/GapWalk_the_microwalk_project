@@ -1,8 +1,10 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { View, StyleSheet, Alert, Platform, Pressable, Linking, Share, Switch } from 'react-native';
+import { View, StyleSheet, Alert, Platform, Pressable, Linking, Switch } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import * as WebBrowser from 'expo-web-browser';
 import Constants from 'expo-constants';
+import { File, Paths } from 'expo-file-system';
+import * as Sharing from 'expo-sharing';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useFocusEffect } from '@react-navigation/native';
 import { RootStackParamList } from '../../App';

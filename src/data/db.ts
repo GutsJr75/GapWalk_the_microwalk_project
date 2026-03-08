@@ -339,6 +339,13 @@ export const withTransaction = async <T>(
 ): Promise<T> => {
   const instance = await getDatabase();
   let result: T;
+  if (Platform.OS === 'web') {
+    // expo-sqlite web adapter doesn't support exclusive transactions.
+    await instance.withTransactionAsync(async () => {
+      result = await fn(instance);
+    });
+    return result!;
+  }
   await instance.withExclusiveTransactionAsync(async () => {
     result = await fn(instance);
   });

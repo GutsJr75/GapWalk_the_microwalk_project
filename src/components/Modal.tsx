@@ -4,7 +4,6 @@ import {
   View,
   StyleSheet,
   TouchableWithoutFeedback,
-  KeyboardAvoidingView,
   Platform,
   ScrollView,
   Keyboard,
@@ -39,6 +38,7 @@ export const Modal: React.FC<ModalProps> = ({
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const translateYAnim = useRef(new Animated.Value(18)).current;
   const [keyboardHeight, setKeyboardHeight] = useState(0);
+  const [renderVisible, setRenderVisible] = useState(visible);
 
   useEffect(() => {
     const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
@@ -59,62 +59,102 @@ export const Modal: React.FC<ModalProps> = ({
 
   useEffect(() => {
     if (visible) {
-      scaleAnim.setValue(0.94);
+      setRenderVisible(true);
+      scaleAnim.stopAnimation();
+      fadeAnim.stopAnimation();
+      translateYAnim.stopAnimation();
+      scaleAnim.setValue(0.97);
       fadeAnim.setValue(0);
-      translateYAnim.setValue(18);
+      translateYAnim.setValue(8);
       Animated.parallel([
         Animated.spring(scaleAnim, {
           toValue: 1,
-          tension: 95,
-          friction: 10,
+          tension: 140,
+          friction: 14,
           useNativeDriver: true,
         }),
         Animated.timing(translateYAnim, {
           toValue: 0,
-          duration: 240,
+          duration: 150,
           easing: Easing.out(Easing.cubic),
           useNativeDriver: true,
         }),
         Animated.timing(fadeAnim, {
           toValue: 1,
-          duration: 220,
+          duration: 130,
           easing: Easing.out(Easing.cubic),
           useNativeDriver: true,
         }),
       ]).start();
-    } else {
-      setKeyboardHeight(0);
+      return;
     }
-  }, [fadeAnim, scaleAnim, translateYAnim, visible]);
+
+    if (!renderVisible) {
+      setKeyboardHeight(0);
+      return;
+    }
+
+    setKeyboardHeight(0);
+    scaleAnim.stopAnimation();
+    fadeAnim.stopAnimation();
+    translateYAnim.stopAnimation();
+    Animated.parallel([
+      Animated.timing(scaleAnim, {
+        toValue: 0.985,
+        duration: 95,
+        easing: Easing.out(Easing.quad),
+        useNativeDriver: true,
+      }),
+      Animated.timing(translateYAnim, {
+        toValue: 6,
+        duration: 95,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }),
+      Animated.timing(fadeAnim, {
+        toValue: 0,
+        duration: 90,
+        easing: Easing.in(Easing.cubic),
+        useNativeDriver: true,
+      }),
+    ]).start(({ finished }) => {
+      if (!finished || visible) return;
+      setRenderVisible(false);
+    });
+  }, [fadeAnim, renderVisible, scaleAnim, translateYAnim, visible]);
+
+  if (!renderVisible) return null;
 
   const keyboardOpen = keyboardHeight > 0;
-  const verticalPadding = keyboardOpen ? theme.spacing.md : theme.spacing.xxl;
-  const modalMaxHeight = keyboardOpen
-    ? Math.max(280, viewportHeight - keyboardHeight - verticalPadding * 2)
-    : Math.round(viewportHeight * 0.9);
+  // Keep the modal centered in the space above the keyboard.
+  // Adding keyboardHeight to paddingBottom shifts the center point up only as much as needed.
+  const availableHeight = viewportHeight - keyboardHeight;
+  const modalMaxHeight = Math.min(
+    Math.round(viewportHeight * 0.9),
+    availableHeight - theme.spacing.md * 2,
+  );
 
   return (
     <RNModal
-      visible={visible}
+      visible={renderVisible}
       transparent
       animationType="none"
       onRequestClose={onClose}
       statusBarTranslucent
     >
-      <KeyboardAvoidingView
-        style={styles.kavRoot}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        keyboardVerticalOffset={Platform.OS === 'ios' ? 10 : 0}
-      >
+      <View style={styles.kavRoot}>
         <TouchableWithoutFeedback onPress={() => { Keyboard.dismiss(); onClose(); }}>
-          <View
+          <Animated.View
             style={[
               styles.backdrop,
               {
                 backgroundColor: palette.overlay,
-                justifyContent: keyboardOpen ? 'flex-start' : 'center',
-                paddingTop: keyboardOpen ? theme.spacing.lg : theme.spacing.xxl,
-                paddingBottom: verticalPadding,
+                justifyContent: 'center',
+                paddingTop: theme.spacing.xxl,
+                paddingBottom: keyboardOpen
+                  ? keyboardHeight + theme.spacing.md
+                  : theme.spacing.xxl,
+                opacity: fadeAnim,
               },
             ]}
           >
@@ -156,9 +196,9 @@ export const Modal: React.FC<ModalProps> = ({
                 </ScrollView>
               </Animated.View>
             </TouchableWithoutFeedback>
-          </View>
+          </Animated.View>
         </TouchableWithoutFeedback>
-      </KeyboardAvoidingView>
+      </View>
     </RNModal>
   );
 };

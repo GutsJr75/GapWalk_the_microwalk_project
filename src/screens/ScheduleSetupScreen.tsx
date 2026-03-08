@@ -1,5 +1,15 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, StyleSheet, ActivityIndicator, Platform, LayoutAnimation, UIManager, Animated, Easing } from 'react-native';
+import {
+  View,
+  StyleSheet,
+  ActivityIndicator,
+  Platform,
+  LayoutAnimation,
+  UIManager,
+  Animated,
+  Easing,
+  Alert,
+} from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import * as DocumentPicker from 'expo-document-picker';
 import { RootStackParamList } from '../../App';
@@ -492,7 +502,7 @@ const ScheduleSetupScreenInner: React.FC<Props> = ({ navigation, route }) => {
             <Card
               selected={selectedOption === 'import'}
               onPress={() => toggle('import')}
-              style={[selectedOption === 'import' && styles.selectedHalfCard]}
+              style={[styles.halfCardContent, selectedOption === 'import' && styles.selectedHalfCard]}
               testID="schedule-option-import"
             >
               <View style={styles.cardTitleRow}>
@@ -502,11 +512,6 @@ const ScheduleSetupScreenInner: React.FC<Props> = ({ navigation, route }) => {
               <Text variant="bodySmall" color={palette.textMuted} style={styles.cardDesc}>
                 Upload a .ics file so GapWalk can see when you're busy.
               </Text>
-              {selectedOption === 'import' && (
-                <View style={styles.checkmarkWrap}>
-                  <Ionicons name="checkmark-circle" size={20} color={palette.accentPrimary} />
-                </View>
-              )}
             </Card>
           </View>
 
@@ -514,7 +519,7 @@ const ScheduleSetupScreenInner: React.FC<Props> = ({ navigation, route }) => {
             <Card
               selected={selectedOption === 'manual'}
               onPress={() => toggle('manual')}
-              style={[selectedOption === 'manual' && styles.selectedHalfCard]}
+              style={[styles.halfCardContent, selectedOption === 'manual' && styles.selectedHalfCard]}
               testID="schedule-option-manual"
             >
               <View style={styles.cardTitleRow}>
@@ -524,11 +529,6 @@ const ScheduleSetupScreenInner: React.FC<Props> = ({ navigation, route }) => {
               <Text variant="bodySmall" color={palette.textMuted} style={styles.cardDesc}>
                 Build your weekly schedule and one-time events with a simple calendar.
               </Text>
-              {selectedOption === 'manual' && (
-                <View style={styles.checkmarkWrap}>
-                  <Ionicons name="checkmark-circle" size={20} color={palette.accentPrimary} />
-                </View>
-              )}
             </Card>
           </View>
         </View>
@@ -626,7 +626,7 @@ const styles = StyleSheet.create({
   sectionLabel: { marginBottom: 16, fontWeight: theme.fontWeight.semibold, textAlign: 'center' },
   googleCard: { marginBottom: 12 },
   row: { flexDirection: 'row', gap: 12, alignItems: 'stretch' },
-  halfCard: { flex: 1 },
+  halfCard: { flex: 1, alignSelf: 'stretch' },
   halfCardContent: { flex: 1 },
   selectedHalfCard: {
     paddingHorizontal: theme.spacing.md - 1,
@@ -644,6 +644,19 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   cardTitle: { fontWeight: theme.fontWeight.semibold },
+  recommendedBadge: {
+    borderRadius: theme.borderRadius.xl,
+    paddingVertical: 3,
+    paddingHorizontal: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(46,233,166,0.35)',
+    backgroundColor: 'rgba(46,233,166,0.12)',
+  },
+  recommendedText: {
+    fontSize: theme.fontSize.xs,
+    fontWeight: theme.fontWeight.medium,
+    color: theme.colors.accentPrimary,
+  },
   cardDesc: { lineHeight: 18, marginTop: 6 },
   upcomingCard: {
     opacity: 0.7,
