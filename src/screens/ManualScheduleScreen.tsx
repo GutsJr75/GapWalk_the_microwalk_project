@@ -835,7 +835,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
       setImportStatus(null);
       showMessage('Sign-in Failed', toUserFriendlyError(error));
     }
-  };
+  }, [handleGoogleCalendarImport]);
 
   const currentSignature = useMemo(() => buildScheduleSignature(entriesByDay), [entriesByDay]);
   const hasUnsavedChanges = currentSignature !== initialSignature;

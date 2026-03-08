@@ -81,6 +81,7 @@ const ESTIMATED_STRIDE_METERS = 0.78;
 const START_COUNTDOWN_SECONDS = 3;
 const MAP_LATITUDE_DELTA = 0.005;
 const MAP_LONGITUDE_DELTA = 0.005;
+const WALK_STATE_UPDATE_ERROR_MESSAGE = 'Something went wrong updating your walk. Please try again.';
 
 const formatClock = (seconds: number): string => {
   const clamped = Math.max(0, Math.floor(seconds));
@@ -495,6 +496,7 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
   const [statusDetailsExpanded, setStatusDetailsExpanded] = useState(false);
   const [routeCoords, setRouteCoords] = useState<Coord[]>([]);
   const [liveLocation, setLiveLocation] = useState<Coord | null>(null);
+  const [liveHeading, setLiveHeading] = useState<number>(0);
   const [isMapFollowingUser, setIsMapFollowingUser] = useState(true);
 
   const mapRef = useRef<MapView>(null);
@@ -520,6 +522,14 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
   const appStateRef = useRef<AppStateStatus>(AppState.currentState);
   const lastFollowAnimateAtRef = useRef<number>(0);
   const statusPulseAnim = useRef(new Animated.Value(0)).current;
+  const pulseOpacity = statusPulseAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [1, 0],
+  });
+  const pulseScale = statusPulseAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [1, 2.2],
+  });
   const completionBackdropAnim = useRef(new Animated.Value(0)).current;
   const completionCardAnim = useRef(new Animated.Value(0)).current;
   const completionGlowAnim = useRef(new Animated.Value(0)).current;
@@ -549,6 +559,22 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
   const slideAnim = useRef(new Animated.Value(0)).current; // 0 = collapsed, 1 = expanded
   const slideGestureRef = useRef(0);
   const dragHandleActiveAnim = useRef(new Animated.Value(0)).current;
+
+  // Extra metrics panel height (measured at runtime for slide animation)
+  const [extraMetricsHeight, setExtraMetricsHeight] = useState(0);
+
+  // Ref to track session started for background prompt timer callback
+  const sessionStartedRef = useRef(false);
+  // Ref to track whether background tracking is currently limited
+  const backgroundTrackingLimitedRef = useRef(false);
+  // Ref for the background prompt re-show timer
+  const backgroundPromptTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const clearBackgroundPromptTimer = useCallback(() => {
+    if (backgroundPromptTimerRef.current != null) {
+      clearTimeout(backgroundPromptTimerRef.current);
+      backgroundPromptTimerRef.current = null;
+    }
+  }, []);
 
   useEffect(() => () => {
     isMountedRef.current = false;
@@ -715,14 +741,6 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
     }, duration);
   }, []);
 
-  const remainingSeconds = useMemo(() => {
-    const activeSeconds = isAndroidService
-      ? (activeWalkSnapshot?.elapsedSeconds ?? 0)
-      : fallbackState.activeSeconds;
-    if (!plan) return activeSeconds;
-    return Math.max(0, plan.suggestedDurationMinutes * 60 - activeSeconds);
-  }, [activeWalkSnapshot?.elapsedSeconds, fallbackState.activeSeconds, isAndroidService, plan]);
-
   const displayedSnapshot = isAndroidService ? activeWalkSnapshot : null;
   const hasLiveSession = isAndroidService
     ? Boolean(displayedSnapshot?.sessionId)
@@ -833,6 +851,31 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
     return () => anim.stop();
   }, [displayState, paused, clockColonAnim]);
 
+  // Pulsing dot on status pill while walking / calibrating
+  useEffect(() => {
+    if (displayState !== 'walking' && displayState !== 'calibrating') {
+      statusPulseAnim.setValue(0);
+      return undefined;
+    }
+    const anim = Animated.loop(
+      Animated.sequence([
+        Animated.timing(statusPulseAnim, {
+          toValue: 1,
+          duration: 1200,
+          easing: Easing.out(Easing.ease),
+          useNativeDriver: true,
+        }),
+        Animated.timing(statusPulseAnim, {
+          toValue: 0,
+          duration: 0,
+          useNativeDriver: true,
+        }),
+      ]),
+    );
+    anim.start();
+    return () => anim.stop();
+  }, [displayState, statusPulseAnim]);
+
   // Milestone haptic feedback every 100 steps
   useEffect(() => {
     if (steps === 0) return;
@@ -840,7 +883,7 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
     if (currentMilestone > lastMilestoneRef.current && currentMilestone > 0) {
       lastMilestoneRef.current = currentMilestone;
       if (Platform.OS !== 'web') {
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => { });
       }
     }
   }, [steps]);
@@ -912,7 +955,7 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
     if (currentMilestone > lastMilestoneRef.current && currentMilestone > 0) {
       lastMilestoneRef.current = currentMilestone;
       if (Platform.OS !== 'web') {
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => { });
       }
     }
   }, [steps]);
@@ -1149,6 +1192,9 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
               latitude: location.coords.latitude,
               longitude: location.coords.longitude,
             });
+            if (typeof location.coords.heading === 'number' && location.coords.heading >= 0) {
+              setLiveHeading(location.coords.heading);
+            }
           },
         );
 
@@ -1205,6 +1251,9 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
               latitude: location.coords.latitude,
               longitude: location.coords.longitude,
             });
+            if (typeof location.coords.heading === 'number' && location.coords.heading >= 0) {
+              setLiveHeading(location.coords.heading);
+            }
           },
         );
 
@@ -1471,21 +1520,25 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
     applyFallbackPermissionResults(resolvedPermissions);
 
     if (resolvedPermissions.locationForeground) {
-      locationSubscriptionRef.current = await Location.watchPositionAsync(
-        {
-          accuracy: Location.Accuracy.High,
-          timeInterval: 1000,
-          distanceInterval: 1,
-        },
-        (location) => {
-          const nextCoord: Coord = {
-            latitude: location.coords.latitude,
-            longitude: location.coords.longitude,
-          };
-          setLiveLocation(nextCoord);
-          const timestampMs = typeof location.timestamp === 'number' ? location.timestamp : Date.now();
-          const previous = lastCoordRef.current;
-          lastCoordRef.current = { coord: nextCoord, timestampMs };
+      try {
+        locationSubscriptionRef.current = await Location.watchPositionAsync(
+          {
+            accuracy: Location.Accuracy.High,
+            timeInterval: 1000,
+            distanceInterval: 1,
+          },
+          (location) => {
+            const nextCoord: Coord = {
+              latitude: location.coords.latitude,
+              longitude: location.coords.longitude,
+            };
+            setLiveLocation(nextCoord);
+            if (typeof location.coords.heading === 'number' && location.coords.heading >= 0) {
+              setLiveHeading(location.coords.heading);
+            }
+            const timestampMs = typeof location.timestamp === 'number' ? location.timestamp : Date.now();
+            const previous = lastCoordRef.current;
+            lastCoordRef.current = { coord: nextCoord, timestampMs };
 
             // Accumulate route for map polyline
             setRouteCoords((prev) => [...prev, nextCoord]);
@@ -2156,6 +2209,9 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
       const location = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
       const coord: Coord = { latitude: location.coords.latitude, longitude: location.coords.longitude };
       setLiveLocation(coord);
+      if (typeof location.coords.heading === 'number' && location.coords.heading >= 0) {
+        setLiveHeading(location.coords.heading);
+      }
       setIsMapFollowingUser(true);
       lastFollowAnimateAtRef.current = Date.now();
       centerMapOnCoord(coord, 800);
@@ -2293,6 +2349,13 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
     },
   ] as const;
 
+  const hideClutterRules = [
+    { featureType: 'poi', elementType: 'labels.icon', stylers: [{ visibility: 'off' }] },
+    { featureType: 'poi', elementType: 'labels.text', stylers: [{ visibility: 'off' }] },
+    { featureType: 'transit', elementType: 'labels.icon', stylers: [{ visibility: 'off' }] },
+    { featureType: 'landscape.man_made', elementType: 'labels.icon', stylers: [{ visibility: 'off' }] },
+  ];
+
   const darkMapStyle = [
     { elementType: 'geometry', stylers: [{ color: '#1a2130' }] },
     { elementType: 'labels.text.fill', stylers: [{ color: '#8b9bbd' }] },
@@ -2305,7 +2368,10 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
     { featureType: 'poi.park', elementType: 'geometry', stylers: [{ color: '#172a1f' }] },
     { featureType: 'transit', elementType: 'geometry', stylers: [{ color: '#212f45' }] },
     { featureType: 'administrative', elementType: 'geometry.stroke', stylers: [{ color: '#334155' }] },
+    ...hideClutterRules,
   ];
+
+  const lightMapStyle = [...hideClutterRules];
 
   const renderMetricCard = useCallback((cardId: WalkDisplayCard) => {
     if (cardId === 'walkDuration') {
@@ -2317,7 +2383,7 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
             label="Walk Duration"
             value={(
               <View style={styles.metricFaceWrap}>
-                <Text variant="heading" style={[styles.metricClockFront, styles.metricClockPlaceholder]}>
+                <Text style={[styles.metricClockFront, styles.metricClockPlaceholder]}>
                   --:--
                 </Text>
                 <Text variant="bodySmall" color={palette.textMuted}>
@@ -2414,7 +2480,7 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
           centerValue
           value={(
             <Animated.View style={{ transform: [{ scale: stepScaleAnim }] }}>
-              <Text variant="heading" style={[styles.metricValue, styles.metricValueCentered, styles.metricValueSteps]}>{steps.toLocaleString()}</Text>
+              <Text style={[styles.metricValue, styles.metricValueCentered, styles.metricValueSteps]}>{steps.toLocaleString()}</Text>
             </Animated.View>
           )}
         />
@@ -2430,7 +2496,7 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
           centerValue
           value={(
             <Animated.View style={{ transform: [{ scale: distanceScaleAnim }] }}>
-              <Text variant="heading" style={[styles.metricValue, styles.metricValueCentered]}>{formatMiles(distanceMeters)}</Text>
+              <Text style={[styles.metricValue, styles.metricValueCentered]}>{formatMiles(distanceMeters)}</Text>
             </Animated.View>
           )}
         />
@@ -2446,7 +2512,7 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
           centerValue
           value={(
             <Animated.View style={{ transform: [{ scale: speedScaleAnim }] }}>
-              <Text variant="heading" style={[styles.metricValue, styles.metricValueCentered]}>{speedMph} mph</Text>
+              <Text style={[styles.metricValue, styles.metricValueCentered]}>{speedMph} mph</Text>
             </Animated.View>
           )}
         />
@@ -2460,7 +2526,7 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
           palette={palette}
           label="Calories"
           centerValue
-          value={<Text variant="heading" style={[styles.metricValue, styles.metricValueCentered]}>{Math.round(steps * 0.04)} kcal</Text>}
+          value={<Text style={[styles.metricValue, styles.metricValueCentered]}>{Math.round(steps * 0.04)} kcal</Text>}
         />
       );
     }
@@ -2475,7 +2541,7 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
           palette={palette}
           label="Goal Progress"
           centerValue
-          value={<Text variant="heading" style={[styles.metricValue, styles.metricValueCentered]}>{goalPct}</Text>}
+          value={<Text style={[styles.metricValue, styles.metricValueCentered]}>{goalPct}</Text>}
         />
       );
     }
@@ -2518,13 +2584,17 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
             onPanDrag={() => setIsMapFollowingUser((current) => (current ? false : current))}
             showsMyLocationButton={false}
             showsCompass={false}
+            showsTraffic={false}
+            showsIndoorLevelPicker={false}
+            showsIndoors={false}
             toolbarEnabled={false}
-            customMapStyle={themeMode === 'dark' ? darkMapStyle : []}
+            customMapStyle={themeMode === 'dark' ? darkMapStyle : lightMapStyle}
           >
             {liveLocation && (
-              <Marker coordinate={liveLocation} anchor={{ x: 0.5, y: 0.5 }} tracksViewChanges={false}>
-                <View style={styles.userLocationRing}>
-                  <View style={styles.userLocationDot} />
+              <Marker coordinate={liveLocation} anchor={{ x: 0.5, y: 0.5 }} flat>
+                <View style={[styles.userArrowOuter, { transform: [{ rotate: `${liveHeading}deg` }] }]}>
+                  <View style={styles.userArrowHead} />
+                  <View style={styles.userArrowDot} />
                 </View>
               </Marker>
             )}
@@ -2541,43 +2611,7 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
 
           <View style={styles.heroOverlay}>
             <Animated.View style={[styles.heroStatusRow, { opacity: statusChangeAnim, transform: [{ scale: statusChangeAnim }] }]}>
-              <View
-                style={[
-                  styles.statusPill,
-                  {
-                    backgroundColor: statusTint,
-                    borderColor: statusBorderColor,
-                  },
-                ]}
-              >
-                <View style={styles.statusDotWrap}>
-                  {(displayState === 'walking' || displayState === 'calibrating') && (
-                    <Animated.View
-                      style={[
-                        styles.statusDotPulse,
-                        {
-                          backgroundColor: statusColor,
-                          opacity: pulseOpacity,
-                          transform: [{ scale: pulseScale }],
-                        },
-                      ]}
-                    />
-                  )}
-                  <View style={[styles.statusDot, { backgroundColor: statusColor }]} />
-                </View>
-                <Ionicons
-                  name={
-                    displayState === 'walking' ? 'walk' :
-                    displayState === 'paused' ? 'pause-circle-outline' :
-                    displayState === 'not_moving' ? 'body-outline' :
-                    displayState === 'location_off' ? 'location-outline' :
-                    'radio-outline'
-                  }
-                  size={16}
-                  color={statusColor}
-                />
-                <Text variant="body" style={[styles.statusPillText, { color: statusColor }]}>{heroStatusLabel}</Text>
-              </View>
+              {/* Status pill removed per user request */}
               <Pressable
                 style={[
                   styles.mapIcon,
@@ -2594,47 +2628,21 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
               </Pressable>
             </Animated.View>
 
-          {showCompactWarning && (
-            <View
-              style={[
-                styles.mapIcon,
-                {
-                  backgroundColor: palette.bgSurfaceElevated,
-                  borderColor: isMapFollowingUser
-                    ? (themeMode === 'dark' ? 'rgba(46,233,166,0.30)' : 'rgba(5,150,105,0.24)')
-                    : palette.borderSoft,
-                },
-              ]}
-              onPress={() => { void handleLocatePress(); }}
-            >
-              <Ionicons name={isMapFollowingUser ? 'locate' : 'locate-outline'} size={20} color={statusDisplayColor} />
-            </Pressable>
-          </View>
-          <View style={styles.noticeStack}>
-            {startupError && (
-              <WalkNoticeCard
-                palette={palette}
-                themeMode={themeMode}
-                iconName="alert-circle-outline"
-                title="Walk could not start"
-                message={startupError}
-                tone="danger"
-                actionLabel={isStartingWalk ? undefined : 'Retry start'}
-                onAction={() => { void handleRetryStart(); }}
-              />
-            )}
-            {canUpgradeBackgroundTracking && (
-              <WalkNoticeCard
-                palette={palette}
-                themeMode={themeMode}
-                iconName="alert-circle-outline"
-                title="Background tracking is limited"
-                message={locationWarning ?? 'Background tracking is off right now.'}
-                actionLabel="Enable background tracking"
-                actionBusy={isRequestingBackgroundPermission}
-                onAction={() => { void handleBackgroundPermissionUpgrade(); }}
-              />
-            )}
+            <View style={styles.noticeStack}>
+              {startupError && (
+                <WalkNoticeCard
+                  palette={palette}
+                  themeMode={themeMode}
+                  iconName="alert-circle-outline"
+                  title="Walk could not start"
+                  message={startupError}
+                  tone="danger"
+                  actionLabel={isStartingWalk ? undefined : 'Retry start'}
+                  onAction={() => { void handleRetryStart(); }}
+                />
+              )}
+              {/* Background tracking notice removed per user request */}
+            </View>
           </View>
         </View>
 
@@ -2651,32 +2659,6 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
             },
           ]}
         >
-          {hasExtraCards && (
-            <View style={styles.dragHandleArea}>
-              <View {...slidePanResponder.panHandlers} style={styles.dragHandleGestureArea}>
-                <Animated.View
-                  style={[
-                    styles.dragHandleHalo,
-                    {
-                      opacity: dragHandleHaloOpacity,
-                      backgroundColor: themeMode === 'dark' ? 'rgba(46,233,166,0.18)' : 'rgba(5,150,105,0.16)',
-                    },
-                  ]}
-                />
-                <Animated.View
-                  style={[
-                    styles.dragHandle,
-                    {
-                      width: dragHandleWidth,
-                      opacity: dragHandleOpacity,
-                      backgroundColor: dragHandleColor,
-                      transform: [{ scaleX: dragHandleScale }],
-                    },
-                  ]}
-                />
-              </View>
-            </View>
-          )}
 
           <View style={styles.statusCapsuleWrap}>
             <Pressable
@@ -2712,83 +2694,8 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
           </View>
 
           <View style={styles.metricGrid}>
-            <View style={[styles.metricCard, { backgroundColor: palette.bgSurface, borderColor: palette.borderSoft }]}>
-              <Text variant="body">Time Remaining</Text>
-              {plan ? (
-                <View style={{ flexDirection: 'row', alignItems: 'baseline' }}>
-                  <Text style={styles.metricDigitalClock}>
-                    {formatClockDigital(remainingSeconds).split(':')[0]}
-                  </Text>
-                  <Animated.View style={{ opacity: clockColonAnim }}>
-                    <Text style={styles.metricDigitalClock}>:</Text>
-                  </Animated.View>
-                  <Text style={styles.metricDigitalClock}>
-                    {formatClockDigital(remainingSeconds).split(':').slice(1).join(':')}
-                  </Text>
-                </View>
-              ) : (
-                <Text variant="heading" style={styles.metricValue}>N/A</Text>
-              )}
-            </View>
-            <View style={[styles.metricCard, { backgroundColor: palette.bgSurface, borderColor: palette.borderSoft }]}>
-              <Text variant="body">Distance</Text>
-              <Animated.View style={{ transform: [{ scale: distanceScaleAnim }] }}>
-                <Text variant="heading" style={styles.metricValue}>{formatMiles(distanceMeters)}</Text>
-              </Animated.View>
-            </View>
-            <View style={[styles.metricCard, { backgroundColor: palette.bgSurface, borderColor: palette.borderSoft }]}>
-              <Text variant="body">Speed</Text>
-              <Animated.View style={{ transform: [{ scale: speedScaleAnim }] }}>
-                <Text variant="heading" style={styles.metricValue}>
-                  {activeSeconds > 0 ? ((distanceMeters / 1609.34) / (activeSeconds / 3600)).toFixed(1) : '0.0'} mph
-                </Text>
-              </Animated.View>
-            </View>
-            <View style={[styles.metricCard, { backgroundColor: palette.bgSurface, borderColor: palette.borderSoft }]}>
-              <Text variant="body">Steps</Text>
-              <Animated.View style={{ transform: [{ scale: stepScaleAnim }] }}>
-                <Text variant="heading" style={styles.metricValue}>{steps.toLocaleString()}</Text>
-              </Animated.View>
-            </View>
+            {walkDisplayCards.map(renderMetricCard)}
           </View>
-
-          {hasExtraCards && (
-            <Animated.View
-              style={[
-                styles.extraMetricsWrap,
-                {
-                  height: slideAnim.interpolate({
-                    inputRange: [0, 1],
-                    outputRange: [0, Math.max(extraMetricsHeight, 1)],
-                  }),
-                  opacity: slideAnim.interpolate({
-                    inputRange: [0, 0.2, 1],
-                    outputRange: [0, 0.35, 1],
-                  }),
-                },
-              ]}
-            >
-              <View
-                onLayout={(event) => {
-                  const measuredHeight = event.nativeEvent.layout.height;
-                  if (measuredHeight !== extraMetricsHeight) {
-                    setExtraMetricsHeight(measuredHeight);
-                  }
-                }}
-                style={styles.extraMetricsContent}
-              >
-                <View style={styles.metricGrid}>
-                  {extraCards.map(renderMetricCard)}
-                </View>
-                <View style={styles.hintRow}>
-                  <Ionicons name="settings-outline" size={12} color={palette.textMuted} />
-                  <Text variant="bodySmall" color={palette.textMuted} style={styles.hintText}>
-                    Customize these stats in Settings
-                  </Text>
-                </View>
-              </View>
-            </Animated.View>
-          )}
 
           {hasLiveSession ? (
             <View style={styles.actionRow}>
@@ -2800,15 +2707,16 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
                 disabled={isStartingWalk || startCountdown != null}
                 testID="walking-pause-resume"
               />
-            </Pressable>
-            <Button
-              title="End"
-              onPress={() => setShowEndModal(true)}
-              variant="danger"
-              style={styles.actionButton}
-              testID="walking-end"
-            />
-          </View>
+              <WalkActionButton
+                palette={palette}
+                label="End walk"
+                iconName="close"
+                tone="danger"
+                onPress={() => setShowEndModal(true)}
+                testID="walking-end"
+              />
+            </View>
+          ) : null}
         </Animated.View>
       </View>
 
@@ -2833,7 +2741,7 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
         </View>
       </Modal>
 
-      <Modal visible={showIdleModal} onClose={() => {}} title="No walking detected">
+      <Modal visible={showIdleModal} onClose={() => { }} title="No walking detected">
         <Text variant="body" style={styles.modalText}>
           Looks like you paused for now. You can continue this walk anytime.
         </Text>
@@ -2856,7 +2764,7 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
 
       <Modal
         visible={showBackgroundLimitModal}
-        onClose={() => {}}
+        onClose={() => { }}
         title="Set location to Allow all the time"
       >
         <Text variant="body" style={styles.modalText}>
@@ -3089,9 +2997,9 @@ const styles = StyleSheet.create({
   heroOverlay: {
     position: 'absolute',
     top: 16,
+    left: 16,
     right: 16,
     pointerEvents: 'box-none',
-    alignItems: 'flex-end',
   },
   mapIcon: {
     width: 44,
@@ -3101,28 +3009,36 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     borderWidth: 1,
   },
-  userLocationRing: {
-    width: 20,
-    height: 20,
-    borderRadius: 10,
+  userArrowOuter: {
+    width: 36,
+    height: 36,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(59,130,246,0.22)',
-    borderWidth: 1,
-    borderColor: 'rgba(59,130,246,0.48)',
   },
-  userLocationDot: {
-    width: 9,
-    height: 9,
-    borderRadius: 4.5,
+  userArrowHead: {
+    width: 0,
+    height: 0,
+    borderLeftWidth: 8,
+    borderRightWidth: 8,
+    borderBottomWidth: 16,
+    borderLeftColor: 'transparent',
+    borderRightColor: 'transparent',
+    borderBottomColor: '#3b82f6',
+    marginBottom: -4,
+  },
+  userArrowDot: {
+    width: 14,
+    height: 14,
+    borderRadius: 7,
     backgroundColor: '#3b82f6',
-    borderWidth: 1.5,
+    borderWidth: 2.5,
     borderColor: '#ffffff',
   },
   heroStatusRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    justifyContent: 'flex-end',
+    gap: 12,
   },
   statusPill: {
     flexDirection: 'row',
@@ -3154,6 +3070,12 @@ const styles = StyleSheet.create({
     borderColor: '#ffffff',
   },
   statusDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+  },
+  statusDotPulse: {
+    position: 'absolute',
     width: 10,
     height: 10,
     borderRadius: 5,
@@ -3208,6 +3130,7 @@ const styles = StyleSheet.create({
   },
   noticeStack: {
     gap: 10,
+    marginTop: 12,
   },
   noticeCard: {
     flexDirection: 'row',
@@ -3364,9 +3287,19 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'flex-start',
   },
+  metricLabel: {
+    textAlign: 'center',
+    alignSelf: 'stretch',
+  },
+  metricValueWrap: {
+    alignSelf: 'stretch',
+  },
+  metricValueWrapCentered: {
+    alignItems: 'center',
+  },
   metricValue: {
-    fontSize: 16,
-    lineHeight: 20,
+    fontSize: 18,
+    lineHeight: 22,
     fontWeight: '600',
     fontVariant: ['tabular-nums' as const],
   },
@@ -3379,8 +3312,29 @@ const styles = StyleSheet.create({
   },
   metricFaceWrap: {
     width: '100%',
-    minHeight: 62,
+    minHeight: 40,
     justifyContent: 'center',
+    alignItems: 'center',
+  },
+  flipFace: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backfaceVisibility: 'hidden',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  flipFaceBack: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backfaceVisibility: 'hidden',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   metricFlipHint: {
     alignSelf: 'flex-end',
@@ -3389,11 +3343,11 @@ const styles = StyleSheet.create({
     lineHeight: 12,
   },
   metricFlipHintFront: {
-    transform: [{ translateY: 8 }],
+    transform: [{ translateY: 2 }],
   },
   metricClockFront: {
-    fontSize: 26,
-    lineHeight: 32,
+    fontSize: 24,
+    lineHeight: 28,
     fontWeight: theme.fontWeight.bold,
     fontVariant: ['tabular-nums' as const],
     textAlign: 'center',
@@ -3403,7 +3357,6 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingTop: 2,
   },
   metricClockFrame: {
     minWidth: 92,
@@ -3420,8 +3373,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   metricClockStandalone: {
-    fontSize: 26,
-    lineHeight: 32,
+    fontSize: 24,
+    lineHeight: 28,
     fontWeight: theme.fontWeight.bold,
     letterSpacing: -0.5,
     fontVariant: ['tabular-nums' as const],
@@ -3451,7 +3404,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center' as const,
   },
   metricDigitalClock: {
-    fontSize: 22,
+    fontSize: 24,
     lineHeight: 28,
     fontWeight: theme.fontWeight.bold,
     letterSpacing: -0.5,
