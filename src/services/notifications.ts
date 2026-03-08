@@ -43,6 +43,16 @@ export const isNotificationsSupported =
   !isExpoGo &&
   hasNativeNotificationApis;
 
+let reminderVibrationEnabled = true;
+
+const getDefaultAndroidChannelConfig = () => ({
+  name: 'GapWalk Nudges',
+  importance: Notifications.AndroidImportance.HIGH,
+  vibrationPattern: reminderVibrationEnabled ? [0, 250, 250, 250] : [0],
+  enableVibrate: reminderVibrationEnabled,
+  lightColor: '#6366F1',
+});
+
 type ExpoExtraConfig = {
   eas?: {
     projectId?: string;
@@ -127,7 +137,7 @@ const NUDGE_BODIES_NOW_STRICT = [
 const NUDGE_BODIES_SOON_RELAXED = [
   (dur: number, time: string, mins: number) => `Your ${dur} minute walk starts in ${mins} minutes at ${time}.`,
   (dur: number, time: string, mins: number) => `In ${mins} minutes you have a ${dur} minute walk at ${time}.`,
-  (dur: number, time: string, mins: number) => `Heads up. Your ${dur} minute walk window opens at ${time}.`,
+  (dur: number, time: string, _mins: number) => `Heads up. Your ${dur} minute walk window opens at ${time}.`,
   (dur: number, time: string, mins: number) => `${mins} minute reminder for your ${dur} minute walk at ${time}.`,
 ];
 
@@ -197,6 +207,16 @@ export const getPlanNotifyTime = (plan: NudgePlan, prefs?: Preferences): Date =>
 };
 
 export const notificationService = {
+  async setReminderVibrationEnabled(enabled: boolean): Promise<void> {
+    reminderVibrationEnabled = enabled;
+    if (isNotificationsSupported && Platform.OS === 'android') {
+      await Notifications.setNotificationChannelAsync(
+        ANDROID_CHANNEL_DEFAULT,
+        getDefaultAndroidChannelConfig(),
+      );
+    }
+  },
+
   /**
    * Request notification permissions
    */
@@ -220,12 +240,10 @@ export const notificationService = {
     if (finalStatus !== 'granted') return false;
     
     if (Platform.OS === 'android') {
-      await Notifications.setNotificationChannelAsync(ANDROID_CHANNEL_DEFAULT, {
-        name: 'GapWalk Nudges',
-        importance: Notifications.AndroidImportance.HIGH,
-        vibrationPattern: [0, 250, 250, 250],
-        lightColor: '#6366F1',
-      });
+      await Notifications.setNotificationChannelAsync(
+        ANDROID_CHANNEL_DEFAULT,
+        getDefaultAndroidChannelConfig(),
+      );
     }
 
     await Notifications.setNotificationCategoryAsync(WALK_NUDGE_CATEGORY_ID, [
@@ -640,27 +658,27 @@ export const notificationService = {
     // silently swallowed and the user would see no effect.
     await Notifications.setNotificationCategoryAsync(WALK_SESSION_ACTIVE_CATEGORY, [
       {
-        identifier: WALK_SESSION_ACTION_END,
-        buttonTitle: 'End Walk',
-        options: { opensAppToForeground: true, isDestructive: true },
-      },
-      {
         identifier: WALK_SESSION_ACTION_PAUSE,
         buttonTitle: 'Pause',
         options: { opensAppToForeground: true },
+      },
+      {
+        identifier: WALK_SESSION_ACTION_END,
+        buttonTitle: 'End walk',
+        options: { opensAppToForeground: true, isDestructive: true },
       },
     ]);
 
     await Notifications.setNotificationCategoryAsync(WALK_SESSION_PAUSED_CATEGORY, [
       {
-        identifier: WALK_SESSION_ACTION_END,
-        buttonTitle: 'End Walk',
-        options: { opensAppToForeground: true, isDestructive: true },
-      },
-      {
         identifier: WALK_SESSION_ACTION_RESUME,
         buttonTitle: 'Resume',
         options: { opensAppToForeground: true },
+      },
+      {
+        identifier: WALK_SESSION_ACTION_END,
+        buttonTitle: 'End walk',
+        options: { opensAppToForeground: true, isDestructive: true },
       },
     ]);
   },
@@ -675,6 +693,9 @@ export const notificationService = {
     targetDurationMinutes?: number | null;
     startedFromNotification?: boolean;
     timerMode?: NotificationTimerMode;
+    steps?: number;
+    distanceMeters?: number;
+    distanceUnit?: 'km' | 'mi';
   }): Promise<void> {
     if (!isNotificationsSupported) return;
 
@@ -682,23 +703,23 @@ export const notificationService = {
       const {
         elapsedSeconds,
         isPaused,
-        targetDurationMinutes,
-        startedFromNotification = false,
-        timerMode = 'smart',
+        steps = 0,
+        distanceMeters = 0,
+        distanceUnit = 'mi',
       } = options;
       const categoryId = isPaused ? WALK_SESSION_PAUSED_CATEGORY : WALK_SESSION_ACTIVE_CATEGORY;
       const elapsedMinutes = Math.max(0, Math.floor(elapsedSeconds / 60));
-      const remainingSeconds = Math.max(0, (targetDurationMinutes ?? 0) * 60 - elapsedSeconds);
-      const remainingMinutes = Math.ceil(remainingSeconds / 60);
-
-      let timerText = `${elapsedMinutes} min walked`;
-      if (timerMode === 'remaining') {
-        timerText = targetDurationMinutes ? `${remainingMinutes} min left` : `${elapsedMinutes} min walked`;
-      } else if (timerMode === 'smart' && startedFromNotification && targetDurationMinutes) {
-        timerText = `${remainingMinutes} min left`;
-      }
-      const title = isPaused ? 'Walk paused' : 'Walk in progress';
-      const body = isPaused ? `${timerText}. Tap Resume when you are ready.` : timerText;
+      const elapsedRemainderSeconds = Math.max(0, elapsedSeconds % 60);
+      const normalizedUnit = distanceUnit === 'km' ? 'km' : 'mi';
+      const normalizedDistance = normalizedUnit === 'km'
+        ? Math.max(0, distanceMeters) / 1000
+        : Math.max(0, distanceMeters) / 1609.34;
+      const title = 'MicroWalk Session';
+      const body = [
+        `${elapsedMinutes} min ${elapsedRemainderSeconds} seconds walked, Keep it up!`,
+        `Steps: ${Math.max(0, steps).toLocaleString()}`,
+        `Distance: ${normalizedDistance.toFixed(2)} ${normalizedUnit}`,
+      ].join('\n');
 
       await Notifications.scheduleNotificationAsync({
         identifier: WALK_SESSION_NOTIFICATION_ID,
@@ -725,7 +746,7 @@ export const notificationService = {
   async scheduleAlternativeGapNotification(
     planId: string,
     gapStartTime: Date,
-    gapEndTime: Date,
+    _gapEndTime: Date,
     suggestedDurationMinutes: number
   ): Promise<string | null> {
     if (!isNotificationsSupported) return null;

@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Animated, AppState, AppStateStatus, Easing, Linking, PanResponder, Platform, Pressable, StyleSheet, View } from 'react-native';
+import { Animated, AppState, AppStateStatus, Easing, Linking, Platform, Pressable, StyleSheet, View } from 'react-native';
 import MapView, { Marker, Polyline } from 'react-native-maps';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { Ionicons } from '@expo/vector-icons';
@@ -22,7 +22,6 @@ import { androidWalkTracking } from '../services/androidWalkTracking';
 import { isNotificationsSupported, notificationService } from '../services/notifications';
 import {
   getWalkTrackingPermissionStatus,
-  requestBackgroundWalkTrackingPermission,
   requestWalkTrackingPermissions,
   WalkTrackingPermissionResults,
 } from '../services/permissions';
@@ -116,7 +115,7 @@ const getTimerDisplayParts = (seconds: number): { lead: string; trailing: string
   };
 };
 
-const resolveStartupErrorMessage = (error: unknown): string => {
+const resolveStartupErrorMessage = (_error: unknown): string => {
   return 'GapWalk could not start the walk. Please try again.';
 };
 
@@ -465,6 +464,7 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
   const {
     preferences,
     themeMode,
+    distanceUnit,
     activeWalkSnapshot,
     setActiveWalkSnapshot,
     pendingWalkPrompt,
@@ -492,7 +492,6 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
   const [sessionStarted, setSessionStarted] = useState(false);
   const [startupError, setStartupError] = useState<string | null>(null);
   const [isStartingWalk, setIsStartingWalk] = useState(false);
-  const [isRequestingBackgroundPermission, setIsRequestingBackgroundPermission] = useState(false);
   const [statusDetailsExpanded, setStatusDetailsExpanded] = useState(false);
   const [routeCoords, setRouteCoords] = useState<Coord[]>([]);
   const [liveLocation, setLiveLocation] = useState<Coord | null>(null);
@@ -522,14 +521,6 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
   const appStateRef = useRef<AppStateStatus>(AppState.currentState);
   const lastFollowAnimateAtRef = useRef<number>(0);
   const statusPulseAnim = useRef(new Animated.Value(0)).current;
-  const pulseOpacity = statusPulseAnim.interpolate({
-    inputRange: [0, 1],
-    outputRange: [1, 0],
-  });
-  const pulseScale = statusPulseAnim.interpolate({
-    inputRange: [0, 1],
-    outputRange: [1, 2.2],
-  });
   const completionBackdropAnim = useRef(new Animated.Value(0)).current;
   const completionCardAnim = useRef(new Animated.Value(0)).current;
   const completionGlowAnim = useRef(new Animated.Value(0)).current;
@@ -554,14 +545,6 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
   const flipAnim = useRef(new Animated.Value(0)).current;
   const [isFlipped, setIsFlipped] = useState(false);
   const flipHintDone = useRef(false);
-
-  // Slidable frame state
-  const slideAnim = useRef(new Animated.Value(0)).current; // 0 = collapsed, 1 = expanded
-  const slideGestureRef = useRef(0);
-  const dragHandleActiveAnim = useRef(new Animated.Value(0)).current;
-
-  // Extra metrics panel height (measured at runtime for slide animation)
-  const [extraMetricsHeight, setExtraMetricsHeight] = useState(0);
 
   // Ref to track session started for background prompt timer callback
   const sessionStartedRef = useRef(false);
@@ -627,56 +610,6 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
     }).start();
   }, [flipAnim, isFlipped]);
 
-  // Determine cards
-  const defaultCards = walkDisplayCards.slice(0, 2);
-  const extraCards = walkDisplayCards.slice(2);
-  const hasExtraCards = extraCards.length > 0;
-
-  const animateDragHandleActive = useCallback((toValue: number) => {
-    Animated.timing(dragHandleActiveAnim, {
-      toValue,
-      duration: toValue > 0 ? 110 : 150,
-      easing: Easing.out(Easing.cubic),
-      useNativeDriver: false,
-    }).start();
-  }, [dragHandleActiveAnim]);
-
-  const finishDockDrag = useCallback((velocityY: number) => {
-    animateDragHandleActive(0);
-    slideAnim.stopAnimation((value) => {
-      const projected = Math.max(0, Math.min(1, value + (-velocityY * 0.18)));
-      const toValue = projected >= 0.5 ? 1 : 0;
-      Animated.timing(slideAnim, {
-        toValue,
-        duration: 220,
-        easing: Easing.out(Easing.cubic),
-        useNativeDriver: false,
-      }).start();
-    });
-  }, [animateDragHandleActive, slideAnim]);
-
-  // Slide PanResponder for dock
-  const slidePanResponder = useMemo(() => PanResponder.create({
-    onStartShouldSetPanResponder: () => hasExtraCards,
-    onMoveShouldSetPanResponder: (_, g) => hasExtraCards && Math.abs(g.dy) > Math.abs(g.dx) && Math.abs(g.dy) > 1,
-    onPanResponderGrant: () => {
-      animateDragHandleActive(1);
-      slideAnim.stopAnimation((v) => { slideGestureRef.current = v; });
-    },
-    onPanResponderMove: (_, g) => {
-      const dragDistance = Math.max(extraMetricsHeight, 132);
-      const progress = slideGestureRef.current + (-g.dy / dragDistance);
-      slideAnim.setValue(Math.max(0, Math.min(1, progress)));
-    },
-    onPanResponderRelease: (_, g) => {
-      finishDockDrag(g.vy);
-    },
-    onPanResponderTerminate: (_, g) => {
-      finishDockDrag(g.vy);
-    },
-    onPanResponderTerminationRequest: () => false,
-  }), [animateDragHandleActive, extraMetricsHeight, finishDockDrag, hasExtraCards, slideAnim]);
-
   const clearStartCountdown = useCallback(() => {
     countdownTimerIdsRef.current.forEach((timerId) => clearTimeout(timerId));
     countdownTimerIdsRef.current = [];
@@ -726,8 +659,9 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
       targetDurationMinutes,
       startedFromNotification,
       notificationTimerMode,
+      distanceUnit,
     });
-  }, [notificationTimerMode, plan, planId, startedFromNotification]);
+  }, [distanceUnit, notificationTimerMode, plan, planId, startedFromNotification]);
 
   useEffect(() => {
     void loadPlan();
@@ -760,18 +694,6 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
   const displayState: WalkDisplayState = isAndroidService
     ? (displayedSnapshot?.displayState ?? 'calibrating')
     : fallbackState.displayState;
-  const pedometerHealth: SensorHealth = isAndroidService
-    ? (displayedSnapshot?.pedometerHealth ?? 'stale')
-    : fallbackState.pedometerHealth;
-  const locationHealth: SensorHealth = isAndroidService
-    ? (displayedSnapshot?.locationHealth ?? 'stale')
-    : fallbackState.locationHealth;
-  const motionConfidence: WalkMotionConfidence = isAndroidService
-    ? (displayedSnapshot?.motionConfidence ?? 'low')
-    : fallbackState.motionConfidence;
-  const stepSource: WalkStepSource = isAndroidService
-    ? (displayedSnapshot?.stepSource ?? 'none')
-    : fallbackState.stepSource;
   const statusReason = isAndroidService
     ? (displayedSnapshot?.statusReason ?? null)
     : fallbackState.statusReason;
@@ -787,12 +709,6 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
   const steps = isAndroidService
     ? (displayedSnapshot?.steps ?? 0)
     : fallbackState.steps;
-  const locationUnavailable = isAndroidService
-    ? displayedSnapshot?.displayState === 'location_off'
-    : fallbackState.displayState === 'location_off';
-  const locationWarning = isAndroidService
-    ? (displayedSnapshot?.warning ?? null)
-    : fallbackState.warning;
   const hasStartupIssue = !hasLiveSession && startupError != null;
   const remainingSeconds = useMemo(() => {
     const elapsedSeconds = hasLiveSession ? activeSeconds : 0;
@@ -1639,6 +1555,9 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
         targetDurationMinutes: plan?.suggestedDurationMinutes ?? null,
         startedFromNotification,
         timerMode: notificationTimerMode,
+        steps: 0,
+        distanceMeters: 0,
+        distanceUnit,
       });
     }
   }, [
@@ -1727,24 +1646,6 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
     }
   }, [applyFallbackPermissionResults, handleStartupFailure, isAndroidService, markPlanStarted, runStartCountdown, startFallbackTracking]);
 
-  const handleBackgroundPermissionUpgrade = useCallback(async () => {
-    if (isRequestingBackgroundPermission) return;
-
-    setIsRequestingBackgroundPermission(true);
-    try {
-      await requestBackgroundWalkTrackingPermission();
-      if (isAndroidService) {
-        await refreshAndroidSnapshot();
-      } else {
-        await refreshFallbackPermissionState();
-      }
-    } finally {
-      if (isMountedRef.current) {
-        setIsRequestingBackgroundPermission(false);
-      }
-    }
-  }, [isAndroidService, isRequestingBackgroundPermission, refreshAndroidSnapshot, refreshFallbackPermissionState]);
-
   const handleRetryStart = useCallback(async () => {
     if (hasLiveSession || isStartingWalk || startCountdown != null) return;
 
@@ -1807,6 +1708,9 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
           targetDurationMinutes: plan?.suggestedDurationMinutes ?? null,
           startedFromNotification,
           timerMode: notificationTimerMode,
+          steps: fallbackStateRef.current.steps,
+          distanceMeters: fallbackStateRef.current.distanceMeters,
+          distanceUnit,
         });
       }
 
@@ -1830,6 +1734,7 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
     plan?.suggestedDurationMinutes,
     sessionStarted,
     startedFromNotification,
+    distanceUnit,
     updateFallbackCheckpoint,
     updateFallbackState,
   ]);
@@ -2302,29 +2207,6 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
   const speedMph = computeSpeedMph(distanceMeters, activeSeconds);
   const activeTimerParts = getTimerDisplayParts(activeSeconds);
   const remainingTimerParts = getTimerDisplayParts(remainingSeconds);
-  const canUpgradeBackgroundTracking = Boolean(locationWarning) && !locationUnavailable;
-  const shouldShowRecoveryAction = !hasLiveSession && !isStartingWalk && startCountdown == null && hasStartupIssue;
-  const shouldShowStartAction = !hasLiveSession && !isStartingWalk && startCountdown == null && !hasStartupIssue;
-  const dragHandleWidth = dragHandleActiveAnim.interpolate({
-    inputRange: [0, 1],
-    outputRange: [36, 54],
-  });
-  const dragHandleScale = dragHandleActiveAnim.interpolate({
-    inputRange: [0, 1],
-    outputRange: [1, 1.04],
-  });
-  const dragHandleOpacity = dragHandleActiveAnim.interpolate({
-    inputRange: [0, 1],
-    outputRange: [0.9, 1],
-  });
-  const dragHandleColor = dragHandleActiveAnim.interpolate({
-    inputRange: [0, 1],
-    outputRange: [palette.borderStrong, palette.accentPrimary],
-  });
-  const dragHandleHaloOpacity = dragHandleActiveAnim.interpolate({
-    inputRange: [0, 1],
-    outputRange: [0, 1],
-  });
   const completionSavedForLater = completionKind === 'saved_later';
   const completionAccent = completionSavedForLater ? '#38bdf8' : palette.accentPrimary;
   const completionTitle = completionSavedForLater ? 'Progress saved for later' : 'Walk recorded';

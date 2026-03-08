@@ -10,7 +10,7 @@ import { Button } from '../components/Button';
 import { StatCard } from '../components/StatCard';
 import { GapItem } from '../components/GapItem';
 import { Card } from '../components/Card';
-import { AppIcon, type AppIconName } from '../components/AppIcon';
+import { AppIcon } from '../components/AppIcon';
 import { theme } from '../theme';
 import { withAlpha } from '../theme/colorUtils';
 import { getThemePalette } from '../theme/palette';
@@ -18,7 +18,6 @@ import { useAppStore } from '../store';
 import { preferencesRepo } from '../data/repositories/preferencesRepo';
 import { plansRepo } from '../data/repositories/plansRepo';
 import { sessionsRepo } from '../data/repositories/sessionsRepo';
-import { scheduleSourceRepo } from '../data/repositories/scheduleSourceRepo';
 import { eventsRepo } from '../data/repositories/eventsRepo';
 import { achievementsRepo, type UnlockedAchievement, type AchievementId } from '../data/repositories/achievementsRepo';
 import { gapEngine } from '../services/gapEngine';
@@ -29,7 +28,6 @@ import {
   notificationService,
 } from '../services/notifications';
 import { notificationPlanActions } from '../services/notificationPlanActions';
-import { googleCalendarService } from '../services/googleCalendar';
 import { NudgePlan, Preferences } from '../types';
 import { calculateStreak, calculateWeeklyStats, getMotivationalMessage, StreakData, WeeklyStats } from '../utils/statsUtils';
 import { addMinutes, format, isAfter, isBefore, parseISO, subMinutes, subDays } from 'date-fns';
@@ -163,7 +161,6 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
     todaySteps, setTodaySteps,
     setTodayStats, setUpcomingPlans,
     hasRequestedPermissions, setHasRequestedPermissions,
-    setHasLocationPermission, setHasNotificationPermission, setHasActivityPermission,
     themeMode, language,
     authUser,
     profileDisplayName,
@@ -379,9 +376,7 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
     useCallback(() => {
       load().catch((e) => console.error('Dashboard load failed:', e));
       if (!hasRequestedPermissions) {
-        requestAllPermissions().then((results) => {
-          setHasNotificationPermission(results.notifications);
-          setHasActivityPermission(results.activityRecognition);
+        requestAllPermissions().then(() => {
           setHasRequestedPermissions(true);
         }).catch((e) => {
           if (__DEV__) console.warn('Permission request failed:', e);
@@ -917,11 +912,6 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
   const navigateToAchievements = () => { closeMenu(); navigation.navigate('Achievements', { source: 'options' }); };
   const navigateToAboutHelp = () => { closeMenu(); navigation.navigate('AboutHelp'); };
 
-  const handleReplayTour = () => {
-    closeMenu();
-    setTimeout(() => setTourVisible(true), 600);
-  };
-
   const menuItems: SideMenuItem[] = [
     { key: 'profile', label: 'Profile', icon: 'person', onPress: navigateToProfile, testID: 'dashboard-menu-profile' },
     { key: 'schedule', label: 'Manage schedule', icon: 'calendar', onPress: navigateToManageSchedule, testID: 'dashboard-menu-schedule' },
@@ -930,7 +920,6 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
     { key: 'achievements', label: 'Achievements', icon: 'trophy', onPress: navigateToAchievements, testID: 'dashboard-menu-achievements' },
     { key: 'settings', label: 'Settings', icon: 'settings', onPress: navigateToSettings, testID: 'dashboard-menu-settings' },
     { key: 'about-help', label: 'About & Help', icon: 'info', onPress: navigateToAboutHelp, testID: 'dashboard-menu-about-help' },
-    { key: 'replay-tour', label: 'Replay Tour', icon: 'info', onPress: handleReplayTour, testID: 'dashboard-menu-replay-tour' },
   ];
 
   const handleLogoutFromMenu = () => {

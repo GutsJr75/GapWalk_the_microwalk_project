@@ -8,6 +8,7 @@ data class WalkTrackingSnapshot(
   val targetDurationMinutes: Int? = null,
   val startedFromNotification: Boolean = false,
   val notificationTimerMode: String = "smart",
+  val distanceUnit: String = "mi",
   val startIso: String,
   val sessionStartMs: Long,
   val totalPausedMs: Long = 0L,

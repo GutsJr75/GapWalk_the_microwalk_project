@@ -4,6 +4,7 @@ import { resolveAppFontFamily, theme } from '../theme';
 import { useAppStore } from '../store';
 import { getThemePalette } from '../theme/palette';
 import { AppLanguage, translateLiteral } from '../i18n';
+import { toDisplayTitleCase } from '../utils/textCase';
 
 interface TextProps {
   children: React.ReactNode;
@@ -12,6 +13,7 @@ interface TextProps {
   style?: StyleProp<TextStyle>;
   numberOfLines?: number;
   ellipsizeMode?: React.ComponentProps<typeof RNText>['ellipsizeMode'];
+  allowFontScaling?: boolean;
 }
 
 const mapThemeTokenColor = (candidate: string | undefined, mode: 'dark' | 'light'): string | undefined => {
@@ -30,6 +32,7 @@ export const Text: React.FC<TextProps> = ({
   style,
   numberOfLines,
   ellipsizeMode,
+  allowFontScaling = true,
 }) => {
   const { themeMode, language } = useAppStore();
   const palette = getThemePalette(themeMode);
@@ -86,6 +89,11 @@ export const Text: React.FC<TextProps> = ({
     () => localizeNode(children, language),
     [children, language]
   );
+  const displayChildren = React.useMemo(() => {
+    const shouldTitleCase = variant === 'heading' || variant === 'title' || variant === 'nav';
+    if (!shouldTitleCase) return localizedChildren;
+    return titleCaseNode(localizedChildren);
+  }, [localizedChildren, variant]);
 
   return (
     <RNText
@@ -99,8 +107,9 @@ export const Text: React.FC<TextProps> = ({
       ]}
       numberOfLines={numberOfLines}
       ellipsizeMode={ellipsizeMode}
+      allowFontScaling={allowFontScaling}
     >
-      {localizedChildren}
+      {displayChildren}
     </RNText>
   );
 };
@@ -121,6 +130,27 @@ const localizeNode = (node: React.ReactNode, language: AppLanguage): React.React
     return React.cloneElement(element, {
       ...element.props,
       children: localizeNode(element.props.children, language),
+    });
+  }
+
+  return node;
+};
+
+const titleCaseNode = (node: React.ReactNode): React.ReactNode => {
+  if (typeof node === 'string') {
+    return toDisplayTitleCase(node);
+  }
+
+  if (Array.isArray(node)) {
+    return React.Children.map(node, (child) => titleCaseNode(child));
+  }
+
+  if (React.isValidElement(node)) {
+    const element = node as React.ReactElement<{ children?: React.ReactNode }>;
+    if (!element.props?.children) return node;
+    return React.cloneElement(element, {
+      ...element.props,
+      children: titleCaseNode(element.props.children),
     });
   }
 

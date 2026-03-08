@@ -6,6 +6,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { RootStackParamList } from '../../App';
 import { Container } from '../components/Container';
 import { Text } from '../components/Text';
+import { Button } from '../components/Button';
 import { Card } from '../components/Card';
 import { ScreenState } from '../components/ScreenState';
 import { ScreenHeader } from '../components/ScreenHeader';

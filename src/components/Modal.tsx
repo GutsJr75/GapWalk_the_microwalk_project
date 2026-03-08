@@ -14,6 +14,7 @@ import {
 import { theme } from '../theme';
 import { Text } from './Text';
 import { useThemePalette } from '../theme/palette';
+import { toDisplayTitleCase } from '../utils/textCase';
 
 interface ModalProps {
   visible: boolean;
@@ -177,7 +178,7 @@ export const Modal: React.FC<ModalProps> = ({
                       {leftAccessory}
                     </View>
                     {typeof title === 'string'
-                      ? <Text variant="body" style={styles.title}>{title}</Text>
+                      ? <Text variant="body" style={styles.title}>{toDisplayTitleCase(title)}</Text>
                       : <View style={styles.titleSlot}>{title}</View>
                     }
                     <View style={styles.headerAccessorySlot}>

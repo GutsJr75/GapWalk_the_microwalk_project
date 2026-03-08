@@ -1,10 +1,10 @@
 import React, { useRef, useCallback } from 'react';
 import { Pressable, StyleSheet, ActivityIndicator, ViewStyle, TextStyle, StyleProp, Platform, Animated } from 'react-native';
 import { theme } from '../theme';
-import { useAppStore } from '../store';
 import { useThemePalette } from '../theme/palette';
 import { Text } from './Text';
 import { useTapFeedbackAction } from '../hooks/useTapFeedbackAction';
+import { toDisplayTitleCase } from '../utils/textCase';
 
 interface ButtonProps {
   title: string;
@@ -31,8 +31,6 @@ export const Button: React.FC<ButtonProps> = ({
   full = false,
   testID,
 }) => {
-  const { themeMode } = useAppStore();
-  const isDark = themeMode === 'dark';
   const palette = useThemePalette();
   const scaleAnim = useRef(new Animated.Value(1)).current;
   const isPrimaryLike = variant === 'primary' || variant === 'danger';
@@ -48,6 +46,7 @@ export const Button: React.FC<ButtonProps> = ({
           : palette.textPrimary;
   const spinnerColor = disabled ? palette.textMuted : labelColor;
   const glowColor = variant === 'danger' ? theme.colors.danger : palette.accentPrimary;
+  const displayTitle = React.useMemo(() => toDisplayTitleCase(title), [title]);
   const { isTapActive, handlePress, handlePressIn, handlePressOut } = useTapFeedbackAction({
     onPress,
     enabled: !(disabled || loading),
@@ -125,7 +124,7 @@ export const Button: React.FC<ButtonProps> = ({
             textStyle,
           ]}
         >
-          {title}
+          {displayTitle}
         </Text>
       )}
     </AnimatedPressable>

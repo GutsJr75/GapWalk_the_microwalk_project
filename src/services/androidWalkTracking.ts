@@ -7,6 +7,7 @@ type NativeWalkTrackingModule = {
     targetDurationMinutes?: number | null,
     startedFromNotification?: boolean,
     notificationTimerMode?: NotificationTimerMode,
+    distanceUnit?: 'km' | 'mi',
   ): Promise<ActiveWalkSnapshot | null>;
   pauseSession(source: WalkActionSource): Promise<ActiveWalkSnapshot | null>;
   resumeSession(source: WalkActionSource): Promise<ActiveWalkSnapshot | null>;
@@ -33,6 +34,7 @@ const normalizeSnapshot = (value: ActiveWalkSnapshot | null | undefined): Active
     targetDurationMinutes: value.targetDurationMinutes ?? null,
     startedFromNotification: !!value.startedFromNotification,
     notificationTimerMode: (value.notificationTimerMode as NotificationTimerMode | undefined) ?? 'smart',
+    distanceUnit: value.distanceUnit === 'mi' ? 'mi' : 'km',
     pauseStartedAtMs: value.pauseStartedAtMs ?? null,
     displayState: value.displayState ?? (value.paused ? 'paused' : 'calibrating'),
     pedometerHealth: value.pedometerHealth ?? 'stale',
@@ -61,14 +63,42 @@ export const androidWalkTracking = {
     targetDurationMinutes?: number | null;
     startedFromNotification?: boolean;
     notificationTimerMode?: NotificationTimerMode;
+    distanceUnit?: 'km' | 'mi';
   }): Promise<ActiveWalkSnapshot | null> {
     if (!nativeModule) return null;
-    return normalizeSnapshot(await nativeModule.startSession(
-      options?.planId ?? null,
-      options?.targetDurationMinutes ?? null,
-      options?.startedFromNotification ?? false,
-      options?.notificationTimerMode ?? 'smart',
-    ));
+    const planId = options?.planId ?? null;
+    const targetDurationMinutes = options?.targetDurationMinutes ?? null;
+    const startedFromNotification = options?.startedFromNotification ?? false;
+    const notificationTimerMode = options?.notificationTimerMode ?? 'smart';
+    const distanceUnit = options?.distanceUnit === 'mi' ? 'mi' : 'km';
+
+    try {
+      return normalizeSnapshot(await nativeModule.startSession(
+        planId,
+        targetDurationMinutes,
+        startedFromNotification,
+        notificationTimerMode,
+        distanceUnit,
+      ));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const argCountMismatch =
+        message.includes('called with 5 arguments') &&
+        message.includes('expected argument count: 4');
+      if (!argCountMismatch) throw error;
+
+      return normalizeSnapshot(await (nativeModule.startSession as unknown as (
+        planId?: string | null,
+        targetDurationMinutes?: number | null,
+        startedFromNotification?: boolean,
+        notificationTimerMode?: NotificationTimerMode,
+      ) => Promise<ActiveWalkSnapshot | null>)(
+        planId,
+        targetDurationMinutes,
+        startedFromNotification,
+        notificationTimerMode,
+      ));
+    }
   },
 
   async pauseSession(source: WalkActionSource): Promise<ActiveWalkSnapshot | null> {

@@ -1,7 +1,7 @@
 import { getDatabase } from '../db';
 import { sessionsRepo } from './sessionsRepo';
 import { calculateStreak } from '../../utils/statsUtils';
-import { startOfDay, format } from 'date-fns';
+import { format } from 'date-fns';
 
 // ────────────────────────────────────────────────────────
 // Achievement definitions

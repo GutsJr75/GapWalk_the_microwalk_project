@@ -1,5 +1,5 @@
 import { StrictnessMode, WalkSession } from '../types';
-import { startOfDay, endOfDay, startOfWeek, endOfWeek, startOfMonth, endOfMonth, subDays, format, parseISO, isSameDay, isValid } from 'date-fns';
+import { startOfDay, startOfWeek, endOfWeek, startOfMonth, endOfMonth, subDays, format, parseISO, isSameDay, isValid } from 'date-fns';
 
 export interface StreakData {
   currentStreak: number;

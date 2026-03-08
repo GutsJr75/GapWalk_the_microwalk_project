@@ -27,7 +27,6 @@ import {
   WALK_NUDGE_ACTION_SKIP,
   WALK_NUDGE_ACTION_START,
   ALT_GAP_ACTION_ACCEPT,
-  ALT_GAP_ACTION_DECLINE,
 } from './src/services/notifications';
 import { recoverOrphanedSession } from './src/services/walkCheckpoint';
 import { notificationPlanActions } from './src/services/notificationPlanActions';
@@ -165,9 +164,6 @@ function App() {
     setTodayStats,
     setTodaySteps,
     setUpcomingPlans,
-    setHasLocationPermission,
-    setHasNotificationPermission,
-    setHasActivityPermission,
     setHasRequestedPermissions,
     hasRequestedPermissions,
     themeMode,
@@ -605,8 +601,6 @@ function App() {
           void (async () => {
             try {
               const permResults = await requestAllPermissions();
-              setHasNotificationPermission(permResults.notifications);
-              setHasActivityPermission(permResults.activityRecognition);
               setHasRequestedPermissions(true);
 
               // Register device with backend after push permission is resolved
