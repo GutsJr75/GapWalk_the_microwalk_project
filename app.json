@@ -23,6 +23,7 @@
       }
     },
     "android": {
+      "googleServicesFile": "./android/app/google-services.json",
       "package": "com.gapwalk.app",
       "versionCode": 10102,
       "softwareKeyboardLayoutMode": "pan",
