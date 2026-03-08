@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Alert, View, StyleSheet, TouchableOpacity, Animated, Easing, Pressable, useWindowDimensions, Image, LayoutChangeEvent, ScrollView } from 'react-native';
+import { View, StyleSheet, TouchableOpacity, Animated, Easing, Pressable, useWindowDimensions, Image, LayoutChangeEvent, ScrollView } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import * as AuthSession from 'expo-auth-session';
 import * as WebBrowser from 'expo-web-browser';
@@ -7,6 +7,7 @@ import { RootStackParamList } from '../../App';
 import { Container } from '../components/Container';
 import { Text } from '../components/Text';
 import { Button } from '../components/Button';
+import { Modal as AppModal } from '../components/Modal';
 import { theme } from '../theme';
 import { useAppStore } from '../store';
 import { useThemePalette } from '../theme/palette';
@@ -68,7 +69,7 @@ const AUTH_SECONDARY_BLOCK_GAP = 28;
 const AUTH_GUEST_BLOCK_GAP = 32;
 const AUTH_FOOTER_MARGIN_TOP = 24;
 const HOW_DETAILS_GAP = 18;
-const HOW_DETAILS_EXPAND_MARGIN_TOP = 14;
+const HOW_DETAILS_EXPAND_MARGIN_TOP = 12;
 const HOW_DETAILS_FALLBACK_HEIGHT = 240;
 
 export const IntroScreen: React.FC<Props> = ({
@@ -80,6 +81,8 @@ export const IntroScreen: React.FC<Props> = ({
   const palette = useThemePalette();
   const isDark = themeMode === 'dark';
   const [showHowItWorks, setShowHowItWorks] = useState(false);
+  const [messageDialog, setMessageDialog] = useState<{ title: string; message: string } | null>(null);
+  const showMessage = (title: string, message: string) => setMessageDialog({ title, message });
   const [authLoadingMode, setAuthLoadingMode] = useState<'login' | 'signup' | null>(null);
   const [rememberMe, setRememberMe] = useState(false);
   const [howDetailsMeasuredHeight, setHowDetailsMeasuredHeight] = useState(HOW_DETAILS_FALLBACK_HEIGHT);
@@ -214,7 +217,7 @@ export const IntroScreen: React.FC<Props> = ({
       response.type === 'error'
         ? response.error?.message ?? 'Please try again.'
         : 'Please try again.';
-    Alert.alert('Login failed', details);
+    showMessage('Login failed', details);
   };
 
   useEffect(() => {
@@ -250,6 +253,24 @@ export const IntroScreen: React.FC<Props> = ({
     outputRange: [0, HOW_DETAILS_EXPAND_MARGIN_TOP],
   });
 
+  // Keep lift stable while details are measured so the capsule never appears to drop on expand.
+  const stableDetailsHeightForLift = Math.max(howDetailsMeasuredHeight, HOW_DETAILS_FALLBACK_HEIGHT);
+  const howExpandedLift = Math.min(
+    Math.round(stableDetailsHeightForLift * 0.2),
+    Math.round(viewportHeight * 0.08),
+  );
+
+  const howStackTranslateY = howAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0, -howExpandedLift],
+  });
+
+  const collapsedHowSectionDownShift = Math.round(ctaTopGap * 4.2);
+  const howSectionTranslateY = howAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [collapsedHowSectionDownShift, 0],
+  });
+
   const handleHowDetailsLayout = (event: LayoutChangeEvent) => {
     const nextHeight = Math.ceil(event.nativeEvent.layout.height);
     if (nextHeight <= 0) return;
@@ -279,16 +300,13 @@ export const IntroScreen: React.FC<Props> = ({
 
   const runAuth = async (mode: 'login' | 'signup') => {
     if (!authConfigured) {
-      Alert.alert(
-        'Auth0 is not configured',
-        'Add EXPO_PUBLIC_AUTH0_DOMAIN and EXPO_PUBLIC_AUTH0_CLIENT_ID to your .env file.'
-      );
+      showMessage('Auth0 is not configured', 'Add EXPO_PUBLIC_AUTH0_DOMAIN and EXPO_PUBLIC_AUTH0_CLIENT_ID to your .env file.');
       return;
     }
 
     const request = mode === 'login' ? loginRequest : signupRequest;
     if (!request) {
-      Alert.alert('Please wait', 'Authentication is still loading.');
+      showMessage('Please wait', 'Authentication is still loading.');
       return;
     }
 
@@ -299,29 +317,16 @@ export const IntroScreen: React.FC<Props> = ({
     } catch (error) {
       setAuthLoadingMode(null);
       const message = error instanceof Error ? error.message : 'Please try again.';
-      Alert.alert('Login failed', message);
+      showMessage('Login failed', message);
     }
   };
 
   return (
     <Container entranceAnimated={false}>
-      <ScrollView
-        style={styles.introLayout}
-        contentContainerStyle={[
-          styles.screen,
-          {
-            paddingTop: verticalTopPadding,
-            paddingBottom: verticalBottomPadding,
-          },
-        ]}
-        showsVerticalScrollIndicator={false}
-        keyboardShouldPersistTaps="handled"
-      >
-          <View style={styles.topContent}>
+      <View style={[styles.screen, { paddingTop: verticalTopPadding, paddingBottom: Math.round(verticalBottomPadding * 0.01) }]}>
+        <Animated.View style={[styles.heroHowStack, { transform: [{ translateY: howStackTranslateY }] }]}>
+          <View style={styles.topSection}>
             <View style={[styles.headerFrame, { paddingVertical: heroVerticalPadding }]}>
-              <View style={styles.logoRow}>
-                <LogoTile size={75} isDark={isDark} />
-              </View>
               <View style={styles.headingRow}>
                 <Text variant="heading" style={[styles.headingGap, { color: palette.textPrimary }]}>Gap</Text>
                 <Text variant="heading" style={[styles.headingWalk, { color: palette.textMuted }]}>Walk</Text>
@@ -330,8 +335,10 @@ export const IntroScreen: React.FC<Props> = ({
                 Busy schedule? No time to exercise? Turn your daily schedule gaps into short, realistic walks.
               </Text>
             </View>
+          </View>
 
-            <View style={[styles.howSection, { marginTop: heroToHowGap }]}>
+          <View style={styles.middleSection}>
+          <Animated.View style={[styles.howSection, { marginTop: heroToHowGap, transform: [{ translateY: howSectionTranslateY }] }]}>
               <TouchableOpacity
                 onPress={() => setShowHowItWorks((prev) => !prev)}
                 style={[
@@ -411,34 +418,32 @@ export const IntroScreen: React.FC<Props> = ({
                   </View>
                 </Animated.View>
               </Animated.View>
-            </View>
+            </Animated.View>
           </View>
+        </Animated.View>
 
-          <View style={[styles.bottom, { paddingTop: ctaTopGap }]}>
+          <View style={styles.bottomSection}>
             {!isAuthenticated ? (
               <>
-                <Button
-                  title="Log in"
-                  onPress={() => void runAuth('login')}
-                  full
-                  loading={authLoadingMode === 'login'}
-                  disabled={!authConfigured || authLoadingMode === 'signup'}
-                  testID="intro-auth-login"
-                />
-                <View style={styles.authDivider}>
-                  <View style={[styles.dividerLine, { backgroundColor: palette.borderStrong }]} />
-                  <Text variant="bodySmall" color={palette.textMuted} style={styles.dividerText}>or</Text>
-                  <View style={[styles.dividerLine, { backgroundColor: palette.borderStrong }]} />
+                <View style={styles.authButtonRow}>
+                  <Button
+                    title="Sign up"
+                    onPress={() => void runAuth('signup')}
+                    variant="secondary"
+                    loading={authLoadingMode === 'signup'}
+                    disabled={!authConfigured || authLoadingMode === 'login'}
+                    testID="intro-auth-signup"
+                    style={styles.authButtonHalf}
+                  />
+                  <Button
+                    title="Log in"
+                    onPress={() => void runAuth('login')}
+                    loading={authLoadingMode === 'login'}
+                    disabled={!authConfigured || authLoadingMode === 'signup'}
+                    testID="intro-auth-login"
+                    style={styles.authButtonHalf}
+                  />
                 </View>
-                <Button
-                  title="Sign up"
-                  onPress={() => void runAuth('signup')}
-                  variant="secondary"
-                  full
-                  loading={authLoadingMode === 'signup'}
-                  disabled={!authConfigured || authLoadingMode === 'login'}
-                  testID="intro-auth-signup"
-                />
                 <Pressable
                   onPress={() => setRememberMe((prev) => !prev)}
                   style={styles.rememberRow}
@@ -496,36 +501,47 @@ export const IntroScreen: React.FC<Props> = ({
                 : 'Your health and privacy are our utmost priority.'}
             </Text>
           </View>
-      </ScrollView>
+      </View>
+      <AppModal visible={messageDialog !== null} onClose={() => setMessageDialog(null)} title={messageDialog?.title ?? ''}>
+        <View style={{ paddingBottom: 8 }}>
+          <Text variant="body" style={{ color: palette.textMuted, textAlign: 'center', marginBottom: 24 }}>{messageDialog?.message}</Text>
+          <Button title="OK" onPress={() => setMessageDialog(null)} />
+        </View>
+      </AppModal>
     </Container>
   );
 };
 
 const styles = StyleSheet.create({
-  introLayout: {
-    flex: 1,
-  },
   screen: {
-    flexGrow: 1,
-    justifyContent: 'space-between',
+    flex: 1,
     alignSelf: 'center',
     width: '100%',
     maxWidth: theme.layout.contentMaxWidth,
     paddingHorizontal: theme.layout.contentHorizontal,
   },
-  topContent: {
-    width: '100%',
+  heroHowStack: {
+    flex: 7,
+  },
+  topSection: {
+    flex: 3,
+    justifyContent: 'center',
+  },
+  middleSection: {
+    flex: 4,
+    justifyContent: 'flex-start',
+    overflow: 'visible',
+  },
+  bottomSection: {
+    flex: 2,
+    justifyContent: 'flex-end',
+    paddingBottom: 20,
   },
   headerFrame: {
     width: '100%',
     maxWidth: 370,
     alignSelf: 'center',
     paddingHorizontal: theme.spacing.sm,
-  },
-  logoRow: {
-    alignItems: 'center',
-    marginBottom: theme.spacing.md,
-    marginTop: -4,
   },
   logoTile: {
     alignItems: 'center',
@@ -624,18 +640,12 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 2 },
     elevation: 2,
   },
-  bottom: {},
-  authDivider: {
+  authButtonRow: {
     flexDirection: 'row',
-    alignItems: 'center',
-    marginVertical: AUTH_DIVIDER_MARGIN_Y,
+    gap: 12,
   },
-  dividerLine: {
+  authButtonHalf: {
     flex: 1,
-    height: 1,
-  },
-  dividerText: {
-    marginHorizontal: theme.spacing.md,
   },
   rememberRow: {
     flexDirection: 'row',
@@ -655,7 +665,7 @@ const styles = StyleSheet.create({
     marginLeft: 8,
   },
   guestBtn: {
-    marginTop: AUTH_GUEST_BLOCK_GAP,
+    marginTop: 16,
   },
   guestBtnText: {
     letterSpacing: 0.2,
@@ -664,6 +674,6 @@ const styles = StyleSheet.create({
   },
   footer: {
     textAlign: 'center',
-    marginTop: AUTH_FOOTER_MARGIN_TOP,
+    marginTop: 10,
   },
 });

@@ -499,6 +499,18 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
   const [eventInfoEditMode, setEventInfoEditMode] = useState(false);
   const [eventInfoFormSnapshot, setEventInfoFormSnapshot] = useState<ManualFormState | null>(null);
   const [tappedInfoField, setTappedInfoField] = useState<'title' | 'frequency' | 'days' | 'time' | null>(null);
+  const [confirmDialog, setConfirmDialog] = useState<{
+    title: string;
+    message: string;
+    confirmText: string;
+    confirmStyle: 'default' | 'destructive';
+    onConfirm: () => void;
+  } | null>(null);
+  const [messageDialog, setMessageDialog] = useState<{
+    title: string;
+    message: string;
+    onAcknowledge?: () => void;
+  } | null>(null);
   const [editorScrollEnabled, setEditorScrollEnabled] = useState(true);
   const { width: winWidth, height: winHeight } = useWindowDimensions();
   const allowNextBeforeRemoveRef = useRef(false);
@@ -871,11 +883,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
       onAcknowledge?.();
       return;
     }
-    if (onAcknowledge) {
-      Alert.alert(title, message, [{ text: 'OK', onPress: onAcknowledge }]);
-      return;
-    }
-    Alert.alert(title, message);
+    setMessageDialog({ title, message, onAcknowledge });
   };
 
   const runAllowedNavigation = useCallback((action: () => void) => {
@@ -899,14 +907,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
       if (ok) onDiscard();
       return;
     }
-    Alert.alert(
-      title,
-      message,
-      [
-        { text: 'No', style: 'cancel' },
-        { text: 'Yes', style: 'destructive', onPress: onDiscard },
-      ]
-    );
+    showBinaryConfirm(title, message, 'Yes', onDiscard, 'destructive');
   };
 
   useEffect(() => {
@@ -1351,14 +1352,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
         if (ok) onConfirm();
         return;
       }
-      Alert.alert(
-        title,
-        message,
-        [
-          { text: 'No', style: 'cancel' },
-          { text: confirmActionText, style: confirmStyle, onPress: onConfirm },
-        ]
-      );
+      setConfirmDialog({ title, message, confirmText: confirmActionText, confirmStyle, onConfirm });
     },
     []
   );
@@ -1508,33 +1502,33 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
     }
     const title = form.title.trim();
     if (title.length === 0) {
-      Alert.alert('Title Required', 'Enter an event title.');
+      showMessage('Title Required', 'Enter an event title.');
       return;
     }
     const start = to24Hour(form.startHourRaw, form.startMinuteRaw, form.startPeriod);
     const end = to24Hour(form.endHourRaw, form.endMinuteRaw, form.endPeriod);
     if (!start || !end) {
-      Alert.alert('Invalid Time', 'Enter valid start and end times.');
+      showMessage('Invalid Time', 'Enter valid start and end times.');
       return;
     }
     // Allow overnight (e.g. sleep 10pm–6am): end can be before start
     if (start === end) {
-      Alert.alert('Invalid Time', 'Start and end time cannot be the same.');
+      showMessage('Invalid Time', 'Start and end time cannot be the same.');
       return;
     }
     if (form.repeatMode === 'one_time') {
       if (oneTimeDateResolution.error || !oneTimeDateResolution.dateKey) {
-        Alert.alert('Select date', oneTimeDateResolution.error ?? 'Choose a date for this one-time event.');
+        showMessage('Select date', oneTimeDateResolution.error ?? 'Choose a date for this one-time event.');
         return;
       }
       if (!isOneTimeFutureOrToday) {
-        Alert.alert('Select date', 'One-time event date must be today or later.');
+        showMessage('Select date', 'One-time event date must be today or later.');
         return;
       }
     }
     const resolvedOneTimeDate = form.repeatMode === 'one_time' ? oneTimeDateResolution.dateKey : null;
     if (form.repeatMode === 'one_time' && !resolvedOneTimeDate) {
-      Alert.alert('Select date', 'Choose a date for this one-time event.');
+      showMessage('Select date', 'Choose a date for this one-time event.');
       return;
     }
 
@@ -1609,7 +1603,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
             continue;
           }
           const dayName = DAY_FULL_NAMES[candidate.dayIndex];
-          Alert.alert(
+          showMessage(
             'Time conflict',
             `${dayName} already has an event ("${existing.event.title}") that overlaps this time. Only one-time events can replace a recurring event on a specific day; otherwise choose a different time.`,
           );
@@ -1766,25 +1760,13 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
     const deletingSeries = !!seriesId;
     const title = deletingSeries ? 'Delete recurring event?' : 'Delete event';
     const message = deletingSeries ? 'Remove this event from all repeated days?' : 'Remove this event?';
-    // Alert.alert button callbacks don't fire on web (react-native-web limitation)
     if (Platform.OS === 'web' && typeof (globalThis as any).confirm === 'function') {
       if ((globalThis as any).confirm(message)) {
         deleteEntryFromModal(id, deletingSeries ? seriesId : null);
       }
       return;
     }
-    Alert.alert(
-      title,
-      message,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: () => deleteEntryFromModal(id, deletingSeries ? seriesId : null),
-        },
-      ]
-    );
+    showBinaryConfirm(title, message, 'Delete', () => deleteEntryFromModal(id, deletingSeries ? seriesId : null), 'destructive');
   };
 
   const addEntry = addOrUpdateEntry;
@@ -1819,25 +1801,33 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
   }, [addOrUpdateEntry]);
 
   const handleEventInfoDelete = useCallback(() => {
-    const id = editingEventId;
-    const seriesId = editingSeriesId;
+    const id = editingEventId ?? viewOnlyEventInfo?.event.id ?? null;
+    const seriesId = editingSeriesId ?? (!viewOnlyEventInfo?.event.isOneTime ? resolveRecurringSeriesId(viewOnlyEventInfo?.event.id ?? '') : null);
     if (!id) return;
     const deletingSeries = !!seriesId;
     const title = deletingSeries ? 'Delete recurring event?' : 'Delete event';
     const message = deletingSeries ? 'Remove this event from all repeated days?' : 'Remove this event?';
     const doDelete = () => {
-      // deleteEntryFromModal calls closeEventModal which also closes the info modal
-      deleteEntryFromModal(id, deletingSeries ? seriesId : null);
+      if (editingEventId) {
+        deleteEntryFromModal(id, deletingSeries ? seriesId : null);
+      } else {
+        // Read-only view: delete directly and close the info modal
+        setEntriesByDay((prev) => {
+          const next = { ...prev };
+          for (const d of [0, 1, 2, 3, 4, 5, 6]) {
+            next[d] = (next[d] ?? []).filter((e) => {
+              if (deletingSeries && seriesId && !e.isOneTime && resolveRecurringSeriesId(e.id) === seriesId) return false;
+              if (id && e.id === id) return false;
+              return true;
+            });
+          }
+          return next;
+        });
+        closeEventInfoModal();
+      }
     };
-    if (Platform.OS === 'web' && typeof (globalThis as any).confirm === 'function') {
-      if ((globalThis as any).confirm(message)) doDelete();
-      return;
-    }
-    Alert.alert(title, message, [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Delete', style: 'destructive', onPress: doDelete },
-    ]);
-  }, [deleteEntryFromModal, editingEventId, editingSeriesId]);
+    showBinaryConfirm(title, message, 'Delete', doDelete, 'destructive');
+  }, [closeEventInfoModal, deleteEntryFromModal, editingEventId, editingSeriesId, showBinaryConfirm, viewOnlyEventInfo]);
 
   const parseTime = (t: string): [number, number] => {
     const parts = t.split(':').map(Number);
@@ -2007,8 +1997,6 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
         if (manageMode) {
           if (Platform.OS === 'android') {
             ToastAndroid.show('Schedule saved', ToastAndroid.SHORT);
-          } else if (Platform.OS === 'ios') {
-            Alert.alert('Saved', 'Schedule saved');
           } else {
             showMessage('Saved', 'Schedule saved');
           }
@@ -2070,22 +2058,12 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
       return;
     }
 
-    Alert.alert(
-      confirmTitle,
-      confirmMessage,
-      [
-        { text: SAVE_CONFIRM_DECLINE, style: 'cancel' },
-        {
-          text: confirmAction,
-          onPress: () => {
-            if (convertImportEditsToManual) {
-              setDidConfirmImportEditConversion(true);
-            }
-            void performSave({ convertImportEditsToManual });
-          },
-        },
-      ]
-    );
+    showBinaryConfirm(confirmTitle, confirmMessage, confirmAction, () => {
+      if (convertImportEditsToManual) {
+        setDidConfirmImportEditConversion(true);
+      }
+      void performSave({ convertImportEditsToManual });
+    });
   };
 
   const handleContinueAfterSave = () => {
@@ -2264,9 +2242,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
       selectedGridTarget.dayIndex === dayIndex &&
       selectedGridTarget.slotIndex === slotIndex;
     if (isSecondTapOnSameCell) {
-      setTimeout(() => {
-        handleSlotClick(dayIndex, slotIndex);
-      }, 70);
+      handleSlotClick(dayIndex, slotIndex);
       return;
     }
 
@@ -2358,10 +2334,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
       }
       return;
     }
-    Alert.alert(title, message, [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Clear', style: 'destructive', onPress: clearVisibleEvents },
-    ]);
+    showBinaryConfirm(title, message, 'Clear', clearVisibleEvents, 'destructive');
   };
 
   /* ── Current-time indicator (horizontal line in vertical-time grid) ── */
@@ -3486,6 +3459,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
             ]}
             onPress={confirmDelete}
             activeOpacity={0.8}
+            delayPressIn={0}
             accessibilityRole="button"
             accessibilityLabel="Delete event"
             testID="manual-schedule-delete-event"
@@ -3518,6 +3492,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
                   form.repeatMode === 'weekly' && { backgroundColor: palette.accentPrimary, borderColor: palette.accentPrimary },
                 ]}
                 onPress={() => setRepeatMode('weekly')}
+                delayPressIn={0}
               >
                 <Text
                   variant="bodySmall"
@@ -3538,6 +3513,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
                   form.repeatMode === 'one_time' && { backgroundColor: palette.accentPrimary, borderColor: palette.accentPrimary },
                 ]}
                 onPress={() => setRepeatMode('one_time')}
+                delayPressIn={0}
               >
                 <Text
                   variant="bodySmall"
@@ -3567,6 +3543,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
                       form.repeatDays.includes(idx) && { backgroundColor: palette.accentPrimary, borderColor: palette.accentPrimary },
                     ]}
                     onPress={() => toggleRepeatDay(idx)}
+                    delayPressIn={0}
                   >
                     <Text
                       variant="bodySmall"
@@ -3692,6 +3669,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
                           form.startPeriod === p && { backgroundColor: palette.accentPrimary },
                         ]}
                         onPress={() => setForm((prev) => ({ ...prev, startPeriod: p }))}
+                        delayPressIn={0}
                       >
                         <Text variant="bodySmall" style={[styles.periodBtnText, { color: form.startPeriod === p ? palette.accentOnSolid : palette.textPrimary }]}>{p}</Text>
                       </TouchableOpacity>
@@ -3745,6 +3723,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
                           form.endPeriod === p && { backgroundColor: palette.accentPrimary },
                         ]}
                         onPress={() => setForm((prev) => ({ ...prev, endPeriod: p }))}
+                        delayPressIn={0}
                       >
                         <Text variant="bodySmall" style={[styles.periodBtnText, { color: form.endPeriod === p ? palette.accentOnSolid : palette.textPrimary }]}>{p}</Text>
                       </TouchableOpacity>
@@ -3792,25 +3771,24 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
             </Animated.Text>
           </View>
         }
-        leftAccessory={eventInfoEditMode ? (
-          <Animated.View style={{ opacity: infoDeleteIconOpacity }}>
-            <TouchableOpacity
-              style={[
-                styles.modalHeaderIconBtn,
-                {
-                  backgroundColor: 'rgba(220,38,38,0.12)',
-                  borderColor: 'rgba(220,38,38,0.28)',
-                },
-              ]}
-              onPress={handleEventInfoDelete}
-              activeOpacity={0.8}
-              accessibilityRole="button"
-              accessibilityLabel="Delete event"
-            >
-              <AppIcon name="trash" size={17} color={theme.colors.error} />
-            </TouchableOpacity>
-          </Animated.View>
-        ) : undefined}
+        leftAccessory={
+          <TouchableOpacity
+            style={[
+              styles.modalHeaderIconBtn,
+              {
+                backgroundColor: 'rgba(220,38,38,0.12)',
+                borderColor: 'rgba(220,38,38,0.28)',
+              },
+            ]}
+            onPress={handleEventInfoDelete}
+            activeOpacity={0.8}
+            delayPressIn={0}
+            accessibilityRole="button"
+            accessibilityLabel="Delete event"
+          >
+            <AppIcon name="trash" size={17} color={theme.colors.error} />
+          </TouchableOpacity>
+        }
         rightAccessory={
           <TouchableOpacity
             style={[
@@ -3822,6 +3800,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
             ]}
             onPress={closeEventInfoModal}
             activeOpacity={0.75}
+            delayPressIn={0}
             accessibilityRole="button"
             accessibilityLabel="Close"
           >
@@ -3845,7 +3824,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
             <View style={styles.mForm}>
               <View style={styles.modalSection}>
                 <Text variant="bodySmall" style={[styles.modalLabel, { color: palette.textMuted }]}>Title</Text>
-                <TouchableOpacity activeOpacity={1} onPress={() => handleInfoFieldTap('title')}>
+                <TouchableOpacity activeOpacity={1} delayPressIn={0} onPress={() => handleInfoFieldTap('title')}>
                   <View style={[styles.input, themedInput, styles.eventInfoValueBox]}>
                     <Text variant="body" style={{ color: palette.textPrimary }}>{event.title}</Text>
                   </View>
@@ -3857,7 +3836,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
 
               <View style={styles.modalSection}>
                 <Text variant="bodySmall" style={[styles.modalLabel, { color: palette.textMuted }]}>Frequency</Text>
-                <TouchableOpacity activeOpacity={1} onPress={() => handleInfoFieldTap('frequency')}>
+                <TouchableOpacity activeOpacity={1} delayPressIn={0} onPress={() => handleInfoFieldTap('frequency')}>
                   <View style={styles.freqModeRow}>
                     <View
                       style={[
@@ -3893,7 +3872,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
               {!event.isOneTime ? (
                 <View style={styles.modalSection}>
                   <Text variant="bodySmall" style={[styles.modalLabel, { color: palette.textMuted }]}>Days</Text>
-                  <TouchableOpacity activeOpacity={1} onPress={() => handleInfoFieldTap('days')}>
+                  <TouchableOpacity activeOpacity={1} delayPressIn={0} onPress={() => handleInfoFieldTap('days')}>
                     <View style={styles.repeatDaysRow}>
                       {DAY_TAB_LABELS.map((d, idx) => {
                         const active = seriesDays.includes(idx);
@@ -3922,7 +3901,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
               ) : (
                 <View style={styles.modalSection}>
                   <Text variant="bodySmall" style={[styles.modalLabel, { color: palette.textMuted }]}>Date</Text>
-                  <TouchableOpacity activeOpacity={1} onPress={() => handleInfoFieldTap('days')}>
+                  <TouchableOpacity activeOpacity={1} delayPressIn={0} onPress={() => handleInfoFieldTap('days')}>
                     <View style={[styles.input, themedInput, styles.eventInfoValueBox]}>
                       <Text variant="body" style={{ color: palette.textPrimary }}>{event.oneTimeDate ?? '—'}</Text>
                     </View>
@@ -3935,7 +3914,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
 
               <View style={styles.modalSection}>
                 <Text variant="bodySmall" style={[styles.modalLabel, { color: palette.textMuted }]}>Time</Text>
-                <TouchableOpacity activeOpacity={1} onPress={() => handleInfoFieldTap('time')}>
+                <TouchableOpacity activeOpacity={1} delayPressIn={0} onPress={() => handleInfoFieldTap('time')}>
                   <View style={styles.timeStack}>
                     <View style={[styles.timeCard, themedChip]}>
                       <Text variant="bodySmall" style={styles.timeCardLabel}>Start</Text>
@@ -4006,6 +3985,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
                       form.repeatMode === 'weekly' && { backgroundColor: palette.accentPrimary, borderColor: palette.accentPrimary },
                     ]}
                     onPress={() => setRepeatMode('weekly')}
+                    delayPressIn={0}
                   >
                     <Text
                       variant="bodySmall"
@@ -4026,6 +4006,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
                       form.repeatMode === 'one_time' && { backgroundColor: palette.accentPrimary, borderColor: palette.accentPrimary },
                     ]}
                     onPress={() => setRepeatMode('one_time')}
+                    delayPressIn={0}
                   >
                     <Text
                       variant="bodySmall"
@@ -4055,6 +4036,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
                           form.repeatDays.includes(idx) && { backgroundColor: palette.accentPrimary, borderColor: palette.accentPrimary },
                         ]}
                         onPress={() => toggleRepeatDay(idx)}
+                        delayPressIn={0}
                       >
                         <Text
                           variant="bodySmall"
@@ -4162,6 +4144,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
                               form.startPeriod === p && { backgroundColor: palette.accentPrimary },
                             ]}
                             onPress={() => setForm((prev) => ({ ...prev, startPeriod: p }))}
+                            delayPressIn={0}
                           >
                             <Text variant="bodySmall" style={[styles.periodBtnText, { color: form.startPeriod === p ? palette.accentOnSolid : palette.textPrimary }]}>{p}</Text>
                           </TouchableOpacity>
@@ -4209,6 +4192,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
                               form.endPeriod === p && { backgroundColor: palette.accentPrimary },
                             ]}
                             onPress={() => setForm((prev) => ({ ...prev, endPeriod: p }))}
+                            delayPressIn={0}
                           >
                             <Text variant="bodySmall" style={[styles.periodBtnText, { color: form.endPeriod === p ? palette.accentOnSolid : palette.textPrimary }]}>{p}</Text>
                           </TouchableOpacity>
@@ -4237,6 +4221,54 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
             </View>
           );
         })()}
+      </AppModal>
+
+      {/* Themed message dialog — replaces native Alert.alert for single-action messages */}
+      <AppModal
+        visible={messageDialog !== null}
+        onClose={() => { messageDialog?.onAcknowledge?.(); setMessageDialog(null); }}
+        title={messageDialog?.title ?? ''}
+      >
+        <View style={styles.mForm}>
+          <Text variant="body" style={{ color: palette.textMuted, textAlign: 'center', marginBottom: 24 }}>
+            {messageDialog?.message}
+          </Text>
+          <Button
+            title="OK"
+            onPress={() => { messageDialog?.onAcknowledge?.(); setMessageDialog(null); }}
+            style={styles.modalActionButton}
+          />
+        </View>
+      </AppModal>
+
+      {/* Themed confirm dialog — replaces native Alert.alert for binary confirmations */}
+      <AppModal
+        visible={confirmDialog !== null}
+        onClose={() => setConfirmDialog(null)}
+        title={confirmDialog?.title ?? ''}
+      >
+        <View style={styles.mForm}>
+          <Text variant="body" style={{ color: palette.textMuted, textAlign: 'center', marginBottom: 24 }}>
+            {confirmDialog?.message}
+          </Text>
+          <View style={styles.modalActionsRow}>
+            <Button
+              title="No"
+              variant="secondary"
+              onPress={() => setConfirmDialog(null)}
+              style={styles.modalActionButton}
+            />
+            <Button
+              title={confirmDialog?.confirmText ?? 'Yes'}
+              variant={confirmDialog?.confirmStyle === 'destructive' ? 'danger' : 'primary'}
+              onPress={() => {
+                confirmDialog?.onConfirm();
+                setConfirmDialog(null);
+              }}
+              style={styles.modalActionButton}
+            />
+          </View>
+        </View>
       </AppModal>
     </SafeAreaView>
   );

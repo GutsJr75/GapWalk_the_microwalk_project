@@ -6,7 +6,6 @@ import {
   TextInput,
   TouchableOpacity,
   Pressable,
-  Alert,
   Animated,
   LayoutAnimation,
   Platform,
@@ -280,6 +279,10 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
   const [preferredError, setPreferredError] = useState<string | null>(null);
   const [savingPrefs, setSavingPrefs] = useState(false);
   const [showSaveToast, setShowSaveToast] = useState(false);
+  const [messageDialog, setMessageDialog] = useState<{ title: string; message: string } | null>(null);
+  const [confirmDialog, setConfirmDialog] = useState<{ title: string; message: string; confirmText: string; onConfirm: () => void; destructive?: boolean } | null>(null);
+  const showMessage = (title: string, message: string) => setMessageDialog({ title, message });
+  const showBinaryConfirm = (title: string, message: string, confirmText: string, onConfirm: () => void, style: 'default' | 'destructive' = 'default') => setConfirmDialog({ title, message, confirmText, onConfirm, destructive: style === 'destructive' });
   const [activeInfo, setActiveInfo] = useState<ActiveInfoState | null>(null);
   const { width: viewportWidth, height: viewportHeight } = useWindowDimensions();
   const [quietForm, setQuietForm] = useState(() => {
@@ -425,14 +428,7 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
       }
       return;
     }
-    Alert.alert(
-      discardTitle,
-      discardMessage,
-      [
-        { text: 'No', style: 'cancel' },
-        { text: 'Yes', style: 'destructive', onPress: onDiscard },
-      ]
-    );
+    showBinaryConfirm(discardTitle, discardMessage, 'Yes', onDiscard, 'destructive');
   }, [hasChanges]);
 
   useEffect(() => {
@@ -700,7 +696,7 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
       }
     }
     const msg = toUserFriendlyError(lastError);
-    Alert.alert('Could Not Save', msg);
+    showMessage('Could Not Save', msg);
     setSavingPrefs(false);
   };
 
@@ -726,20 +722,7 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
       }
       return;
     }
-    Alert.alert(
-      title,
-      message,
-      [
-        { text: SAVE_CONFIRM_DECLINE, style: 'cancel' },
-        {
-          text: actionLabel,
-          onPress: () => {
-            options?.onConfirm?.();
-            void savePreferences(nextPrefs);
-          },
-        },
-      ]
-    );
+    showBinaryConfirm(title, message, actionLabel, () => { options?.onConfirm?.(); void savePreferences(nextPrefs); });
   };
 
   const handleManageBackToOptions = () => {
@@ -1559,6 +1542,21 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
         message="Preferences saved"
         onDismiss={() => setShowSaveToast(false)}
       />
+      <Modal visible={messageDialog !== null} onClose={() => setMessageDialog(null)} title={messageDialog?.title ?? ''}>
+        <View style={{ paddingBottom: 8 }}>
+          <Text variant="body" style={{ color: palette.textMuted, textAlign: 'center', marginBottom: 24 }}>{messageDialog?.message}</Text>
+          <Button title="OK" onPress={() => setMessageDialog(null)} />
+        </View>
+      </Modal>
+      <Modal visible={confirmDialog !== null} onClose={() => setConfirmDialog(null)} title={confirmDialog?.title ?? ''}>
+        <View style={{ paddingBottom: 8 }}>
+          <Text variant="body" style={{ color: palette.textMuted, textAlign: 'center', marginBottom: 24 }}>{confirmDialog?.message}</Text>
+          <View style={{ flexDirection: 'row', gap: 12 }}>
+            <Button title="No" variant="secondary" onPress={() => setConfirmDialog(null)} style={{ flex: 1 }} />
+            <Button title={confirmDialog?.confirmText ?? 'Yes'} variant={confirmDialog?.destructive ? 'danger' : 'primary'} onPress={() => { confirmDialog?.onConfirm(); setConfirmDialog(null); }} style={{ flex: 1 }} />
+          </View>
+        </View>
+      </Modal>
     </Container>
   );
 };

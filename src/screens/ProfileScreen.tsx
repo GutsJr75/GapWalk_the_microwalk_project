@@ -1,5 +1,5 @@
 import React, { useCallback, useMemo, useState } from 'react';
-import { View, StyleSheet, Alert, Platform, Pressable, TextInput } from 'react-native';
+import { View, StyleSheet, Platform, Pressable, TextInput } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { Ionicons } from '@expo/vector-icons';
@@ -10,6 +10,7 @@ import { Card } from '../components/Card';
 import { ScreenState } from '../components/ScreenState';
 import { ScreenHeader } from '../components/ScreenHeader';
 import { SuccessToast } from '../components/SuccessToast';
+import { Modal as AppModal } from '../components/Modal';
 import { TwoActionBar } from '../components/TwoActionBar';
 import { theme } from '../theme';
 import { screenChrome } from '../theme/screenChrome';
@@ -65,6 +66,8 @@ export const ProfileScreen: React.FC<Props> = ({ navigation }) => {
   const [nameError, setNameError] = useState<string | null>(null);
   const [savingName, setSavingName] = useState(false);
   const [showSaveToast, setShowSaveToast] = useState(false);
+  const [confirmDialog, setConfirmDialog] = useState<{ title: string; message: string; confirmText: string; onConfirm: () => void } | null>(null);
+  const showBinaryConfirm = (title: string, message: string, confirmText: string, onConfirm: () => void) => setConfirmDialog({ title, message, confirmText, onConfirm });
 
   const resolvedDisplayName = useMemo(() => {
     const localName = profileDisplayName?.trim();
@@ -181,10 +184,7 @@ export const ProfileScreen: React.FC<Props> = ({ navigation }) => {
       return;
     }
 
-    Alert.alert('Log out', 'Are you sure you want to log out?', [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Log out', style: 'destructive', onPress: () => void doLogout() },
-    ]);
+    showBinaryConfirm('Log out', 'Are you sure you want to log out?', 'Log out', () => void doLogout());
   };
 
   const latestUnlocked = unlockedAchievements
@@ -420,6 +420,15 @@ export const ProfileScreen: React.FC<Props> = ({ navigation }) => {
         message="Profile updated"
         onDismiss={() => setShowSaveToast(false)}
       />
+      <AppModal visible={confirmDialog !== null} onClose={() => setConfirmDialog(null)} title={confirmDialog?.title ?? ''}>
+        <View style={{ paddingBottom: 8 }}>
+          <Text variant="body" style={{ color: palette.textMuted, textAlign: 'center', marginBottom: 24 }}>{confirmDialog?.message}</Text>
+          <View style={{ flexDirection: 'row', gap: 12 }}>
+            <Button title="Cancel" variant="secondary" onPress={() => setConfirmDialog(null)} style={{ flex: 1 }} />
+            <Button title={confirmDialog?.confirmText ?? 'Yes'} variant="danger" onPress={() => { confirmDialog?.onConfirm(); setConfirmDialog(null); }} style={{ flex: 1 }} />
+          </View>
+        </View>
+      </AppModal>
     </Container>
   );
 };

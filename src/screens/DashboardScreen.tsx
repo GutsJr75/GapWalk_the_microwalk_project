@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
-import { View, StyleSheet, ScrollView, RefreshControl, Alert, Pressable, Animated, Easing, useWindowDimensions, Platform } from 'react-native';
+import { View, StyleSheet, ScrollView, RefreshControl, Pressable, Animated, Easing, useWindowDimensions, Platform } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
@@ -39,6 +39,7 @@ import { toUserFriendlyError } from '../utils/errorMessages';
 import { authStorage } from '../data/authStorage';
 import { guidanceStorage } from '../data/guidanceStorage';
 import { SuccessToast } from '../components/SuccessToast';
+import { Modal as AppModal } from '../components/Modal';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
   DASHBOARD_TOUR_STEPS,
@@ -246,6 +247,13 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
     (changeHour !== changeInitialState.hour || changeMinute !== changeInitialState.minute ||
       changePeriod !== changeInitialState.period || changeDuration !== changeInitialState.duration ||
       changeNotifyChoice !== changeInitialState.notifyChoice);
+
+  // ── Themed dialog state ──
+  const [messageDialog, setMessageDialog] = useState<{ title: string; message: string } | null>(null);
+  const [confirmDialog, setConfirmDialog] = useState<{ title: string; message: string; confirmText: string; confirmStyle: 'default' | 'destructive'; onConfirm: () => void } | null>(null);
+  const showMessage = (title: string, message: string) => setMessageDialog({ title, message });
+  const showBinaryConfirm = (title: string, message: string, confirmText: string, onConfirm: () => void, style: 'default' | 'destructive' = 'default') =>
+    setConfirmDialog({ title, message, confirmText, confirmStyle: style, onConfirm });
 
   // ── Add walk modal state ──
   const [showAddWalkModal, setShowAddWalkModal] = useState(false);
@@ -490,7 +498,7 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
           .filter((plan) => plan.status === 'planned' || plan.status === 'notified')
           .sort((a, b) => a.walkStart.localeCompare(b.walkStart));
         if (!preferences || remainingToday.length === 0) {
-          Alert.alert('No walk windows today', 'No walk windows are available today.');
+          showMessage('No walk windows today', 'No walk windows are available today.');
           return;
         }
         const next = remainingToday[0];
@@ -499,11 +507,11 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
         const nextEndRaw = addMinutes(parseISO(next.walkStart), next.suggestedDurationMinutes);
         const nextGapEnd = parseISO(next.gapEnd);
         const nextEnd = isAfter(nextEndRaw, nextGapEnd) ? nextGapEnd : nextEndRaw;
-        Alert.alert('Next walk window selected',
+        showMessage('Next walk window selected',
           `Walk time: ${format(nextWalkStart, 'h:mm a')} - ${format(nextEnd, 'h:mm a')}\nNotification time: ${format(nextNotify, 'h:mm a')}`);
       } catch (error) {
         if (__DEV__) console.error('Failed to cancel walk opportunity:', error);
-        Alert.alert('Could Not Cancel', toUserFriendlyError(error));
+        showMessage('Could Not Cancel', toUserFriendlyError(error));
       }
     };
     const isManualPlan = opportunity.plan.reason === 'manual';
@@ -515,10 +523,7 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
       if ((globalThis as any).confirm(`${confirmTitle}\n\n${confirmMessage}`)) void performCancel();
       return;
     }
-    Alert.alert(confirmTitle, confirmMessage, [
-      { text: 'No', style: 'cancel' },
-      { text: 'Yes, cancel', style: 'destructive', onPress: () => { void performCancel(); } },
-    ]);
+    showBinaryConfirm(confirmTitle, confirmMessage, 'Yes, cancel', () => { void performCancel(); }, 'destructive');
   }, [preferences, setUpcomingPlans]);
 
   // ── Change walk handlers ──
@@ -559,7 +564,7 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
       if ((globalThis as any).confirm(`${title}\n\n${message}`)) closeNow();
       return;
     }
-    Alert.alert(title, message, [{ text: 'No', style: 'cancel' }, { text: 'Yes', style: 'destructive', onPress: closeNow }]);
+    showBinaryConfirm(title, message, 'Yes', closeNow, 'destructive');
   };
 
   const shouldAllowChangeQuietHoursBypass = useCallback((opportunity: PlanOpportunity) => {
@@ -668,7 +673,7 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
       setShowSaveToast(true);
     } catch (error) {
       if (__DEV__) console.error('Failed to update walk window:', error);
-      Alert.alert('Could Not Update', toUserFriendlyError(error));
+      showMessage('Could Not Update', toUserFriendlyError(error));
     } finally { setSavingChange(false); }
   };
 
@@ -719,10 +724,7 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
       if ((globalThis as any).confirm(`Update this walk?\n\n${message}`)) void applyWalkChange();
       return;
     }
-    Alert.alert('Update this walk?', message, [
-      { text: 'No', style: 'cancel' },
-      { text: 'Yes, Update', onPress: () => { void applyWalkChange(); } },
-    ]);
+    showBinaryConfirm('Update this walk?', message, 'Yes, Update', () => { void applyWalkChange(); });
   };
 
   // ── Add walk handlers ──
@@ -764,7 +766,7 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
       if ((globalThis as any).confirm(`${title}\n\n${message}`)) closeNow();
       return;
     }
-    Alert.alert(title, message, [{ text: 'No', style: 'cancel' }, { text: 'Yes', style: 'destructive', onPress: closeNow }]);
+    showBinaryConfirm(title, message, 'Yes', closeNow, 'destructive');
   };
 
   const saveManualWalk = async (bypassQuiet = false) => {
@@ -854,10 +856,7 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
       if ((globalThis as any).confirm(message)) void saveManualWalk(quietHoursBypass);
       return;
     }
-    Alert.alert('Save this walk?', message, [
-      { text: 'No', style: 'cancel' },
-      { text: 'Yes, save', onPress: () => { void saveManualWalk(quietHoursBypass); } },
-    ]);
+    showBinaryConfirm('Save this walk?', message, 'Yes, save', () => { void saveManualWalk(quietHoursBypass); });
   };
 
   // ── Menu handlers ──
@@ -945,10 +944,7 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
       if ((globalThis as any).confirm('Are you sure you want to log out?')) void doLogout();
       return;
     }
-    Alert.alert('Log out', 'Are you sure you want to log out?', [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Log out', style: 'destructive', onPress: () => { void doLogout(); } },
-    ]);
+    showBinaryConfirm('Log out', 'Are you sure you want to log out?', 'Log out', () => { void doLogout(); }, 'destructive');
   };
 
   // ── Guidance helpers ──
@@ -1298,6 +1294,28 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
           void authStorage.saveDashboardTourSeen(true);
         }}
       />
+
+      <AppModal visible={messageDialog !== null} onClose={() => setMessageDialog(null)} title={messageDialog?.title ?? ''}>
+        <View style={{ paddingBottom: 8 }}>
+          <Text variant="body" style={{ color: palette.textMuted, textAlign: 'center', marginBottom: 24 }}>{messageDialog?.message}</Text>
+          <Button title="OK" onPress={() => setMessageDialog(null)} />
+        </View>
+      </AppModal>
+
+      <AppModal visible={confirmDialog !== null} onClose={() => setConfirmDialog(null)} title={confirmDialog?.title ?? ''}>
+        <View style={{ paddingBottom: 8 }}>
+          <Text variant="body" style={{ color: palette.textMuted, textAlign: 'center', marginBottom: 24 }}>{confirmDialog?.message}</Text>
+          <View style={{ flexDirection: 'row', gap: 12 }}>
+            <Button title="Cancel" onPress={() => setConfirmDialog(null)} variant="muted" style={{ flex: 1 }} />
+            <Button
+              title={confirmDialog?.confirmText ?? 'Confirm'}
+              onPress={() => { confirmDialog?.onConfirm(); setConfirmDialog(null); }}
+              variant={confirmDialog?.confirmStyle === 'destructive' ? 'danger' : 'primary'}
+              style={{ flex: 1 }}
+            />
+          </View>
+        </View>
+      </AppModal>
     </SafeAreaView>
   );
 };

@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Alert, Animated, Easing, Linking, Platform, Pressable, StyleSheet, View } from 'react-native';
+import { Animated, Easing, Linking, Platform, Pressable, StyleSheet, View } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { Ionicons } from '@expo/vector-icons';
 import { RootStackParamList } from '../../App';
@@ -9,6 +9,7 @@ import { Card } from '../components/Card';
 import { Text } from '../components/Text';
 import { Button } from '../components/Button';
 import { TwoActionBar } from '../components/TwoActionBar';
+import { Modal as AppModal } from '../components/Modal';
 import { theme } from '../theme';
 import { screenChrome } from '../theme/screenChrome';
 import { ThemePalette, useThemePalette } from '../theme/palette';
@@ -156,6 +157,8 @@ const FaqAccordionItem: React.FC<{
 export const AboutHelpScreen: React.FC<Props> = ({ navigation }) => {
   const palette = useThemePalette();
   const { themeMode } = useAppStore();
+  const [messageDialog, setMessageDialog] = React.useState<{ title: string; message: string } | null>(null);
+  const showMessage = (title: string, message: string) => setMessageDialog({ title, message });
 
   const exitScreen = () => {
     navigation.navigate('Dashboard', { openMenu: true });
@@ -172,10 +175,7 @@ export const AboutHelpScreen: React.FC<Props> = ({ navigation }) => {
         (globalThis as any).alert('Please copy the email address and contact us from your email app.');
         return;
       }
-      Alert.alert(
-        'Unable to open email',
-        'Please copy the email address and contact us from your email app.'
-      );
+      showMessage('Unable to open email', 'Please copy the email address and contact us from your email app.');
     }
   }, []);
 
@@ -317,6 +317,12 @@ export const AboutHelpScreen: React.FC<Props> = ({ navigation }) => {
           style={styles.footerActions}
         />
       </View>
+      <AppModal visible={messageDialog !== null} onClose={() => setMessageDialog(null)} title={messageDialog?.title ?? ''}>
+        <View style={{ paddingBottom: 8 }}>
+          <Text variant="body" style={{ color: palette.textMuted, textAlign: 'center', marginBottom: 24 }}>{messageDialog?.message}</Text>
+          <Button title="OK" onPress={() => setMessageDialog(null)} />
+        </View>
+      </AppModal>
     </Container>
   );
 };

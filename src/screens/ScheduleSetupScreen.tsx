@@ -8,7 +8,6 @@ import {
   UIManager,
   Animated,
   Easing,
-  Alert,
 } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import * as DocumentPicker from 'expo-document-picker';
@@ -219,11 +218,7 @@ const ScheduleSetupScreenInner: React.FC<Props> = ({ navigation, route }) => {
   const startGoogleAuth = async () => {
     const configError = getGoogleConfigurationError();
     if (configError || !isGoogleConfigured()) {
-      Alert.alert(
-        'Google Calendar',
-        configError ?? 'Google Calendar is not configured.',
-        [{ text: 'OK' }],
-      );
+      showMessage('Google Calendar', configError ?? 'Google Calendar is not configured.');
       return;
     }
     setLoading(true);
@@ -240,7 +235,7 @@ const ScheduleSetupScreenInner: React.FC<Props> = ({ navigation, route }) => {
       setLoading(false);
       setSyncStatus(null);
       const msg = toUserFriendlyError(error);
-      Alert.alert('Sign-in Failed', msg);
+      showMessage('Sign-in Failed', msg);
     }
   };
 

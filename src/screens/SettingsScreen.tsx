@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { View, StyleSheet, Alert, Platform, Pressable, Linking, Switch } from 'react-native';
+import { View, StyleSheet, Platform, Pressable, Linking, Switch } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import * as WebBrowser from 'expo-web-browser';
 import Constants from 'expo-constants';
@@ -15,6 +15,7 @@ import { Button } from '../components/Button';
 import { ScreenHeader } from '../components/ScreenHeader';
 import { SuccessToast } from '../components/SuccessToast';
 import { TwoActionBar } from '../components/TwoActionBar';
+import { Modal as AppModal } from '../components/Modal';
 import { Ionicons } from '@expo/vector-icons';
 import { AppIcon } from '../components/AppIcon';
 import { theme } from '../theme';
@@ -125,6 +126,10 @@ export const SettingsScreen: React.FC<Props> = ({ navigation }) => {
   const allowExitRef = useRef(false);
   const [showSaveToast, setShowSaveToast] = useState(false);
   const [saveToastMessage, setSaveToastMessage] = useState('Settings saved');
+  const [messageDialog, setMessageDialog] = useState<{ title: string; message: string } | null>(null);
+  const [confirmDialog, setConfirmDialog] = useState<{ title: string; message: string; confirmText: string; onConfirm: () => void; destructive?: boolean } | null>(null);
+  const showMessage = (title: string, message: string) => setMessageDialog({ title, message });
+  const showBinaryConfirm = (title: string, message: string, confirmText: string, onConfirm: () => void, style: 'default' | 'destructive' = 'default') => setConfirmDialog({ title, message, confirmText, onConfirm, destructive: style === 'destructive' });
   const [exporting, setExporting] = useState(false);
   const hasUnsavedChangesRef = useRef(false);
 
@@ -205,10 +210,7 @@ export const SettingsScreen: React.FC<Props> = ({ navigation }) => {
         return;
       }
 
-      Alert.alert(title, message, [
-        { text: translateLiteral('Keep editing', activeLanguage), style: 'cancel' },
-        { text: translateLiteral('Discard', activeLanguage), style: 'destructive', onPress: discardAndLeave },
-      ]);
+      showBinaryConfirm(title, message, translateLiteral('Discard', activeLanguage), discardAndLeave, 'destructive');
     });
 
     return unsubscribe;
@@ -258,7 +260,7 @@ export const SettingsScreen: React.FC<Props> = ({ navigation }) => {
     try {
       const sessions = await sessionsRepo.getAll();
       if (sessions.length === 0) {
-        Alert.alert('No Data', 'There are no walk sessions to export yet.');
+        showMessage('No Data', 'There are no walk sessions to export yet.');
         return;
       }
 
@@ -288,7 +290,7 @@ export const SettingsScreen: React.FC<Props> = ({ navigation }) => {
           UTI: 'public.comma-separated-values-text',
         });
       } else {
-        Alert.alert('Sharing not available', 'Your device does not support file sharing.');
+        showMessage('Sharing not available', 'Your device does not support file sharing.');
       }
     } catch (error) {
       if (__DEV__) console.error('Export failed:', error);
@@ -298,30 +300,25 @@ export const SettingsScreen: React.FC<Props> = ({ navigation }) => {
   };
 
   const handleClearWalkHistory = () => {
-    Alert.alert(
+    showBinaryConfirm(
       'Clear Walk History',
       'This will permanently delete all your walk sessions, routes, and related data. This cannot be undone.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete All',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              const db = await getDatabase();
-              await db.runAsync('DELETE FROM walk_sessions');
-              await db.runAsync('DELETE FROM walk_routes');
-              await db.runAsync('DELETE FROM walk_pause_events');
-              await db.runAsync('DELETE FROM walk_checkpoint');
-              setSaveToastMessage(t('Walk history cleared'));
-              setShowSaveToast(true);
-            } catch (error) {
-              if (__DEV__) console.error('Clear walk history failed:', error);
-              Alert.alert('Error', 'Could not clear walk history. Please try again.');
-            }
-          },
-        },
-      ]
+      'Delete All',
+      async () => {
+        try {
+          const db = await getDatabase();
+          await db.runAsync('DELETE FROM walk_sessions');
+          await db.runAsync('DELETE FROM walk_routes');
+          await db.runAsync('DELETE FROM walk_pause_events');
+          await db.runAsync('DELETE FROM walk_checkpoint');
+          setSaveToastMessage(t('Walk history cleared'));
+          setShowSaveToast(true);
+        } catch (error) {
+          if (__DEV__) console.error('Clear walk history failed:', error);
+          showMessage('Error', 'Could not clear walk history. Please try again.');
+        }
+      },
+      'destructive'
     );
   };
 
@@ -343,12 +340,12 @@ export const SettingsScreen: React.FC<Props> = ({ navigation }) => {
   const simulateNotificationStart = async () => {
     const first = (await plansRepo.getUpcomingPlans(1))[0];
     if (!first) {
-      Alert.alert('No upcoming plan', 'Create a schedule first so we can simulate the start action.');
+      showMessage('No upcoming plan', 'Create a schedule first so we can simulate the start action.');
       return;
     }
     const result = await notificationPlanActions.canStartPlan(first.id);
     if (!result.allowed) {
-      Alert.alert('Action blocked', 'The start action was blocked, likely because today\'s goal is already complete.');
+      showMessage('Action blocked', 'The start action was blocked, likely because today\'s goal is already complete.');
       return;
     }
     navigation.navigate('Walking', { planId: first.id, startedFromNotification: true });
@@ -357,20 +354,17 @@ export const SettingsScreen: React.FC<Props> = ({ navigation }) => {
   const simulateNotificationSkip = async () => {
     const first = (await plansRepo.getUpcomingPlans(1))[0];
     if (!first) {
-      Alert.alert('No upcoming plan', 'Create a schedule first so we can simulate the skip action.');
+      showMessage('No upcoming plan', 'Create a schedule first so we can simulate the skip action.');
       return;
     }
     await notificationPlanActions.skipGap(first.id);
-    Alert.alert('Done', 'Skip action simulated for the next upcoming plan.');
+    showMessage('Done', 'Skip action simulated for the next upcoming plan.');
   };
 
   const showTelemetrySnapshot = async () => {
     const events = await analyticsRepo.getRecentEvents(20);
     const crashes = await analyticsRepo.getRecentCrashes(5);
-    Alert.alert(
-      'Telemetry Snapshot',
-      `Recent events: ${events.length}\nRecent crashes: ${crashes.length}`
-    );
+    showMessage('Telemetry Snapshot', `Recent events: ${events.length}\nRecent crashes: ${crashes.length}`);
   };
 
   // --- UI helpers ---
@@ -380,7 +374,7 @@ export const SettingsScreen: React.FC<Props> = ({ navigation }) => {
     const isOn = walkDisplayCards.includes(card);
     if (isOn) {
       if (walkDisplayCards.length <= 2) {
-        Alert.alert('Minimum Cards', 'At least 2 cards must be visible on the walking screen.');
+        showMessage('Minimum Cards', 'At least 2 cards must be visible on the walking screen.');
         return;
       }
       setWalkDisplayCards(walkDisplayCards.filter((c) => c !== card));
@@ -779,6 +773,21 @@ export const SettingsScreen: React.FC<Props> = ({ navigation }) => {
         message={saveToastMessage}
         onDismiss={() => setShowSaveToast(false)}
       />
+      <AppModal visible={messageDialog !== null} onClose={() => setMessageDialog(null)} title={messageDialog?.title ?? ''}>
+        <View style={{ paddingBottom: 8 }}>
+          <Text variant="body" style={{ color: palette.textMuted, textAlign: 'center', marginBottom: 24 }}>{messageDialog?.message}</Text>
+          <Button title="OK" onPress={() => setMessageDialog(null)} />
+        </View>
+      </AppModal>
+      <AppModal visible={confirmDialog !== null} onClose={() => setConfirmDialog(null)} title={confirmDialog?.title ?? ''}>
+        <View style={{ paddingBottom: 8 }}>
+          <Text variant="body" style={{ color: palette.textMuted, textAlign: 'center', marginBottom: 24 }}>{confirmDialog?.message}</Text>
+          <View style={{ flexDirection: 'row', gap: 12 }}>
+            <Button title="Cancel" variant="secondary" onPress={() => setConfirmDialog(null)} style={{ flex: 1 }} />
+            <Button title={confirmDialog?.confirmText ?? 'Yes'} variant={confirmDialog?.destructive ? 'danger' : 'primary'} onPress={() => { confirmDialog?.onConfirm(); setConfirmDialog(null); }} style={{ flex: 1 }} />
+          </View>
+        </View>
+      </AppModal>
     </Container>
   );
 };
