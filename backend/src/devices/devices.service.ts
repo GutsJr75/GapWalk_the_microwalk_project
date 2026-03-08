@@ -20,20 +20,30 @@ export class DevicesService {
       isActive: true,
     };
 
-    return this.prisma.device.upsert({
-      where: {
-        userId_expoPushToken: {
+    const [device] = await Promise.all([
+      this.prisma.device.upsert({
+        where: {
+          userId_expoPushToken: {
+            userId,
+            expoPushToken: dto.expoPushToken,
+          },
+        },
+        update: deviceFields,
+        create: {
           userId,
           expoPushToken: dto.expoPushToken,
+          ...deviceFields,
         },
-      },
-      update: deviceFields,
-      create: {
-        userId,
-        expoPushToken: dto.expoPushToken,
-        ...deviceFields,
-      },
-    });
+      }),
+      dto.timezone
+        ? this.prisma.user.update({
+            where: { id: userId },
+            data: { timezone: dto.timezone },
+          })
+        : Promise.resolve(),
+    ]);
+
+    return device;
   }
 
   async deactivate(userId: string, expoPushToken: string) {

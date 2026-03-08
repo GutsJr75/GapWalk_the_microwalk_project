@@ -224,6 +224,7 @@ export async function registerDevice(params: {
   notificationPermissionGranted?: boolean;
   locationPermissionLevel?: string;
   activityPermissionGranted?: boolean;
+  timezone?: string;
 }): Promise<boolean> {
   const token = await authStorage.getToken();
   if (!token) return false;
