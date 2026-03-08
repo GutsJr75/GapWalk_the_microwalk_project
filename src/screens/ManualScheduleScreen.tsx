@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   StyleSheet,
@@ -14,8 +14,7 @@ import {
   useWindowDimensions,
   Platform,
   Modal as RNModal,
-  NativeSyntheticEvent,
-  NativeScrollEvent,
+  PanResponder,
   AccessibilityActionEvent,
   InteractionManager,
 } from 'react-native';
@@ -499,6 +498,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
   const [viewOnlyEventInfo, setViewOnlyEventInfo] = useState<{ event: TemplateEvent; dayIndex: number } | null>(null);
   const [eventInfoEditMode, setEventInfoEditMode] = useState(false);
   const [eventInfoFormSnapshot, setEventInfoFormSnapshot] = useState<ManualFormState | null>(null);
+  const [tappedInfoField, setTappedInfoField] = useState<'title' | 'frequency' | 'days' | 'time' | null>(null);
   const [editorScrollEnabled, setEditorScrollEnabled] = useState(true);
   const { width: winWidth, height: winHeight } = useWindowDimensions();
   const allowNextBeforeRemoveRef = useRef(false);
@@ -508,7 +508,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
     setShowSourceSheet(false);
   }, [manageMode]);
   const gridScrollRef = useRef<ScrollView>(null);
-  const weekHeaderPagerRef = useRef<ScrollView>(null);
+  const weekSlideX = useRef(new Animated.Value(0)).current;
   const oneTimeMonthRef = useRef<TextInput>(null);
   const oneTimeDayRef = useRef<TextInput>(null);
   const oneTimeYearRef = useRef<TextInput>(null);
@@ -522,8 +522,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
   const eventPopAnim = useRef(new Animated.Value(0)).current;
   const eventPulseTokenRef = useRef(0);
   const selectedCellAnimTokenRef = useRef(0);
-  const weekHeaderUserDraggingRef = useRef(false);
-  const weekHeaderShiftCommittedRef = useRef(false);
+  const weekSlideActiveRef = useRef(false);
   const prevWeekNavScale = useRef(new Animated.Value(1)).current;
   const nextWeekNavScale = useRef(new Animated.Value(1)).current;
   const prevWeekNavGlow = useRef(new Animated.Value(0)).current;
@@ -1278,6 +1277,13 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
     };
   }, [entriesByDay, getPreferredOneTimeDateForDay]);
 
+  const tappedInfoFieldTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const handleInfoFieldTap = useCallback((field: 'title' | 'frequency' | 'days' | 'time') => {
+    if (tappedInfoFieldTimerRef.current) clearTimeout(tappedInfoFieldTimerRef.current);
+    setTappedInfoField(field);
+    tappedInfoFieldTimerRef.current = setTimeout(() => setTappedInfoField(null), 2500);
+  }, []);
+
   const handleEventInfoEdit = useCallback(() => {
     if (!viewOnlyEventInfo) return;
     const { event, dayIndex } = viewOnlyEventInfo;
@@ -1321,6 +1327,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
     setViewOnlyEventInfo(null);
     setEventInfoEditMode(false);
     setEventInfoFormSnapshot(null);
+    setTappedInfoField(null);
     setEditingEventId(null);
     setEditingSeriesId(null);
     setEventFormInitialSignature('');
@@ -2432,53 +2439,90 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
     });
   }, [activeWeekStart, entriesByDaySorted]);
 
-  const centerWeekHeaderPager = useCallback((animated: boolean) => {
-    weekHeaderPagerRef.current?.scrollTo({ x: weekHeaderPagerWidth, y: 0, animated });
-  }, [weekHeaderPagerWidth]);
+  const weekSlideNeedsResetRef = useRef(false);
+
+  // Reset animated offset AFTER React re-renders with new week data,
+  // but BEFORE the frame is painted — prevents old-data flash.
+  useLayoutEffect(() => {
+    if (weekSlideNeedsResetRef.current) {
+      weekSlideX.setValue(0);
+      weekSlideActiveRef.current = false;
+      weekSlideNeedsResetRef.current = false;
+    }
+  }, [activeWeekStart, weekSlideX]);
 
   const commitWeekShift = useCallback((direction: -1 | 1) => {
-    weekHeaderUserDraggingRef.current = false;
-    weekHeaderShiftCommittedRef.current = false;
-    setSelectedDay(null);
-    setSelectedGridTarget(null);
-    setClearArmedDay(null);
-    setActiveWeekStart((prev) => addDays(prev, direction * 7));
-    requestAnimationFrame(() => {
-      centerWeekHeaderPager(false);
+    if (weekSlideActiveRef.current) return;
+    weekSlideActiveRef.current = true;
+    Animated.spring(weekSlideX, {
+      toValue: -direction * weekHeaderPagerWidth,
+      tension: 280,
+      friction: 28,
+      useNativeDriver: false,
+    }).start(() => {
+      weekSlideNeedsResetRef.current = true;
+      setSelectedDay(null);
+      setSelectedGridTarget(null);
+      setClearArmedDay(null);
+      setActiveWeekStart((prev) => addDays(prev, direction * 7));
     });
-  }, [centerWeekHeaderPager]);
+  }, [weekHeaderPagerWidth, weekSlideX]);
 
-  const settleWeekHeaderPager = useCallback((x: number) => {
-    if (!weekHeaderUserDraggingRef.current || weekHeaderShiftCommittedRef.current) return;
-    const page = Math.round(x / weekHeaderPagerWidth);
-    weekHeaderUserDraggingRef.current = false;
-    if (page === 0 || page === 2) {
-      weekHeaderShiftCommittedRef.current = true;
-      commitWeekShift(page === 0 ? -1 : 1);
-      return;
-    }
-    weekHeaderShiftCommittedRef.current = false;
-  }, [commitWeekShift, weekHeaderPagerWidth]);
-
-  const handleWeekHeaderScrollBeginDrag = useCallback(() => {
-    weekHeaderUserDraggingRef.current = true;
-    weekHeaderShiftCommittedRef.current = false;
-  }, []);
-
-  const handleWeekHeaderScrollEndDrag = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
-    const velocity = event.nativeEvent.velocity?.x ?? 0;
-    const velocityX = Math.abs(velocity);
-    if (velocityX > 0.1) {
-      weekHeaderShiftCommittedRef.current = true;
-      commitWeekShift(velocity > 0 ? -1 : 1);
-      return;
-    }
-    settleWeekHeaderPager(event.nativeEvent.contentOffset.x);
-  }, [commitWeekShift, settleWeekHeaderPager]);
-
-  const handleWeekHeaderMomentumScrollEnd = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
-    settleWeekHeaderPager(event.nativeEvent.contentOffset.x);
-  }, [settleWeekHeaderPager]);
+  const weekPanResponder = useMemo(() =>
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => false,
+      onMoveShouldSetPanResponder: (_, gs) =>
+        !weekSlideActiveRef.current && Math.abs(gs.dx) > 10 && Math.abs(gs.dy) < 20,
+      onPanResponderGrant: () => {
+        weekSlideX.stopAnimation();
+        weekSlideX.setValue(0);
+      },
+      onPanResponderMove: (_, gs) => {
+        const clamped = Math.max(-weekHeaderPagerWidth, Math.min(weekHeaderPagerWidth, gs.dx));
+        weekSlideX.setValue(clamped);
+      },
+      onPanResponderRelease: (_, gs) => {
+        const swipeThreshold = weekHeaderPagerWidth * 0.25;
+        const velocityThreshold = 0.4;
+        let direction: -1 | 0 | 1 = 0;
+        if (gs.dx > swipeThreshold || gs.vx > velocityThreshold) {
+          direction = -1; // swiped right = previous week
+        } else if (gs.dx < -swipeThreshold || gs.vx < -velocityThreshold) {
+          direction = 1; // swiped left = next week
+        }
+        if (direction !== 0) {
+          weekSlideActiveRef.current = true;
+          Animated.spring(weekSlideX, {
+            toValue: -direction * weekHeaderPagerWidth,
+            tension: 280,
+            friction: 28,
+            useNativeDriver: false,
+          }).start(() => {
+            weekSlideNeedsResetRef.current = true;
+            setSelectedDay(null);
+            setSelectedGridTarget(null);
+            setClearArmedDay(null);
+            setActiveWeekStart((prev) => addDays(prev, direction * 7));
+          });
+        } else {
+          Animated.spring(weekSlideX, {
+            toValue: 0,
+            tension: 300,
+            friction: 26,
+            useNativeDriver: false,
+          }).start();
+        }
+      },
+      onPanResponderTerminate: () => {
+        Animated.spring(weekSlideX, {
+          toValue: 0,
+          tension: 300,
+          friction: 26,
+          useNativeDriver: false,
+        }).start();
+      },
+    }),
+  [weekHeaderPagerWidth, weekSlideX]);
 
   const animateWeekHeaderNavPress = useCallback((direction: -1 | 1, pressed: boolean) => {
     const scaleAnim = direction < 0 ? prevWeekNavScale : nextWeekNavScale;
@@ -2518,13 +2562,6 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
   const unlockEditorScroll = useCallback(() => {
     setEditorScrollEnabled(true);
   }, []);
-
-  useEffect(() => {
-    const frame = requestAnimationFrame(() => {
-      centerWeekHeaderPager(false);
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [centerWeekHeaderPager]);
 
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: palette.bgApp }]}>
@@ -2700,22 +2737,8 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
                   </Animated.View>
                 </Pressable>
               </View>
-              <ScrollView
-                ref={weekHeaderPagerRef}
-                horizontal
-                pagingEnabled
-                bounces={false}
-                disableIntervalMomentum
-                directionalLockEnabled
-                showsHorizontalScrollIndicator={false}
-                scrollEventThrottle={16}
-                decelerationRate="fast"
-                contentOffset={{ x: weekHeaderPagerWidth, y: 0 }}
+              <View
                 style={[styles.weekHeaderPager, { width: weekHeaderPagerWidth }]}
-                contentContainerStyle={styles.weekHeaderPagerContent}
-                onScrollBeginDrag={handleWeekHeaderScrollBeginDrag}
-                onScrollEndDrag={handleWeekHeaderScrollEndDrag}
-                onMomentumScrollEnd={handleWeekHeaderMomentumScrollEnd}
                 accessibilityRole="adjustable"
                 accessibilityLabel="Weekly schedule header"
                 accessibilityValue={{ text: `Week of ${format(activeWeekDates[0], 'MMMM d, yyyy')}` }}
@@ -2725,93 +2748,118 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
                 ]}
                 onAccessibilityAction={handleWeekHeaderAccessibilityAction}
                 testID="manual-week-header-pager"
+                {...weekPanResponder.panHandlers}
               >
-                {headerWeekPages.map((page, pageIndex) => {
-                  const isCenteredPage = pageIndex === 1;
-                  return (
-                    <View key={page.key} style={[styles.weekHeaderDaysRow, { width: weekGridWidth }]}>
-                      {page.dates.map((date, dayIndex) => {
-                        const dateKey = toDateKey(date);
-                        const isSelected = isCenteredPage && selectedDay === dayIndex;
-                        const isToday = dateKey === todayGridDateKey;
-                        const visibleCount = (page.visibleEntriesByDay[dayIndex] ?? []).length;
-                        return (
-                          <Pressable
-                            key={`week-day-${dateKey}`}
-                            disabled={!isCenteredPage}
-                            onPress={() => {
-                              setSelectedDay(dayIndex);
-                              setSelectedGridTarget(null);
-                              setClearArmedDay(null);
-                            }}
-                            accessibilityRole="button"
-                            accessibilityLabel={format(date, 'EEEE, MMMM d, yyyy')}
-                            accessibilityState={isCenteredPage ? { selected: isSelected } : undefined}
-                            testID={`manual-week-day-${dateKey}`}
-                            style={({ pressed }) => [
-                              styles.weekHeaderDayCell,
-                              {
-                                width: dayColumnWidth,
-                                borderColor: isSelected ? palette.accentPrimary : 'transparent',
-                                backgroundColor: isSelected ? accentSurfaceStrong : 'transparent',
-                              },
-                              pressed && isCenteredPage && { opacity: 0.82 },
+                <Animated.View
+                  style={[
+                    styles.weekHeaderPagerContent,
+                    {
+                      width: weekGridWidth * 3,
+                      transform: [{
+                        translateX: weekSlideX.interpolate({
+                          inputRange: [-weekHeaderPagerWidth, 0, weekHeaderPagerWidth],
+                          outputRange: [-weekHeaderPagerWidth - weekGridWidth, -weekGridWidth, -weekGridWidth + weekHeaderPagerWidth],
+                        }),
+                      }],
+                    },
+                  ]}
+                >
+                  {headerWeekPages.map((page, pageIndex) => {
+                    const isCenteredPage = pageIndex === 1;
+                    return (
+                      <View key={page.key} style={[styles.weekHeaderDaysRow, { width: weekGridWidth }]}>
+                        {pageIndex > 0 && (
+                          <View
+                            style={[
+                              styles.weekDivider,
+                              { backgroundColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(15,23,42,0.08)' },
                             ]}
-                          >
-                            <Text
-                              variant="bodySmall"
-                              style={[
-                                styles.weekHeaderDayName,
+                            pointerEvents="none"
+                          />
+                        )}
+                        {page.dates.map((date, dayIndex) => {
+                          const dateKey = toDateKey(date);
+                          const isSelected = isCenteredPage && selectedDay === dayIndex;
+                          const isToday = dateKey === todayGridDateKey;
+                          const visibleCount = (page.visibleEntriesByDay[dayIndex] ?? []).length;
+                          return (
+                            <Pressable
+                              key={`week-day-${dateKey}`}
+                              disabled={!isCenteredPage}
+                              onPress={() => {
+                                setSelectedDay(dayIndex);
+                                setSelectedGridTarget(null);
+                                setClearArmedDay(null);
+                              }}
+                              accessibilityRole="button"
+                              accessibilityLabel={format(date, 'EEEE, MMMM d, yyyy')}
+                              accessibilityState={isCenteredPage ? { selected: isSelected } : undefined}
+                              testID={`manual-week-day-${dateKey}`}
+                              style={({ pressed }) => [
+                                styles.weekHeaderDayCell,
                                 {
-                                  color: isSelected ? palette.accentPrimary : (isToday ? palette.textPrimary : palette.textMuted),
-                                  fontWeight: isToday ? '700' as any : theme.fontWeight.medium,
+                                  width: dayColumnWidth,
+                                  borderColor: isSelected ? palette.accentPrimary : 'transparent',
+                                  backgroundColor: isSelected ? accentSurfaceStrong : 'transparent',
                                 },
+                                pressed && isCenteredPage && { opacity: 0.82 },
                               ]}
                             >
-                              {DAY_TAB_LABELS[dayIndex]}
-                            </Text>
-                            <Text
-                              variant="body"
-                              style={[
-                                styles.weekHeaderDayDate,
-                                {
-                                  color: isSelected ? palette.accentPrimary : palette.textPrimary,
-                                },
-                              ]}
-                            >
-                              {format(date, 'd')}
-                            </Text>
-                            <View style={styles.weekHeaderBadgeSlot}>
-                              {visibleCount > 0 && (
-                                <View
-                                  style={[
-                                    styles.weekHeaderBadge,
-                                    {
-                                      backgroundColor: isSelected ? palette.accentPrimary : palette.bgSurfaceElevated,
-                                    },
-                                  ]}
-                                >
-                                  <Text
-                                    variant="bodySmall"
+                              <Text
+                                variant="bodySmall"
+                                style={[
+                                  styles.weekHeaderDayName,
+                                  {
+                                    color: isSelected ? palette.accentPrimary : (isToday ? palette.textPrimary : palette.textMuted),
+                                    fontWeight: isToday ? '700' as any : theme.fontWeight.medium,
+                                  },
+                                ]}
+                              >
+                                {DAY_TAB_LABELS[dayIndex]}
+                              </Text>
+                              <Text
+                                variant="body"
+                                style={[
+                                  styles.weekHeaderDayDate,
+                                  {
+                                    color: isSelected ? palette.accentPrimary : palette.textPrimary,
+                                  },
+                                ]}
+                              >
+                                {format(date, 'd')}
+                              </Text>
+                              <View style={styles.weekHeaderBadgeSlot}>
+                                {visibleCount > 0 && (
+                                  <View
                                     style={[
-                                      styles.weekHeaderBadgeText,
+                                      styles.weekHeaderBadge,
                                       {
-                                        color: isSelected ? palette.accentOnSolid : palette.textMuted,
+                                        backgroundColor: isSelected ? palette.accentPrimary : palette.bgSurfaceElevated,
                                       },
                                     ]}
                                   >
-                                    {visibleCount}
-                                  </Text>
-                                </View>
-                              )}
-                            </View>
-                          </Pressable>
-                        );
-                      })}
-                    </View>
-                  );
-                })}
-              </ScrollView>
+                                    <Text
+                                      variant="bodySmall"
+                                      style={[
+                                        styles.weekHeaderBadgeText,
+                                        {
+                                          color: isSelected ? palette.accentOnSolid : palette.textMuted,
+                                        },
+                                      ]}
+                                    >
+                                      {visibleCount}
+                                    </Text>
+                                  </View>
+                                )}
+                              </View>
+                            </Pressable>
+                          );
+                        })}
+                      </View>
+                    );
+                  })}
+                </Animated.View>
+              </View>
             </View>
           </View>
 
@@ -3797,90 +3845,121 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
             <View style={styles.mForm}>
               <View style={styles.modalSection}>
                 <Text variant="bodySmall" style={[styles.modalLabel, { color: palette.textMuted }]}>Title</Text>
-                <View style={[styles.input, themedInput, styles.eventInfoValueBox]}>
-                  <Text variant="body" style={{ color: palette.textPrimary }}>{event.title}</Text>
-                </View>
+                <TouchableOpacity activeOpacity={1} onPress={() => handleInfoFieldTap('title')}>
+                  <View style={[styles.input, themedInput, styles.eventInfoValueBox]}>
+                    <Text variant="body" style={{ color: palette.textPrimary }}>{event.title}</Text>
+                  </View>
+                </TouchableOpacity>
+                {tappedInfoField === 'title' && (
+                  <Text variant="bodySmall" style={{ color: theme.colors.warning, marginTop: 4 }}>Press Edit to start editing</Text>
+                )}
               </View>
 
               <View style={styles.modalSection}>
                 <Text variant="bodySmall" style={[styles.modalLabel, { color: palette.textMuted }]}>Frequency</Text>
-                <View style={styles.freqModeRow}>
-                  <View
-                    style={[
-                      styles.freqModeChip,
-                      themedChip,
-                      !event.isOneTime && styles.freqModeChipActive,
-                      !event.isOneTime && { backgroundColor: palette.accentPrimary, borderColor: palette.accentPrimary },
-                    ]}
-                  >
-                    <Text variant="bodySmall" style={StyleSheet.flatten([styles.freqModeText, !event.isOneTime && styles.freqModeTextActive, !event.isOneTime && { color: palette.accentOnSolid }])}>
-                      Repeats weekly
-                    </Text>
+                <TouchableOpacity activeOpacity={1} onPress={() => handleInfoFieldTap('frequency')}>
+                  <View style={styles.freqModeRow}>
+                    <View
+                      style={[
+                        styles.freqModeChip,
+                        themedChip,
+                        !event.isOneTime && styles.freqModeChipActive,
+                        !event.isOneTime && { backgroundColor: palette.accentPrimary, borderColor: palette.accentPrimary },
+                      ]}
+                    >
+                      <Text variant="bodySmall" style={StyleSheet.flatten([styles.freqModeText, !event.isOneTime && styles.freqModeTextActive, !event.isOneTime && { color: palette.accentOnSolid }])}>
+                        Repeats weekly
+                      </Text>
+                    </View>
+                    <View
+                      style={[
+                        styles.freqModeChip,
+                        themedChip,
+                        event.isOneTime && styles.freqModeChipActive,
+                        event.isOneTime && { backgroundColor: palette.accentPrimary, borderColor: palette.accentPrimary },
+                      ]}
+                    >
+                      <Text variant="bodySmall" style={StyleSheet.flatten([styles.freqModeText, event.isOneTime && styles.freqModeTextActive, event.isOneTime && { color: palette.accentOnSolid }])}>
+                        One-time event
+                      </Text>
+                    </View>
                   </View>
-                  <View
-                    style={[
-                      styles.freqModeChip,
-                      themedChip,
-                      event.isOneTime && styles.freqModeChipActive,
-                      event.isOneTime && { backgroundColor: palette.accentPrimary, borderColor: palette.accentPrimary },
-                    ]}
-                  >
-                    <Text variant="bodySmall" style={StyleSheet.flatten([styles.freqModeText, event.isOneTime && styles.freqModeTextActive, event.isOneTime && { color: palette.accentOnSolid }])}>
-                      One-time event
-                    </Text>
-                  </View>
-                </View>
+                </TouchableOpacity>
+                {tappedInfoField === 'frequency' && (
+                  <Text variant="bodySmall" style={{ color: theme.colors.warning, marginTop: 4 }}>Press Edit to start editing</Text>
+                )}
               </View>
 
               {!event.isOneTime ? (
                 <View style={styles.modalSection}>
                   <Text variant="bodySmall" style={[styles.modalLabel, { color: palette.textMuted }]}>Days</Text>
-                  <View style={styles.repeatDaysRow}>
-                    {DAY_TAB_LABELS.map((d, idx) => {
-                      const active = seriesDays.includes(idx);
-                      return (
-                        <View
-                          key={d}
-                          style={[
-                            styles.repeatDayChip,
-                            themedChip,
-                            active && styles.repeatDayChipActive,
-                            active && { backgroundColor: palette.accentPrimary, borderColor: palette.accentPrimary },
-                          ]}
-                        >
-                          <Text variant="bodySmall" numberOfLines={1} style={StyleSheet.flatten([styles.repeatDayChipText, active && styles.repeatDayChipTextActive, active && { color: palette.accentOnSolid }])}>
-                            {d}
-                          </Text>
-                        </View>
-                      );
-                    })}
-                  </View>
+                  <TouchableOpacity activeOpacity={1} onPress={() => handleInfoFieldTap('days')}>
+                    <View style={styles.repeatDaysRow}>
+                      {DAY_TAB_LABELS.map((d, idx) => {
+                        const active = seriesDays.includes(idx);
+                        return (
+                          <View
+                            key={d}
+                            style={[
+                              styles.repeatDayChip,
+                              themedChip,
+                              active && styles.repeatDayChipActive,
+                              active && { backgroundColor: palette.accentPrimary, borderColor: palette.accentPrimary },
+                            ]}
+                          >
+                            <Text variant="bodySmall" numberOfLines={1} style={StyleSheet.flatten([styles.repeatDayChipText, active && styles.repeatDayChipTextActive, active && { color: palette.accentOnSolid }])}>
+                              {d}
+                            </Text>
+                          </View>
+                        );
+                      })}
+                    </View>
+                  </TouchableOpacity>
+                  {tappedInfoField === 'days' && (
+                    <Text variant="bodySmall" style={{ color: theme.colors.warning, marginTop: 4 }}>Press Edit to start editing</Text>
+                  )}
                 </View>
               ) : (
                 <View style={styles.modalSection}>
                   <Text variant="bodySmall" style={[styles.modalLabel, { color: palette.textMuted }]}>Date</Text>
-                  <View style={[styles.input, themedInput, styles.eventInfoValueBox]}>
-                    <Text variant="body" style={{ color: palette.textPrimary }}>{event.oneTimeDate ?? '—'}</Text>
-                  </View>
+                  <TouchableOpacity activeOpacity={1} onPress={() => handleInfoFieldTap('days')}>
+                    <View style={[styles.input, themedInput, styles.eventInfoValueBox]}>
+                      <Text variant="body" style={{ color: palette.textPrimary }}>{event.oneTimeDate ?? '—'}</Text>
+                    </View>
+                  </TouchableOpacity>
+                  {tappedInfoField === 'days' && (
+                    <Text variant="bodySmall" style={{ color: theme.colors.warning, marginTop: 4 }}>Press Edit to start editing</Text>
+                  )}
                 </View>
               )}
 
               <View style={styles.modalSection}>
                 <Text variant="bodySmall" style={[styles.modalLabel, { color: palette.textMuted }]}>Time</Text>
-                <View style={styles.timeStack}>
-                  <View style={[styles.timeCard, themedChip]}>
-                    <Text variant="bodySmall" style={styles.timeCardLabel}>Start</Text>
-                    <View style={[styles.timeDisplay, themedInput, styles.eventInfoTimeDisplay]}>
-                      <Text variant="body" style={{ color: palette.textPrimary, fontFamily: appFontFamily.bold, fontSize: 18 }}>{formatTime12(event.startTime)}</Text>
+                <TouchableOpacity activeOpacity={1} onPress={() => handleInfoFieldTap('time')}>
+                  <View style={styles.timeStack}>
+                    <View style={[styles.timeCard, themedChip]}>
+                      <Text variant="bodySmall" style={styles.timeCardLabel}>Start</Text>
+                      <View style={[styles.timeDisplay, themedInput, styles.eventInfoTimeDisplay]}>
+                        <Text variant="body" style={{ color: palette.textPrimary, fontFamily: appFontFamily.bold, fontSize: 18 }}>
+                          {formatTime12(event.startTime).replace(/ (AM|PM)$/, '')}
+                          <Text style={{ fontSize: 14 }}> {formatTime12(event.startTime).match(/(AM|PM)$/)?.[0]}</Text>
+                        </Text>
+                      </View>
+                    </View>
+                    <View style={[styles.timeCard, themedChip]}>
+                      <Text variant="bodySmall" style={styles.timeCardLabel}>End</Text>
+                      <View style={[styles.timeDisplay, themedInput, styles.eventInfoTimeDisplay]}>
+                        <Text variant="body" style={{ color: palette.textPrimary, fontFamily: appFontFamily.bold, fontSize: 18 }}>
+                          {formatTime12(event.endTime).replace(/ (AM|PM)$/, '')}
+                          <Text style={{ fontSize: 14 }}> {formatTime12(event.endTime).match(/(AM|PM)$/)?.[0]}</Text>
+                        </Text>
+                      </View>
                     </View>
                   </View>
-                  <View style={[styles.timeCard, themedChip]}>
-                    <Text variant="bodySmall" style={styles.timeCardLabel}>End</Text>
-                    <View style={[styles.timeDisplay, themedInput, styles.eventInfoTimeDisplay]}>
-                      <Text variant="body" style={{ color: palette.textPrimary, fontFamily: appFontFamily.bold, fontSize: 18 }}>{formatTime12(event.endTime)}</Text>
-                    </View>
-                  </View>
-                </View>
+                </TouchableOpacity>
+                {tappedInfoField === 'time' && (
+                  <Text variant="bodySmall" style={{ color: theme.colors.warning, marginTop: 4 }}>Press Edit to start editing</Text>
+                )}
               </View>
 
               <View style={styles.modalActionsRow}>
@@ -4549,6 +4628,7 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   weekHeaderPagerContent: {
+    flexDirection: 'row',
     alignItems: 'stretch',
   },
   weekHeaderMonthRail: {
@@ -4591,6 +4671,17 @@ const styles = StyleSheet.create({
   },
   weekHeaderDaysRow: {
     flexDirection: 'row',
+    position: 'relative',
+  },
+  weekDivider: {
+    position: 'absolute',
+    left: 0,
+    top: 6,
+    bottom: 6,
+    width: 1.5,
+    borderRadius: 1,
+    zIndex: 1,
+    opacity: 0.6,
   },
   weekHeaderDayCell: {
     paddingVertical: 2,
