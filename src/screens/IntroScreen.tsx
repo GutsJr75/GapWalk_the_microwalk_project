@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Alert, View, StyleSheet, TouchableOpacity, Animated, Easing, Pressable, useWindowDimensions, Image, LayoutChangeEvent } from 'react-native';
+import { Alert, View, StyleSheet, TouchableOpacity, Animated, Easing, Pressable, useWindowDimensions, Image, LayoutChangeEvent, ScrollView } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import * as AuthSession from 'expo-auth-session';
 import * as WebBrowser from 'expo-web-browser';
@@ -305,16 +305,18 @@ export const IntroScreen: React.FC<Props> = ({
 
   return (
     <Container entranceAnimated={false}>
-      <View style={styles.introLayout}>
-        <View
-          style={[
-            styles.screen,
-            {
-              paddingTop: verticalTopPadding,
-              paddingBottom: verticalBottomPadding,
-            },
-          ]}
-        >
+      <ScrollView
+        style={styles.introLayout}
+        contentContainerStyle={[
+          styles.screen,
+          {
+            paddingTop: verticalTopPadding,
+            paddingBottom: verticalBottomPadding,
+          },
+        ]}
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+      >
           <View style={styles.topContent}>
             <View style={[styles.headerFrame, { paddingVertical: heroVerticalPadding }]}>
               <View style={styles.logoRow}>
@@ -494,8 +496,7 @@ export const IntroScreen: React.FC<Props> = ({
                 : 'Your health and privacy are our utmost priority.'}
             </Text>
           </View>
-        </View>
-      </View>
+      </ScrollView>
     </Container>
   );
 };
@@ -505,7 +506,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   screen: {
-    flex: 1,
+    flexGrow: 1,
     justifyContent: 'space-between',
     alignSelf: 'center',
     width: '100%',
