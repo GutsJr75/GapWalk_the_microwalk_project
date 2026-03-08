@@ -11,6 +11,7 @@ module.exports = ({ config }) => {
   const iosUrlScheme = iosClientId
     ? `com.googleusercontent.apps.${iosClientId.split('.apps.googleusercontent.com')[0]}`
     : undefined;
+  const googleMapsApiKey = process.env.GOOGLE_MAPS_API_KEY || '';
   const androidGoogleServicesCandidates = [
     config.android?.googleServicesFile
       ? path.resolve(__dirname, config.android.googleServicesFile)
@@ -28,6 +29,13 @@ module.exports = ({ config }) => {
 
   return {
     ...config,
+    android: {
+      ...(config.android || {}),
+      config: {
+        ...(config.android?.config || {}),
+        googleMaps: { apiKey: googleMapsApiKey },
+      },
+    },
     extra: {
       ...(config.extra || {}),
       hasAndroidGoogleServices,
