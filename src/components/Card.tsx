@@ -1,5 +1,5 @@
 import React, { useRef, useCallback } from 'react';
-import { View, StyleSheet, ViewStyle, Pressable, StyleProp, Platform, Animated } from 'react-native';
+import { View, StyleSheet, ViewStyle, Pressable, StyleProp, Animated } from 'react-native';
 import { theme } from '../theme';
 import { useThemePalette } from '../theme/palette';
 import { useAppStore } from '../store';

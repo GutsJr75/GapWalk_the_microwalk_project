@@ -8,7 +8,6 @@ import {
   Easing,
   Dimensions,
   Modal,
-  StatusBar,
   type LayoutRectangle,
   type ScrollView,
 } from 'react-native';
@@ -120,7 +119,6 @@ export const TourOverlay: React.FC<TourOverlayProps> = ({
   const [currentStep, setCurrentStep] = useState(0);
   const [tooltipPosition, setTooltipPosition] = useState<'above' | 'below'>('below');
   const [measuring, setMeasuring] = useState(false);
-  const [ready, setReady] = useState(false);
   const [hasSpotlight, setHasSpotlight] = useState(false);
 
   // For SVG overlay: JS-thread tracking of current animated spot values
@@ -488,7 +486,6 @@ export const TourOverlay: React.FC<TourOverlayProps> = ({
   useEffect(() => {
     if (!visible) {
       setCurrentStep(0);
-      setReady(false);
       setHasSpotlight(false);
       calibrated.current = false;
       overlayOpacity.setValue(0);
@@ -507,7 +504,6 @@ export const TourOverlay: React.FC<TourOverlayProps> = ({
     // Wait for Modal to mount, calibrate, then start
     const timer = setTimeout(async () => {
       await calibrate();
-      setReady(true);
       void animateToStep(0, true);
     }, 700);
 

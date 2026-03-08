@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   StyleSheet,
@@ -6,8 +6,6 @@ import {
   Platform,
   LayoutAnimation,
   UIManager,
-  Animated,
-  Easing,
 } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import * as DocumentPicker from 'expo-document-picker';
@@ -34,7 +32,6 @@ import {
 } from '../utils/confirmMessages';
 import { analyticsService } from '../services/analytics';
 import { useAppStore } from '../store';
-import { authStorage } from '../data/authStorage';
 import {
   googleCalendarService,
   signInWithGoogle,

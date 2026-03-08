@@ -11,7 +11,6 @@ import {
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { theme } from '../theme';
 import { withAlpha } from '../theme/colorUtils';
 import { useThemePalette } from '../theme/palette';
 import { useAppStore } from '../store';

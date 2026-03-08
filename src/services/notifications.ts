@@ -137,7 +137,7 @@ const NUDGE_BODIES_NOW_STRICT = [
 const NUDGE_BODIES_SOON_RELAXED = [
   (dur: number, time: string, mins: number) => `Your ${dur} minute walk starts in ${mins} minutes at ${time}.`,
   (dur: number, time: string, mins: number) => `In ${mins} minutes you have a ${dur} minute walk at ${time}.`,
-  (dur: number, time: string, mins: number) => `Heads up. Your ${dur} minute walk window opens at ${time}.`,
+  (dur: number, time: string, _mins: number) => `Heads up. Your ${dur} minute walk window opens at ${time}.`,
   (dur: number, time: string, mins: number) => `${mins} minute reminder for your ${dur} minute walk at ${time}.`,
 ];
 
@@ -746,7 +746,7 @@ export const notificationService = {
   async scheduleAlternativeGapNotification(
     planId: string,
     gapStartTime: Date,
-    gapEndTime: Date,
+    _gapEndTime: Date,
     suggestedDurationMinutes: number
   ): Promise<string | null> {
     if (!isNotificationsSupported) return null;

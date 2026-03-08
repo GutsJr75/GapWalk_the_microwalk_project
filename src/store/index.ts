@@ -44,18 +44,6 @@ interface AppState {
   pendingWalkPrompt: WalkPrompt | null;
   setPendingWalkPrompt: (prompt: WalkPrompt | null) => void;
 
-  // Location permission
-  hasLocationPermission: boolean;
-  setHasLocationPermission: (value: boolean) => void;
-
-  // Notification permission
-  hasNotificationPermission: boolean;
-  setHasNotificationPermission: (value: boolean) => void;
-
-  // Activity Recognition / Pedometer permission
-  hasActivityPermission: boolean;
-  setHasActivityPermission: (value: boolean) => void;
-
   // Whether initial permissions have been requested
   hasRequestedPermissions: boolean;
   setHasRequestedPermissions: (value: boolean) => void;
@@ -139,12 +127,6 @@ export const useAppStore = create<AppState>((set) => ({
   setPendingWalkPrompt: (prompt) => set({ pendingWalkPrompt: prompt }),
 
   // Permissions
-  hasLocationPermission: false,
-  setHasLocationPermission: (value) => set({ hasLocationPermission: value }),
-  hasNotificationPermission: false,
-  setHasNotificationPermission: (value) => set({ hasNotificationPermission: value }),
-  hasActivityPermission: false,
-  setHasActivityPermission: (value) => set({ hasActivityPermission: value }),
   hasRequestedPermissions: false,
   setHasRequestedPermissions: (value) => set({ hasRequestedPermissions: value }),
 

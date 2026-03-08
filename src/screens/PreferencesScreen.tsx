@@ -36,12 +36,10 @@ import { timeUtils } from '../utils/time';
 import { syncNudgePlansForCurrentSchedule } from '../services/scheduleSync';
 import {
   SAVE_CONFIRM_ACTION,
-  SAVE_CONFIRM_DECLINE,
   SAVE_CONFIRM_MESSAGE,
   SAVE_CONFIRM_TITLE,
 } from '../utils/confirmMessages';
 import { analyticsService } from '../services/analytics';
-import { translateLiteral } from '../i18n';
 import { useAppStore } from '../store';
 import { requestAllPermissions } from '../services/permissions';
 import { toUserFriendlyError } from '../utils/errorMessages';
@@ -347,7 +345,7 @@ const PeriodToggle: React.FC<{
 
 /* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• main screen â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
 export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
-  const { preferences: storedPreferences, setPreferences, setHasSetPreferences, setHasCompletedOnboarding, setHasNotificationPermission, setHasLocationPermission, setHasActivityPermission, setHasRequestedPermissions, themeMode, setThemeMode, language, setLanguage } = useAppStore();
+  const { preferences: storedPreferences, setPreferences, setHasSetPreferences, setHasCompletedOnboarding, setHasRequestedPermissions, themeMode } = useAppStore();
   const manageMode = !!route.params?.manageMode;
   const [prefs, setPrefs] = useState<Preferences>(DEFAULT_PREFERENCES);
   const [hasChanges, setHasChanges] = useState(false);
@@ -742,9 +740,7 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
 
         // Request ALL permissions (location, notifications, activity recognition)
         try {
-          const permResults = await requestAllPermissions();
-          setHasNotificationPermission(permResults.notifications);
-          setHasActivityPermission(permResults.activityRecognition);
+          await requestAllPermissions();
           setHasRequestedPermissions(true);
         } catch (e) {
           if (__DEV__) console.warn('Permission request failed during onboarding:', e);
