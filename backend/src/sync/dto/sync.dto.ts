@@ -142,7 +142,7 @@ class SyncAppSessionDto {
   @IsOptional() @IsEnum(AppOpenSource) source?: AppOpenSource;
 }
 
-class SyncUserProfileDto {
+export class SyncUserProfileDto {
   @IsOptional() @IsString() email?: string;
   @IsOptional() @IsString() displayName?: string;
 }
