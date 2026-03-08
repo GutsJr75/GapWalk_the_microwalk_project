@@ -24,9 +24,9 @@ import { WalkSession, NudgePlan, BusyEvent } from '../types';
 
 const API_BASE = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:3000';
 
-async function apiFetch(path: string, body: unknown, token: string) {
+export async function apiFetch(path: string, body: unknown, token: string, method: string = 'POST') {
   const response = await fetch(`${API_BASE}/api${path}`, {
-    method: 'POST',
+    method,
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${token}`,

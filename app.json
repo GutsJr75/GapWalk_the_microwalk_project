@@ -56,6 +56,11 @@
       "expo-font",
       "expo-sensors",
       "expo-secure-store"
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "8dc70f8f-57e4-4ee4-9a0e-6a1d2977513a"
+      }
+    }
   }
 }
