@@ -15,3 +15,4 @@ web-build/
 .DS_Store
 *.db
 scripts/__pycache__/
+CREDENTIALS_BACKUP.txt

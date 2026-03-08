@@ -140,10 +140,12 @@ export class PushNotificationsService {
       try {
         const walkStart = new Date(plan.walkStart);
         const dur = plan.suggestedDurationMinutes;
+        const userTimezone = plan.user?.timezone ?? 'America/New_York';
         const startTime = walkStart.toLocaleTimeString('en-US', {
           hour: 'numeric',
           minute: '2-digit',
           hour12: true,
+          timeZone: userTimezone,
         });
 
         // Rotate body variant by day-of-month for daily variety
