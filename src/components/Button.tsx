@@ -175,5 +175,6 @@ const styles = StyleSheet.create({
     fontSize: theme.fontSize.md,
     fontWeight: theme.fontWeight.semibold,
     letterSpacing: 0,
+    textAlign: 'center',
   },
 });

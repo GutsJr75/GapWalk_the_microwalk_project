@@ -143,7 +143,7 @@ const errorStyles = StyleSheet.create({
   title: { fontSize: 20, fontWeight: '700', color: '#fff', marginBottom: 12 },
   body: { fontSize: 15, color: '#8a95a8', textAlign: 'center', marginBottom: 24, lineHeight: 22 },
   button: { paddingHorizontal: 24, paddingVertical: 12, backgroundColor: '#3b82f6', borderRadius: 10 },
-  buttonText: { color: '#fff', fontSize: 15, fontWeight: '600' },
+  buttonText: { color: '#fff', fontSize: 15, fontWeight: '600', textAlign: 'center' },
 });
 
 export default function AppWithErrorBoundary() {
