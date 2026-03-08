@@ -13,15 +13,27 @@ module.exports = ({ config }) => {
     : undefined;
   const googleMapsApiKey = process.env.GOOGLE_MAPS_API_KEY || '';
   const androidGoogleServicesCandidates = [
+    process.env.GOOGLE_SERVICES_JSON || null,
+    path.resolve(__dirname, 'google-services.json'),
+    path.resolve(__dirname, 'android/app/google-services.json'),
     config.android?.googleServicesFile
       ? path.resolve(__dirname, config.android.googleServicesFile)
       : null,
-    path.resolve(__dirname, 'google-services.json'),
-    path.resolve(__dirname, 'android/app/google-services.json'),
   ].filter(Boolean);
   const hasAndroidGoogleServices = androidGoogleServicesCandidates.some((candidatePath) =>
     fs.existsSync(candidatePath)
   );
+  const androidGoogleServicesFile = (() => {
+    const envFilePath = process.env.GOOGLE_SERVICES_JSON;
+    if (envFilePath && fs.existsSync(envFilePath)) return envFilePath;
+    if (fs.existsSync(path.resolve(__dirname, 'google-services.json'))) {
+      return './google-services.json';
+    }
+    if (fs.existsSync(path.resolve(__dirname, 'android/app/google-services.json'))) {
+      return './android/app/google-services.json';
+    }
+    return config.android?.googleServicesFile;
+  })();
 
   const googleSignInPlugin = iosUrlScheme
     ? ['@react-native-google-signin/google-signin', { iosUrlScheme }]
@@ -31,6 +43,7 @@ module.exports = ({ config }) => {
     ...config,
     android: {
       ...(config.android || {}),
+      ...(androidGoogleServicesFile ? { googleServicesFile: androidGoogleServicesFile } : {}),
       config: {
         ...(config.android?.config || {}),
         googleMaps: { apiKey: googleMapsApiKey },
