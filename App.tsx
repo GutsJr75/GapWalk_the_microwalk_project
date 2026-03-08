@@ -36,7 +36,7 @@ import { androidWalkTracking } from './src/services/androidWalkTracking';
 import { requestAllPermissions } from './src/services/permissions';
 import { authStorage } from './src/data/authStorage';
 import { guidanceStorage } from './src/data/guidanceStorage';
-import { runBackendSync, registerDevice } from './src/services/backendSync';
+import { runBackendSync, registerDevice, apiFetch } from './src/services/backendSync';
 
 // Screens
 import { IntroScreen } from './src/screens/IntroScreen';
@@ -285,11 +285,29 @@ function App() {
 
   /** Register device push token + timezone with the backend. Safe to call multiple times. */
   const tryRegisterDevice = useCallback(async () => {
-    if (!isNotificationsSupported) return;
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+    // Fallback: update the timezone explicitly via /users/me if push isn't available
+    const updateTimezoneFallback = async () => {
+      try {
+        const token = await authStorage.getToken();
+        if (token) {
+          await apiFetch('/users/me', { timezone: tz }, token, 'PATCH');
+        }
+      } catch (e) {
+        if (__DEV__) console.warn('Failed to update timezone fallback:', e);
+      }
+    };
+
+    if (!isNotificationsSupported) {
+      void updateTimezoneFallback();
+      return;
+    }
 
     const remotePushRegistrationError = getRemotePushRegistrationError();
     if (remotePushRegistrationError) {
       if (__DEV__) console.info(remotePushRegistrationError);
+      void updateTimezoneFallback();
       return;
     }
 
@@ -318,6 +336,7 @@ function App() {
           console.warn('Failed to obtain push token for device registration:', e);
         }
       }
+      void updateTimezoneFallback();
     }
   }, []);
 
