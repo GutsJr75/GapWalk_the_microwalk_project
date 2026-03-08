@@ -287,6 +287,44 @@ function App() {
     setUpcomingPlans(upcoming);
   }, [setTodayStats, setTodaySteps, setUpcomingPlans]);
 
+  /** Register device push token + timezone with the backend. Safe to call multiple times. */
+  const tryRegisterDevice = useCallback(async () => {
+    if (!isNotificationsSupported) return;
+
+    const remotePushRegistrationError = getRemotePushRegistrationError();
+    if (remotePushRegistrationError) {
+      if (__DEV__) console.info(remotePushRegistrationError);
+      return;
+    }
+
+    try {
+      const projectId = getExpoPushProjectId();
+      const tokenData = projectId
+        ? await Notifications.getExpoPushTokenAsync({ projectId })
+        : await Notifications.getExpoPushTokenAsync();
+      if (tokenData?.data) {
+        void registerDevice({
+          expoPushToken: tokenData.data,
+          platform: Platform.OS as 'ios' | 'android',
+          appVersion: Constants.expoConfig?.version,
+          osVersion: String(Platform.Version),
+          deviceModel: Device.modelName ?? undefined,
+          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        });
+      }
+    } catch (e) {
+      if (__DEV__) {
+        if (isAndroidFirebaseInitializationError(e)) {
+          console.info(
+            'Skipping backend device registration because Android Firebase push is not configured. Add google-services.json and rebuild if you need server push notifications.'
+          );
+        } else {
+          console.warn('Failed to obtain push token for device registration:', e);
+        }
+      }
+    }
+  }, []);
+
   const navigateToActiveWalk = useCallback((params: { planId?: string; prompt?: 'end_confirmation'; startedFromNotification?: boolean }) => {
     if (navigationRef.isReady()) {
       navigationRef.navigate('Walking', params);
@@ -553,45 +591,8 @@ function App() {
               setHasRequestedPermissions(true);
 
               // Register device with backend after push permission is resolved
-              if (
-                isNotificationsSupported &&
-                permResults.notifications &&
-                hasRestoredAuthenticatedSession
-              ) {
-                const remotePushRegistrationError = getRemotePushRegistrationError();
-                if (remotePushRegistrationError) {
-                  if (__DEV__) console.info(remotePushRegistrationError);
-                  return;
-                }
-
-                try {
-                  const projectId = getExpoPushProjectId();
-                  const tokenData = projectId
-                    ? await Notifications.getExpoPushTokenAsync({ projectId })
-                    : await Notifications.getExpoPushTokenAsync();
-                  if (tokenData?.data) {
-                    void registerDevice({
-                      expoPushToken: tokenData.data,
-                      platform: Platform.OS as 'ios' | 'android',
-                      appVersion: Constants.expoConfig?.version,
-                      osVersion: String(Platform.Version),
-                      deviceModel: Device.modelName ?? undefined,
-                      notificationPermissionGranted: permResults.notifications,
-                      activityPermissionGranted: permResults.activityRecognition,
-                      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-                    });
-                  }
-                } catch (e) {
-                  if (__DEV__) {
-                    if (isAndroidFirebaseInitializationError(e)) {
-                      console.info(
-                        'Skipping backend device registration because Android Firebase push is not configured. Add google-services.json and rebuild if you need server push notifications.'
-                      );
-                    } else {
-                      console.warn('Failed to obtain push token for device registration:', e);
-                    }
-                  }
-                }
+              if (permResults.notifications && hasRestoredAuthenticatedSession) {
+                void tryRegisterDevice();
               }
             } catch (e) {
               if (__DEV__) console.warn('Permission request during init failed:', e);
@@ -783,7 +784,11 @@ function App() {
                   <IntroScreen
                     {...props}
                     isAuthenticated={isAuthenticated}
-                    onAuthenticated={() => setIsAuthenticated(true)}
+                    onAuthenticated={() => {
+                      setIsAuthenticated(true);
+                      // Register device + timezone with backend on fresh login
+                      void tryRegisterDevice();
+                    }}
                   />
                 )}
               />
