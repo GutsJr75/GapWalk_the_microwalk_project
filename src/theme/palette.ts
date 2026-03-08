@@ -49,6 +49,8 @@ const darkPalette: ThemePalette = {
   shadow: '#000000',
 };
 
+const lightAccentPrimary = '#059669';
+
 const lightPalette: ThemePalette = {
   // Softer than pure white to reduce glare in light mode.
   bgApp: '#e6ebf2',
@@ -57,10 +59,10 @@ const lightPalette: ThemePalette = {
   textPrimary: '#111827',
   // Darker muted text to meet AA contrast across light surfaces.
   textMuted: '#475569',
-  // Brand mint accent, shared with dark mode for visual consistency.
-  accentPrimary: theme.colors.accentPrimary,
-  accentMuted: withAlpha(theme.colors.accentPrimary, 0.12),
-  accentBorder: withAlpha(theme.colors.accentPrimary, 0.30),
+  // Slightly darker mint in light mode for stronger visibility/contrast.
+  accentPrimary: lightAccentPrimary,
+  accentMuted: withAlpha(lightAccentPrimary, 0.12),
+  accentBorder: withAlpha(lightAccentPrimary, 0.30),
   accentOnSolid: '#ffffff',
   accentOnTint: '#0f5132',
   info: '#0369a1',
