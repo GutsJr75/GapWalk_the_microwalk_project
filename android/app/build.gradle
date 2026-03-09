@@ -4,6 +4,40 @@ apply plugin: "com.facebook.react"
 apply plugin: "com.google.gms.google-services"
 
 def projectRoot = rootDir.getAbsoluteFile().getParentFile().getAbsolutePath()
+def appGoogleServicesFile = file("$projectDir/google-services.json")
+
+tasks.register("prepareGoogleServices") {
+    doLast {
+        def candidates = []
+        def googleServicesEnvPath = System.getenv("GOOGLE_SERVICES_JSON")
+        if (googleServicesEnvPath) {
+            candidates << file(googleServicesEnvPath)
+        }
+        candidates << file("$rootDir/../google-services.json")
+        candidates << appGoogleServicesFile
+
+        def sourceFile = candidates.find { it?.exists() }
+        if (!sourceFile) {
+            throw new GradleException(
+                "google-services.json not found. Set GOOGLE_SERVICES_JSON (EAS file secret), " +
+                "or provide google-services.json at project root or android/app."
+            )
+        }
+
+        if (sourceFile.absolutePath != appGoogleServicesFile.absolutePath) {
+            copy {
+                from sourceFile
+                into projectDir
+                rename { "google-services.json" }
+            }
+            println("[GapWalk] Copied google-services.json from ${sourceFile.absolutePath}")
+        }
+    }
+}
+
+tasks.named("preBuild").configure {
+    dependsOn("prepareGoogleServices")
+}
 
 // Read secrets from local.properties (gitignored)
 def localProps = new Properties()
