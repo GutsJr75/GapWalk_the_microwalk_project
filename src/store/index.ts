@@ -152,7 +152,7 @@ export const useAppStore = create<AppState>((set) => ({
   setLanguage: (lang) => set({ language: lang }),
 
   // Settings
-  distanceUnit: 'km',
+  distanceUnit: 'mi',
   setDistanceUnit: (unit) => set({ distanceUnit: unit }),
   firstDayOfWeek: 'sun',
   setFirstDayOfWeek: (day) => set({ firstDayOfWeek: day }),

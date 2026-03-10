@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { View, StyleSheet, TouchableOpacity, Animated, Easing, Pressable, useWindowDimensions, Image, LayoutChangeEvent, ScrollView } from 'react-native';
+import { View, StyleSheet, TouchableOpacity, Animated, Easing, useWindowDimensions, Image, LayoutChangeEvent, ScrollView } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import * as AuthSession from 'expo-auth-session';
 import * as WebBrowser from 'expo-web-browser';
@@ -65,7 +65,6 @@ interface Props extends NativeStackScreenProps<RootStackParamList, 'Intro'> {
 }
 
 const AUTH_DIVIDER_MARGIN_Y = 18;
-const AUTH_SECONDARY_BLOCK_GAP = 28;
 const AUTH_GUEST_BLOCK_GAP = 32;
 const AUTH_FOOTER_MARGIN_TOP = 24;
 const HOW_DETAILS_GAP = 18;
@@ -84,7 +83,6 @@ export const IntroScreen: React.FC<Props> = ({
   const [messageDialog, setMessageDialog] = useState<{ title: string; message: string } | null>(null);
   const showMessage = (title: string, message: string) => setMessageDialog({ title, message });
   const [authLoadingMode, setAuthLoadingMode] = useState<'login' | 'signup' | null>(null);
-  const [rememberMe, setRememberMe] = useState(false);
   const [howDetailsMeasuredHeight, setHowDetailsMeasuredHeight] = useState(HOW_DETAILS_FALLBACK_HEIGHT);
   const howAnim = useRef(new Animated.Value(0)).current;
   const handledAuthResponseRef = useRef<string | null>(null);
@@ -174,10 +172,10 @@ export const IntroScreen: React.FC<Props> = ({
         }
       }
 
-      // Always save the token — it's needed for backend sync.
-      // "Remember me" controls whether the session is restored on next cold start.
+      // Always save the token and mark the session as persistent.
       await authStorage.saveToken(tokenResponse.accessToken);
-      await authStorage.setRememberMe(rememberMe);
+      await authStorage.setRememberMe(true);
+      await authStorage.saveLastLoginAt(new Date().toISOString());
     } catch (e) {
       if (__DEV__) console.warn('Token exchange failed:', e);
     }
@@ -444,33 +442,6 @@ export const IntroScreen: React.FC<Props> = ({
                     style={styles.authButtonHalf}
                   />
                 </View>
-                <Pressable
-                  onPress={() => setRememberMe((prev) => !prev)}
-                  style={styles.rememberRow}
-                  hitSlop={8}
-                >
-                  <View
-                    style={[
-                      styles.checkbox,
-                      { borderColor: palette.borderStrong },
-                      rememberMe && { backgroundColor: palette.accentPrimary, borderColor: palette.accentPrimary },
-                    ]}
-                  >
-                    {rememberMe && (
-                      <Svg width={12} height={12} viewBox="0 0 24 24">
-                        <Path
-                          d="M5 13l4 4L19 7"
-                          stroke="#06261d"
-                          strokeWidth={3}
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          fill="none"
-                        />
-                      </Svg>
-                    )}
-                  </View>
-                  <Text variant="bodySmall" style={styles.rememberLabel}>Remember me</Text>
-                </Pressable>
                 <Button
                   title="Continue as Guest"
                   onPress={handleContinueAsGuest}
@@ -646,23 +617,6 @@ const styles = StyleSheet.create({
   },
   authButtonHalf: {
     flex: 1,
-  },
-  rememberRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: AUTH_SECONDARY_BLOCK_GAP,
-  },
-  checkbox: {
-    width: 20,
-    height: 20,
-    borderRadius: 4,
-    borderWidth: 1.5,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  rememberLabel: {
-    marginLeft: 8,
   },
   guestBtn: {
     marginTop: 16,
