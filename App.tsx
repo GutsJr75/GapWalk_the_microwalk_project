@@ -508,16 +508,23 @@ function App() {
       }
 
       // Restore auth session.
-      // Always load the stored user profile (email/name) so it appears in the
-      // Profile screen regardless of the "Remember me" setting.
-      // "Remember me" only controls whether the session token is restored
-      // (i.e. whether the user skips the login screen on next cold start).
+      // The session is always persisted — no "Remember me" gate.
+      // Exception: if it has been more than 30 days since the last login
+      // we clear the stored credentials and require the user to log in again.
       try {
         const storedUser = await authStorage.getUser();
         if (storedUser) setAuthUser(storedUser);
 
-        const rememberMe = await authStorage.getRememberMe();
-        if (rememberMe) {
+        const lastLoginAt = await authStorage.getLastLoginAt();
+        const thirtyDaysMs = 30 * 24 * 60 * 60 * 1000;
+        const sessionExpired =
+          !lastLoginAt ||
+          Date.now() - new Date(lastLoginAt).getTime() > thirtyDaysMs;
+
+        if (sessionExpired) {
+          // Force re-auth — clear credentials but keep user profile for display
+          await authStorage.clearAll();
+        } else {
           const storedToken = await authStorage.getToken();
           if (storedToken) {
             setIsAuthenticated(true);
