@@ -51,6 +51,11 @@ export async function signInWithGoogle(): Promise<string> {
   });
 
   await GoogleSignin.hasPlayServices({ showPlayServicesUpdateDialog: true });
+
+  // Sign out any previously cached account so the account picker always appears,
+  // allowing the user to choose a different Google account each time.
+  try { await GoogleSignin.signOut(); } catch { /* ignore if not signed in */ }
+
   await GoogleSignin.signIn();
 
   const tokens = await GoogleSignin.getTokens();
