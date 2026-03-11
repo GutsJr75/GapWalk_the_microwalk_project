@@ -16,3 +16,7 @@ web-build/
 *.db
 scripts/__pycache__/
 CREDENTIALS_BACKUP.txt
+google-services.json
+eas.json
+*.aab
+*.apk
