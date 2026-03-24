@@ -148,6 +148,7 @@ const esExact: Record<string, string> = {
   'Not set yet': 'Aun no configurado',
   'File: ': 'Archivo: ',
   'ICS file: ': 'Archivo ICS: ',
+  'Calendar file: ': 'Archivo de calendario: ',
   'Sun': 'Dom',
   'Mon': 'Lun',
   'Tue': 'Mar',
@@ -191,6 +192,9 @@ const esExact: Record<string, string> = {
   'What is an ICS file?': 'Que es un archivo ICS?',
   'An ICS file is a standard calendar export used by Google Calendar, Apple Calendar, Outlook, and similar apps. Importing it lets GapWalk rebuild your weekly schedule for you instead of making you enter everything by hand.':
     'Un archivo ICS es una exportacion estandar de calendario usada por Google Calendar, Apple Calendar, Outlook y apps similares. Importarlo permite que GapWalk reconstruya tu horario semanal por ti en lugar de obligarte a escribir todo a mano.',
+  'What is a calendar file?': 'Que es un archivo de calendario?',
+  'A calendar file (.ics) is a standard export used by Google Calendar, Apple Calendar, Outlook, and similar apps. Importing it lets GapWalk rebuild your weekly schedule so you do not have to enter everything by hand.':
+    'Un archivo de calendario (.ics) es una exportacion estandar usada por Google Calendar, Apple Calendar, Outlook y apps similares. Importarlo permite que GapWalk reconstruya tu horario semanal para que no tengas que escribir todo a mano.',
   'Why does GapWalk ask for location?':
     'Por que GapWalk solicita ubicacion?',
   'Location is used for distance tracking during walks. If your device supports step counting, steps can still be tracked separately, but distance becomes less reliable without location access.':
@@ -524,11 +528,14 @@ const esExact: Record<string, string> = {
   'Import Warning': 'Aviso de importacion',
   'No Events': 'Sin eventos',
   'No events found in the ICS file.': 'No se encontraron eventos en el archivo ICS.',
+  'No events found in the calendar file.': 'No se encontraron eventos en el archivo de calendario.',
   'Import Failed': 'Importacion fallida',
   'Schedule Updated': 'Horario actualizado',
   'Import Note': 'Nota de importacion',
   'The ICS file was imported, but no timed events were available for the weekly grid preview.':
     'El archivo ICS se importo, pero no habia eventos con hora para la vista semanal.',
+  'The calendar file was imported, but no timed events were available for the weekly grid preview.':
+    'Se importo el archivo de calendario, pero no habia eventos con hora para la vista semanal.',
   'Calendar Linked': 'Calendario vinculado',
   'No Events Found': 'No se encontraron eventos',
   'Your Google Calendar has no events in the next 14 days. You can add events manually instead.':
@@ -677,6 +684,10 @@ const patterns: PatternTranslator[] = [
   {
     re: /^ICS file:\s(.+)$/,
     toEs: (m) => `Archivo ICS: ${m[1]}`,
+  },
+  {
+    re: /^Calendar file:\s(.+)$/,
+    toEs: (m) => `Archivo de calendario: ${m[1]}`,
   },
   {
     re: /^Walk time:\s(.+)\s-\s(.+)$/,

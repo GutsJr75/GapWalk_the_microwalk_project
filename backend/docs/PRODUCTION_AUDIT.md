@@ -1,4 +1,4 @@
-# GapWalk Backend — Production Readiness Audit
+# GapWalk Backend - Production Readiness Audit
 
 > Review findings and changes applied to prepare the backend for production deployment.
 
@@ -28,10 +28,10 @@ The GapWalk backend is a well-structured NestJS 11 application with PostgreSQL, 
 
 | Change | File | Details |
 |---|---|---|
-| Filter inactive users in nudge generation | `nudge-generation.processor.ts` | `generateForAllUsers()` now filters `isActive: true` — previously generated plans for all users including deactivated ones |
+| Filter inactive users in nudge generation | `nudge-generation.processor.ts` | `generateForAllUsers()` now filters `isActive: true` - previously generated plans for all users including deactivated ones |
 | Filter inactive users in daily aggregation | `aggregation.processor.ts` | `computeDailyAll()` now filters `isActive: true` |
 | Filter inactive users in weekly aggregation | `aggregation.processor.ts` | `computeWeeklyAll()` now filters `isActive: true` |
-| Dashboard copy in Docker | `Dockerfile` | Added `COPY --from=builder /app/dashboard ./dashboard` — dashboard SPA was not included in production image |
+| Dashboard copy in Docker | `Dockerfile` | Added `COPY --from=builder /app/dashboard ./dashboard` - dashboard SPA was not included in production image |
 
 ### ⚡ Production Hardening
 

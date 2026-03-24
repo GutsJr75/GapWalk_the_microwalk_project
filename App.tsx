@@ -76,7 +76,13 @@ export type RootStackParamList = {
     manageMode?: boolean;
   }
   | undefined;
-  Dashboard: { openMenu?: boolean; showPostWalkSummary?: boolean; startTour?: boolean } | undefined;
+  Dashboard:
+  | {
+    openMenu?: boolean;
+    showPostWalkSummary?: boolean;
+    replayDashboardTour?: boolean;
+  }
+  | undefined;
   Walking: { planId?: string; prompt?: 'end_confirmation'; startedFromNotification?: boolean } | undefined;
   WalkingExpanded: undefined;
   Settings: undefined;
@@ -175,7 +181,6 @@ function App() {
     setProfileDisplayName,
     setActiveWalkSnapshot,
     setPendingWalkPrompt,
-    setHasSeenDashboardTour,
     setWalkDisplayCards,
     setNotificationTimerMode,
     setAllGuidanceSeen,
@@ -561,14 +566,6 @@ function App() {
         }
       } catch (e) {
         if (__DEV__) console.warn('Failed to restore UI settings:', e);
-      }
-
-      // Restore tour state
-      try {
-        const dashTourSeen = await authStorage.getDashboardTourSeen();
-        if (dashTourSeen) setHasSeenDashboardTour(true);
-      } catch (e) {
-        if (__DEV__) console.warn('Failed to restore tour state:', e);
       }
 
       // Load guidance "seen" flags so hint cards render correctly on first frame

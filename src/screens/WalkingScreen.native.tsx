@@ -634,6 +634,9 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
     if (!found) return;
     if (found.status === 'planned' || found.status === 'notified') {
       await plansRepo.updateStatus(planId, 'started');
+      if (isNotificationsSupported) {
+        await notificationService.clearPlanNotifications(planId);
+      }
     }
     hasMarkedPlanStartedRef.current = true;
   }, [planId]);
@@ -1846,6 +1849,9 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
     await sessionsRepo.save(resolvedSession);
     if (resolvedSession.nudgePlanId) {
       await plansRepo.updateStatus(resolvedSession.nudgePlanId, options?.planStatus ?? 'completed');
+      if (isNotificationsSupported) {
+        await notificationService.clearPlanNotifications(resolvedSession.nudgePlanId);
+      }
     }
 
     // Fire-and-forget backend sync after every completed session

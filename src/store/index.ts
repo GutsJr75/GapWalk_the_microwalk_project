@@ -58,11 +58,6 @@ interface AppState {
   rememberMe: boolean;
   setRememberMe: (value: boolean) => void;
 
-  // Tour state
-
-  hasSeenDashboardTour: boolean;
-  setHasSeenDashboardTour: (value: boolean) => void;
-
   // UI settings
   themeMode: 'dark' | 'light';
   setThemeMode: (mode: 'dark' | 'light') => void;
@@ -72,8 +67,6 @@ interface AppState {
   // Settings
   distanceUnit: 'km' | 'mi';
   setDistanceUnit: (unit: 'km' | 'mi') => void;
-  firstDayOfWeek: 'sun' | 'mon';
-  setFirstDayOfWeek: (day: 'sun' | 'mon') => void;
   vibrationEnabled: boolean;
   setVibrationEnabled: (val: boolean) => void;
   notificationTimerMode: NotificationTimerMode;
@@ -140,11 +133,6 @@ export const useAppStore = create<AppState>((set) => ({
   rememberMe: false,
   setRememberMe: (value) => set({ rememberMe: value }),
 
-  // Tour state
-
-  hasSeenDashboardTour: false,
-  setHasSeenDashboardTour: (value) => set({ hasSeenDashboardTour: value }),
-
   // UI settings
   themeMode: 'dark',
   setThemeMode: (mode) => set({ themeMode: mode }),
@@ -154,8 +142,6 @@ export const useAppStore = create<AppState>((set) => ({
   // Settings
   distanceUnit: 'mi',
   setDistanceUnit: (unit) => set({ distanceUnit: unit }),
-  firstDayOfWeek: 'sun',
-  setFirstDayOfWeek: (day) => set({ firstDayOfWeek: day }),
   vibrationEnabled: true,
   setVibrationEnabled: (val) => set({ vibrationEnabled: val }),
   notificationTimerMode: 'smart',

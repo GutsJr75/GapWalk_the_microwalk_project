@@ -414,7 +414,7 @@ export function getMotivationalMessage({
         ? [
             'Midday reset. A short walk can still steal this day back.',
             'This day is still very saveable.',
-            'Not too late. A micro-walk still counts big.',
+            'Not too late. A MicroWalk still counts big.',
             'Lunch-break energy, but make it useful.',
           ]
         : [

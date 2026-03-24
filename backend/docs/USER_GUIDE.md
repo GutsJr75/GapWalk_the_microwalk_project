@@ -1,4 +1,4 @@
-# GapWalk Backend — User & Feature Guide
+# GapWalk Backend - User & Feature Guide
 
 > For app users, study participants, and anyone wanting to understand what GapWalk does and how it works.
 
@@ -7,7 +7,7 @@
 ## Table of Contents
 
 1. [What is GapWalk?](#1-what-is-gapwalk)
-2. [How It Works — Step by Step](#2-how-it-works--step-by-step)
+2. [How It Works - Step by Step](#2-how-it-works--step-by-step)
 3. [Features Overview](#3-features-overview)
 4. [Setting Up Your Schedule](#4-setting-up-your-schedule)
 5. [How Nudge Notifications Work](#5-how-nudge-notifications-work)
@@ -23,7 +23,7 @@
 
 ## 1. What is GapWalk?
 
-**GapWalk** is a micro-walk research intervention platform. It analyzes your daily schedule to find free gaps in your day and sends you gentle nudge notifications encouraging short walks (typically 6–15 minutes). The goal is to help you build a sustainable walking habit by fitting micro-walks into your existing routine — not by asking you to carve out separate exercise time.
+**GapWalk** is a micro-walk research intervention platform. It analyzes your daily schedule to find free gaps in your day and sends you gentle nudge notifications encouraging short walks (typically 6–15 minutes). The goal is to help you build a sustainable walking habit by fitting micro-walks into your existing routine - not by asking you to carve out separate exercise time.
 
 ### Key Principles
 
@@ -34,7 +34,7 @@
 
 ---
 
-## 2. How It Works — Step by Step
+## 2. How It Works - Step by Step
 
 ```
 1. IMPORT YOUR SCHEDULE
@@ -120,10 +120,10 @@ Every day at **06:00 AM**, the server runs the Gap Engine for every active user:
 
 1. **Reads your busy events** for today and tomorrow
 2. **Finds free gaps** between events (accounting for buffer time)
-3. **Filters out quiet hours** — no walks during sleep time
-4. **Scores each gap** — prefers work hours (8 AM–5 PM), lunch windows (11 AM–2 PM), and ideal durations (8–15 minutes)
-5. **Allocates notifications** — distributes your daily notification budget across the best-scored gaps
-6. **Creates walk plans** — each plan has a specific `walkStart` time and suggested duration
+3. **Filters out quiet hours** - no walks during sleep time
+4. **Scores each gap** - prefers work hours (8 AM–5 PM), lunch windows (11 AM–2 PM), and ideal durations (8–15 minutes)
+5. **Allocates notifications** - distributes your daily notification budget across the best-scored gaps
+6. **Creates walk plans** - each plan has a specific `walkStart` time and suggested duration
 
 ### Notification Delivery
 
@@ -131,19 +131,19 @@ When a walk plan's start time arrives, the server sends a push notification to a
 
 ```
 🚶 Your 10:05 AM walk
-Walk o'clock. 8 minutes is all it takes — let's go!
+Walk o'clock. 8 minutes is all it takes - let's go!
 ```
 
 The notification includes two quick actions:
-- **Start Walk** — opens the app and begins tracking
-- **Skip** — dismisses the nudge
+- **Start Walk** - opens the app and begins tracking
+- **Skip** - dismisses the nudge
 
 ### Notification Variants
 
 To keep things fresh, GapWalk rotates through 6 different notification body messages daily:
 
 - "It's time! Head out for a X-min walk. Your body will thank you."
-- "Walk o'clock. X minutes is all it takes — let's go!"
+- "Walk o'clock. X minutes is all it takes - let's go!"
 - "Step outside for X min. A little movement goes a long way."
 - "Your X-min walking window is open. Time to move!"
 - "Fresh air awaits. X-min walk starts now."
@@ -173,8 +173,8 @@ planned → notified → started → completed ✅
 ### Starting a Walk
 
 You can start a walk in two ways:
-1. **Tap a nudge notification** — opens the app linked to the specific nudge plan
-2. **Manual start** — open the app and start an organic walk (not linked to a nudge)
+1. **Tap a nudge notification** - opens the app linked to the specific nudge plan
+2. **Manual start** - open the app and start an organic walk (not linked to a nudge)
 
 ### What Gets Tracked
 
@@ -192,8 +192,8 @@ You can start a walk in two ways:
 ### Pausing
 
 You can pause a walk at any time. Pauses can be:
-- **Manual** — you tap the pause button
-- **Automatic** — the app detects you've stopped moving
+- **Manual** - you tap the pause button
+- **Automatic** - the app detects you've stopped moving
 
 Each pause records the reason (e.g., traffic light, phone call) and duration.
 
@@ -221,14 +221,14 @@ All preferences are fully customizable from the app:
 | **Notify Delay** | 5 min | Minutes to wait before sending notification (when `delay` is selected) |
 | **Strictness Mode** | `easygoing` | `easygoing` = gentle, `no_excuses` = aggressive nudging |
 | **Step Goal** | 1000 | Optional daily step target |
-| **Preferred Walking Periods** | — | Optional time windows you prefer for walking |
+| **Preferred Walking Periods** | - | Optional time windows you prefer for walking |
 
 ### How Preferences Affect the Engine
 
 - **Daily Target** determines total walking minutes the engine tries to distribute
 - **Notifications Per Day** limits how many nudges you'll receive (sustainability guard)
 - **Min Walk Minutes** sets the minimum gap size the engine considers
-- **Quiet Hours** creates a hard blackout window — no notifications, no walk plans
+- **Quiet Hours** creates a hard blackout window - no notifications, no walk plans
 - **Buffer** ensures you're never told to walk the instant a meeting ends
 
 ---
@@ -321,8 +321,8 @@ Researchers can:
 - **Create studies** with name, description, date range, and configuration
 - **Enroll participants** by user ID
 - **Withdraw participants** (preserves data, marks as withdrawn)
-- **Export all study data** — walk sessions, nudge plans, behavior logs, aggregations
-- **View per-participant summaries** — totals for sessions, minutes, steps, nudge adherence
+- **Export all study data** - walk sessions, nudge plans, behavior logs, aggregations
+- **View per-participant summaries** - totals for sessions, minutes, steps, nudge adherence
 
 ---
 
@@ -359,7 +359,7 @@ Researchers can:
 
 ### Q: How many notifications will I get per day?
 
-By default, 2 per day. You can change this in Preferences → Notifications Per Day (range: 1–10). The engine also applies a "sustainability guard" — it won't schedule more notifications than your daily walking goal can reasonably support.
+By default, 2 per day. You can change this in Preferences → Notifications Per Day (range: 1–10). The engine also applies a "sustainability guard" - it won't schedule more notifications than your daily walking goal can reasonably support.
 
 ### Q: What happens if I don't have any free time today?
 
@@ -379,7 +379,7 @@ Step accuracy depends on your device's pedometer sensor. The app reports the ste
 
 ### Q: Can I participate in a research study?
 
-Yes — a researcher can enroll you in a study using your user ID. You'll continue using the app normally; your data will be included in the study's exports.
+Yes - a researcher can enroll you in a study using your user ID. You'll continue using the app normally; your data will be included in the study's exports.
 
 ### Q: How do I stop receiving notifications?
 

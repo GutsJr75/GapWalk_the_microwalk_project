@@ -56,6 +56,13 @@ import { analyticsService } from '../services/analytics';
 import { useAppStore } from '../store';
 import { addDays, format, setHours, setMinutes, startOfDay } from 'date-fns';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { guidanceStorage } from '../data/guidanceStorage';
+import {
+  TourOverlay,
+  SCHEDULE_TOUR_STEPS,
+  SCHEDULE_TOUR_STEPS_IMPORT,
+  type TourTargetRef,
+} from '../tour';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'ManualSchedule'>;
 const DAY_TAB_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] as const;
@@ -612,8 +619,53 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
   const infoTitleFadeOut = useRef(new Animated.Value(1)).current;
   const infoTitleFadeIn = useRef(new Animated.Value(0)).current;
   const infoDeleteIconOpacity = useRef(new Animated.Value(0)).current;
-  const { scheduleSource, setScheduleSource, setUpcomingPlans, preferences, themeMode } = useAppStore();
+  const { scheduleSource, setScheduleSource, setUpcomingPlans, preferences, themeMode, guidanceSeen, setGuidanceSeen } = useAppStore();
 
+  const tourHintBarRef = useRef<View>(null);
+  const tourWeekHeaderRef = useRef<View>(null);
+  const tourGridRef = useRef<View>(null);
+  const tourGridCellsRef = useRef<View>(null);
+  const tourClearBtnRef = useRef<View>(null);
+  const tourFooterRef = useRef<View>(null);
+  const [showScheduleTour, setShowScheduleTour] = useState(false);
+
+  const tourSteps = useMemo(
+    () => (prefillTemplate ? SCHEDULE_TOUR_STEPS_IMPORT : SCHEDULE_TOUR_STEPS),
+    [prefillTemplate],
+  );
+  const tourTargets = useMemo<TourTargetRef[]>(() => [
+    // Step 0 explains the weekly grid (columns=days, rows=time slots).
+    // We spotlight both the day/date header and the visible grid rows.
+    { ref: tourWeekHeaderRef, stepIndex: 0 },
+    { ref: tourGridRef, stepIndex: 0 },
+    // Step 1 is about week navigation / selecting a day.
+    { ref: tourWeekHeaderRef, stepIndex: 1 },
+    // Step 2 is about tapping slots/events in the grid.
+    // Measure only the grid cells area (no left row/time header).
+    { ref: tourGridCellsRef, stepIndex: 2 },
+    { ref: tourClearBtnRef, stepIndex: 3 },
+    { ref: tourFooterRef, stepIndex: 4 },
+  ], []);
+
+  useEffect(() => {
+    // The schedule editor tour should keep showing until the user has visited
+    // the dashboard for the first time.
+    if (manageMode || guidanceSeen.dashboard_welcome) return;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const task = InteractionManager.runAfterInteractions(() => {
+      timer = setTimeout(() => setShowScheduleTour(true), 600);
+    });
+    return () => {
+      task.cancel();
+      if (timer) clearTimeout(timer);
+    };
+  }, [manageMode, guidanceSeen.dashboard_welcome]);
+
+  const handleTourFinish = useCallback(() => {
+    setShowScheduleTour(false);
+    setGuidanceSeen('schedule_editor_tour', true);
+    guidanceStorage.markSeen('schedule_editor_tour');
+  }, [setGuidanceSeen]);
 
   const scrollGridToNow = useCallback((animated = true) => {
     const now = new Date();
@@ -980,6 +1032,21 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
       return;
     }
     showBinaryConfirm(title, message, 'Yes', onDiscard, 'destructive');
+  };
+
+  const handleBack = () => {
+    const totalEntries = Object.values(entriesByDay).reduce((sum, arr) => sum + arr.length, 0);
+    if (totalEntries === 0) {
+      runAllowedNavigation(() => navigation.goBack());
+      return;
+    }
+    showBinaryConfirm(
+      'Go back?',
+      'Going back will remove all progress on this screen. Are you sure?',
+      'Yes',
+      () => runAllowedNavigation(() => navigation.goBack()),
+      'destructive'
+    );
   };
 
   useEffect(() => {
@@ -2599,6 +2666,8 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
           <ScreenHeader
             title={manageMode ? 'Manage schedule' : 'Set up your schedule'}
             style={[styles.compactScreenHeader, manageMode && styles.manageHeaderTitle]}
+            onBack={manageMode ? undefined : handleBack}
+            backTestID="manual-schedule-back"
           />
           {!manageMode && sourceType === 'import' && importedFilename ? (
             <View style={[styles.icsBadge, { backgroundColor: palette.accentMuted, borderColor: palette.accentBorder }]}>
@@ -2617,7 +2686,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
           nestedScrollEnabled
           stickyHeaderIndices={[1]}
         >
-          <View style={[styles.gridToolbar, { borderBottomColor: gridLineSoft }]}>
+          <View ref={tourHintBarRef} collapsable={false} style={[styles.gridToolbar, { borderBottomColor: gridLineSoft }]}>
             <Text
               variant="bodySmall"
               style={[
@@ -2630,7 +2699,8 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
             >
               {slotHintText}
             </Text>
-            <Pressable
+              <Pressable
+                ref={tourClearBtnRef as any}
                 onPress={() => handleClearDay()}
                 disabled={selectedDay === null || selectedDayVisibleCount === 0}
                 testID="manual-clear-day"
@@ -2646,7 +2716,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
               </Pressable>
           </View>
 
-          <View style={[styles.weekHeaderWrap, { borderBottomColor: gridLineSoft, backgroundColor: palette.bgApp }]}>
+          <View ref={tourWeekHeaderRef} collapsable={false} style={[styles.weekHeaderWrap, { borderBottomColor: gridLineSoft, backgroundColor: palette.bgApp }]}>
             <View style={styles.weekHeaderTrackRow}>
               <View
                 style={[
@@ -2866,6 +2936,8 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
           {/* Grid: fixed 7 day columns (X) with vertical time axis (Y) */}
             <View style={[styles.gridContainer, { paddingHorizontal: GRID_PADDING }]}>
             <View
+              ref={tourGridRef}
+              collapsable={false}
               style={[
                 styles.gridWrap,
                 {
@@ -2920,7 +2992,11 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
                     ))}
                   </View>
 
-                  <View style={[styles.gridWeekBody, { width: weekGridWidth, height: gridBodyHeight }]}>
+                  <View
+                    ref={tourGridCellsRef}
+                    collapsable={false}
+                    style={[styles.gridWeekBody, { width: weekGridWidth, height: gridBodyHeight }]}
+                  >
                     {isTodayInActiveWeek && nowRowFloat >= 0 && nowRowFloat < NUM_SLOTS && (
                       <View
                         pointerEvents="none"
@@ -3151,6 +3227,8 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
         </ScrollView>
 
         <View
+            ref={tourFooterRef}
+            collapsable={false}
             style={[
               styles.footer,
               {
@@ -4269,6 +4347,16 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
           </View>
         </View>
       </AppModal>
+
+      <TourOverlay
+        visible={showScheduleTour}
+        targets={tourTargets}
+        steps={tourSteps}
+        preferAboveStepIndices={[2]}
+        backdropCutoffRef={tourFooterRef}
+        spotlightClampRef={tourGridRef}
+        onFinish={handleTourFinish}
+      />
     </SafeAreaView>
   );
 };

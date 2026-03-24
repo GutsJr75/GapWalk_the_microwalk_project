@@ -5,10 +5,12 @@ const PREFIX = 'gapwalk_guidance_';
 
 export const GUIDANCE_KEYS = [
   'dashboard_welcome',
+  'dashboard_tour',
   'dashboard_opportunities_hint',
   'dashboard_manual_walk_hint',
   'weekly_data_hint',
   'achievements_hint',
+  'schedule_editor_tour',
 ] as const;
 
 export type GuidanceKey = (typeof GUIDANCE_KEYS)[number];

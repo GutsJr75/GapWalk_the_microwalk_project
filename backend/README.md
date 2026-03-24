@@ -1,6 +1,6 @@
 # GapWalk Backend
 
-REST API server for **GapWalk** — a micro-walk research intervention platform that identifies schedule gaps and sends nudge notifications encouraging short walks throughout the day.
+REST API server for **GapWalk** - a micro-walk research intervention platform that identifies schedule gaps and sends nudge notifications encouraging short walks throughout the day.
 
 ## Tech Stack
 
@@ -78,20 +78,20 @@ The API will be available at `http://localhost:3000`.
 
 | Variable                 | Required | Default                  | Description                                                 |
 | ------------------------ | -------- | ------------------------ | ----------------------------------------------------------- |
-| `DATABASE_URL`           | Yes      | —                        | PostgreSQL connection string                                |
+| `DATABASE_URL`           | Yes      | -                        | PostgreSQL connection string                                |
 | `REDIS_URL`              | Yes      | `redis://localhost:6379` | Redis connection URL                                        |
-| `AUTH0_DOMAIN`           | Yes      | —                        | Auth0 tenant domain                                         |
-| `AUTH0_AUDIENCE`         | Yes      | —                        | Auth0 API audience                                          |
-| `AUTH0_CLIENT_ID`        | Yes      | —                        | Auth0 application client ID                                 |
-| `AUTH0_CLIENT_SECRET`    | Yes      | —                        | Auth0 application client secret                             |
-| `EXPO_ACCESS_TOKEN`      | Yes      | —                        | Expo push notification access token                         |
+| `AUTH0_DOMAIN`           | Yes      | -                        | Auth0 tenant domain                                         |
+| `AUTH0_AUDIENCE`         | Yes      | -                        | Auth0 API audience                                          |
+| `AUTH0_CLIENT_ID`        | Yes      | -                        | Auth0 application client ID                                 |
+| `AUTH0_CLIENT_SECRET`    | Yes      | -                        | Auth0 application client secret                             |
+| `EXPO_ACCESS_TOKEN`      | Yes      | -                        | Expo push notification access token                         |
 | `PORT`                   | No       | `3000`                   | HTTP port                                                   |
 | `NODE_ENV`               | No       | `development`            | `development` or `production`                               |
 | `CORS_ORIGIN`            | No       | `http://localhost:8081`  | Allowed CORS origin                                         |
 | `ENABLE_WORKERS`         | No       | `true`                   | Set `false` to disable BullMQ schedulers/processors         |
 | `PRISMA_CONNECT_IN_TEST` | No       | `false`                  | When `NODE_ENV=test`, set `true` to force Prisma DB connect |
-| `GOOGLE_CLIENT_ID`       | No       | —                        | Google Calendar OAuth client ID                             |
-| `GOOGLE_CLIENT_SECRET`   | No       | —                        | Google Calendar OAuth client secret                         |
+| `GOOGLE_CLIENT_ID`       | No       | -                        | Google Calendar OAuth client ID                             |
+| `GOOGLE_CLIENT_SECRET`   | No       | -                        | Google Calendar OAuth client secret                         |
 
 ## NPM Scripts
 
@@ -117,7 +117,7 @@ docker compose up -d --build
 | ---------------- | ---- | -------------------------------- |
 | `postgres`       | 5432 | PostgreSQL 16 database           |
 | `redis`          | 6379 | BullMQ queue backend             |
-| `prisma-migrate` | —    | Runs migrations then exits       |
+| `prisma-migrate` | -    | Runs migrations then exits       |
 | `api`            | 3000 | Production API server            |
 
 All services have health checks, restart policies (`unless-stopped`), and proper dependency ordering. The API container runs as a non-root user with a built-in Docker `HEALTHCHECK`.
@@ -171,7 +171,7 @@ backend/
 
 | Document                                             | Description                                     |
 | ---------------------------------------------------- | ----------------------------------------------- |
-| [docs/USER_GUIDE.md](docs/USER_GUIDE.md)             | User & feature guide — how GapWalk works        |
+| [docs/USER_GUIDE.md](docs/USER_GUIDE.md)             | User & feature guide - how GapWalk works        |
 | [docs/API_REFERENCE.md](docs/API_REFERENCE.md)       | Complete REST API reference                      |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)         | System architecture, data flow, algorithms       |
 | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)             | Production deployment guide                      |
@@ -209,4 +209,4 @@ See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for detailed deployment instruction
 
 ## License
 
-Private — Research use only.
+Private - Research use only.
