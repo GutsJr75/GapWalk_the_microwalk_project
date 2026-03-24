@@ -1,4 +1,4 @@
-# GapWalk Backend — Architecture
+# GapWalk Backend - Architecture
 
 ## System Overview
 
@@ -373,7 +373,7 @@ A static HTML/JS SPA served at `/dashboard`, backed by the `/api/dashboard-api/*
 
 | Feature              | Chart Type     | Data Source                                                       |
 | -------------------- | -------------- | ----------------------------------------------------------------- |
-| Overview stats cards | —              | `GET /overview` (users, sessions, minutes, steps, plans, studies) |
+| Overview stats cards | -              | `GET /overview` (users, sessions, minutes, steps, plans, studies) |
 | Daily walk activity  | Bar chart      | `GET /daily-activity` (last 30 days)                              |
 | Nudge adherence      | Doughnut chart | `GET /nudge-adherence` (planned/completed/skipped/cancelled)      |
 | Top walkers          | Table          | `GET /leaderboard` (name, minutes, steps, sessions)               |
@@ -456,7 +456,7 @@ Multi-stage Dockerfile:
 
 | Feature | Implementation |
 |---|---|
-| **Graceful shutdown** | `app.enableShutdownHooks()` — clean Prisma/Redis disconnect on SIGTERM |
+| **Graceful shutdown** | `app.enableShutdownHooks()` - clean Prisma/Redis disconnect on SIGTERM |
 | **Log levels** | Production: `error`, `warn`, `log` only |
 | **Non-root container** | Docker `appuser` with minimal permissions |
 | **Health check** | `GET /health` endpoint + Docker `HEALTHCHECK` |

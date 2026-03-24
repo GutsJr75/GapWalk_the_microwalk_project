@@ -10,6 +10,7 @@ const mapRowToPlan = (row: {
   walk_start: string;
   suggested_duration_minutes: number;
   manual_notify_lead_minutes: number;
+  notifications_enabled: number;
   status: string;
   reason: string | null;
   created_at: string;
@@ -21,6 +22,7 @@ const mapRowToPlan = (row: {
   walkStart: row.walk_start,
   suggestedDurationMinutes: row.suggested_duration_minutes,
   manualNotifyLeadMinutes: row.manual_notify_lead_minutes ?? 0,
+  notificationsEnabled: row.notifications_enabled !== 0,
   status: row.status as NudgePlanStatus,
   reason: row.reason || undefined,
   createdAt: row.created_at,
@@ -47,9 +49,9 @@ export const plansRepo = {
     await db.runAsync(
       `INSERT OR REPLACE INTO nudge_plans 
        (id, date, gap_start, gap_end, walk_start, suggested_duration_minutes,
-        manual_notify_lead_minutes,
+        manual_notify_lead_minutes, notifications_enabled,
         status, reason, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         plan.id,
         plan.date,
@@ -58,6 +60,7 @@ export const plansRepo = {
         plan.walkStart,
         plan.suggestedDurationMinutes,
         plan.manualNotifyLeadMinutes ?? 0,
+        plan.notificationsEnabled === false ? 0 : 1,
         plan.status,
         plan.reason || null,
         plan.createdAt,
@@ -72,11 +75,12 @@ export const plansRepo = {
         await db.runAsync(
           `INSERT OR REPLACE INTO nudge_plans
            (id, date, gap_start, gap_end, walk_start, suggested_duration_minutes,
-            manual_notify_lead_minutes,
+            manual_notify_lead_minutes, notifications_enabled,
             status, reason, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [plan.id, plan.date, plan.gapStart, plan.gapEnd, plan.walkStart,
            plan.suggestedDurationMinutes, plan.manualNotifyLeadMinutes ?? 0,
+           plan.notificationsEnabled === false ? 0 : 1,
            plan.status, plan.reason || null, plan.createdAt]
         );
       }
@@ -93,6 +97,7 @@ export const plansRepo = {
       walk_start: string;
       suggested_duration_minutes: number;
       manual_notify_lead_minutes: number;
+      notifications_enabled: number;
       status: string;
       reason: string | null;
       created_at: string;
@@ -115,6 +120,7 @@ export const plansRepo = {
       walk_start: string;
       suggested_duration_minutes: number;
       manual_notify_lead_minutes: number;
+      notifications_enabled: number;
       status: string;
       reason: string | null;
       created_at: string;
@@ -137,6 +143,7 @@ export const plansRepo = {
       walk_start: string;
       suggested_duration_minutes: number;
       manual_notify_lead_minutes: number;
+      notifications_enabled: number;
       status: string;
       reason: string | null;
       created_at: string;
@@ -160,6 +167,7 @@ export const plansRepo = {
       walk_start: string;
       suggested_duration_minutes: number;
       manual_notify_lead_minutes: number;
+      notifications_enabled: number;
       status: string;
       reason: string | null;
       created_at: string;
@@ -244,6 +252,7 @@ export const plansRepo = {
       walkStart: string;
       suggestedDurationMinutes: number;
       manualNotifyLeadMinutes?: number;
+      notificationsEnabled?: boolean;
       reason?: string;
       status?: NudgePlanStatus;
     }
@@ -252,7 +261,7 @@ export const plansRepo = {
     await db.runAsync(
       `UPDATE nudge_plans
        SET gap_start = ?, gap_end = ?, walk_start = ?, suggested_duration_minutes = ?,
-           manual_notify_lead_minutes = ?, reason = ?, status = ?
+           manual_notify_lead_minutes = ?, notifications_enabled = COALESCE(?, notifications_enabled), reason = ?, status = ?
        WHERE id = ?`,
       [
         timing.gapStart,
@@ -260,6 +269,7 @@ export const plansRepo = {
         timing.walkStart,
         timing.suggestedDurationMinutes,
         timing.manualNotifyLeadMinutes ?? 0,
+        timing.notificationsEnabled == null ? null : (timing.notificationsEnabled ? 1 : 0),
         timing.reason ?? null,
         timing.status ?? 'planned',
         id,

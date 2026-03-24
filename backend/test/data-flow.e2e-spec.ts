@@ -455,7 +455,7 @@ describe('POST /api/behavior-log — Behavior event logging', () => {
     const { status } = await authed('POST', '/behavior-log/bulk', {
       logs: [
         { eventType: 'button_tap', screen: 'Dashboard', metadata: { button: 'start_walk' } },
-        { eventType: 'screen_view', screen: 'WalkingExpanded', metadata: {} },
+        { eventType: 'screen_view', screen: 'Walking', metadata: {} },
       ],
     });
     expect([200, 201]).toContain(status);

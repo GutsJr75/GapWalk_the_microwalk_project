@@ -649,8 +649,8 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
   const notifCount = prefs.notificationCountPerDay;
 
   let dailyTargetError: string | null = null;
-  if (dailyTarget < 5) dailyTargetError = 'Set at least 5 minutes for micro walks.';
-  else if (dailyTarget > 60) dailyTargetError = 'Keep it under 60 min for micro walks.';
+  if (dailyTarget < 5) dailyTargetError = 'Set at least 5 minutes for your daily MicroWalk goal.';
+  else if (dailyTarget > 60) dailyTargetError = 'Keep your daily MicroWalk goal under 60 minutes.';
 
   const allowedMaxByTarget = Math.max(1, Math.floor(dailyTarget / 4));
   const ruleMax = dailyTarget > 60 ? 5 : allowedMaxByTarget;
@@ -658,9 +658,8 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
   let notifError: string | null = null;
   if (notifCount < 1) notifError = 'At least 1 notification required.';
   else if (notifCount > 15) notifError = 'Maximum 15 notifications allowed.';
-  else if (notifCount > effectiveMax) notifError = dailyTarget > 60
-    ? 'Target > 60 min limits notifications to 5.'
-    : `Max ${effectiveMax} notifications for ${dailyTarget} min.`;
+  else if (notifCount > effectiveMax) notifError =
+    `At ${dailyTarget} minutes daily, you can have up to ${effectiveMax} reminders.`;
 
   let bufferError: string | null = null;
   if (prefs.bufferMinutes < 0) bufferError = 'Buffer cannot be negative.';
@@ -845,7 +844,7 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
     if (!hasChanges) {
       confirmAndSavePreferences(DEFAULT_PREFERENCES, {
         title: 'Use recommended preferences',
-        message: 'Continue with GapWalk recommended settings',
+        message: 'Continue with GapWalk recommended settings?',
         actionLabel: 'Yes, continue',
       });
       return;
@@ -959,7 +958,7 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
                   <Text variant="bodySmall" style={styles.fieldLabel}>Walk buffer</Text>
                   <InfoTip
                     id="walk-buffer"
-                    text="Adds space before and after busy events so walk suggestions are not too tight. Example: 10 min means no walk suggestion in the 10 min before or after each event."
+                    text="Adds space before and after busy events so your walk windows are not too tight. Example: 10 min means GapWalk will avoid walk windows in the 10 min before or after each event."
                     activeInfoId={activeInfo?.id ?? null}
                     onToggle={handleInfoToggle}
                   />
@@ -1027,17 +1026,17 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
                 <View style={styles.radioGroup}>
                   <RadioOption
                     selected={notifyChoice === 'gap'}
-                    label="When the app finds a gap"
+                    label="When GapWalk finds a walk window"
                     onPress={() => setNotifyChoice('gap')}
                   />
                   <RadioOption
                     selected={notifyChoice === '5min'}
-                    label="5 minutes before the micro walk"
+                    label="5 minutes before the MicroWalk"
                     onPress={() => setNotifyChoice('5min')}
                   />
                   <RadioOption
                     selected={notifyChoice === '10min'}
-                    label="10 minutes before the micro walk"
+                    label="10 minutes before the MicroWalk"
                     onPress={() => setNotifyChoice('10min')}
                   />
                 </View>
