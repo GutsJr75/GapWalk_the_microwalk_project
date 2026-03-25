@@ -8,6 +8,7 @@
   <uses-permission android:name="android.permission.FOREGROUND_SERVICE_HEALTH"/>
   <uses-permission android:name="android.permission.INTERNET"/>
   <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"/>
+  <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM"/>
   <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW"/>
   <uses-permission android:name="android.permission.VIBRATE"/>
   <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"/>
@@ -40,6 +41,10 @@
       android:enabled="true"
       android:exported="false"
       android:foregroundServiceType="location|health"/>
+    <receiver
+      android:name=".notifications.ExactAlarmNotificationReceiver"
+      android:enabled="true"
+      android:exported="false"/>
     <receiver
       android:name=".walk.WalkTrackingNotificationReceiver"
       android:enabled="true"

@@ -266,7 +266,7 @@ const ScheduleSetupScreenInner: React.FC<Props> = ({ navigation, route }) => {
       }
 
       if (!content.trim()) {
-        throw new Error('The selected ICS file is empty.');
+        throw new Error('The selected calendar file is empty.');
       }
 
       setSyncStatus('Parsing calendar...');
@@ -281,7 +281,7 @@ const ScheduleSetupScreenInner: React.FC<Props> = ({ navigation, route }) => {
       if (parseResult.events.length === 0) {
         setLoading(false);
         setSyncStatus(null);
-        showMessage('No Events', 'No events found in the ICS file.');
+        showMessage('No Events', 'No events found in the calendar file.');
         return;
       }
 
@@ -295,7 +295,7 @@ const ScheduleSetupScreenInner: React.FC<Props> = ({ navigation, route }) => {
       if (weeklyTemplate.length === 0) {
         showMessage(
           'Import Note',
-          'The ICS file was imported, but no timed events were available for the weekly grid preview.'
+          'The calendar file was imported, but no timed events were available for the weekly grid preview.'
         );
       }
       setLoading(false);

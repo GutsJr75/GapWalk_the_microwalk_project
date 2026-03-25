@@ -13,6 +13,7 @@ import { NudgePlan, WalkSession } from '../types';
 import { plansRepo } from '../data/repositories/plansRepo';
 import { sessionsRepo } from '../data/repositories/sessionsRepo';
 import { analyticsService } from '../services/analytics';
+import { isNotificationsSupported, notificationService } from '../services/notifications';
 import { useAppStore } from '../store';
 import { addMinutes } from 'date-fns';
 
@@ -75,6 +76,9 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
     if (!found) return;
     if (found.status === 'planned' || found.status === 'notified') {
       await plansRepo.updateStatus(planId, 'started');
+      if (isNotificationsSupported) {
+        await notificationService.clearPlanNotifications(planId);
+      }
     }
     hasMarkedPlanStartedRef.current = true;
   }, [planId]);
@@ -244,6 +248,9 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
     await sessionsRepo.save(resolvedSession);
     if (resolvedSession.nudgePlanId) {
       await plansRepo.updateStatus(resolvedSession.nudgePlanId, options?.planStatus ?? 'completed');
+      if (isNotificationsSupported) {
+        await notificationService.clearPlanNotifications(resolvedSession.nudgePlanId);
+      }
     }
 
     analyticsService.track('walk_completed', {

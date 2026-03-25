@@ -39,9 +39,9 @@ const setupSteps = [
 
 const faqItems = [
   {
-    question: 'What is an ICS file?',
+    question: 'What is a calendar file?',
     answer:
-      'An ICS file is a standard calendar export used by Google Calendar, Apple Calendar, Outlook, and similar apps. Importing it lets GapWalk rebuild your weekly schedule for you instead of making you enter everything by hand.',
+      'A calendar file (.ics) is a standard export used by Google Calendar, Apple Calendar, Outlook, and similar apps. Importing it lets GapWalk rebuild your weekly schedule so you do not have to enter everything by hand.',
   },
   {
     question: 'Why does GapWalk ask for location?',

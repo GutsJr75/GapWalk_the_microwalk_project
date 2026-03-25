@@ -32,6 +32,9 @@ export async function syncNudgePlansForCurrentSchedule(
     );
     for (const plan of activeAutoPlans) {
       await plansRepo.updateStatus(plan.id, 'cancelled');
+      if (isNotificationsSupported) {
+        await notificationService.clearPlanNotifications(plan.id);
+      }
     }
 
     const plans = await gapEngine.generatePlansForDate(date, events, prefs);

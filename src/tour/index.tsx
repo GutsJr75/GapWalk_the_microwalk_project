@@ -3,13 +3,11 @@ import {
   View,
   StyleSheet,
   Pressable,
-  Platform,
   Animated,
   Easing,
   Dimensions,
   Modal,
   type LayoutRectangle,
-  type ScrollView,
 } from 'react-native';
 import Svg, { Path as SvgPath } from 'react-native-svg';
 import * as Haptics from 'expo-haptics';
@@ -19,7 +17,7 @@ import { getThemePalette, type ThemeMode } from '../theme/palette';
 import { useAppStore } from '../store';
 
 /* ────────────────────────────────────────────────────────────
- *  Tour Step Definitions
+ *  Step definitions
  * ──────────────────────────────────────────────────────────── */
 
 export interface TourStepDef {
@@ -28,42 +26,76 @@ export interface TourStepDef {
   text: string;
 }
 
+export const SCHEDULE_TOUR_STEPS: TourStepDef[] = [
+  {
+    name: 'sched-hint-bar',
+    order: 1,
+    text: 'This is your weekly schedule. Each column is a day and each row is a 30-minute time slot.',
+  },
+  {
+    name: 'sched-week-header',
+    order: 2,
+    text: 'Use the arrows next to the month on the left to switch weeks. You can also slide (swipe) left/right on the weekly header to move between weeks. Tap a day to select it.',
+  },
+  {
+    name: 'sched-grid-body',
+    order: 3,
+    text: "Tap any empty slot to select it, and a '+' icon appears. Tap it again to open the Add Event form where you set the title, time, and repeat days.",
+  },
+  {
+    name: 'sched-clear-btn',
+    order: 4,
+    text: 'Select a day, then tap Clear to remove all events for that day.',
+  },
+  {
+    name: 'sched-footer',
+    order: 5,
+    text: "When you're done adding your busy times, tap Save and then Continue to proceed.",
+  },
+];
+
+export const SCHEDULE_TOUR_STEPS_IMPORT: TourStepDef[] = [
+  SCHEDULE_TOUR_STEPS[0],
+  SCHEDULE_TOUR_STEPS[1],
+  {
+    name: 'sched-grid-body',
+    order: 3,
+    text: 'Your imported events appear as colored blocks. Tap one to select it, then tap again to view or edit. Tap an empty slot twice to add a new event.',
+  },
+  SCHEDULE_TOUR_STEPS[3],
+  SCHEDULE_TOUR_STEPS[4],
+];
+
 export const DASHBOARD_TOUR_STEPS: TourStepDef[] = [
   {
-    name: 'dash-menu',
+    name: 'dashboard-menu',
     order: 1,
-    text: 'Tap here to access your profile, schedule, preferences, and more.',
+    text: 'Tap the menu icon to access settings, manage your schedule, view your profile, and more.',
   },
   {
-    name: 'dash-quick-status',
+    name: 'dashboard-streak',
     order: 2,
-    text: 'Your daily walking target, notifications, and step goal at a glance.',
+    text: 'This is your walking streak. Walk consistently each day to keep your streak alive and build lasting habits.',
   },
   {
-    name: 'dash-opportunities',
+    name: 'dashboard-quick-status',
     order: 3,
-    text: 'Your upcoming walk windows. Tap Change or Cancel to adjust them.',
+    text: 'Your daily progress at a glance. Track minutes walked, notification count, and steps toward your goals.',
   },
   {
-    name: 'dash-add-walk',
+    name: 'dashboard-opportunities',
     order: 4,
-    text: "Tap '+' to schedule a new MicroWalk at any time you choose.",
+    text: 'These are your upcoming walk windows. GapWalk finds gaps in your schedule and suggests the best times. Tap the + button to add a walk manually.',
   },
   {
-    name: 'dash-manual-walk',
+    name: 'dashboard-manual-walk',
     order: 5,
-    text: "Start walking right now — no schedule needed! That's the tour, happy walking!",
+    text: 'Tap here anytime to start a walk on demand, even outside your scheduled windows.',
   },
 ];
 
 /* ────────────────────────────────────────────────────────────
- *  Tour Overlay Component (Google-style spotlight)
- *
- *  Uses a Modal with coordinate calibration: an invisible ref
- *  at the top of the Modal is measured via measureInWindow to
- *  determine the exact offset between the app's coordinate space
- *  and the Modal's coordinate space. This guarantees pixel-
- *  perfect spotlight alignment.
+ *  Tour overlay
  * ──────────────────────────────────────────────────────────── */
 
 export interface TourTargetRef {
@@ -75,23 +107,44 @@ interface TourOverlayProps {
   visible: boolean;
   targets: TourTargetRef[];
   steps: TourStepDef[];
-  scrollViewRef?: React.RefObject<ScrollView | null>;
   onFinish: () => void;
+  onBeforeStep?: (stepIndex: number) => Promise<void>;
+  preferAboveStepIndices?: number[];
+  /**
+   * Optional reference used to "cut off" the dark backdrop + tap-anywhere layer
+   * (so underlying CTA buttons stay visible/clickable during Step 0).
+   */
+  backdropCutoffRef?: React.RefObject<View | null>;
+  /**
+   * Optional reference used to clamp spotlight height to a visible viewport.
+   * Useful when the step target is inside a ScrollView and is taller than what
+   * the user can see at once.
+   */
+  spotlightClampRef?: React.RefObject<View | null>;
 }
 
-const SPOTLIGHT_PADDING = 18;  // increased to prevent corner clipping
-const SPOTLIGHT_RADIUS = 16;   // reduced so corners don't eat into content
+const SPOTLIGHT_PADDING = 14;
+const SPOTLIGHT_RADIUS = 14;
 const TOOLTIP_MAX_WIDTH = 300;
 const TOOLTIP_MARGIN = 20;
-// Slightly longer to feel smoother and more intentional
-const ANIMATION_DURATION = 340;
-const SCROLL_SETTLE_MS = 420;
+const ANIMATION_DURATION = 320;
+const STEP_TRANSITION_DURATION = 260;
+const TOOLTIP_REVEAL_DURATION = 220;
+const MEASURE_TIMEOUT_MS = 500;
+// Make the non-spotlight area dark enough that underlying CTA buttons
+// (e.g. Save/Continue) don't look like tour controls.
+const BACKDROP_COLOR = 'rgba(0, 0, 0, 0.88)';
+// Bottom fade for Step 0: keep the CTA area less prominent while still allowing
+// the user to see/engage it (tap-capture stays cut off below `darkRectHeight`).
+const BACKDROP_BOTTOM_COLOR = 'rgba(0, 0, 0, 0.35)';
 
-const MANUAL_OFFSET_X = 4;
-const MANUAL_OFFSET_Y = 0;
-
-/** Build an SVG rounded-rect path string (clockwise, so evenodd punches a hole). */
-const buildRoundedRectPath = (x: number, y: number, w: number, h: number, r: number): string => {
+const buildRoundedRectPath = (
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  r: number,
+): string => {
   const sr = Math.min(r, w / 2, h / 2);
   return [
     `M${x + sr},${y}`,
@@ -110,63 +163,43 @@ export const TourOverlay: React.FC<TourOverlayProps> = ({
   visible,
   targets,
   steps,
-  scrollViewRef,
   onFinish,
+  onBeforeStep,
+  preferAboveStepIndices,
+  backdropCutoffRef,
+  spotlightClampRef,
 }) => {
   const { themeMode } = useAppStore();
   const palette = getThemePalette(themeMode as ThemeMode);
 
   const [currentStep, setCurrentStep] = useState(0);
-  const [tooltipPosition, setTooltipPosition] = useState<'above' | 'below'>('below');
+  const [backdropCutoffY, setBackdropCutoffY] = useState<number | null>(null);
+  const [tooltipPosition, setTooltipPosition] = useState<'above' | 'below'>(
+    'below',
+  );
   const [measuring, setMeasuring] = useState(false);
   const [hasSpotlight, setHasSpotlight] = useState(false);
 
-  // For SVG overlay: JS-thread tracking of current animated spot values
-  const svgSpotRef = useRef({
-    x: 0,
-    y: 0,
-    w: 0,
-    h: 0,
-    scale: 1,
-    radius: SPOTLIGHT_RADIUS,
-    strokePulse: 0,
-  });
-  const [svgSpot, setSvgSpot] = useState({
-    x: 0,
-    y: 0,
-    w: 0,
-    h: 0,
-    scale: 1,
-    radius: SPOTLIGHT_RADIUS,
-    strokePulse: 0,
-  });
+  const svgSpotRef = useRef({ x: 0, y: 0, w: 0, h: 0 });
+  const [svgSpot, setSvgSpot] = useState({ x: 0, y: 0, w: 0, h: 0 });
   const rafPendingRef = useRef(false);
 
-  // The offset between measure page coordinates and the Modal's coordinate space
   const modalOffsetRef = useRef({ x: 0, y: 0 });
   const calibrationRef = useRef<View>(null);
-  const calibrated = useRef(false);
+  const calibratedRef = useRef(false);
 
-  // Animations — all use useNativeDriver: false to avoid mixing issues with layout props
+  const busyRef = useRef(false);
+  const dismissingRef = useRef(false);
+
   const overlayOpacity = useRef(new Animated.Value(0)).current;
   const tooltipOpacity = useRef(new Animated.Value(0)).current;
   const tooltipTranslateY = useRef(new Animated.Value(12)).current;
-
-  // Micro-animation for the active progress dot
   const activeDotScale = useRef(new Animated.Value(1)).current;
-
-  // Animated spotlight dimensions
   const animSpotX = useRef(new Animated.Value(0)).current;
   const animSpotY = useRef(new Animated.Value(0)).current;
   const animSpotW = useRef(new Animated.Value(0)).current;
   const animSpotH = useRef(new Animated.Value(0)).current;
 
-  // Micro-animations for the spotlight “curved box”
-  const animSpotScale = useRef(new Animated.Value(1)).current;
-  const animSpotRadius = useRef(new Animated.Value(SPOTLIGHT_RADIUS)).current;
-  const animSpotStrokePulse = useRef(new Animated.Value(0)).current;
-
-  // Track the raw values for tooltip positioning
   const spotXRef = useRef(0);
   const spotYRef = useRef(0);
   const spotWRef = useRef(0);
@@ -175,7 +208,8 @@ export const TourOverlay: React.FC<TourOverlayProps> = ({
   const screenHeight = Dimensions.get('window').height;
   const screenWidth = Dimensions.get('window').width;
 
-  // Keep svgSpot in sync with Animated values (JS thread, batched via rAF)
+  /* ── Batch SVG rerenders via rAF ── */
+
   const scheduleSvgUpdate = useCallback(() => {
     if (!rafPendingRef.current) {
       rafPendingRef.current = true;
@@ -188,108 +222,235 @@ export const TourOverlay: React.FC<TourOverlayProps> = ({
 
   useEffect(() => {
     const ids = [
-      animSpotX.addListener(({ value }) => { svgSpotRef.current.x = value; scheduleSvgUpdate(); }),
-      animSpotY.addListener(({ value }) => { svgSpotRef.current.y = value; scheduleSvgUpdate(); }),
-      animSpotW.addListener(({ value }) => { svgSpotRef.current.w = value; scheduleSvgUpdate(); }),
-      animSpotH.addListener(({ value }) => { svgSpotRef.current.h = value; scheduleSvgUpdate(); }),
-      animSpotScale.addListener(({ value }) => { svgSpotRef.current.scale = value; scheduleSvgUpdate(); }),
-      animSpotRadius.addListener(({ value }) => { svgSpotRef.current.radius = value; scheduleSvgUpdate(); }),
-      animSpotStrokePulse.addListener(({ value }) => { svgSpotRef.current.strokePulse = value; scheduleSvgUpdate(); }),
+      animSpotX.addListener(({ value }) => {
+        svgSpotRef.current.x = value;
+        scheduleSvgUpdate();
+      }),
+      animSpotY.addListener(({ value }) => {
+        svgSpotRef.current.y = value;
+        scheduleSvgUpdate();
+      }),
+      animSpotW.addListener(({ value }) => {
+        svgSpotRef.current.w = value;
+        scheduleSvgUpdate();
+      }),
+      animSpotH.addListener(({ value }) => {
+        svgSpotRef.current.h = value;
+        scheduleSvgUpdate();
+      }),
     ];
     return () => {
       animSpotX.removeListener(ids[0]);
       animSpotY.removeListener(ids[1]);
       animSpotW.removeListener(ids[2]);
       animSpotH.removeListener(ids[3]);
-      animSpotScale.removeListener(ids[4]);
-      animSpotRadius.removeListener(ids[5]);
-      animSpotStrokePulse.removeListener(ids[6]);
     };
-  }, [animSpotX, animSpotY, animSpotW, animSpotH, animSpotScale, animSpotRadius, animSpotStrokePulse, scheduleSvgUpdate]);
+  }, [animSpotX, animSpotY, animSpotW, animSpotH, scheduleSvgUpdate]);
 
-  // Calibrate: measure where (0,0) in the Modal maps to in page coordinates
+  /* ── Calibrate Modal→screen offset ── */
+
   const calibrate = useCallback((): Promise<void> => {
     return new Promise((resolve) => {
       if (!calibrationRef.current) {
         resolve();
         return;
       }
-      calibrationRef.current.measureInWindow((mx, my) => {
-        modalOffsetRef.current = { x: mx, y: my };
-        calibrated.current = true;
-        resolve();
-      });
+      let done = false;
+      const timeout = setTimeout(() => {
+        if (!done) {
+          done = true;
+          resolve();
+        }
+      }, MEASURE_TIMEOUT_MS);
+      calibrationRef.current.measure(
+        (
+          _fx: number,
+          _fy: number,
+          _w: number,
+          _h: number,
+          pageX: number,
+          pageY: number,
+        ) => {
+          if (done) return;
+          done = true;
+          clearTimeout(timeout);
+          // Store page coordinates so `measureTarget()` can subtract in the same space.
+          modalOffsetRef.current = { x: pageX, y: pageY };
+          calibratedRef.current = true;
+          resolve();
+        },
+      );
     });
   }, []);
+
+  /* ── Measure a target view ── */
 
   const measureTarget = useCallback(
     (stepIdx: number): Promise<LayoutRectangle | null> => {
       return new Promise((resolve) => {
-        const target = targets.find((t) => t.stepIndex === stepIdx);
-        if (!target?.ref?.current) {
+        const targetsForStep = targets.filter((t) => t.stepIndex === stepIdx && !!t.ref?.current);
+        if (targetsForStep.length === 0) {
           resolve(null);
           return;
         }
-        target.ref.current.measure((_x, _y, width, height, pageX, pageY) => {
-          if (width === 0 && height === 0) {
+
+        // Measure every target for this step and return the bounding box union.
+        // This is useful for Step 0 where we need a single spotlight hole that spans
+        // both the day/date header and the visible grid rows.
+        const measureOne = (ref: React.RefObject<View | null>) =>
+          new Promise<LayoutRectangle | null>((r) => {
+            let done = false;
+            const timeout = setTimeout(() => {
+              if (done) return;
+              done = true;
+              r(null);
+            }, MEASURE_TIMEOUT_MS);
+
+            // Using .measure() yields more reliable page coordinates for views rendered inside
+            // ScrollViews with sticky headers, especially when the measurement originates from a Modal.
+            ref.current?.measure(
+              (
+                _fx: number,
+                _fy: number,
+                width: number,
+                height: number,
+                pageX: number,
+                pageY: number,
+              ) => {
+                if (done) return;
+                done = true;
+                clearTimeout(timeout);
+                if (width === 0 && height === 0) {
+                  r(null);
+                  return;
+                }
+                const offset = modalOffsetRef.current;
+                r({
+                  x: pageX - offset.x,
+                  y: pageY - offset.y,
+                  width,
+                  height,
+                });
+              },
+            );
+          });
+
+        void Promise.all(targetsForStep.map((t) => measureOne(t.ref))).then((rects) => {
+          const valid = rects.filter((x): x is LayoutRectangle => !!x);
+          if (valid.length === 0) {
             resolve(null);
             return;
           }
-          // Apply calibration offset: convert from page coords to Modal coords
-          const offset = modalOffsetRef.current;
+
+          const minX = Math.min(...valid.map((v) => v.x));
+          const minY = Math.min(...valid.map((v) => v.y));
+          const maxX = Math.max(...valid.map((v) => v.x + v.width));
+          const maxY = Math.max(...valid.map((v) => v.y + v.height));
+
           resolve({
-            x: pageX - offset.x + MANUAL_OFFSET_X,
-            y: pageY - offset.y + MANUAL_OFFSET_Y,
-            width,
-            height,
+            x: minX,
+            y: minY,
+            width: Math.max(0, maxX - minX),
+            height: Math.max(0, maxY - minY),
           });
         });
       });
     },
-    [targets]
+    [targets],
   );
 
-  const scrollToAndMeasure = useCallback(
-    async (stepIdx: number): Promise<LayoutRectangle | null> => {
-      const rect = await measureTarget(stepIdx);
-
-      if (rect && rect.y >= 0 && rect.y + rect.height <= screenHeight) {
-        return rect;
+  /* ── Measure backdrop cutoff top (for Step 0 only) ── */
+  const measureBackdropCutoffTop = useCallback((): Promise<number | null> => {
+    return new Promise((resolve) => {
+      const ref = backdropCutoffRef?.current;
+      if (!ref) {
+        resolve(null);
+        return;
       }
 
-      if (scrollViewRef?.current) {
-        const target = targets.find((t) => t.stepIndex === stepIdx);
-        if (target?.ref?.current) {
-          target.ref.current.measureLayout(
-            scrollViewRef.current as any,
-            (_x: number, y: number) => {
-              const scrollTarget = Math.max(0, y - screenHeight / 3);
-              scrollViewRef.current?.scrollTo({ y: scrollTarget, animated: true });
-            },
-            () => { }
-          );
+      let done = false;
+      const timeout = setTimeout(() => {
+        if (done) return;
+        done = true;
+        resolve(null);
+      }, MEASURE_TIMEOUT_MS);
 
-          return new Promise((resolve) => {
-            setTimeout(async () => {
-              const newRect = await measureTarget(stepIdx);
-              resolve(newRect);
-            }, SCROLL_SETTLE_MS);
-          });
-        }
-      }
+      ref.measure(
+        (
+          _fx: number,
+          _fy: number,
+          _w: number,
+          _h: number,
+          _pageX: number,
+          pageY: number,
+        ) => {
+          if (done) return;
+          done = true;
+          clearTimeout(timeout);
 
-      return rect;
+          const offset = modalOffsetRef.current;
+          resolve(pageY - offset.y);
+        },
+      );
+    });
+  }, [backdropCutoffRef]);
+
+  /* ── Measure a single ref rect (screen coordinates within Modal root) ── */
+  const measureRefRect = useCallback(
+    async (ref: React.RefObject<View | null>): Promise<LayoutRectangle | null> => {
+      const el = ref.current;
+      if (!el) return null;
+
+      return new Promise((resolve) => {
+        let done = false;
+        const timeout = setTimeout(() => {
+          if (done) return;
+          done = true;
+          resolve(null);
+        }, MEASURE_TIMEOUT_MS);
+
+        el.measure(
+          (
+            _fx: number,
+            _fy: number,
+            width: number,
+            height: number,
+            pageX: number,
+            pageY: number,
+          ) => {
+            if (done) return;
+            done = true;
+            clearTimeout(timeout);
+
+            if (width === 0 && height === 0) {
+              resolve(null);
+              return;
+            }
+
+            const offset = modalOffsetRef.current;
+            resolve({
+              x: pageX - offset.x,
+              y: pageY - offset.y,
+              width,
+              height,
+            });
+          },
+        );
+      });
     },
-    [measureTarget, screenHeight, scrollViewRef, targets]
+    [],
   );
+
+  /* ── Animate spotlight + tooltip to a step ── */
 
   const animateToStep = useCallback(
     async (stepIdx: number, isInitial = false) => {
+      if (busyRef.current || dismissingRef.current) return;
+      busyRef.current = true;
       setMeasuring(true);
 
-      // Fade out tooltip
       if (!isInitial) {
-        await new Promise<void>((resolve) => {
+        await new Promise<void>((r) => {
           Animated.parallel([
             Animated.timing(tooltipOpacity, {
               toValue: 0,
@@ -298,315 +459,312 @@ export const TourOverlay: React.FC<TourOverlayProps> = ({
               useNativeDriver: false,
             }),
             Animated.timing(tooltipTranslateY, {
-              toValue: 8,
+              toValue: 10,
               duration: 140,
               useNativeDriver: false,
             }),
-          ]).start(() => resolve());
+          ]).start(() => r());
         });
       }
 
-      // Ensure calibration is done
-      if (!calibrated.current) {
+      if (!calibratedRef.current) {
         await calibrate();
       }
 
-      const rect = await scrollToAndMeasure(stepIdx);
+      if (onBeforeStep) {
+        await onBeforeStep(stepIdx);
+      }
 
-      if (rect) {
-        const nextX = rect.x - SPOTLIGHT_PADDING;
-        const nextY = rect.y - SPOTLIGHT_PADDING;
-        const nextW = rect.width + SPOTLIGHT_PADDING * 2;
-        const nextH = rect.height + SPOTLIGHT_PADDING * 2;
+      let cutoffY: number | null = null;
+      if (stepIdx === 0) {
+        cutoffY = backdropCutoffY ?? (await measureBackdropCutoffTop());
+        if (cutoffY != null) setBackdropCutoffY(cutoffY);
+      }
 
-        spotXRef.current = nextX;
-        spotYRef.current = nextY;
-        spotWRef.current = nextW;
-        spotHRef.current = nextH;
+      const rect = await measureTarget(stepIdx);
+      if (!rect) {
+        setMeasuring(false);
+        busyRef.current = false;
+        if (isInitial) onFinish();
+        return;
+      }
 
-        // Decide tooltip position based on future space
-        const spaceBelow = screenHeight - (nextY + nextH);
-        setTooltipPosition(spaceBelow > 200 ? 'below' : 'above');
+      const padX = stepIdx === 2 ? 4 : SPOTLIGHT_PADDING;
+      const padY = SPOTLIGHT_PADDING;
 
-        if (isInitial || !hasSpotlight) {
-          // Snap instantly if it's the first step
-          animSpotX.setValue(nextX);
-          animSpotY.setValue(nextY);
-          animSpotW.setValue(nextW);
-          animSpotH.setValue(nextH);
-          animSpotScale.setValue(0.9);
-          animSpotRadius.setValue(SPOTLIGHT_RADIUS + 4);
-          animSpotStrokePulse.setValue(1);
-          setHasSpotlight(true);
+      let sX = rect.x - padX;
+      let sY = rect.y - padY;
+      let sW = rect.width + padX * 2;
+      let sH = rect.height + padY * 2;
 
-          // Gentle reveal micro-animation for the very first step
+      if (stepIdx === 2) {
+        const trimLeft = sW * 0.02;
+        sX += trimLeft;
+        sW -= trimLeft;
+      }
+
+      // For Step 0, we want the backdrop + tap-capture to stop at the footer
+      // CTA area (so they stay visible/clickable). Also cap the spotlight so
+      // it doesn't extend under the footer.
+      if (stepIdx === 0 && cutoffY != null) {
+        const maxSpotlightHeight = Math.max(0, cutoffY - sY);
+        sH = Math.min(sH, maxSpotlightHeight);
+      }
+
+      // Step 2: clamp spotlight height to the visible grid viewport.
+      // This prevents the spotlight from extending to the full ScrollView
+      // content height.
+      if (stepIdx === 2 && spotlightClampRef?.current) {
+        const clampRect = await measureRefRect(spotlightClampRef);
+        if (clampRect) {
+          const visibleTop = clampRect.y;
+          const visibleBottom = clampRect.y + clampRect.height;
+          const bottomReduce = clampRect.height * 0.22;
+          const clampedBottom = Math.max(visibleTop, visibleBottom - bottomReduce);
+
+          // If the scroll position moves the target view so its top is above
+          // the visible viewport, only clamping `sH` can still make the
+          // spotlight appear "full screen". Clamp both top and bottom.
+          const spotTop = Math.max(visibleTop, sY);
+          const spotBottom = Math.min(clampedBottom, sY + sH);
+
+          sY = spotTop;
+          sH = Math.max(0, spotBottom - spotTop);
+        }
+        sH -= sH * 0.08;
+      }
+
+      spotXRef.current = sX;
+      spotYRef.current = sY;
+      spotWRef.current = sW;
+      spotHRef.current = sH;
+
+      // Some screens need specific steps forced above (e.g. schedule grid cells).
+      // Keep it configurable so dashboard steps can choose natural placement.
+      const preferAbove = preferAboveStepIndices?.includes(stepIdx) ?? false;
+      setTooltipPosition(preferAbove || sY + sH > screenHeight * 0.55 ? 'above' : 'below');
+
+      if (isInitial) {
+        animSpotX.setValue(sX);
+        animSpotY.setValue(sY);
+        animSpotW.setValue(sW);
+        animSpotH.setValue(sH);
+        svgSpotRef.current = { x: sX, y: sY, w: sW, h: sH };
+        setSvgSpot({ x: sX, y: sY, w: sW, h: sH });
+
+        setHasSpotlight(true);
+        setCurrentStep(stepIdx);
+        setMeasuring(false);
+
+        await new Promise<void>((r) => {
           Animated.parallel([
-            Animated.spring(animSpotScale, {
+            Animated.timing(overlayOpacity, {
               toValue: 1,
-              tension: 150,
-              friction: 18,
-              useNativeDriver: false,
-            }),
-            Animated.timing(animSpotRadius, {
-              toValue: SPOTLIGHT_RADIUS,
-              duration: 260,
-              easing: Easing.out(Easing.cubic),
-              useNativeDriver: false,
-            }),
-            Animated.timing(animSpotStrokePulse, {
-              toValue: 0,
-              duration: 260,
-              easing: Easing.out(Easing.cubic),
-              useNativeDriver: false,
-            }),
-          ]).start();
-        } else {
-          // Smooth animate to new position with playful micro-animations
-          const moveAnim = Animated.parallel([
-            Animated.timing(animSpotX, {
-              toValue: nextX,
               duration: ANIMATION_DURATION,
               easing: Easing.out(Easing.cubic),
+              useNativeDriver: false,
+            }),
+            Animated.timing(tooltipOpacity, {
+              toValue: 1,
+              duration: ANIMATION_DURATION,
+              delay: 120,
+              easing: Easing.out(Easing.cubic),
+              useNativeDriver: false,
+            }),
+            Animated.timing(tooltipTranslateY, {
+              toValue: 0,
+              duration: ANIMATION_DURATION,
+              delay: 120,
+              easing: Easing.out(Easing.cubic),
+              useNativeDriver: false,
+            }),
+          ]).start(() => r());
+        });
+      } else {
+        await new Promise<void>((r) => {
+          Animated.parallel([
+            Animated.timing(animSpotX, {
+              toValue: sX,
+              duration: STEP_TRANSITION_DURATION,
+              easing: Easing.inOut(Easing.cubic),
               useNativeDriver: false,
             }),
             Animated.timing(animSpotY, {
-              toValue: nextY,
-              duration: ANIMATION_DURATION,
-              easing: Easing.out(Easing.cubic),
+              toValue: sY,
+              duration: STEP_TRANSITION_DURATION,
+              easing: Easing.inOut(Easing.cubic),
               useNativeDriver: false,
             }),
             Animated.timing(animSpotW, {
-              toValue: nextW,
-              duration: ANIMATION_DURATION,
-              easing: Easing.out(Easing.cubic),
+              toValue: sW,
+              duration: STEP_TRANSITION_DURATION,
+              easing: Easing.inOut(Easing.cubic),
               useNativeDriver: false,
             }),
             Animated.timing(animSpotH, {
-              toValue: nextH,
-              duration: ANIMATION_DURATION,
+              toValue: sH,
+              duration: STEP_TRANSITION_DURATION,
+              easing: Easing.inOut(Easing.cubic),
+              useNativeDriver: false,
+            }),
+          ]).start(() => r());
+        });
+
+        setCurrentStep(stepIdx);
+        setHasSpotlight(true);
+        setMeasuring(false);
+
+        await new Promise<void>((r) => {
+          Animated.parallel([
+            Animated.timing(tooltipOpacity, {
+              toValue: 1,
+              duration: TOOLTIP_REVEAL_DURATION,
               easing: Easing.out(Easing.cubic),
               useNativeDriver: false,
             }),
-          ]);
-
-          const microAnim = Animated.sequence([
-            Animated.parallel([
-              Animated.timing(animSpotScale, {
-                toValue: 1.04,
-                duration: Math.round(ANIMATION_DURATION * 0.45),
-                easing: Easing.out(Easing.cubic),
-                useNativeDriver: false,
-              }),
-              Animated.timing(animSpotRadius, {
-                toValue: SPOTLIGHT_PADDING + SPOTLIGHT_RADIUS > 24 ? SPOTLIGHT_RADIUS + 4 : SPOTLIGHT_RADIUS + 6,
-                duration: Math.round(ANIMATION_DURATION * 0.45),
-                easing: Easing.out(Easing.cubic),
-                useNativeDriver: false,
-              }),
-              Animated.timing(animSpotStrokePulse, {
-                toValue: 1,
-                duration: Math.round(ANIMATION_DURATION * 0.35),
-                easing: Easing.out(Easing.cubic),
-                useNativeDriver: false,
-              }),
-            ]),
-            Animated.parallel([
-              Animated.spring(animSpotScale, {
-                toValue: 1,
-                tension: 160,
-                friction: 18,
-                useNativeDriver: false,
-              }),
-              Animated.timing(animSpotRadius, {
-                toValue: SPOTLIGHT_RADIUS,
-                duration: Math.round(ANIMATION_DURATION * 0.55),
-                easing: Easing.out(Easing.cubic),
-                useNativeDriver: false,
-              }),
-              Animated.timing(animSpotStrokePulse, {
-                toValue: 0,
-                duration: Math.round(ANIMATION_DURATION * 0.55),
-                easing: Easing.out(Easing.cubic),
-                useNativeDriver: false,
-              }),
-            ]),
-          ]);
-
-          Animated.parallel([moveAnim, microAnim]).start();
-        }
+            Animated.timing(tooltipTranslateY, {
+              toValue: 0,
+              duration: TOOLTIP_REVEAL_DURATION,
+              easing: Easing.out(Easing.cubic),
+              useNativeDriver: false,
+            }),
+          ]).start(() => r());
+        });
       }
 
-      setCurrentStep(stepIdx);
-      setMeasuring(false);
+      activeDotScale.setValue(0.6);
+      Animated.spring(activeDotScale, {
+        toValue: 1,
+        tension: 300,
+        friction: 12,
+        useNativeDriver: false,
+      }).start();
 
-      // Fade in tooltip (slight stagger so the spotlight motion leads)
-      const direction = tooltipPosition === 'below' ? 12 : -12;
-      tooltipTranslateY.setValue(direction);
-      activeDotScale.setValue(0.8);
-      Animated.sequence([
-        Animated.delay(70),
-        Animated.parallel([
-          Animated.timing(tooltipOpacity, {
-            toValue: 1,
-            duration: ANIMATION_DURATION,
-            easing: Easing.out(Easing.cubic),
-            useNativeDriver: false,
-          }),
-          Animated.spring(tooltipTranslateY, {
-            toValue: 0,
-            tension: 140,
-            friction: 16,
-            useNativeDriver: false,
-          }),
-          Animated.spring(activeDotScale, {
-            toValue: 1,
-            tension: 160,
-            friction: 18,
-            useNativeDriver: false,
-          }),
-        ]),
-      ]).start();
+      try {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      } catch {
+        /* non-critical */
+      }
+
+      busyRef.current = false;
     },
     [
-      scrollToAndMeasure,
-      screenHeight,
+      calibrate,
+      measureTarget,
+      measureRefRect,
+      measureBackdropCutoffTop,
+      overlayOpacity,
       tooltipOpacity,
       tooltipTranslateY,
-      tooltipPosition,
-      calibrate,
-      hasSpotlight,
-      animSpotH,
-      animSpotW,
       animSpotX,
-      animSpotY
-    ]
+      animSpotY,
+      animSpotW,
+      animSpotH,
+      activeDotScale,
+      screenHeight,
+      onFinish,
+      onBeforeStep,
+      preferAboveStepIndices,
+      backdropCutoffY,
+      spotlightClampRef,
+    ],
   );
 
-  // Start / reset
+  /* ── Start tour when visible ── */
+
   useEffect(() => {
-    if (!visible) {
-      setCurrentStep(0);
-      setHasSpotlight(false);
-      calibrated.current = false;
-      overlayOpacity.setValue(0);
-      tooltipOpacity.setValue(0);
-      return;
-    }
-
-    // Fade in overlay
-    Animated.timing(overlayOpacity, {
-      toValue: 1,
-      duration: 350,
-      easing: Easing.out(Easing.cubic),
-      useNativeDriver: false,
-    }).start();
-
-    // Wait for Modal to mount, calibrate, then start
-    const timer = setTimeout(async () => {
-      await calibrate();
-      void animateToStep(0, true);
-    }, 700);
-
+    if (!visible) return;
+    setCurrentStep(0);
+    setBackdropCutoffY(null);
+    setHasSpotlight(false);
+    calibratedRef.current = false;
+    dismissingRef.current = false;
+    busyRef.current = false;
+    overlayOpacity.setValue(0);
+    tooltipOpacity.setValue(0);
+    tooltipTranslateY.setValue(12);
+    const timer = setTimeout(() => animateToStep(0, true), 350);
     return () => clearTimeout(timer);
+    // Only re-run when visibility toggles; animateToStep is stable enough.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible]);
 
-  const hapticTap = () => {
-    if (Platform.OS !== 'web') {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => { });
-    }
-  };
+  /* ── Navigation handlers ── */
 
-  const handleNext = () => {
-    hapticTap();
-    if (currentStep >= steps.length - 1) {
-      handleFinish();
-    } else {
-      void animateToStep(currentStep + 1);
-    }
-  };
-
-  const handlePrev = () => {
-    hapticTap();
-    if (currentStep > 0) {
-      void animateToStep(currentStep - 1);
-    }
-  };
-
-  const handleSkip = () => {
-    hapticTap();
-    handleFinish();
-  };
-
-  const handleFinish = () => {
+  const handleFinish = useCallback(() => {
+    if (dismissingRef.current) return;
+    dismissingRef.current = true;
+    busyRef.current = true;
     Animated.parallel([
       Animated.timing(overlayOpacity, {
         toValue: 0,
-        duration: 250,
+        duration: 220,
         easing: Easing.in(Easing.cubic),
         useNativeDriver: false,
       }),
       Animated.timing(tooltipOpacity, {
         toValue: 0,
-        duration: 200,
-        useNativeDriver: false,
-      }),
-      Animated.timing(animSpotScale, {
-        toValue: 0.9,
-        duration: 220,
-        easing: Easing.in(Easing.cubic),
-        useNativeDriver: false,
-      }),
-      Animated.timing(animSpotRadius, {
-        toValue: SPOTLIGHT_RADIUS + 4,
-        duration: 220,
-        easing: Easing.in(Easing.cubic),
-        useNativeDriver: false,
-      }),
-      Animated.timing(animSpotStrokePulse, {
-        toValue: 0,
-        duration: 200,
+        duration: 180,
         easing: Easing.in(Easing.cubic),
         useNativeDriver: false,
       }),
     ]).start(() => {
       onFinish();
     });
-  };
+  }, [overlayOpacity, tooltipOpacity, onFinish]);
+
+  const handleNext = useCallback(() => {
+    if (currentStep + 1 >= steps.length) {
+      handleFinish();
+      return;
+    }
+    animateToStep(currentStep + 1);
+  }, [currentStep, steps.length, animateToStep, handleFinish]);
+
+  const handlePrev = useCallback(() => {
+    if (currentStep > 0) {
+      animateToStep(currentStep - 1);
+    }
+  }, [currentStep, animateToStep]);
+
+  /* ── Render ── */
 
   if (!visible) return null;
 
   const isFirst = currentStep === 0;
   const isLast = currentStep === steps.length - 1;
   const step = steps[currentStep];
+  const useBackdropCutoff = isFirst && backdropCutoffY != null;
+  const darkRectHeight = useBackdropCutoff ? Math.max(0, backdropCutoffY as number) : screenHeight;
 
-  const BACKDROP_COLOR = 'rgba(0, 0, 0, 0.75)';
-
-  // Tooltip position (uses refs since it doesn't need to animate during transit)
-  const spotX = spotXRef.current;
-  const spotY = spotYRef.current;
-  const spotH = spotHRef.current;
-
-  const tooltipLeft =
-    hasSpotlight
-      ? Math.max(
+  const tooltipLeft = hasSpotlight
+    ? Math.max(
         TOOLTIP_MARGIN,
-        Math.min(screenWidth - TOOLTIP_MAX_WIDTH - TOOLTIP_MARGIN, spotX)
+        Math.min(
+          screenWidth - TOOLTIP_MAX_WIDTH - TOOLTIP_MARGIN,
+          spotXRef.current,
+        ),
       )
-      : TOOLTIP_MARGIN;
+    : TOOLTIP_MARGIN;
 
   const tooltipTopValue =
     tooltipPosition === 'below'
-      ? spotY + spotH + 14
+      ? spotYRef.current + spotHRef.current + 14
       : undefined;
 
   const tooltipBottomValue =
     tooltipPosition === 'above'
-      ? screenHeight - spotY + 14
+      ? screenHeight - spotYRef.current + 14
       : undefined;
 
   return (
-    <Modal transparent visible={visible} animationType="none" statusBarTranslucent onRequestClose={handleFinish}>
-      {/* Calibration point: invisible View at Modal origin to compute offset */}
+    <Modal
+      transparent
+      visible
+      animationType="none"
+      statusBarTranslucent
+      onRequestClose={handleFinish}
+    >
       <View
         ref={calibrationRef}
         style={overlayStyles.calibrationPoint}
@@ -614,69 +772,87 @@ export const TourOverlay: React.FC<TourOverlayProps> = ({
       />
 
       <View style={overlayStyles.root}>
-        {/* ── SVG overlay: full screen dark mask with a rounded-rect hole punched out ── */}
+        {/* Dark backdrop with spotlight hole */}
         <Animated.View
           style={[StyleSheet.absoluteFill, { opacity: overlayOpacity }]}
-          pointerEvents="auto"
+          pointerEvents="none"
         >
           <Svg width={screenWidth} height={screenHeight}>
-            {hasSpotlight ? (() => {
-              const { x, y, w, h, scale, radius, strokePulse } = svgSpot;
-              const effectiveScale = typeof scale === 'number' && !Number.isNaN(scale) ? scale : 1;
-              const effectiveRadius = typeof radius === 'number' && !Number.isNaN(radius) ? radius : SPOTLIGHT_RADIUS;
-              const cx = x + w / 2;
-              const cy = y + h / 2;
-              const scaledW = w * effectiveScale;
-              const scaledH = h * effectiveScale;
-              const drawX = cx - scaledW / 2;
-              const drawY = cy - scaledH / 2;
-              const pulse = typeof strokePulse === 'number' && !Number.isNaN(strokePulse) ? strokePulse : 0;
-              const strokeAlpha = 0.16 + 0.26 * Math.max(0, Math.min(1, pulse));
-
-              return (
+            {hasSpotlight ? (
+              [
                 <SvgPath
+                  key="top"
                   d={[
-                    `M0,0 H${screenWidth} V${screenHeight} H0 Z`,
-                    buildRoundedRectPath(drawX, drawY, scaledW, scaledH, effectiveRadius),
+                    useBackdropCutoff
+                      ? `M0,0 H${screenWidth} V${darkRectHeight} H0 Z`
+                      : `M0,0 H${screenWidth} V${screenHeight} H0 Z`,
+                    buildRoundedRectPath(
+                      svgSpot.x,
+                      svgSpot.y,
+                      svgSpot.w,
+                      svgSpot.h,
+                      SPOTLIGHT_RADIUS,
+                    ),
                   ].join(' ')}
                   fill={BACKDROP_COLOR}
                   fillRule="evenodd"
-                  stroke={`rgba(255,255,255,${strokeAlpha.toFixed(3)})`}
+                  stroke="rgba(255,255,255,0.15)"
                   strokeWidth={1.5}
+                />,
+                ...(useBackdropCutoff
+                  ? [
+                      <SvgPath
+                        key="bottom-fade"
+                        d={`M0,${darkRectHeight} H${screenWidth} V${screenHeight} H0 Z`}
+                        fill={BACKDROP_BOTTOM_COLOR}
+                      />,
+                    ]
+                  : []),
+              ]
+            ) : (
+              useBackdropCutoff ? (
+                [
+                  <SvgPath
+                    key="top"
+                    d={`M0,0 H${screenWidth} V${darkRectHeight} H0 Z`}
+                    fill={BACKDROP_COLOR}
+                  />,
+                  <SvgPath
+                    key="bottom-fade"
+                    d={`M0,${darkRectHeight} H${screenWidth} V${screenHeight} H0 Z`}
+                    fill={BACKDROP_BOTTOM_COLOR}
+                  />,
+                ]
+              ) : (
+                <SvgPath
+                  d={`M0,0 H${screenWidth} V${screenHeight} H0 Z`}
+                  fill={BACKDROP_COLOR}
                 />
-              );
-            })() : (
-              <SvgPath
-                d={`M0,0 H${screenWidth} V${screenHeight} H0 Z`}
-                fill={BACKDROP_COLOR}
-              />
+              )
             )}
           </Svg>
         </Animated.View>
 
-        {/* Tap on spotlight to advance */}
-        {hasSpotlight && (
-          <Pressable
-            style={[
-              overlayStyles.spotlightTouch,
-              { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 } // A full pressable is easier to prevent event swallowing, or we connect it.
-              // Wait, let's just make the cutout area pressable: 
-            ]}
-            onPress={handleNext}
-          >
-            <Animated.View style={{
-              position: 'absolute',
-              left: animSpotX,
-              top: animSpotY,
-              width: animSpotW,
-              height: animSpotH,
-            }} />
-          </Pressable>
-        )}
+        {/* Tap-anywhere advances the tour */}
+        <Pressable
+          style={
+            useBackdropCutoff
+              ? {
+                  position: 'absolute',
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  height: darkRectHeight,
+                }
+              : StyleSheet.absoluteFill
+          }
+          onPress={handleNext}
+        />
 
-        {/* ── Tooltip (Google Material style) ── */}
+        {/* Tooltip card */}
         {hasSpotlight && !measuring && (
           <Animated.View
+            pointerEvents="box-none"
             style={[
               overlayStyles.tooltipContainer,
               {
@@ -688,8 +864,12 @@ export const TourOverlay: React.FC<TourOverlayProps> = ({
                 maxWidth: TOOLTIP_MAX_WIDTH,
                 opacity: tooltipOpacity,
                 transform: [{ translateY: tooltipTranslateY }],
-                ...(tooltipTopValue !== undefined ? { top: tooltipTopValue } : {}),
-                ...(tooltipBottomValue !== undefined ? { bottom: tooltipBottomValue } : {}),
+                ...(tooltipTopValue !== undefined
+                  ? { top: tooltipTopValue }
+                  : {}),
+                ...(tooltipBottomValue !== undefined
+                  ? { bottom: tooltipBottomValue }
+                  : {}),
               },
             ]}
           >
@@ -697,30 +877,30 @@ export const TourOverlay: React.FC<TourOverlayProps> = ({
             <View style={overlayStyles.dotsRow}>
               {steps.map((_, i) => {
                 const isActive = i === currentStep;
-                if (isActive) {
-                  return (
-                    <Animated.View
-                      key={i}
-                      style={[
-                        overlayStyles.dot,
-                        {
-                          backgroundColor: palette.accentPrimary,
-                          width: 16,
-                          transform: [{ scale: activeDotScale }],
-                        },
-                      ]}
-                    />
-                  );
-                }
-
-                return (
+                return isActive ? (
+                  <Animated.View
+                    key={i}
+                    style={[
+                      overlayStyles.dot,
+                      {
+                        backgroundColor: palette.accentPrimary,
+                        width: 16,
+                        transform: [{ scale: activeDotScale }],
+                      },
+                    ]}
+                  />
+                ) : (
                   <View
                     key={i}
                     style={[
                       overlayStyles.dot,
                       {
-                        backgroundColor: palette.borderSoft,
+                        backgroundColor:
+                          i < currentStep
+                            ? palette.accentPrimary
+                            : palette.borderSoft,
                         width: 6,
+                        opacity: i < currentStep ? 0.5 : 1,
                       },
                     ]}
                   />
@@ -733,7 +913,11 @@ export const TourOverlay: React.FC<TourOverlayProps> = ({
               {step?.text ?? ''}
             </Text>
 
-            {/* Buttons */}
+            {/* Action buttons
+             * Step 0 shows the `Next` button in-card. Additionally, the backdrop +
+             * tap-capture layer is cut off above the footer CTA area so the user
+             * can still see/click the underlying actions.
+             */}
             <View style={overlayStyles.actionsRow}>
               {!isFirst && (
                 <Pressable
@@ -741,10 +925,7 @@ export const TourOverlay: React.FC<TourOverlayProps> = ({
                   style={({ pressed }) => [
                     overlayStyles.btn,
                     overlayStyles.btnOutline,
-                    {
-                      borderColor: palette.borderStrong,
-                      backgroundColor: 'transparent',
-                    },
+                    { borderColor: palette.borderStrong },
                     pressed && { opacity: 0.7 },
                   ]}
                 >
@@ -758,16 +939,13 @@ export const TourOverlay: React.FC<TourOverlayProps> = ({
                 </Pressable>
               )}
 
-              {!isLast && (
+              {!isFirst && !isLast && (
                 <Pressable
-                  onPress={handleSkip}
+                  onPress={handleFinish}
                   style={({ pressed }) => [
                     overlayStyles.btn,
                     overlayStyles.btnOutline,
-                    {
-                      borderColor: palette.borderStrong,
-                      backgroundColor: 'transparent',
-                    },
+                    { borderColor: palette.borderStrong },
                     pressed && { opacity: 0.7 },
                   ]}
                 >
@@ -786,9 +964,7 @@ export const TourOverlay: React.FC<TourOverlayProps> = ({
                 style={({ pressed }) => [
                   overlayStyles.btn,
                   overlayStyles.btnPrimary,
-                  {
-                    backgroundColor: palette.accentPrimary,
-                  },
+                  { backgroundColor: palette.accentPrimary },
                   pressed && { opacity: 0.85, transform: [{ scale: 0.97 }] },
                 ]}
               >
@@ -820,21 +996,6 @@ const overlayStyles = StyleSheet.create({
   root: {
     ...StyleSheet.absoluteFillObject,
     zIndex: 9999,
-  },
-  overlayRect: {
-    position: 'absolute',
-  },
-  fullBackdrop: {
-    ...StyleSheet.absoluteFillObject,
-  },
-  spotlightRing: {
-    position: 'absolute',
-    borderWidth: 1.5,
-    borderColor: 'rgba(255, 255, 255, 0.2)',
-  },
-  spotlightTouch: {
-    position: 'absolute',
-    zIndex: 10,
   },
   tooltipContainer: {
     position: 'absolute',
@@ -881,8 +1042,7 @@ const overlayStyles = StyleSheet.create({
     fontFamily: appFontFamily.medium,
     fontSize: 13,
   },
-  btnPrimary: {
-  },
+  btnPrimary: {},
   btnPrimaryText: {
     fontFamily: appFontFamily.medium,
     fontSize: 13,

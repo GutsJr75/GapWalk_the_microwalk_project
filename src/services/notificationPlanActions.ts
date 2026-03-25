@@ -39,6 +39,9 @@ export const notificationPlanActions = {
         isAfter(now, parseISO(plan.gapEnd))
       ) {
         await plansRepo.updateStatusWithReason(plan.id, 'cancelled', 'missed');
+        if (isNotificationsSupported) {
+          await notificationService.clearPlanNotifications(plan.id, { dismissMissed: false });
+        }
         analyticsService.track('plan_expired', { planId: plan.id, previousStatus: plan.status });
         lastExpiredId = plan.id;
         expired++;
@@ -49,6 +52,15 @@ export const notificationPlanActions = {
       void this.findAndSuggestAlternativeGap(lastExpiredId).catch((e) => { if (__DEV__) console.warn('Alt gap suggestion failed:', e); });
     }
 
+    return expired;
+  },
+
+  async reconcileExpiredPlansAndNotifications(): Promise<number> {
+    const expired = await this.expireStaleNotifiedPlans();
+    if (isNotificationsSupported) {
+      const todayPlans = await plansRepo.getTodayPlans();
+      await notificationService.cleanupPresentedPlanNotifications(todayPlans);
+    }
     return expired;
   },
 
@@ -70,6 +82,9 @@ export const notificationPlanActions = {
     if (!plan || terminalStatuses.has(plan.status)) return false;
 
     await plansRepo.updateStatus(plan.id, 'skipped');
+    if (isNotificationsSupported) {
+      await notificationService.clearPlanNotifications(plan.id);
+    }
     await rescheduleFutureNudges();
     analyticsService.track('notification_skip_action', {
       planId: plan.id,
@@ -104,9 +119,15 @@ export const notificationPlanActions = {
     if (sameGapActivePlans.length > 0) {
       for (const item of sameGapActivePlans) {
         await plansRepo.updateStatus(item.id, item.id === plan.id ? 'skipped' : 'cancelled');
+        if (isNotificationsSupported) {
+          await notificationService.clearPlanNotifications(item.id);
+        }
       }
     } else {
       await plansRepo.updateStatus(plan.id, 'skipped');
+      if (isNotificationsSupported) {
+        await notificationService.clearPlanNotifications(plan.id);
+      }
     }
 
     await rescheduleFutureNudges();
@@ -132,15 +153,26 @@ export const notificationPlanActions = {
       return { allowed: false, planExists: !!plan };
     }
 
+    if (isAfter(new Date(), parseISO(plan.gapEnd))) {
+      await plansRepo.updateStatusWithReason(plan.id, 'cancelled', 'missed');
+      if (isNotificationsSupported) {
+        await notificationService.clearPlanNotifications(plan.id, { dismissMissed: false });
+      }
+      return { allowed: false, planExists: true };
+    }
+
     if (plan.status === 'planned') {
       await plansRepo.updateStatus(plan.id, 'notified');
     }
 
     const prefs = await preferencesRepo.get();
-    if (prefs && plan.reason !== 'manual') {
+    if (prefs) {
       const minsToday = await sessionsRepo.getTodayMinutes();
       if (minsToday >= prefs.dailyTargetMinutes) {
         await plansRepo.updateStatus(plan.id, 'cancelled');
+        if (isNotificationsSupported) {
+          await notificationService.clearPlanNotifications(plan.id);
+        }
         analyticsService.track('notification_open_blocked_goal_reached', {
           planId: plan.id,
           minutesWalked: minsToday,
@@ -154,6 +186,9 @@ export const notificationPlanActions = {
         const stepsToday = await sessionsRepo.getTodaySteps();
         if (stepsToday >= prefs.stepGoal) {
           await plansRepo.updateStatus(plan.id, 'cancelled');
+          if (isNotificationsSupported) {
+            await notificationService.clearPlanNotifications(plan.id);
+          }
           analyticsService.track('notification_open_blocked_step_goal_reached', {
             planId: plan.id,
             stepsToday,
@@ -273,10 +308,8 @@ export const notificationPlanActions = {
     const plan = await plansRepo.getById(planId);
     if (!plan || plan.status !== 'planned') return false;
 
-    await plansRepo.updateStatus(plan.id, 'notified');
-
     const prefs = await preferencesRepo.get();
-    await notificationService.scheduleNudge(plan, prefs ?? undefined);
+    await notificationService.schedulePlanNotifications(plan, prefs ?? undefined);
 
     analyticsService.track('alt_gap_accepted', {
       planId: plan.id,
@@ -294,6 +327,9 @@ export const notificationPlanActions = {
     if (!plan || plan.status !== 'planned') return false;
 
     await plansRepo.updateStatusWithReason(plan.id, 'cancelled', 'declined_alt_gap');
+    if (isNotificationsSupported) {
+      await notificationService.clearPlanNotifications(plan.id);
+    }
     analyticsService.track('alt_gap_declined', {
       planId: plan.id,
       gapStart: plan.gapStart,

@@ -45,10 +45,10 @@ describe('WorkersService', () => {
         { name: 'generate-all-users', data: {} },
       );
 
-      // Push send every 2 minutes
+      // Push send every minute
       expect(mockPushQueue.upsertJobScheduler).toHaveBeenCalledWith(
         'send-due-nudges',
-        { pattern: '*/2 * * * *' },
+        { pattern: '* * * * *' },
         { name: 'send-due-nudges', data: {} },
       );
 
