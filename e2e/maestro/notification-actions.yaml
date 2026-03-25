@@ -47,10 +47,30 @@ name: notification-actions
     text: OK
     optional: true
 - tapOn:
+    id: e2e-notification-timing
+- assertVisible: Timing Snapshot
+- assertVisible: "Nudge second: 00"
+- assertVisible: "Missed second: 00"
+- tapOn:
+    text: OK
+- tapOn:
+    id: e2e-notification-quiet-hours
+- assertVisible: Quiet Hours Save
+- assertVisible: "Notifications enabled: no"
+- tapOn:
+    text: OK
+- tapOn:
+    id: e2e-notification-missed
+- assertVisible: Missed Walk Result
+- assertVisible: "Status: cancelled"
+- assertVisible: "Reason: missed"
+- tapOn:
+    text: OK
+- tapOn:
     id: e2e-telemetry-snapshot
 - assertVisible: Telemetry Snapshot
 - tapOn:
     text: OK
     optional: true
 - assertVisible:
-    id: settings-done
+    id: settings-back

@@ -9,6 +9,7 @@ import com.facebook.react.ReactActivity
 import com.facebook.react.ReactActivityDelegate
 import com.facebook.react.defaults.DefaultNewArchitectureEntryPoint.fabricEnabled
 import com.facebook.react.defaults.DefaultReactActivityDelegate
+import com.gapwalk.app.notifications.ExactAlarmNotificationsModule
 
 import expo.modules.ReactActivityDelegateWrapper
 
@@ -21,6 +22,7 @@ class MainActivity : ReactActivity() {
     SplashScreenManager.registerOnActivity(this)
     // @generated end expo-splashscreen
     super.onCreate(null)
+    ExactAlarmNotificationsModule.handleLaunchIntent(this, intent)
   }
 
   /**
@@ -47,6 +49,7 @@ class MainActivity : ReactActivity() {
   override fun onNewIntent(intent: Intent) {
     super.onNewIntent(intent)
     setIntent(intent)
+    ExactAlarmNotificationsModule.handleLaunchIntent(this, intent)
   }
 
   /**

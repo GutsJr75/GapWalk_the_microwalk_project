@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
-import { View, StyleSheet, ScrollView, RefreshControl, Pressable, Animated, Easing, useWindowDimensions, Platform } from 'react-native';
+import { View, StyleSheet, ScrollView, RefreshControl, Pressable, Animated, Easing, useWindowDimensions, Platform, InteractionManager, Dimensions } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
@@ -39,11 +39,6 @@ import { guidanceStorage } from '../data/guidanceStorage';
 import { SuccessToast } from '../components/SuccessToast';
 import { Modal as AppModal } from '../components/Modal';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import {
-  DASHBOARD_TOUR_STEPS,
-  TourOverlay,
-  type TourTargetRef,
-} from '../tour';
 
 // Extracted dashboard components
 import { StreakCard } from './dashboard/StreakCard';
@@ -56,6 +51,7 @@ import { MissedPlansSection } from './dashboard/MissedPlansSection';
 import { BadgeUnlockedModal } from './dashboard/BadgeUnlockedModal';
 import { SideMenu, type SideMenuItem } from './dashboard/SideMenu';
 import { WalkTimeModal } from './dashboard/WalkTimeModal';
+import { DASHBOARD_TOUR_STEPS, TourOverlay, TourTargetRef } from '../tour';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Dashboard'>;
 
@@ -168,13 +164,9 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
     hasCompletedOnboarding,
     setIsAuthenticated,
     setAuthUser,
-    setHasSeenDashboardTour,
-    hasSeenDashboardTour,
     guidanceSeen,
     setGuidanceSeen,
   } = useAppStore();
-  const [tourVisible, setTourVisible] = useState(false);
-  const tourStartedRef = useRef(false);
   const [refreshing, setRefreshing] = useState(false);
   const [menuVisible, setMenuVisible] = useState(false);
   const menuSlide = useRef(new Animated.Value(0)).current;
@@ -192,28 +184,15 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
   const { width, height } = useWindowDimensions();
   const menuPanelWidth = Math.min(Math.round(width * MENU_WIDTH_RATIO), MENU_MAX_WIDTH);
   const dashboardScrollRef = useRef<ScrollView>(null);
+  const scrollYRef = useRef(0);
   const [unlockedAchievements, setUnlockedAchievements] = useState<UnlockedAchievement[]>([]);
   const [newBadgeIds, setNewBadgeIds] = useState<AchievementId[]>([]);
   const [showBadgeModal, setShowBadgeModal] = useState(false);
+  const [showDashboardTour, setShowDashboardTour] = useState(false);
   const badgeAnim = useRef(new Animated.Value(0)).current;
   const [yesterdayMinutes, setYesterdayMinutes] = useState<number | null>(null);
   const [completedPlans, setCompletedPlans] = useState<NudgePlan[]>([]);
   const [missedPlans, setMissedPlans] = useState<NudgePlan[]>([]);
-
-  // Tour target refs
-  const tourMenuRef = useRef<View>(null);
-  const tourQuickStatusRef = useRef<View>(null);
-  const tourOpportunitiesRef = useRef<View>(null);
-  const tourAddWalkRef = useRef<View>(null);
-  const tourManualWalkRef = useRef<View>(null);
-
-  const tourTargets: TourTargetRef[] = useMemo(() => [
-    { ref: tourMenuRef, stepIndex: 0 },
-    { ref: tourQuickStatusRef, stepIndex: 1 },
-    { ref: tourOpportunitiesRef, stepIndex: 2 },
-    { ref: tourAddWalkRef, stepIndex: 3 },
-    { ref: tourManualWalkRef, stepIndex: 4 },
-  ], []);
   // Staggered card entrance animations
   const cardAnims = useRef(
     Array.from({ length: 6 }, () => new Animated.Value(0))
@@ -221,7 +200,22 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
 
   // Post-walk summary highlight glow
   const postWalkGlowAnim = useRef(new Animated.Value(0)).current;
+  const tourMenuRef = useRef<View>(null);
+  const tourStreakRef = useRef<View>(null);
   const quickStatusRef = useRef<View>(null);
+  const tourOpportunitiesRef = useRef<View>(null);
+  const tourManualWalkRef = useRef<View>(null);
+  const tourTargets = useMemo<TourTargetRef[]>(
+    () => [
+      { ref: tourMenuRef, stepIndex: 0 },
+      { ref: tourStreakRef, stepIndex: 1 },
+      { ref: quickStatusRef, stepIndex: 2 },
+      { ref: tourOpportunitiesRef, stepIndex: 3 },
+      { ref: tourManualWalkRef, stepIndex: 4 },
+    ],
+    [],
+  );
+  const dashboardTourLaunchAttemptedRef = useRef(false);
 
   // ── Change walk modal state ──
   const [showChangeModal, setShowChangeModal] = useState(false);
@@ -270,6 +264,139 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
     if (isAuthenticated || hasCompletedOnboarding) return;
     navigation.reset({ index: 0, routes: [{ name: 'Intro' }] });
   }, [hasCompletedOnboarding, isAuthenticated, navigation]);
+
+  // Mark that the user has reached the dashboard at least once.
+  // The schedule editor tour should continue to show until this happens.
+  useEffect(() => {
+    if (!hasCompletedOnboarding) return;
+    if (guidanceSeen.dashboard_welcome) return;
+    setGuidanceSeen('dashboard_welcome', true);
+    void guidanceStorage.markSeen('dashboard_welcome');
+  }, [hasCompletedOnboarding, guidanceSeen.dashboard_welcome, setGuidanceSeen]);
+
+  const areTourTargetsMeasurable = useCallback(async (): Promise<boolean> => {
+    const canMeasure = (ref: React.RefObject<View | null>) =>
+      new Promise<boolean>((resolve) => {
+        const node = ref.current;
+        if (!node) {
+          resolve(false);
+          return;
+        }
+        node.measure((_x, _y, width, height) => {
+          resolve(width > 0 && height > 0);
+        });
+      });
+
+    const checks = await Promise.all([
+      canMeasure(tourMenuRef),
+      canMeasure(tourStreakRef),
+      canMeasure(quickStatusRef),
+      canMeasure(tourOpportunitiesRef),
+      canMeasure(tourManualWalkRef),
+    ]);
+    return checks.every(Boolean);
+  }, []);
+
+  const smoothScrollTo = useCallback((toY: number): Promise<void> => {
+    return new Promise<void>((resolve) => {
+      const scrollView = dashboardScrollRef.current;
+      if (!scrollView) {
+        resolve();
+        return;
+      }
+
+      const fromY = scrollYRef.current;
+      const clampedTargetY = Math.max(0, toY);
+      if (Math.abs(clampedTargetY - fromY) < 2) {
+        resolve();
+        return;
+      }
+
+      const driver = new Animated.Value(fromY);
+      const listenerId = driver.addListener(({ value }) => {
+        scrollYRef.current = value;
+        scrollView.scrollTo({ y: value, animated: false });
+      });
+
+      Animated.timing(driver, {
+        toValue: clampedTargetY,
+        duration: 520,
+        easing: Easing.inOut(Easing.cubic),
+        useNativeDriver: false,
+      }).start(() => {
+        driver.removeListener(listenerId);
+        scrollYRef.current = clampedTargetY;
+        scrollView.scrollTo({ y: clampedTargetY, animated: false });
+        resolve();
+      });
+    });
+  }, []);
+
+  const launchTourWhenReady = useCallback(async (): Promise<boolean> => {
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      const ready = await areTourTargetsMeasurable();
+      if (ready) {
+        setShowDashboardTour(true);
+        return true;
+      }
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, 180);
+      });
+    }
+    return false;
+  }, [areTourTargetsMeasurable]);
+
+  useEffect(() => {
+    if (!hasCompletedOnboarding || !hasSetPreferences || !preferences) return;
+    if (guidanceSeen.dashboard_tour || showDashboardTour) return;
+    if (dashboardTourLaunchAttemptedRef.current) return;
+
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    const task = InteractionManager.runAfterInteractions(() => {
+      timer = setTimeout(() => {
+        void (async () => {
+          if (cancelled) return;
+          const launched = await launchTourWhenReady();
+          if (launched) dashboardTourLaunchAttemptedRef.current = true;
+        })();
+      }, 600);
+    });
+
+    return () => {
+      cancelled = true;
+      task.cancel();
+      if (timer) clearTimeout(timer);
+    };
+  }, [
+    hasCompletedOnboarding,
+    hasSetPreferences,
+    preferences,
+    guidanceSeen.dashboard_tour,
+    showDashboardTour,
+    launchTourWhenReady,
+  ]);
+
+  useEffect(() => {
+    if (!route.params?.replayDashboardTour) return;
+    if (!hasSetPreferences || !preferences) return;
+
+    navigation.setParams({ replayDashboardTour: undefined });
+    dashboardTourLaunchAttemptedRef.current = true;
+
+    const task = InteractionManager.runAfterInteractions(() => {
+      void launchTourWhenReady();
+    });
+
+    return () => task.cancel();
+  }, [
+    route.params?.replayDashboardTour,
+    hasSetPreferences,
+    preferences,
+    navigation,
+    launchTourWhenReady,
+  ]);
 
   const resolvedDisplayName = useMemo(() => {
     const localName = profileDisplayName?.trim();
@@ -395,15 +522,6 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
           })
         )
       ).start();
-
-      // Auto-start tour for new users (mark seen immediately so back-button dismissal
-      // doesn't cause the tour to re-trigger on next app launch)
-      if (hasCompletedOnboarding && !hasSeenDashboardTour && !tourStartedRef.current) {
-        tourStartedRef.current = true;
-        setHasSeenDashboardTour(true);
-        void authStorage.saveDashboardTourSeen(true);
-        setTimeout(() => setTourVisible(true), 1500);
-      }
     }, [load, hasRequestedPermissions])
   );
 
@@ -874,12 +992,6 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
     navigation.setParams({ openMenu: undefined });
   }, [navigation, openMenu, route.params?.openMenu]);
 
-  useEffect(() => {
-    if (!route.params?.startTour) return;
-    navigation.setParams({ startTour: undefined });
-    setTimeout(() => setTourVisible(true), 600);
-  }, [navigation, route.params?.startTour]);
-
   // Post-walk summary: scroll to Quick Status and pulse a highlight glow
   useEffect(() => {
     if (!route.params?.showPostWalkSummary) return;
@@ -941,6 +1053,57 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
     setGuidanceSeen(key, true);
     void guidanceStorage.markSeen(key);
   }, [setGuidanceSeen]);
+
+  const handleDashboardTourFinish = useCallback(() => {
+    setShowDashboardTour(false);
+    setGuidanceSeen('dashboard_tour', true);
+    void guidanceStorage.markSeen('dashboard_tour');
+  }, [setGuidanceSeen]);
+
+  const handleBeforeTourStep = useCallback(async (stepIndex: number): Promise<void> => {
+    const refs: Array<React.RefObject<View | null>> = [
+      tourMenuRef,
+      tourStreakRef,
+      quickStatusRef,
+      tourOpportunitiesRef,
+      tourManualWalkRef,
+    ];
+    const targetRef = refs[stepIndex];
+    if (!targetRef?.current || !dashboardScrollRef.current) return;
+
+    // Step 0 is in the fixed header. Reset scroll so header/menu are always
+    // consistently visible regardless of prior user scrolling.
+    if (stepIndex === 0) {
+      await smoothScrollTo(0);
+      return;
+    }
+
+    const screenHeight = Dimensions.get('window').height;
+    const desiredScreenY = screenHeight * 0.28;
+    const safeTop = 60;
+    const safeBottom = screenHeight - 100;
+
+    const scrollToTargetAndVerify = async (): Promise<boolean> => {
+      const screenY = await new Promise<number>((resolve) => {
+        targetRef.current?.measureInWindow((_x, y) => resolve(y));
+      });
+
+      const contentY = screenY + scrollYRef.current;
+      const targetScrollY = contentY - desiredScreenY;
+      await smoothScrollTo(targetScrollY);
+
+      const finalY = await new Promise<number>((resolve) => {
+        targetRef.current?.measureInWindow((_x, y) => resolve(y));
+      });
+
+      return finalY >= safeTop && finalY <= safeBottom;
+    };
+
+    let visible = await scrollToTargetAndVerify();
+    if (!visible) {
+      visible = await scrollToTargetAndVerify();
+    }
+  }, [smoothScrollTo]);
 
   // ── Computed values ──
   const today = new Date();
@@ -1056,6 +1219,10 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
 
       <ScrollView
         ref={dashboardScrollRef}
+        onScroll={(e) => {
+          scrollYRef.current = e.nativeEvent.contentOffset.y;
+        }}
+        scrollEventThrottle={16}
         contentContainerStyle={[styles.scroll, { paddingHorizontal: horizontalPadding, paddingTop: Math.max(height * 0.03, 12), paddingBottom: Math.max(height * 0.04, 20) }]}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={palette.accentPrimary} />}
       >
@@ -1067,7 +1234,11 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
             </View>
           </Animated.View>
 
-          <Animated.View style={{ opacity: cardAnims[1], transform: [{ translateY: cardAnims[1].interpolate({ inputRange: [0, 1], outputRange: [12, 0] }) }] }}>
+          <Animated.View
+            ref={tourStreakRef}
+            collapsable={false}
+            style={{ opacity: cardAnims[1], transform: [{ translateY: cardAnims[1].interpolate({ inputRange: [0, 1], outputRange: [12, 0] }) }] }}
+          >
             <StreakCard streak={streak} />
           </Animated.View>
 
@@ -1078,41 +1249,43 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
           )}
 
           <View ref={quickStatusRef} collapsable={false}>
-            <View ref={tourQuickStatusRef} style={styles.quickStatusStack} collapsable={false}>
-              <Animated.View style={[
-                { opacity: cardAnims[3], transform: [{ translateY: cardAnims[3].interpolate({ inputRange: [0, 1], outputRange: [12, 0] }) }] },
-                { borderRadius: 16, overflow: 'hidden' },
-              ]}>
-                <Animated.View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, borderRadius: 16, borderWidth: 2, borderColor: palette.accentPrimary, opacity: postWalkGlowAnim }} pointerEvents="none" />
-                <View style={styles.quickStatusContent}>
-                  <Text variant="body" style={styles.qsTitle}>Quick Status</Text>
-                  <View style={styles.quickStatusCards}>
-                    <StatCard
-                      title="Daily Target"
-                      current={todayMinutesWalked}
-                      target={preferences.dailyTargetMinutes}
-                      unitLabel="minutes"
-                      tone="target"
-                    />
-                    <StatCard
-                      title="Notification Count"
-                      current={todayNotificationCount}
-                      target={preferences.notificationCountPerDay}
-                      unitLabel="times"
-                      tone="notifications"
-                    />
-                    {showStepGoalCard && (
+            <View style={styles.quickStatusStack} collapsable={false}>
+              <View collapsable={false}>
+                <Animated.View style={[
+                  { opacity: cardAnims[3], transform: [{ translateY: cardAnims[3].interpolate({ inputRange: [0, 1], outputRange: [12, 0] }) }] },
+                  { borderRadius: 16, overflow: 'hidden' },
+                ]}>
+                  <Animated.View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, borderRadius: 16, borderWidth: 2, borderColor: palette.accentPrimary, opacity: postWalkGlowAnim }} pointerEvents="none" />
+                  <View style={styles.quickStatusContent}>
+                    <Text variant="body" style={styles.qsTitle}>Quick Status</Text>
+                    <View style={styles.quickStatusCards}>
                       <StatCard
-                        title="Step Goal"
-                        current={todaySteps}
-                        target={preferences.stepGoal}
-                        unitLabel="steps"
-                        tone="steps"
+                        title="Daily Target"
+                        current={todayMinutesWalked}
+                        target={preferences.dailyTargetMinutes}
+                        unitLabel="minutes"
+                        tone="target"
                       />
-                    )}
+                      <StatCard
+                        title="Notification Count"
+                        current={todayNotificationCount}
+                        target={preferences.notificationCountPerDay}
+                        unitLabel="times"
+                        tone="notifications"
+                      />
+                      {showStepGoalCard && (
+                        <StatCard
+                          title="Step Goal"
+                          current={todaySteps}
+                          target={preferences.stepGoal}
+                          unitLabel="steps"
+                          tone="steps"
+                        />
+                      )}
+                    </View>
                   </View>
-                </View>
-              </Animated.View>
+                </Animated.View>
+              </View>
 
               <Animated.View style={{ opacity: cardAnims[4], transform: [{ translateY: cardAnims[4].interpolate({ inputRange: [0, 1], outputRange: [12, 0] }) }] }}>
                 <WeeklyStatsCard weeklyStats={weeklyStats} prevWeeklyStats={prevWeeklyStats} />
@@ -1121,13 +1294,14 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
           </View>
 
           <Animated.View style={{ opacity: cardAnims[5], transform: [{ translateY: cardAnims[5].interpolate({ inputRange: [0, 1], outputRange: [12, 0] }) }] }}>
-            <View ref={tourOpportunitiesRef} style={styles.opportunitySection} collapsable={false}>
+            <View style={styles.opportunitySection} collapsable={false}>
+              <View ref={tourOpportunitiesRef} collapsable={false}>
               <View style={styles.gapHeaderRow}>
                 <View style={{ flex: 1 }}>
                   <Text variant="body" style={styles.gapTitle}>Walking Opportunities</Text>
                   <Text variant="muted" style={styles.gapSubtitle}>See your next walk windows and reminder times.</Text>
                 </View>
-                <View ref={tourAddWalkRef} collapsable={false}>
+                <View>
                   <Pressable
                     onPress={() => { if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => { }); openAddWalkModal(); }}
                     hitSlop={12}
@@ -1185,6 +1359,7 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
                   {missedPlans.length > 0 && <MissedPlansSection missedPlans={missedPlans} />}
                 </View>
               )}
+              </View>
 
               <View ref={tourManualWalkRef} style={styles.footerStack} collapsable={false}>
                 <Button title="Start Manual Walk" onPress={() => navigation.navigate('Walking', {})} testID="dashboard-start-manual-walk" />
@@ -1272,18 +1447,6 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
         onDismiss={() => setShowSaveToast(false)}
       />
 
-      <TourOverlay
-        visible={tourVisible}
-        targets={tourTargets}
-        steps={DASHBOARD_TOUR_STEPS}
-        scrollViewRef={dashboardScrollRef}
-        onFinish={() => {
-          setTourVisible(false);
-          setHasSeenDashboardTour(true);
-          void authStorage.saveDashboardTourSeen(true);
-        }}
-      />
-
       <AppModal visible={messageDialog !== null} onClose={() => setMessageDialog(null)} title={messageDialog?.title ?? ''}>
         <View style={{ paddingBottom: 8 }}>
           <Text variant="body" style={{ color: palette.textMuted, textAlign: 'center', marginBottom: 24 }}>{messageDialog?.message}</Text>
@@ -1305,6 +1468,14 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
           </View>
         </View>
       </AppModal>
+
+      <TourOverlay
+        visible={showDashboardTour}
+        targets={tourTargets}
+        steps={DASHBOARD_TOUR_STEPS}
+        onFinish={handleDashboardTourFinish}
+        onBeforeStep={handleBeforeTourStep}
+      />
     </SafeAreaView>
   );
 };

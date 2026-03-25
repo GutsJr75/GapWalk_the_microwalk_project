@@ -1,5 +1,9 @@
 node_modules/
 .expo/
+.expo-shared/
+.eas/
+.idea/
+android/.kotlin/
 dist/
 .env
 .env.*
@@ -17,6 +21,8 @@ web-build/
 scripts/__pycache__/
 CREDENTIALS_BACKUP.txt
 google-services.json
-eas.json
+android/app/eas-build.gradle
+credentials.json
+test.bundle
 *.aab
 *.apk

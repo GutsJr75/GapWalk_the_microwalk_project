@@ -71,7 +71,7 @@ export const parseICSFile = async (fileContent: string): Promise<ICSParseResult>
   } catch (err) {
     return {
       events: [],
-      errors: [`Failed to parse ICS file: ${err instanceof Error ? err.message : 'Unknown error'}`],
+      errors: [`Failed to parse calendar file: ${err instanceof Error ? err.message : 'Unknown error'}`],
     };
   }
 };

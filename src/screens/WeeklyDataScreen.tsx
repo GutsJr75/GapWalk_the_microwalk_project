@@ -158,7 +158,7 @@ export const WeeklyDataScreen: React.FC<Props> = ({ navigation }) => {
                       {isLatest ? 'This Week' : 'Week of'}
                     </Text>
                     <Text variant="body" style={styles.weekRange}>
-                      {start} – {end}
+                      {start} - {end}
                     </Text>
                   </View>
 

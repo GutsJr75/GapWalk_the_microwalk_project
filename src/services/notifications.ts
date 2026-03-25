@@ -6,10 +6,14 @@ import { NudgePlan, NotificationTimerMode, Preferences } from '../types';
 import { addMinutes, format, parseISO, subMinutes, isBefore } from 'date-fns';
 import { timeUtils } from '../utils/time';
 import { sessionsRepo } from '../data/repositories/sessionsRepo';
+import { preferencesRepo } from '../data/repositories/preferencesRepo';
+import { androidExactNotifications } from './androidExactNotifications';
 
 export const WALK_NUDGE_CATEGORY_ID = 'walk_nudge_actions';
 export const WALK_NUDGE_ACTION_START = 'START_WALK';
 export const WALK_NUDGE_ACTION_SKIP = 'SKIP_GAP';
+export const WALK_NUDGE_NOTIFICATION_TYPE = 'walk_nudge';
+export const WALK_MISSED_NOTIFICATION_TYPE = 'walk_missed';
 
 // Alternative gap suggestion notification
 export const ALT_GAP_CATEGORY_ID = 'alt_gap_suggestion';
@@ -113,6 +117,118 @@ const noopSubscription: Notifications.Subscription = {
   },
 };
 
+type PlanNotificationType =
+  | typeof WALK_NUDGE_NOTIFICATION_TYPE
+  | typeof WALK_MISSED_NOTIFICATION_TYPE;
+
+type PlanNotificationSuppressionReason =
+  | 'notifications_disabled'
+  | 'past'
+  | 'quiet_hours'
+  | 'after_walk_start'
+  | 'goal_reached';
+
+type PlanNotificationWindow = {
+  notificationId: string;
+  triggerAt: Date;
+  allowed: boolean;
+  reason?: PlanNotificationSuppressionReason;
+};
+
+export type PlanNotificationWindowPolicy = {
+  nudge: PlanNotificationWindow;
+  missed: PlanNotificationWindow;
+};
+
+const IOS_PLAN_THREAD_PREFIX = 'walk-plan';
+
+const normalizeNotificationDate = (value: Date): Date => {
+  const normalized = new Date(value);
+  normalized.setSeconds(0, 0);
+  return normalized;
+};
+
+export const getWalkNudgeNotificationId = (planId: string): string =>
+  `walk-nudge:${planId}`;
+
+export const getWalkMissedNotificationId = (planId: string): string =>
+  `walk-missed:${planId}`;
+
+const getPlanThreadIdentifier = (planId: string): string =>
+  `${IOS_PLAN_THREAD_PREFIX}:${planId}`;
+
+export const getPlanMissedNotifyTime = (plan: NudgePlan): Date =>
+  normalizeNotificationDate(parseISO(plan.gapEnd));
+
+const adjustNotifyTimeForQuietHours = (
+  notifyTime: Date,
+  walkStart: Date,
+  prefs?: Preferences,
+): Date => {
+  if (!prefs) return notifyTime;
+
+  let adjusted = notifyTime;
+  while (
+    adjusted.getTime() < walkStart.getTime() &&
+    timeUtils.isInQuietHours(adjusted, prefs.quietHoursStart, prefs.quietHoursEnd)
+  ) {
+    adjusted = addMinutes(adjusted, 1);
+    adjusted.setSeconds(0, 0);
+  }
+  return adjusted;
+};
+
+export const getPlanNotificationWindowPolicy = (
+  plan: NudgePlan,
+  prefs?: Preferences,
+  now: Date = new Date(),
+): PlanNotificationWindowPolicy => {
+  const walkStart = normalizeNotificationDate(parseISO(plan.walkStart));
+  const missedTime = getPlanMissedNotifyTime(plan);
+  const baseNotifyTime = normalizeNotificationDate(getPlanNotifyTime(plan, prefs));
+  const nudgeTime = adjustNotifyTimeForQuietHours(baseNotifyTime, walkStart, prefs);
+
+  const nudge: PlanNotificationWindow = {
+    notificationId: getWalkNudgeNotificationId(plan.id),
+    triggerAt: nudgeTime,
+    allowed: true,
+  };
+  const missed: PlanNotificationWindow = {
+    notificationId: getWalkMissedNotificationId(plan.id),
+    triggerAt: missedTime,
+    allowed: true,
+  };
+
+  if (plan.notificationsEnabled === false) {
+    nudge.allowed = false;
+    nudge.reason = 'notifications_disabled';
+    missed.allowed = false;
+    missed.reason = 'notifications_disabled';
+    return { nudge, missed };
+  }
+
+  if (prefs && timeUtils.isInQuietHours(nudgeTime, prefs.quietHoursStart, prefs.quietHoursEnd)) {
+    nudge.allowed = false;
+    nudge.reason = 'quiet_hours';
+  } else if (nudgeTime.getTime() > walkStart.getTime()) {
+    nudge.allowed = false;
+    nudge.reason = 'after_walk_start';
+  } else if (nudgeTime <= now || walkStart <= now) {
+    nudge.allowed = false;
+    nudge.reason = 'past';
+  }
+
+  if (prefs && timeUtils.isInQuietHours(missedTime, prefs.quietHoursStart, prefs.quietHoursEnd)) {
+    missed.allowed = false;
+    missed.reason = 'quiet_hours';
+  } else if (missedTime <= now) {
+    missed.allowed = false;
+    missed.reason = 'past';
+  }
+
+  return { nudge, missed };
+};
+
 function buildNudgeTitle(walkStart: Date, _isManual = false): string {
   const startTime = format(walkStart, 'h:mm a');
   return `Your ${startTime} walk`;
@@ -175,6 +291,19 @@ function buildNudgeBody(params: {
   return `${body}${progressHint}`;
 }
 
+function buildMissedWalkTitle(walkStart: Date): string {
+  return `You missed your ${format(walkStart, 'h:mm a')} walk`;
+}
+
+function buildMissedWalkBody(params: {
+  walkStart: Date;
+  gapEnd: Date;
+  durationMinutes: number;
+}): string {
+  const { walkStart, gapEnd, durationMinutes } = params;
+  return `Your ${durationMinutes} minute walk window that started at ${format(walkStart, 'h:mm a')} closed at ${format(gapEnd, 'h:mm a')}.`;
+}
+
 export const MANUAL_NOTIFY_LEAD_MINUTE_OPTIONS = [0, 5, 10] as const;
 
 export type ManualNotifyLeadMinutes = typeof MANUAL_NOTIFY_LEAD_MINUTE_OPTIONS[number];
@@ -206,6 +335,155 @@ export const getPlanNotifyTime = (plan: NudgePlan, prefs?: Preferences): Date =>
   return notifyTime;
 };
 
+const buildPlanNotificationSuppressedMessage = (
+  reason: PlanNotificationSuppressionReason | undefined,
+  prefs?: Preferences,
+): string | null => {
+  switch (reason) {
+    case 'notifications_disabled':
+      return 'This walk will be saved without reminders.';
+    case 'quiet_hours':
+      return prefs
+        ? `This walk will be saved without reminders because it falls in your quiet hours (${prefs.quietHoursStart} - ${prefs.quietHoursEnd}).`
+        : 'This walk will be saved without reminders because it falls in your quiet hours.';
+    case 'past':
+      return 'This walk will be saved without reminders because the reminder time has already passed.';
+    case 'after_walk_start':
+      return 'This walk will be saved without reminders because GapWalk cannot place the reminder before the walk starts.';
+    default:
+      return null;
+  }
+};
+
+const getPolicySuppressionReason = (
+  policy: PlanNotificationWindowPolicy,
+): PlanNotificationSuppressionReason | undefined => {
+  if (!policy.nudge.allowed) return policy.nudge.reason;
+  if (!policy.missed.allowed) return policy.missed.reason;
+  return undefined;
+};
+
+const shouldUseExactAndroidPlanNotifications = async (): Promise<boolean> => {
+  if (Platform.OS !== 'android' || !androidExactNotifications.isSupported()) {
+    return false;
+  }
+  return androidExactNotifications.canScheduleExactAlarms();
+};
+
+const hasMetNotificationGoals = async (prefs?: Preferences): Promise<boolean> => {
+  if (!prefs) return false;
+
+  try {
+    const minsToday = await sessionsRepo.getTodayMinutes();
+    if (minsToday >= prefs.dailyTargetMinutes) {
+      return true;
+    }
+
+    if (prefs.stepGoalEnabled && prefs.stepGoal > 0) {
+      const stepsToday = await sessionsRepo.getTodaySteps();
+      if (stepsToday >= prefs.stepGoal) {
+        return true;
+      }
+    }
+  } catch {
+    return false;
+  }
+
+  return false;
+};
+
+const scheduleExpoPlanNotification = async (input: {
+  notificationId: string;
+  planId: string;
+  type: PlanNotificationType;
+  title: string;
+  body: string;
+  triggerAt: Date;
+  categoryIdentifier?: string;
+}): Promise<string> => {
+  const content: Notifications.NotificationContentInput & { threadIdentifier?: string } = {
+    title: input.title,
+    body: input.body,
+    categoryIdentifier: input.categoryIdentifier,
+    data: {
+      planId: input.planId,
+      type: input.type,
+    },
+    sound: true,
+    ...(Platform.OS === 'android'
+      ? {
+          channelId: ANDROID_CHANNEL_DEFAULT,
+          priority: Notifications.AndroidNotificationPriority.MAX,
+        }
+      : {
+          threadIdentifier: getPlanThreadIdentifier(input.planId),
+        }),
+  };
+
+  return Notifications.scheduleNotificationAsync({
+    identifier: input.notificationId,
+    content,
+    trigger: {
+      type: Notifications.SchedulableTriggerInputTypes.DATE,
+      date: input.triggerAt,
+    },
+  });
+};
+
+const schedulePlanNotification = async (input: {
+  notificationId: string;
+  planId: string;
+  type: PlanNotificationType;
+  title: string;
+  body: string;
+  triggerAt: Date;
+  categoryIdentifier?: string;
+}): Promise<string | null> => {
+  const useExactAndroid = await shouldUseExactAndroidPlanNotifications();
+  if (useExactAndroid) {
+    try {
+      const scheduled = await androidExactNotifications.scheduleNotification({
+        notificationId: input.notificationId,
+        planId: input.planId,
+        type: input.type,
+        title: input.title,
+        body: input.body,
+        scheduledAtMs: input.triggerAt.getTime(),
+      });
+      if (scheduled) {
+        return input.notificationId;
+      }
+    } catch (error) {
+      if (__DEV__) {
+        console.warn('Exact Android notification scheduling failed, falling back to Expo:', error);
+      }
+    }
+  }
+
+  try {
+    return await scheduleExpoPlanNotification(input);
+  } catch (error) {
+    if (__DEV__) console.error('Failed to schedule Expo plan notification:', error);
+    return null;
+  }
+};
+
+const getExistingScheduledNotificationIds = async (): Promise<Set<string>> => {
+  const scheduledIds = new Set<string>();
+  if (!isNotificationsSupported) return scheduledIds;
+
+  try {
+    const existing = await Notifications.getAllScheduledNotificationsAsync();
+    for (const scheduled of existing) {
+      scheduledIds.add(scheduled.identifier);
+    }
+  } catch {
+    // fall through - exact Android alarms can still replace existing entries by identifier
+  }
+
+  return scheduledIds;
+};
+
 export const notificationService = {
   async setReminderVibrationEnabled(enabled: boolean): Promise<void> {
     reminderVibrationEnabled = enabled;
@@ -214,6 +492,9 @@ export const notificationService = {
         ANDROID_CHANNEL_DEFAULT,
         getDefaultAndroidChannelConfig(),
       );
+    }
+    if (Platform.OS === 'android' && androidExactNotifications.isSupported()) {
+      await androidExactNotifications.setReminderVibrationEnabled(enabled);
     }
   },
 
@@ -284,152 +565,142 @@ export const notificationService = {
 
     return true;
   },
-  
-  /**
-   * Schedule a notification for a nudge plan.
-   * Respects the user's whenToNotify preference and grace period.
-   *
-   * - "now" : schedule at walkStart (gap start + buffer + grace)
-   * - "delay": schedule notifyDelayMinutes before walkStart (clamped to gap start)
-   * - "next_gap": caller should handle; this just schedules at walkStart
-   */
-  async scheduleNudge(plan: NudgePlan, prefs?: Preferences): Promise<string | null> {
-    if (!isNotificationsSupported) return null;
 
-    try {
-      const walkStart = parseISO(plan.walkStart);
-
-      // Suppress notifications if daily goal or step goal already reached
-      if (prefs) {
-        try {
-          const minsToday = await sessionsRepo.getTodayMinutes();
-          if (minsToday >= prefs.dailyTargetMinutes) return null;
-
-          if (prefs.stepGoalEnabled && prefs.stepGoal > 0) {
-            const stepsToday = await sessionsRepo.getTodaySteps();
-            if (stepsToday >= prefs.stepGoal) return null;
-          }
-        } catch { /* ok - schedule anyway if DB read fails */ }
-      }
-
-      let notifyTime = getPlanNotifyTime(plan, prefs);
-
-      if (prefs) {
-        while (
-          notifyTime.getTime() < walkStart.getTime() &&
-          timeUtils.isInQuietHours(notifyTime, prefs.quietHoursStart, prefs.quietHoursEnd)
-        ) {
-          notifyTime = addMinutes(notifyTime, 1);
-        }
-        if (timeUtils.isInQuietHours(notifyTime, prefs.quietHoursStart, prefs.quietHoursEnd)) {
-          return null;
-        }
-        if (notifyTime.getTime() > walkStart.getTime()) {
-          return null;
-        }
-      }
-
-      const now = new Date();
-      if (notifyTime <= now) return null;
-
-      // Build personalized, varied notification text
-      const dur = plan.suggestedDurationMinutes;
-      const isStrict = prefs?.strictnessMode === 'no_excuses';
-
-      let progressHint = '';
-      try {
-        const minsWalked = await sessionsRepo.getTodayMinutes();
-        const target = prefs?.dailyTargetMinutes ?? 0;
-        if (target > 0 && minsWalked > 0) {
-          const remaining = Math.max(0, target - minsWalked);
-          progressHint = remaining > 0
-            ? `\n${minsWalked} of ${target} min done today, only ${remaining} to go!`
-            : '';
-        }
-      } catch { /* ok */ }
-
-      const title = buildNudgeTitle(walkStart);
-      const bodyText = buildNudgeBody({
-        walkStart,
-        durationMinutes: dur,
-        notifyTime,
-        isStrict,
-        progressHint,
-      });
-
-      const notificationId = await Notifications.scheduleNotificationAsync({
-        content: {
-          title,
-          body: bodyText,
-          categoryIdentifier: WALK_NUDGE_CATEGORY_ID,
-          data: {
-            planId: plan.id,
-            type: 'walk_nudge',
-          },
-          sound: true,
-          ...(Platform.OS === 'android' ? { channelId: ANDROID_CHANNEL_DEFAULT, priority: Notifications.AndroidNotificationPriority.MAX } : {}),
-        },
-        trigger: {
-          type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
-          seconds: Math.max(1, Math.ceil((notifyTime.getTime() - Date.now()) / 1000)),
-          repeats: false,
-        },
-      });
-      
-      return notificationId;
-    } catch (error) {
-      if (__DEV__) console.error('Failed to schedule notification:', error);
-      return null;
+  async getPlanNotificationSuppressedMessage(
+    plan: NudgePlan,
+    prefs?: Preferences,
+  ): Promise<string | null> {
+    const resolvedPrefs = prefs ?? (await preferencesRepo.get()) ?? undefined;
+    const staticPolicy = getPlanNotificationWindowPolicy(plan, resolvedPrefs);
+    const staticSuppressionReason = getPolicySuppressionReason(staticPolicy);
+    if (staticSuppressionReason) {
+      return buildPlanNotificationSuppressedMessage(staticSuppressionReason, resolvedPrefs);
     }
+
+    if (await hasMetNotificationGoals(resolvedPrefs)) {
+      return "This walk will be saved without reminders because today's goal is already complete.";
+    }
+
+    return null;
+  },
+
+  async schedulePlanNotifications(
+    plan: NudgePlan,
+    prefs?: Preferences,
+    existingScheduledIds?: Set<string>,
+  ): Promise<{ nudgeId: string | null; missedId: string | null }> {
+    if (!isNotificationsSupported) {
+      return { nudgeId: null, missedId: null };
+    }
+
+    const resolvedPrefs = prefs ?? (await preferencesRepo.get()) ?? undefined;
+    const windowPolicy = getPlanNotificationWindowPolicy(plan, resolvedPrefs);
+    const goalReached = await hasMetNotificationGoals(resolvedPrefs);
+
+    const nudgePolicy: PlanNotificationWindow = goalReached
+      ? { ...windowPolicy.nudge, allowed: false, reason: 'goal_reached' }
+      : windowPolicy.nudge;
+    const missedPolicy: PlanNotificationWindow = goalReached
+      ? { ...windowPolicy.missed, allowed: false, reason: 'goal_reached' }
+      : windowPolicy.missed;
+
+    let nudgeId: string | null = null;
+    let missedId: string | null = null;
+
+    if (
+      plan.status === 'planned' &&
+      nudgePolicy.allowed &&
+      !existingScheduledIds?.has(nudgePolicy.notificationId)
+    ) {
+      try {
+        const walkStart = parseISO(plan.walkStart);
+        const durationMinutes = plan.suggestedDurationMinutes;
+        const isStrict = resolvedPrefs?.strictnessMode === 'no_excuses';
+
+        let progressHint = '';
+        try {
+          const minsWalked = await sessionsRepo.getTodayMinutes();
+          const target = resolvedPrefs?.dailyTargetMinutes ?? 0;
+          if (target > 0 && minsWalked > 0) {
+            const remaining = Math.max(0, target - minsWalked);
+            progressHint = remaining > 0
+              ? `\n${minsWalked} of ${target} min done today, only ${remaining} to go!`
+              : '';
+          }
+        } catch {
+          // keep notification copy simple if local stats read fails
+        }
+
+        nudgeId = await schedulePlanNotification({
+          notificationId: nudgePolicy.notificationId,
+          planId: plan.id,
+          type: WALK_NUDGE_NOTIFICATION_TYPE,
+          title: buildNudgeTitle(walkStart, plan.reason === 'manual'),
+          body: buildNudgeBody({
+            walkStart,
+            durationMinutes,
+            notifyTime: nudgePolicy.triggerAt,
+            isStrict,
+            progressHint,
+          }),
+          triggerAt: nudgePolicy.triggerAt,
+          categoryIdentifier: WALK_NUDGE_CATEGORY_ID,
+        });
+        if (nudgeId) {
+          existingScheduledIds?.add(nudgeId);
+        }
+      } catch (error) {
+        if (__DEV__) console.error('Failed to schedule walk nudge:', error);
+      }
+    }
+
+    if (
+      (plan.status === 'planned' || plan.status === 'notified') &&
+      missedPolicy.allowed &&
+      !existingScheduledIds?.has(missedPolicy.notificationId)
+    ) {
+      try {
+        const walkStart = parseISO(plan.walkStart);
+        const gapEnd = parseISO(plan.gapEnd);
+        missedId = await schedulePlanNotification({
+          notificationId: missedPolicy.notificationId,
+          planId: plan.id,
+          type: WALK_MISSED_NOTIFICATION_TYPE,
+          title: buildMissedWalkTitle(walkStart),
+          body: buildMissedWalkBody({
+            walkStart,
+            gapEnd,
+            durationMinutes: plan.suggestedDurationMinutes,
+          }),
+          triggerAt: missedPolicy.triggerAt,
+        });
+        if (missedId) {
+          existingScheduledIds?.add(missedId);
+        }
+      } catch (error) {
+        if (__DEV__) console.error('Failed to schedule missed-walk notification:', error);
+      }
+    }
+
+    return { nudgeId, missedId };
   },
 
   /**
-   * Schedule a notification for a manually-created walk plan.
-   * Bypasses quiet hours, goal suppression, and preferred period checks
-   * because the user explicitly requested this walk.
+   * Schedule plan notifications for a nudge plan.
+   * Returns the nudge identifier when a nudge was scheduled.
    */
-  async scheduleManualNudge(plan: NudgePlan): Promise<string | null> {
-    if (!isNotificationsSupported) return null;
+  async scheduleNudge(plan: NudgePlan, prefs?: Preferences): Promise<string | null> {
+    const { nudgeId } = await this.schedulePlanNotifications(plan, prefs);
+    return nudgeId;
+  },
 
-    try {
-      const walkStart = parseISO(plan.walkStart);
-      const notifyTime = getPlanNotifyTime(plan);
-      const now = new Date();
-      if (walkStart <= now || notifyTime <= now) return null;
-
-      const dur = plan.suggestedDurationMinutes;
-      const title = buildNudgeTitle(walkStart, true);
-      const body = buildNudgeBody({
-        walkStart,
-        durationMinutes: dur,
-        notifyTime,
-        isStrict: false,
-      });
-
-      const notificationId = await Notifications.scheduleNotificationAsync({
-        content: {
-          title,
-          body,
-          categoryIdentifier: WALK_NUDGE_CATEGORY_ID,
-          data: {
-            planId: plan.id,
-            type: 'walk_nudge',
-          },
-          sound: true,
-          ...(Platform.OS === 'android' ? { channelId: ANDROID_CHANNEL_DEFAULT, priority: Notifications.AndroidNotificationPriority.MAX } : {}),
-        },
-        trigger: {
-          type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
-          seconds: Math.max(1, Math.ceil((notifyTime.getTime() - Date.now()) / 1000)),
-          repeats: false,
-        },
-      });
-
-      return notificationId;
-    } catch (error) {
-      if (__DEV__) console.error('Failed to schedule manual nudge:', error);
-      return null;
-    }
+  /**
+   * Schedule plan notifications for a manually-created walk plan.
+   * Manual walks follow the same notification rules as the rest of the app.
+   */
+  async scheduleManualNudge(plan: NudgePlan, prefs?: Preferences): Promise<string | null> {
+    const { nudgeId } = await this.schedulePlanNotifications(plan, prefs);
+    return nudgeId;
   },
 
   /**
@@ -445,27 +716,11 @@ export const notificationService = {
       if (!granted) return;
     }
 
-    // Build a set of planIds that already have scheduled notifications
-    // to avoid duplicate scheduling when dashboard re-loads.
-    const alreadyScheduled = new Set<string>();
-    try {
-      const existing = await Notifications.getAllScheduledNotificationsAsync();
-      for (const n of existing) {
-        const data = n.content.data as Record<string, unknown> | undefined;
-        if (data?.type === 'walk_nudge' && typeof data?.planId === 'string') {
-          alreadyScheduled.add(data.planId);
-        }
-      }
-    } catch { /* ok - schedule all */ }
+    const existingScheduledIds = await getExistingScheduledNotificationIds();
+    const resolvedPrefs = prefs ?? (await preferencesRepo.get()) ?? undefined;
 
     for (const plan of plans) {
-      if (!alreadyScheduled.has(plan.id)) {
-        if (plan.reason === 'manual') {
-          await this.scheduleManualNudge(plan);
-        } else {
-          await this.scheduleNudge(plan, prefs);
-        }
-      }
+      await this.schedulePlanNotifications(plan, resolvedPrefs, existingScheduledIds);
     }
   },
   
@@ -474,20 +729,24 @@ export const notificationService = {
    */
   async cancelAllNotifications(): Promise<void> {
     if (!isNotificationsSupported) return;
+    if (Platform.OS === 'android' && androidExactNotifications.isSupported()) {
+      await androidExactNotifications.cancelAllPlanNotifications();
+    }
     await Notifications.cancelAllScheduledNotificationsAsync();
   },
 
   /**
-   * Cancel only walk-nudge notifications, preserving daily_summary
-   * and any other non-nudge notifications.
+   * Cancel scheduled walk plan notifications, preserving other notification types.
    */
   async cancelWalkNudges(): Promise<void> {
     if (!isNotificationsSupported) return;
+    if (Platform.OS === 'android' && androidExactNotifications.isSupported()) {
+      await androidExactNotifications.cancelAllPlanNotifications();
+    }
     const scheduled = await Notifications.getAllScheduledNotificationsAsync();
     for (const n of scheduled) {
       const data = n.content.data as Record<string, unknown> | undefined;
-      // Only cancel notifications explicitly tagged as walk nudges
-      if (data?.type === 'walk_nudge') {
+      if (data?.type === WALK_NUDGE_NOTIFICATION_TYPE || data?.type === WALK_MISSED_NOTIFICATION_TYPE) {
         await Notifications.cancelScheduledNotificationAsync(n.identifier);
       }
     }
@@ -498,7 +757,84 @@ export const notificationService = {
    */
   async cancelNotification(notificationId: string): Promise<void> {
     if (!isNotificationsSupported) return;
-    await Notifications.cancelScheduledNotificationAsync(notificationId);
+    if (Platform.OS === 'android' && androidExactNotifications.isSupported()) {
+      await androidExactNotifications.cancelNotification(notificationId);
+    }
+    try {
+      await Notifications.cancelScheduledNotificationAsync(notificationId);
+    } catch {
+      // ignore - notification may be managed by the native exact-alarm path
+    }
+  },
+
+  async dismissNotification(notificationId: string): Promise<void> {
+    if (!isNotificationsSupported) return;
+    if (Platform.OS === 'android' && androidExactNotifications.isSupported()) {
+      await androidExactNotifications.dismissNotification(notificationId);
+    }
+    try {
+      await Notifications.dismissNotificationAsync(notificationId);
+    } catch {
+      // ignore - notification may already be gone or be managed natively
+    }
+  },
+
+  async dismissWalkReminderNotification(planId: string): Promise<void> {
+    await this.dismissNotification(getWalkNudgeNotificationId(planId));
+  },
+
+  async clearPlanNotifications(
+    planId: string,
+    options?: { dismissMissed?: boolean },
+  ): Promise<void> {
+    const dismissMissed = options?.dismissMissed !== false;
+    const nudgeId = getWalkNudgeNotificationId(planId);
+    const missedId = getWalkMissedNotificationId(planId);
+
+    await this.cancelNotification(nudgeId);
+    await this.cancelNotification(missedId);
+    await this.dismissNotification(nudgeId);
+    if (dismissMissed) {
+      await this.dismissNotification(missedId);
+    }
+  },
+
+  async cleanupPresentedPlanNotifications(plans: NudgePlan[]): Promise<void> {
+    if (!isNotificationsSupported) return;
+
+    let presentedNotificationIds: Set<string> | null = null;
+    if (Platform.OS === 'ios') {
+      try {
+        const presented = await Notifications.getPresentedNotificationsAsync();
+        presentedNotificationIds = new Set(
+          presented.map((notification) => notification.request.identifier),
+        );
+      } catch {
+        presentedNotificationIds = null;
+      }
+    }
+
+    const dismissIfPresented = async (notificationId: string): Promise<void> => {
+      if (Platform.OS === 'ios' && presentedNotificationIds && !presentedNotificationIds.has(notificationId)) {
+        return;
+      }
+      await this.dismissNotification(notificationId);
+    };
+
+    const now = new Date();
+    for (const plan of plans) {
+      const isMissedPlan = plan.status === 'cancelled' && plan.reason === 'missed';
+      const isTerminal = plan.status === 'cancelled' || plan.status === 'completed' || plan.status === 'skipped';
+      const isExpired = parseISO(plan.gapEnd) <= now;
+
+      if (isMissedPlan || isTerminal || isExpired || plan.notificationsEnabled === false) {
+        await dismissIfPresented(getWalkNudgeNotificationId(plan.id));
+      }
+
+      if (!isMissedPlan && (isTerminal || plan.notificationsEnabled === false)) {
+        await dismissIfPresented(getWalkMissedNotificationId(plan.id));
+      }
+    }
   },
   
   /**
@@ -528,7 +864,7 @@ export const notificationService = {
         title: 'Quick walk opportunity \uD83D\uDEB6',
         body: `You've got ${durationMinutes} free min right now. Ready for a quick walk?`,
         categoryIdentifier: WALK_NUDGE_CATEGORY_ID,
-        data: { planId, type: 'walk_nudge' },
+        data: { planId, type: WALK_NUDGE_NOTIFICATION_TYPE },
         sound: true,
         ...(Platform.OS === 'android' ? { channelId: ANDROID_CHANNEL_DEFAULT, priority: Notifications.AndroidNotificationPriority.MAX } : {}),
       },
@@ -618,8 +954,6 @@ export const notificationService = {
         : `Nice work! ${minutes} min and ${steps.toLocaleString()} steps today.`;
     }
 
-    const secondsUntil = Math.max(1, Math.ceil((summaryTime.getTime() - Date.now()) / 1000));
-
     await Notifications.scheduleNotificationAsync({
       content: {
         title,
@@ -629,9 +963,8 @@ export const notificationService = {
         ...(Platform.OS === 'android' ? { channelId: ANDROID_CHANNEL_DEFAULT } : {}),
       },
       trigger: {
-        type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
-        seconds: secondsUntil,
-        repeats: false,
+        type: Notifications.SchedulableTriggerInputTypes.DATE,
+        date: summaryTime,
       },
     });
   },

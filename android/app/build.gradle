@@ -18,10 +18,18 @@ tasks.register("prepareGoogleServices") {
 
         def sourceFile = candidates.find { it?.exists() }
         if (!sourceFile) {
-            throw new GradleException(
-                "google-services.json not found. Set GOOGLE_SERVICES_JSON (EAS file secret), " +
-                "or provide google-services.json at project root or android/app."
-            )
+            // On EAS preview builds, google-services.json may not be available yet.
+            // Only error on release builds; preview builds can skip Firebase setup.
+            def isPreviewBuild = System.getenv("EAS_BUILD_PROFILE") == "preview" ||
+                                  System.getenv("EAS_BUILD_PROFILE") == null
+            if (!isPreviewBuild) {
+                throw new GradleException(
+                    "google-services.json not found. Set GOOGLE_SERVICES_JSON (EAS file secret), " +
+                    "or provide google-services.json at project root or android/app."
+                )
+            }
+            println("[GapWalk] google-services.json not found; Firebase will not be configured.")
+            return
         }
 
         if (sourceFile.absolutePath != appGoogleServicesFile.absolutePath) {

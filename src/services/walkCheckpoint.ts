@@ -7,6 +7,7 @@ import { getDatabase } from '../data/db';
 import { WalkSession } from '../types';
 import { sessionsRepo } from '../data/repositories/sessionsRepo';
 import { plansRepo } from '../data/repositories/plansRepo';
+import { isNotificationsSupported, notificationService } from './notifications';
 
 export interface WalkCheckpointData {
   sessionId: string;
@@ -148,6 +149,9 @@ export async function recoverOrphanedSession(): Promise<WalkSession | null> {
             linkedPlan.status === 'started')
         ) {
           await plansRepo.updateStatus(session.nudgePlanId, 'completed');
+          if (isNotificationsSupported) {
+            await notificationService.clearPlanNotifications(session.nudgePlanId);
+          }
         }
       } catch (planErr) {
         if (__DEV__) console.warn('Failed to update recovered plan status:', planErr);

@@ -9,12 +9,9 @@ const SETTINGS_THEME_KEY = 'gapwalk_settings_theme';
 const SETTINGS_LANGUAGE_KEY = 'gapwalk_settings_language';
 const LAST_NOTIF_KEY = 'gapwalk_last_notif_response_key';
 const SETTINGS_DISTANCE_UNIT_KEY = 'gapwalk_settings_distance_unit';
-const SETTINGS_FIRST_DAY_KEY = 'gapwalk_settings_first_day';
 const SETTINGS_VIBRATION_KEY = 'gapwalk_settings_vibration';
 const SETTINGS_WALK_DISPLAY_CARDS_KEY = 'gapwalk_settings_walk_display_cards';
 const SETTINGS_NOTIFICATION_TIMER_MODE_KEY = 'gapwalk_settings_notification_timer_mode';
-const TOUR_SCHEDULE_SEEN_KEY = 'gapwalk_tour_schedule_seen';
-const TOUR_DASHBOARD_SEEN_KEY = 'gapwalk_tour_dashboard_seen';
 const LAST_SYNCED_AT_KEY = 'gapwalk_last_synced_at';
 const LAST_LOGIN_AT_KEY = 'gapwalk_last_login_at';
 
@@ -122,18 +119,6 @@ export const authStorage = {
     return null;
   },
 
-  async saveFirstDayOfWeek(day: string): Promise<void> {
-    if (Platform.OS === 'web') return;
-    await SecureStore.setItemAsync(SETTINGS_FIRST_DAY_KEY, day);
-  },
-
-  async getFirstDayOfWeek(): Promise<'sun' | 'mon' | null> {
-    if (Platform.OS === 'web') return null;
-    const val = await SecureStore.getItemAsync(SETTINGS_FIRST_DAY_KEY);
-    if (val === 'sun' || val === 'mon') return val;
-    return null;
-  },
-
   async saveVibrationEnabled(enabled: boolean): Promise<void> {
     if (Platform.OS === 'web') return;
     await SecureStore.setItemAsync(SETTINGS_VIBRATION_KEY, enabled ? '1' : '0');
@@ -201,27 +186,5 @@ export const authStorage = {
     await SecureStore.deleteItemAsync(AUTH_USER_KEY);
     await SecureStore.deleteItemAsync(REMEMBER_ME_KEY);
     await SecureStore.deleteItemAsync(LAST_LOGIN_AT_KEY);
-  },
-
-  async saveScheduleTourSeen(seen: boolean): Promise<void> {
-    if (Platform.OS === 'web') return;
-    await SecureStore.setItemAsync(TOUR_SCHEDULE_SEEN_KEY, seen ? '1' : '0');
-  },
-
-  async getScheduleTourSeen(): Promise<boolean> {
-    if (Platform.OS === 'web') return false;
-    const val = await SecureStore.getItemAsync(TOUR_SCHEDULE_SEEN_KEY);
-    return val === '1';
-  },
-
-  async saveDashboardTourSeen(seen: boolean): Promise<void> {
-    if (Platform.OS === 'web') return;
-    await SecureStore.setItemAsync(TOUR_DASHBOARD_SEEN_KEY, seen ? '1' : '0');
-  },
-
-  async getDashboardTourSeen(): Promise<boolean> {
-    if (Platform.OS === 'web') return false;
-    const val = await SecureStore.getItemAsync(TOUR_DASHBOARD_SEEN_KEY);
-    return val === '1';
   },
 };
