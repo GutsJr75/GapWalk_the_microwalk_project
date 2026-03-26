@@ -2,6 +2,7 @@ import {
   CanActivate,
   ExecutionContext,
   Injectable,
+  Logger,
   UnauthorizedException,
 } from '@nestjs/common';
 import { Request } from 'express';
@@ -9,6 +10,8 @@ import { JwtStrategy } from './jwt.strategy';
 
 @Injectable()
 export class JwtAuthGuard implements CanActivate {
+  private readonly logger = new Logger(JwtAuthGuard.name);
+
   constructor(private readonly jwtStrategy: JwtStrategy) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -22,7 +25,14 @@ export class JwtAuthGuard implements CanActivate {
       throw new UnauthorizedException('Missing Bearer token');
     }
 
-    request.user = await this.jwtStrategy.validateIdToken(token);
+    try {
+      request.user = await this.jwtStrategy.validateIdToken(token);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.warn(`Firebase token verification failed: ${message}`);
+      throw new UnauthorizedException('Invalid or expired Firebase ID token');
+    }
+
     return true;
   }
 }
