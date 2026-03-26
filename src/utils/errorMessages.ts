@@ -46,6 +46,26 @@ export function toUserFriendlyError(error: unknown): string {
     return 'Something went wrong on our end. Please try again in a few minutes.';
   }
 
+  // Firebase Authentication errors
+  if (lower.includes('auth/invalid-email')) {
+    return 'Enter a valid email address.';
+  }
+  if (lower.includes('auth/missing-password') || lower.includes('auth/weak-password')) {
+    return 'Password must be at least 6 characters.';
+  }
+  if (lower.includes('auth/invalid-credential') || lower.includes('auth/wrong-password') || lower.includes('auth/user-not-found')) {
+    return 'The email or password is incorrect.';
+  }
+  if (lower.includes('auth/email-already-in-use')) {
+    return 'That email is already linked to an account. Try logging in instead.';
+  }
+  if (lower.includes('auth/too-many-requests')) {
+    return 'Too many attempts were made. Please wait a bit and try again.';
+  }
+  if (lower.includes('auth/popup-closed-by-user') || lower.includes('auth/cancelled-popup-request')) {
+    return 'The sign-in window was closed before the process finished.';
+  }
+
   // File / import errors
   if (lower.includes('could not read') || lower.includes('file') && lower.includes('empty')) {
     return 'The file could not be read or is empty. Choose a different file.';

@@ -15,11 +15,7 @@ on a device to the production database at `http://136.115.63.96:3000`.
 1. Log into GapWalk on the device.
 2. Open the app's dev logs **or** use a reverse proxy (e.g. `mitmproxy`) to capture
    the `Authorization: Bearer eyJ…` header on any authenticated API call.
-3. Alternatively, from a rooted/debug build:
-   ```bash
-   adb shell run-as com.gapwalk cat /data/data/com.gapwalk/shared_prefs/...
-   ```
-   The token is stored under `expo-secure-store` key `gapwalk_auth_token`.
+3. Alternatively, capture a bearer token from app network logs after logging in with Firebase Authentication.
 4. Export for the automated tests:
    ```bash
    export TEST_AUTH_TOKEN=eyJ...
@@ -40,7 +36,7 @@ on a device to the production database at `http://136.115.63.96:3000`.
 
 | Table | What to check |
 |---|---|
-| `User` | Row exists with `auth0Id` matching the token `sub` |
+| `User` | Row exists with `firebaseUid` matching the token `sub` |
 | `Preference` | Row for this userId with `dailyTargetMinutes` matching onboarding input |
 | `ScheduleSource` | Row for this userId with `type = 'manual'` |
 | `ManualScheduleEntry` | Rows matching the entries entered during onboarding |

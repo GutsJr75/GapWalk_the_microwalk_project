@@ -1,8 +1,17 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { View, StyleSheet, TouchableOpacity, Animated, Easing, useWindowDimensions, Image, LayoutChangeEvent, ScrollView } from 'react-native';
+import {
+  View,
+  StyleSheet,
+  TouchableOpacity,
+  Animated,
+  Easing,
+  useWindowDimensions,
+  Image,
+  LayoutChangeEvent,
+  ScrollView,
+  TextInput,
+} from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
-import * as AuthSession from 'expo-auth-session';
-import * as WebBrowser from 'expo-web-browser';
 import { RootStackParamList } from '../../App';
 import { Container } from '../components/Container';
 import { Text } from '../components/Text';
@@ -13,10 +22,16 @@ import { useAppStore } from '../store';
 import { useThemePalette } from '../theme/palette';
 import Svg, { Path } from 'react-native-svg';
 import { analyticsService } from '../services/analytics';
-import { getAuth0Discovery, getAuth0RequestConfig, isAuth0Configured } from '../services/auth0';
-import { authStorage } from '../data/authStorage';
-
-WebBrowser.maybeCompleteAuthSession();
+import {
+  firebaseAuthService,
+  getFirebaseConfigurationError,
+  getGoogleAuthConfigurationError,
+  isFirebaseConfigured,
+  isGoogleAuthConfigured,
+  isGoogleSignInCancelled,
+  requiresEmailVerification,
+} from '../services/firebaseAuth';
+import { toUserFriendlyError } from '../utils/errorMessages';
 
 const BRAND_MARK_SOURCE = require('../../assets/icons/brand-mark.png');
 const BRAND_TILE_DARK = '#071a2e';
@@ -64,45 +79,54 @@ interface Props extends NativeStackScreenProps<RootStackParamList, 'Intro'> {
   onAuthenticated?: () => void;
 }
 
-const AUTH_DIVIDER_MARGIN_Y = 18;
-const AUTH_GUEST_BLOCK_GAP = 32;
-const AUTH_FOOTER_MARGIN_TOP = 24;
 const HOW_DETAILS_GAP = 18;
 const HOW_DETAILS_EXPAND_MARGIN_TOP = 12;
 const HOW_DETAILS_FALLBACK_HEIGHT = 240;
+
+type EmailAuthMode = 'login' | 'signup';
+type VerificationPromptSource = EmailAuthMode | 'restore';
 
 export const IntroScreen: React.FC<Props> = ({
   navigation,
   isAuthenticated = false,
   onAuthenticated,
 }) => {
-  const { hasSetPreferences, hasCompletedOnboarding, setAuthUser, themeMode } = useAppStore();
+  const {
+    authUser,
+    hasSetPreferences,
+    hasCompletedOnboarding,
+    setAuthUser,
+    themeMode,
+  } = useAppStore();
   const palette = useThemePalette();
   const isDark = themeMode === 'dark';
   const [showHowItWorks, setShowHowItWorks] = useState(false);
   const [messageDialog, setMessageDialog] = useState<{ title: string; message: string } | null>(null);
   const showMessage = (title: string, message: string) => setMessageDialog({ title, message });
-  const [authLoadingMode, setAuthLoadingMode] = useState<'login' | 'signup' | null>(null);
+  const [authLoadingMode, setAuthLoadingMode] = useState<
+    'login' | 'signup' | 'google' | 'reset' | 'resendVerification' | 'checkVerification' | null
+  >(null);
+  const [emailAuthMode, setEmailAuthMode] = useState<EmailAuthMode | null>(null);
+  const [authEmail, setAuthEmail] = useState('');
+  const [authPassword, setAuthPassword] = useState('');
+  const [authPasswordConfirm, setAuthPasswordConfirm] = useState('');
+  const [authFormError, setAuthFormError] = useState<string | null>(null);
+  const [verificationPrompt, setVerificationPrompt] = useState<{
+    email: string;
+    source: VerificationPromptSource;
+  } | null>(null);
+  const [verificationPromptError, setVerificationPromptError] = useState<string | null>(null);
   const [howDetailsMeasuredHeight, setHowDetailsMeasuredHeight] = useState(HOW_DETAILS_FALLBACK_HEIGHT);
   const howAnim = useRef(new Animated.Value(0)).current;
-  const handledAuthResponseRef = useRef<string | null>(null);
   const { height: viewportHeight } = useWindowDimensions();
-  const authConfigured = isAuth0Configured();
-  const discovery = getAuth0Discovery();
+  const authConfigured = isFirebaseConfigured();
+  const googleAuthConfigured = isGoogleAuthConfigured();
 
   const verticalTopPadding = Math.round(viewportHeight * 0.072);
   const verticalBottomPadding = Math.round(viewportHeight * 0.09);
   const heroVerticalPadding = Math.max(theme.spacing.md, Math.round(viewportHeight * 0.02));
   const heroToHowGap = Math.max(theme.spacing.lg, Math.round(viewportHeight * 0.045));
   const ctaTopGap = Math.max(28, Math.round(viewportHeight * 0.045));
-  const [loginRequest, loginResponse, promptLogin] = AuthSession.useAuthRequest(
-    getAuth0RequestConfig('login'),
-    discovery ?? null
-  );
-  const [signupRequest, signupResponse, promptSignup] = AuthSession.useAuthRequest(
-    getAuth0RequestConfig('signup'),
-    discovery ?? null
-  );
 
   useEffect(() => {
     Animated.timing(howAnim, {
@@ -113,118 +137,207 @@ export const IntroScreen: React.FC<Props> = ({
     }).start();
   }, [showHowItWorks, howAnim]);
 
-  const exchangeAndStoreToken = async (code: string, request: AuthSession.AuthRequest | null) => {
-    if (!discovery?.tokenEndpoint || !request) return;
-    try {
-      const tokenResponse = await AuthSession.exchangeCodeAsync(
-        {
-          code,
-          clientId: request.clientId,
-          redirectUri: request.redirectUri,
-          extraParams: request.codeVerifier
-            ? { code_verifier: request.codeVerifier }
-            : {},
-        },
-        { tokenEndpoint: discovery.tokenEndpoint }
+  useEffect(() => {
+    if (isAuthenticated || !requiresEmailVerification(authUser) || !authUser?.email) {
+      return;
+    }
+    setVerificationPrompt((current) =>
+      current ?? {
+        email: authUser.email!,
+        source: 'restore',
+      }
+    );
+  }, [authUser, isAuthenticated]);
+
+  const resetEmailAuthForm = () => {
+    setAuthEmail('');
+    setAuthPassword('');
+    setAuthPasswordConfirm('');
+    setAuthFormError(null);
+  };
+
+  const openEmailAuthModal = (mode: EmailAuthMode) => {
+    if (!authConfigured) {
+      showMessage(
+        'Firebase Authentication',
+        getFirebaseConfigurationError() ??
+          'Firebase Authentication is not configured.'
       );
-
-      if (tokenResponse.idToken) {
-        try {
-          // React Native has no atob/Buffer — decode base64url with a pure-JS approach
-          const parts = tokenResponse.idToken.split('.');
-          // Pad and convert base64url → base64 → byte array → UTF-8 string
-          const b64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
-          const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
-          let bytes = '';
-          let i = 0;
-          const padded = b64.padEnd(b64.length + (4 - b64.length % 4) % 4, '=');
-          while (i < padded.length) {
-            const enc1 = chars.indexOf(padded[i++]);
-            const enc2 = chars.indexOf(padded[i++]);
-            const enc3 = chars.indexOf(padded[i++]);
-            const enc4 = chars.indexOf(padded[i++]);
-            bytes += String.fromCharCode((enc1 << 2) | (enc2 >> 4));
-            if (padded[i - 2] !== '=') bytes += String.fromCharCode(((enc2 & 15) << 4) | (enc3 >> 2));
-            if (padded[i - 1] !== '=') bytes += String.fromCharCode(((enc3 & 3) << 6) | enc4);
-          }
-          const payload = JSON.parse(decodeURIComponent(
-            bytes.split('').map((c) => '%' + c.charCodeAt(0).toString(16).padStart(2, '0')).join('')
-          ));
-          // Auth0 sets name = email when no display name is configured.
-          // Prefer given_name or nickname (from 'profile' scope) over a raw email name.
-          const rawName = (payload.name as string | undefined)?.trim();
-          const givenName = (payload.given_name as string | undefined)?.trim();
-          const nickname = (payload.nickname as string | undefined)?.trim();
-          const resolvedName =
-            (givenName && !givenName.includes('@') ? givenName : null) ??
-            (nickname && !nickname.includes('@') ? nickname : null) ??
-            (rawName && !rawName.includes('@') ? rawName : undefined);
-          const user = {
-            email: payload.email as string | undefined,
-            name: resolvedName,
-            sub: payload.sub as string | undefined,
-          };
-          setAuthUser(user);
-          // Always persist — so email shows in Profile even without "Remember me"
-          await authStorage.saveUser(user);
-        } catch {
-          // ID token decode failed — non-critical
-        }
-      }
-
-      // Always save the token and mark the session as persistent.
-      await authStorage.saveToken(tokenResponse.accessToken);
-      await authStorage.setRememberMe(true);
-      await authStorage.saveLastLoginAt(new Date().toISOString());
-    } catch (e) {
-      if (__DEV__) console.warn('Token exchange failed:', e);
+      return;
     }
+    setEmailAuthMode(mode);
+    setAuthFormError(null);
+    setAuthPassword('');
+    setAuthPasswordConfirm('');
   };
 
-  const handleAuthResponse = (
-    response: AuthSession.AuthSessionResult | null,
-    request: AuthSession.AuthRequest | null,
-    key: string,
+  const closeEmailAuthModal = () => {
+    setEmailAuthMode(null);
+    setAuthFormError(null);
+    setAuthPassword('');
+    setAuthPasswordConfirm('');
+  };
+
+  const openVerificationPrompt = (
+    email: string,
+    source: VerificationPromptSource
   ) => {
-    if (!response) return;
-
-    const responseKey =
-      `${key}:` + (response.type === 'success'
-        ? `success:${response.params.code ?? ''}`
-        : `other:${response.type}`);
-    if (handledAuthResponseRef.current === responseKey) return;
-    handledAuthResponseRef.current = responseKey;
-
-    if (response.type === 'success') {
-      const code = response.params.code;
-      if (code) {
-        void exchangeAndStoreToken(code, request);
-      }
-      setAuthLoadingMode(null);
-      onAuthenticated?.();
-      return;
-    }
-
-    if (response.type === 'dismiss' || response.type === 'cancel') {
-      setAuthLoadingMode(null);
-      return;
-    }
-
-    setAuthLoadingMode(null);
-    const details =
-      response.type === 'error'
-        ? response.error?.message ?? 'Please try again.'
-        : 'Please try again.';
-    showMessage('Login failed', details);
+    setVerificationPrompt({ email, source });
+    setVerificationPromptError(null);
   };
 
-  useEffect(() => {
-    handleAuthResponse(loginResponse, loginRequest, 'login');
-  }, [loginResponse]);
+  const dismissVerificationPrompt = async () => {
+    setVerificationPrompt(null);
+    setVerificationPromptError(null);
+    await firebaseAuthService.signOut();
+    setAuthUser(null);
+  };
 
-  useEffect(() => {
-    handleAuthResponse(signupResponse, signupRequest, 'signup');
-  }, [signupResponse]);
+  const validateEmail = (email: string): string | null => {
+    const normalized = email.trim();
+    if (!normalized) return 'Email is required.';
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized)) {
+      return 'Enter a valid email address.';
+    }
+    return null;
+  };
+
+  const runEmailAuth = async () => {
+    if (!emailAuthMode) return;
+
+    const emailError = validateEmail(authEmail);
+    if (emailError) {
+      setAuthFormError(emailError);
+      return;
+    }
+    if (!authPassword) {
+      setAuthFormError('Password is required.');
+      return;
+    }
+    if (emailAuthMode === 'signup') {
+      if (authPassword.length < 6) {
+        setAuthFormError('Password must be at least 6 characters.');
+        return;
+      }
+      if (authPassword !== authPasswordConfirm) {
+        setAuthFormError('Passwords do not match.');
+        return;
+      }
+    }
+
+    setAuthFormError(null);
+    setAuthLoadingMode(emailAuthMode);
+    try {
+      const user =
+        emailAuthMode === 'signup'
+          ? await firebaseAuthService.signUpWithEmail(authEmail, authPassword)
+          : await firebaseAuthService.signInWithEmail(authEmail, authPassword);
+      setAuthUser(user);
+      if (requiresEmailVerification(user)) {
+        closeEmailAuthModal();
+        resetEmailAuthForm();
+        openVerificationPrompt(user.email ?? authEmail.trim(), emailAuthMode);
+        return;
+      }
+      closeEmailAuthModal();
+      resetEmailAuthForm();
+      onAuthenticated?.();
+    } catch (error) {
+      setAuthFormError(toUserFriendlyError(error));
+    } finally {
+      setAuthLoadingMode(null);
+    }
+  };
+
+  const handlePasswordReset = async () => {
+    const emailError = validateEmail(authEmail);
+    if (emailError) {
+      setAuthFormError(emailError);
+      return;
+    }
+
+    setAuthFormError(null);
+    setAuthLoadingMode('reset');
+    try {
+      await firebaseAuthService.sendPasswordReset(authEmail);
+      showMessage(
+        'Reset email sent',
+        'If that account exists, Firebase has sent a password reset email.'
+      );
+    } catch (error) {
+      setAuthFormError(toUserFriendlyError(error));
+    } finally {
+      setAuthLoadingMode(null);
+    }
+  };
+
+  const runGoogleAuth = async () => {
+    if (!googleAuthConfigured) {
+      showMessage(
+        'Google Sign-In',
+        getGoogleAuthConfigurationError() ??
+          'Google sign-in is not configured.'
+      );
+      return;
+    }
+
+    setAuthLoadingMode('google');
+    try {
+      const user = await firebaseAuthService.signInWithGoogle();
+      setAuthUser(user);
+      onAuthenticated?.();
+    } catch (error) {
+      if (isGoogleSignInCancelled(error)) {
+        setAuthLoadingMode(null);
+        return;
+      }
+      showMessage('Sign-in Failed', toUserFriendlyError(error));
+    } finally {
+      setAuthLoadingMode(null);
+    }
+  };
+
+  const handleResendVerificationEmail = async () => {
+    if (!verificationPrompt?.email) return;
+
+    setVerificationPromptError(null);
+    setAuthLoadingMode('resendVerification');
+    try {
+      await firebaseAuthService.sendCurrentUserVerificationEmail();
+      showMessage(
+        'Verification email sent',
+        `We sent another verification email to ${verificationPrompt.email}.`
+      );
+    } catch (error) {
+      setVerificationPromptError(toUserFriendlyError(error));
+    } finally {
+      setAuthLoadingMode(null);
+    }
+  };
+
+  const handleCheckVerification = async () => {
+    setVerificationPromptError(null);
+    setAuthLoadingMode('checkVerification');
+    try {
+      const refreshedUser = await firebaseAuthService.refreshCurrentUser();
+      setAuthUser(refreshedUser);
+      if (!refreshedUser) {
+        setVerificationPromptError('Your session expired. Please log in again.');
+        return;
+      }
+      if (requiresEmailVerification(refreshedUser)) {
+        setVerificationPromptError('Your email is not verified yet. Open the link in your inbox, then try again.');
+        return;
+      }
+      setVerificationPrompt(null);
+      resetEmailAuthForm();
+      onAuthenticated?.();
+    } catch (error) {
+      setVerificationPromptError(toUserFriendlyError(error));
+    } finally {
+      setAuthLoadingMode(null);
+    }
+  };
 
   const chevronRotate = howAnim.interpolate({
     inputRange: [0, 1],
@@ -293,29 +406,6 @@ export const IntroScreen: React.FC<Props> = ({
       navigation.navigate('Dashboard');
     } else {
       navigation.navigate('ScheduleSetup');
-    }
-  };
-
-  const runAuth = async (mode: 'login' | 'signup') => {
-    if (!authConfigured) {
-      showMessage('Auth0 is not configured', 'Add EXPO_PUBLIC_AUTH0_DOMAIN and EXPO_PUBLIC_AUTH0_CLIENT_ID to your .env file.');
-      return;
-    }
-
-    const request = mode === 'login' ? loginRequest : signupRequest;
-    if (!request) {
-      showMessage('Please wait', 'Authentication is still loading.');
-      return;
-    }
-
-    setAuthLoadingMode(mode);
-    try {
-      const prompt = mode === 'login' ? promptLogin : promptSignup;
-      await prompt();
-    } catch (error) {
-      setAuthLoadingMode(null);
-      const message = error instanceof Error ? error.message : 'Please try again.';
-      showMessage('Login failed', message);
     }
   };
 
@@ -423,21 +513,30 @@ export const IntroScreen: React.FC<Props> = ({
           <View style={styles.bottomSection}>
             {!isAuthenticated ? (
               <>
+                <Button
+                  title="Continue with Google"
+                  onPress={() => void runGoogleAuth()}
+                  variant="primary"
+                  loading={authLoadingMode === 'google'}
+                  disabled={!googleAuthConfigured || authLoadingMode === 'login' || authLoadingMode === 'signup' || authLoadingMode === 'reset'}
+                  testID="intro-auth-google"
+                  full
+                />
                 <View style={styles.authButtonRow}>
                   <Button
                     title="Sign up"
-                    onPress={() => void runAuth('signup')}
+                    onPress={() => openEmailAuthModal('signup')}
                     variant="secondary"
                     loading={authLoadingMode === 'signup'}
-                    disabled={!authConfigured || authLoadingMode === 'login'}
+                    disabled={!authConfigured || authLoadingMode === 'login' || authLoadingMode === 'google' || authLoadingMode === 'reset'}
                     testID="intro-auth-signup"
                     style={styles.authButtonHalf}
                   />
                   <Button
                     title="Log in"
-                    onPress={() => void runAuth('login')}
+                    onPress={() => openEmailAuthModal('login')}
                     loading={authLoadingMode === 'login'}
-                    disabled={!authConfigured || authLoadingMode === 'signup'}
+                    disabled={!authConfigured || authLoadingMode === 'signup' || authLoadingMode === 'google' || authLoadingMode === 'reset'}
                     testID="intro-auth-login"
                     style={styles.authButtonHalf}
                   />
@@ -477,6 +576,138 @@ export const IntroScreen: React.FC<Props> = ({
         <View style={{ paddingBottom: 8 }}>
           <Text variant="body" style={{ color: palette.textMuted, textAlign: 'center', marginBottom: 24 }}>{messageDialog?.message}</Text>
           <Button title="OK" onPress={() => setMessageDialog(null)} />
+        </View>
+      </AppModal>
+      <AppModal
+        visible={emailAuthMode !== null}
+        onClose={closeEmailAuthModal}
+        title={emailAuthMode === 'signup' ? 'Create account' : 'Log in'}
+      >
+        <View style={styles.authModalBody}>
+          <Text variant="bodySmall" color={palette.textMuted} style={styles.authModalCopy}>
+            {emailAuthMode === 'signup'
+              ? 'Create your GapWalk account with your email and password.'
+              : 'Log in with the email and password linked to your GapWalk account.'}
+          </Text>
+          <TextInput
+            value={authEmail}
+            onChangeText={(value) => {
+              setAuthEmail(value);
+              if (authFormError) setAuthFormError(null);
+            }}
+            placeholder="Email"
+            placeholderTextColor={palette.textMuted}
+            autoCapitalize="none"
+            keyboardType="email-address"
+            autoCorrect={false}
+            style={[
+              styles.authInput,
+              {
+                color: palette.textPrimary,
+                backgroundColor: palette.inputBg,
+                borderColor: palette.borderStrong,
+              },
+            ]}
+          />
+          <TextInput
+            value={authPassword}
+            onChangeText={(value) => {
+              setAuthPassword(value);
+              if (authFormError) setAuthFormError(null);
+            }}
+            placeholder="Password"
+            placeholderTextColor={palette.textMuted}
+            secureTextEntry
+            autoCapitalize="none"
+            autoCorrect={false}
+            style={[
+              styles.authInput,
+              {
+                color: palette.textPrimary,
+                backgroundColor: palette.inputBg,
+                borderColor: palette.borderStrong,
+              },
+            ]}
+          />
+          {emailAuthMode === 'signup' ? (
+            <TextInput
+              value={authPasswordConfirm}
+              onChangeText={(value) => {
+                setAuthPasswordConfirm(value);
+                if (authFormError) setAuthFormError(null);
+              }}
+              placeholder="Confirm password"
+              placeholderTextColor={palette.textMuted}
+              secureTextEntry
+              autoCapitalize="none"
+              autoCorrect={false}
+              style={[
+                styles.authInput,
+                {
+                  color: palette.textPrimary,
+                  backgroundColor: palette.inputBg,
+                  borderColor: palette.borderStrong,
+                },
+              ]}
+            />
+          ) : null}
+          {authFormError ? (
+            <Text variant="bodySmall" style={[styles.authErrorText, { color: theme.colors.danger }]}>
+              {authFormError}
+            </Text>
+          ) : null}
+          <Button
+            title={emailAuthMode === 'signup' ? 'Create account' : 'Log in'}
+            onPress={() => void runEmailAuth()}
+            loading={authLoadingMode === emailAuthMode}
+            full
+          />
+          {emailAuthMode === 'login' ? (
+            <Button
+              title="Forgot Password"
+              onPress={() => void handlePasswordReset()}
+              variant="muted"
+              loading={authLoadingMode === 'reset'}
+              full
+            />
+          ) : null}
+        </View>
+      </AppModal>
+      <AppModal
+        visible={verificationPrompt !== null}
+        onClose={() => void dismissVerificationPrompt()}
+        title="Verify your email"
+      >
+        <View style={styles.authModalBody}>
+          <Text variant="bodySmall" color={palette.textMuted} style={styles.authModalCopy}>
+            {verificationPrompt?.source === 'signup'
+              ? `We sent a verification email to ${verificationPrompt.email}. Verify your email before using your GapWalk account.`
+              : `This GapWalk account still needs email verification. Open the link we sent to ${verificationPrompt?.email}, then come back here.`}
+          </Text>
+          {verificationPromptError ? (
+            <Text variant="bodySmall" style={[styles.authErrorText, { color: theme.colors.danger }]}>
+              {verificationPromptError}
+            </Text>
+          ) : null}
+          <Button
+            title="I've verified my email"
+            onPress={() => void handleCheckVerification()}
+            loading={authLoadingMode === 'checkVerification'}
+            full
+          />
+          <Button
+            title="Resend verification email"
+            onPress={() => void handleResendVerificationEmail()}
+            variant="secondary"
+            loading={authLoadingMode === 'resendVerification'}
+            full
+          />
+          <Button
+            title="Use different email"
+            onPress={() => void dismissVerificationPrompt()}
+            variant="muted"
+            full
+          />
         </View>
       </AppModal>
     </Container>
@@ -614,9 +845,29 @@ const styles = StyleSheet.create({
   authButtonRow: {
     flexDirection: 'row',
     gap: 12,
+    marginTop: 12,
   },
   authButtonHalf: {
     flex: 1,
+  },
+  authModalBody: {
+    gap: 12,
+    paddingBottom: 8,
+  },
+  authModalCopy: {
+    textAlign: 'center',
+    lineHeight: 20,
+  },
+  authInput: {
+    borderWidth: 1,
+    borderRadius: theme.borderRadius.md,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    fontSize: theme.fontSize.md,
+  },
+  authErrorText: {
+    textAlign: 'center',
+    lineHeight: 20,
   },
   guestBtn: {
     marginTop: 16,

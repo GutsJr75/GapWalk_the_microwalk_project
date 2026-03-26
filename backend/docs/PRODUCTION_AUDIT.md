@@ -8,7 +8,7 @@
 
 ## Summary
 
-The GapWalk backend is a well-structured NestJS 11 application with PostgreSQL, Redis/BullMQ, Auth0 authentication, and Expo push notifications. The codebase is production-ready with the following changes applied.
+The GapWalk backend is a well-structured NestJS 11 application with PostgreSQL, Redis/BullMQ, Firebase Authentication, and Expo push notifications. The codebase is production-ready with the following changes applied.
 
 ---
 
@@ -56,7 +56,7 @@ The GapWalk backend is a well-structured NestJS 11 application with PostgreSQL, 
 
 | Area | Status | Notes |
 |---|---|---|
-| **Auth0 JWT validation** | ✅ | Proper JWKS endpoint, RS256 algorithm, rate-limited key requests |
+| **Firebase token validation** | ✅ | Firebase Admin ID-token verification protects authenticated API routes |
 | **Auto-registration** | ✅ | First JWT creates user record, subsequent JWTs sync email/displayName |
 | **Role-based access** | ✅ | `RolesGuard` correctly checks `@Roles()` decorator |
 | **Prisma error handling** | ✅ | Maps P2002/P2025/P2003/P2014 to proper HTTP status codes |

@@ -71,7 +71,7 @@ Get the authenticated user's profile, including preferences, schedule source, an
 ```json
 {
   "id": "uuid",
-  "auth0Sub": "auth0|123",
+  "firebaseUid": "firebase-uid-123",
   "email": "user@example.com",
   "displayName": "Jane",
   "role": "participant",

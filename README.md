@@ -84,7 +84,7 @@ GapWalk follows a **layered, offline-first architecture** split into a React Nat
 │  └────────────────────────────────┘                     │
 │                    │  (optional sync)                   │
 └────────────────────│────────────────────────────────────┘
-                     │ HTTPS / JWT (Auth0)
+                     │ HTTPS / Firebase ID Token
 ┌────────────────────▼────────────────────────────────────┐
 │                  Research Backend                       │
 │                                                         │
@@ -95,8 +95,8 @@ GapWalk follows a **layered, offline-first architecture** split into a React Nat
 │  └──────────┘  └──────────┘  └──────────┘              │
 │        │            │              │                    │
 │  ┌─────▼────┐  ┌────▼─────┐  ┌────▼─────┐             │
-│  │  Auth0   │  │PostgreSQL│  │  Redis   │             │
-│  │  (RS256) │  │    16    │  │    7     │             │
+│  │ Firebase │  │PostgreSQL│  │  Redis   │             │
+│  │   Auth   │  │    16    │  │    7     │             │
 │  └──────────┘  └──────────┘  └──────────┘             │
 └─────────────────────────────────────────────────────────┘
 ```
@@ -115,7 +115,7 @@ GapWalk follows a **layered, offline-first architecture** split into a React Nat
 | **Prisma ORM**            | Type-safe queries, auto-generated migrations                                             |
 | **BullMQ workers**        | Async nudge generation, push sending, and stats aggregation decoupled from request cycle |
 | **Last-write-wins sync**  | Simple, deterministic conflict resolution for offline-first bidirectional sync           |
-| **Auth0 (RS256 JWKS)**    | Stateless JWT verification; no session storage needed on server                          |
+| **Firebase Authentication** | Native session persistence on mobile; Firebase Admin verifies tokens on the server     |
 
 ---
 
@@ -147,7 +147,7 @@ GapWalk follows a **layered, offline-first architecture** split into a React Nat
 | ORM               | Prisma 7.4                   |
 | Database          | PostgreSQL 16                |
 | Queue / Workers   | Redis 7 + BullMQ             |
-| Authentication    | Auth0 (RS256 JWT via JWKS)   |
+| Authentication    | Firebase Authentication      |
 | Push Delivery     | Expo Server SDK              |
 | API Documentation | Swagger / OpenAPI 3          |
 | Containerization  | Docker + Docker Compose      |
@@ -222,7 +222,7 @@ GapWalk/
 ├── backend/                       # NestJS research backend (optional)
 │   ├── src/
 │   │   ├── modules/               # 19 NestJS feature modules
-│   │   │   ├── auth               # Auth0 JWT strategy + auto-registration
+│   │   │   ├── auth               # Firebase token verification + auto-registration
 │   │   │   ├── users              # Profile management (with user-profile DTO)
 │   │   │   ├── devices            # Expo push token tracking
 │   │   │   ├── preferences        # Settings CRUD
@@ -476,9 +476,9 @@ cp .env.example .env
 | `EXPO_PUBLIC_GOOGLE_MAPS_API_KEY`  | Optional | Live map on walk screen (Android)                |
 | `GOOGLE_MAPS_API_KEY`              | Optional | Same key - used at native build time             |
 | `EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID` | Optional | Google Calendar OAuth (source sheet + setup)     |
-| `EXPO_PUBLIC_AUTH0_DOMAIN`         | Optional | Auth0 tenant domain (required for backend sync)  |
-| `EXPO_PUBLIC_AUTH0_CLIENT_ID`      | Optional | Auth0 app client ID (required for backend sync)  |
-| `EXPO_PUBLIC_AUTH0_AUDIENCE`       | Optional | Auth0 API audience (required for backend sync)   |
+| `EXPO_PUBLIC_FIREBASE_API_KEY`     | Optional | Firebase API key (required for app auth)         |
+| `EXPO_PUBLIC_FIREBASE_PROJECT_ID`  | Optional | Firebase project ID (required for app auth)      |
+| `EXPO_PUBLIC_FIREBASE_APP_ID`      | Optional | Firebase app ID (required for app auth)          |
 | `EXPO_PUBLIC_API_URL`              | Optional | Backend API URL (required for research sync)     |
 
 #### Android Maps API key setup

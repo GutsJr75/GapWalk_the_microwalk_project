@@ -35,6 +35,7 @@ import { timeUtils } from '../utils/time';
 import { requestAllPermissions } from '../services/permissions';
 import { toUserFriendlyError } from '../utils/errorMessages';
 import { authStorage } from '../data/authStorage';
+import { firebaseAuthService } from '../services/firebaseAuth';
 import { guidanceStorage } from '../data/guidanceStorage';
 import { SuccessToast } from '../components/SuccessToast';
 import { Modal as AppModal } from '../components/Modal';
@@ -1036,6 +1037,7 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
 
   const handleLogoutFromMenu = () => {
     const doLogout = async () => {
+      await firebaseAuthService.signOut();
       await authStorage.clearAll();
       setIsAuthenticated(false); setAuthUser(null);
       closeMenu();

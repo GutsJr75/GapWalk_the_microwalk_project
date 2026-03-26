@@ -11,7 +11,7 @@ CREATE TYPE "PushStatus" AS ENUM ('queued', 'sent', 'delivered', 'failed', 'devi
 -- CreateTable
 CREATE TABLE "users" (
     "id" UUID NOT NULL DEFAULT gen_random_uuid(),
-    "auth0_sub" TEXT NOT NULL,
+    "firebase_uid" TEXT NOT NULL,
     "email" TEXT,
     "display_name" TEXT,
     "role" "UserRole" NOT NULL DEFAULT 'participant',
@@ -270,7 +270,7 @@ CREATE TABLE "push_logs" (
 );
 
 -- CreateIndex
-CREATE UNIQUE INDEX "users_auth0_sub_key" ON "users"("auth0_sub");
+CREATE UNIQUE INDEX "users_firebase_uid_key" ON "users"("firebase_uid");
 CREATE UNIQUE INDEX "devices_user_id_expo_push_token_key" ON "devices"("user_id", "expo_push_token");
 CREATE UNIQUE INDEX "schedule_sources_user_id_key" ON "schedule_sources"("user_id");
 CREATE UNIQUE INDEX "preferences_user_id_key" ON "preferences"("user_id");
