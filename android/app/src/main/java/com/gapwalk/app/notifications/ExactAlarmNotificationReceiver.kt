@@ -1,5 +1,6 @@
 package com.gapwalk.app.notifications
 
+import android.app.ActivityManager
 import android.app.Notification
 import android.app.PendingIntent
 import android.content.BroadcastReceiver
@@ -26,6 +27,12 @@ class ExactAlarmNotificationReceiver : BroadcastReceiver() {
 
     if (type == WALK_MISSED_NOTIFICATION_TYPE) {
       cancelPresentedNotification(context, getWalkNudgeNotificationId(planId))
+    }
+    if (type == WALK_READY_NOTIFICATION_TYPE) {
+      cancelPresentedNotification(context, getWalkAlertNotificationId(planId))
+      if (isAppInForeground()) {
+        return
+      }
     }
 
     NotificationManagerCompat.from(context).notify(
@@ -99,15 +106,34 @@ class ExactAlarmNotificationReceiver : BroadcastReceiver() {
       builder
         .addAction(0, "Start walk", startIntent)
         .addAction(0, "Not right now", skipIntent)
+    } else if (type == WALK_READY_NOTIFICATION_TYPE) {
+      val yesIntent = PendingIntent.getBroadcast(
+        context,
+        responseRequestCodeFor(notificationId, WALK_READY_ACTION_YES),
+        buildActionBroadcastIntent(context, notificationId, planId, type, WALK_READY_ACTION_YES),
+        PendingIntent.FLAG_UPDATE_CURRENT or pendingIntentImmutableFlag(),
+      )
+
+      val notNowIntent = PendingIntent.getBroadcast(
+        context,
+        responseRequestCodeFor(notificationId, WALK_READY_ACTION_NOT_NOW),
+        buildActionBroadcastIntent(context, notificationId, planId, type, WALK_READY_ACTION_NOT_NOW),
+        PendingIntent.FLAG_UPDATE_CURRENT or pendingIntentImmutableFlag(),
+      )
+
+      builder
+        .addAction(0, "Yes", yesIntent)
+        .addAction(0, "Not Now", notNowIntent)
     }
 
     return builder.build()
   }
 
+  private fun isAppInForeground(): Boolean {
+    val appProcessInfo = ActivityManager.RunningAppProcessInfo()
+    ActivityManager.getMyMemoryState(appProcessInfo)
+    return appProcessInfo.importance == ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND
+  }
+
   private fun pendingIntentImmutableFlag(): Int = PendingIntent.FLAG_IMMUTABLE
 }
-
-private const val WALK_NUDGE_NOTIFICATION_TYPE = "walk_nudge"
-private const val WALK_MISSED_NOTIFICATION_TYPE = "walk_missed"
-private const val WALK_NUDGE_ACTION_START = "START_WALK"
-private const val WALK_NUDGE_ACTION_SKIP = "SKIP_GAP"

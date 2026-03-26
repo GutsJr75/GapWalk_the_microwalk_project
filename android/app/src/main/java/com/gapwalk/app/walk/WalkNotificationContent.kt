@@ -13,12 +13,25 @@ internal object WalkNotificationContent {
   const val TIMER_MODE_REMAINING = "remaining"
   const val DISTANCE_UNIT_MI = "mi"
   const val DISTANCE_UNIT_KM = "km"
+  const val STATS_MODE_ALL = "all"
+  const val STATS_MODE_STEPS = "steps"
+  const val STATS_MODE_DISTANCE = "distance"
+  const val STATS_MODE_NONE = "none"
 
   fun normalizeTimerMode(value: String?): String {
     return when (value) {
       TIMER_MODE_ELAPSED -> TIMER_MODE_ELAPSED
       TIMER_MODE_REMAINING -> TIMER_MODE_REMAINING
       else -> TIMER_MODE_SMART
+    }
+  }
+
+  fun normalizeStatsMode(value: String?): String {
+    return when (value) {
+      STATS_MODE_STEPS -> STATS_MODE_STEPS
+      STATS_MODE_DISTANCE -> STATS_MODE_DISTANCE
+      STATS_MODE_NONE -> STATS_MODE_NONE
+      else -> STATS_MODE_ALL
     }
   }
 
@@ -32,7 +45,24 @@ internal object WalkNotificationContent {
   fun resolveTimerLine(snapshot: WalkTrackingSnapshot): String {
     val elapsedMinutes = max(0, snapshot.elapsedSeconds / SECONDS_PER_MINUTE)
     val elapsedSecondsRemainder = max(0, snapshot.elapsedSeconds % SECONDS_PER_MINUTE)
-    return "$elapsedMinutes min $elapsedSecondsRemainder seconds walked, Keep it up!"
+    
+    val mode = normalizeTimerMode(snapshot.notificationTimerMode)
+    val targetSeconds = (snapshot.targetDurationMinutes ?: 0) * SECONDS_PER_MINUTE
+
+    val showRemaining = when (mode) {
+      TIMER_MODE_REMAINING -> snapshot.targetDurationMinutes != null && snapshot.elapsedSeconds < targetSeconds
+      TIMER_MODE_SMART -> snapshot.startedFromNotification && snapshot.targetDurationMinutes != null && snapshot.elapsedSeconds < targetSeconds
+      else -> false
+    }
+
+    if (showRemaining) {
+      val remainingSecondsTotal = max(0, targetSeconds - snapshot.elapsedSeconds)
+      val remainingMinutes = remainingSecondsTotal / SECONDS_PER_MINUTE
+      val remainingSecondsRemainder = remainingSecondsTotal % SECONDS_PER_MINUTE
+      return "Remaining time: $remainingMinutes min $remainingSecondsRemainder seconds"
+    }
+
+    return "Walk Duration: $elapsedMinutes min $elapsedSecondsRemainder seconds"
   }
 
   fun buildDistanceLine(snapshot: WalkTrackingSnapshot): String {
@@ -53,8 +83,22 @@ internal object WalkNotificationContent {
 
   fun buildSummaryLine(snapshot: WalkTrackingSnapshot): String {
     val timerLine = resolveTimerLine(snapshot)
-    val stepsLine = buildStepsLine(snapshot)
-    val distanceLine = buildDistanceLine(snapshot)
-    return "$timerLine\n$stepsLine\n$distanceLine"
+    
+    val statsMode = normalizeStatsMode(snapshot.notificationStatsMode)
+    if (statsMode == STATS_MODE_NONE) {
+      return timerLine
+    }
+
+    val lines = mutableListOf(timerLine)
+    
+    if (statsMode == STATS_MODE_ALL || statsMode == STATS_MODE_STEPS) {
+      lines.add(buildStepsLine(snapshot))
+    }
+    
+    if (statsMode == STATS_MODE_ALL || statsMode == STATS_MODE_DISTANCE) {
+      lines.add(buildDistanceLine(snapshot))
+    }
+
+    return lines.joinToString("\n")
   }
 }
