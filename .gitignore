@@ -21,6 +21,9 @@ web-build/
 scripts/__pycache__/
 CREDENTIALS_BACKUP.txt
 google-services.json
+android/app/google-services.json
+GoogleService-Info.plist
+ios/**/GoogleService-Info.plist
 android/app/eas-build.gradle
 credentials.json
 test.bundle
