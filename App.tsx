@@ -45,6 +45,10 @@ import { GUIDANCE_KEYS, guidanceStorage, type GuidanceKey } from './src/data/gui
 import { runBackendSync } from './src/services/backendSync';
 import { registerCurrentDeviceForNotifications } from './src/services/deviceRegistration';
 import {
+  firebaseAuthService,
+  requiresEmailVerification,
+} from './src/services/firebaseAuth';
+import {
   buildWalkSessionFromAndroidCompletion,
   persistCompletedWalkSession,
 } from './src/services/walkSessionPersistence';
