@@ -24,11 +24,27 @@ class WalkTrackingNotificationReceiver : BroadcastReceiver() {
       }
 
       WalkTrackingService.ACTION_REQUEST_END_CONFIRMATION -> {
-        WalkTrackingModule.emitSnapshot(
-          WalkTrackingSessionController.requestEndConfirmation(context),
-        )
-        WalkTrackingService.startOrSync(context)
-        launchApp(context)
+        // Always pause timer immediately when End Walk is pressed
+        WalkTrackingSessionController.pause(context, "end_walk_notification")
+
+        val endWalkMode = context.getSharedPreferences("gapwalk_settings", Context.MODE_PRIVATE)
+          .getString("end_walk_mode", "quick")
+
+        if (endWalkMode == "quick") {
+          // Quick mode: end session directly without launching app
+          val finalSnapshot = WalkTrackingSessionController.confirmEndSession(context)
+          WalkTrackingModule.emitSnapshot(null)
+          WalkTrackingService.stop(context)
+          // Emit quick-end event so JS can show summary notification and persist session
+          WalkTrackingModule.emitQuickEndEvent(context, finalSnapshot)
+        } else {
+          // Confirm mode: set prompt and launch app for confirmation
+          WalkTrackingModule.emitSnapshot(
+            WalkTrackingSessionController.requestEndConfirmation(context),
+          )
+          WalkTrackingService.startOrSync(context)
+          launchApp(context)
+        }
       }
     }
   }

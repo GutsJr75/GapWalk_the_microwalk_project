@@ -1,6 +1,6 @@
 import { NativeEventEmitter, NativeModules, Platform } from 'react-native';
 
-type ExactNotificationType = 'walk_nudge' | 'walk_missed';
+type ExactNotificationType = 'walk_nudge' | 'walk_missed' | 'walk_alert' | 'walk_ready' | 'walk_summary';
 
 export interface ExactNotificationScheduleInput {
   notificationId: string;
@@ -14,6 +14,7 @@ export interface ExactNotificationScheduleInput {
 export interface ExactNotificationResponsePayload {
   notificationId: string;
   planId?: string;
+  sessionId?: string;
   type?: ExactNotificationType;
   actionIdentifier: string;
 }
@@ -21,6 +22,7 @@ export interface ExactNotificationResponsePayload {
 export interface ExactNotificationDeliveryPayload {
   notificationId: string;
   planId?: string;
+  sessionId?: string;
   type?: ExactNotificationType;
 }
 
@@ -33,6 +35,9 @@ type NativeExactNotificationsModule = {
   cancelAllPlanNotifications(): Promise<void>;
   consumePendingResponse(): Promise<ExactNotificationResponsePayload | null>;
   consumePendingDeliveries(): Promise<ExactNotificationDeliveryPayload[]>;
+  isRecoveryNeeded(): Promise<boolean>;
+  markRecoveryNeeded(reason?: string | null): Promise<void>;
+  clearRecoveryNeeded(): Promise<void>;
   addListener(eventName: string): void;
   removeListeners(count: number): void;
 };
@@ -49,6 +54,10 @@ const nativeEmitter =
     ? new NativeEventEmitter(nativeModule as never)
     : null;
 
+const VALID_NOTIFICATION_TYPES: ReadonlySet<ExactNotificationType> = new Set([
+  'walk_nudge', 'walk_missed', 'walk_alert', 'walk_ready', 'walk_summary',
+]);
+
 const normalizeResponse = (
   value: ExactNotificationResponsePayload | null | undefined,
 ): ExactNotificationResponsePayload | null => {
@@ -56,10 +65,8 @@ const normalizeResponse = (
   return {
     notificationId: value.notificationId,
     planId: value.planId || undefined,
-    type:
-      value.type === 'walk_missed' || value.type === 'walk_nudge'
-        ? value.type
-        : undefined,
+    sessionId: value.sessionId || undefined,
+    type: value.type && VALID_NOTIFICATION_TYPES.has(value.type) ? value.type : undefined,
     actionIdentifier: value.actionIdentifier,
   };
 };
@@ -71,10 +78,8 @@ const normalizeDelivery = (
   return {
     notificationId: value.notificationId,
     planId: value.planId || undefined,
-    type:
-      value.type === 'walk_missed' || value.type === 'walk_nudge'
-        ? value.type
-        : undefined,
+    sessionId: value.sessionId || undefined,
+    type: value.type && VALID_NOTIFICATION_TYPES.has(value.type) ? value.type : undefined,
   };
 };
 
@@ -130,6 +135,25 @@ export const androidExactNotifications = {
           .map((payload) => normalizeDelivery(payload))
           .filter((payload): payload is ExactNotificationDeliveryPayload => payload !== null)
       : [];
+  },
+
+  async isRecoveryNeeded(): Promise<boolean> {
+    if (!nativeModule || typeof nativeModule.isRecoveryNeeded !== 'function') return false;
+    try {
+      return await nativeModule.isRecoveryNeeded();
+    } catch {
+      return false;
+    }
+  },
+
+  async markRecoveryNeeded(reason?: string): Promise<void> {
+    if (!nativeModule || typeof nativeModule.markRecoveryNeeded !== 'function') return;
+    await nativeModule.markRecoveryNeeded(reason ?? null);
+  },
+
+  async clearRecoveryNeeded(): Promise<void> {
+    if (!nativeModule || typeof nativeModule.clearRecoveryNeeded !== 'function') return;
+    await nativeModule.clearRecoveryNeeded();
   },
 
   subscribe(

@@ -5,6 +5,7 @@ import {
   PreferredWalkingPeriod,
   StrictnessMode,
   WhenToNotify,
+  EndWalkMode,
 } from '../../types';
 
 const normalizeStepGoal = (raw: number | undefined): number => {
@@ -51,6 +52,7 @@ export const preferencesRepo = {
       step_goal?: number;
       preferred_walking_periods_enabled?: number;
       preferred_walking_periods_json?: string;
+      end_walk_mode?: string;
     }>('SELECT * FROM preferences WHERE id = 1');
     
     if (!result) return null;
@@ -90,6 +92,7 @@ export const preferencesRepo = {
       stepGoal,
       preferredWalkingPeriodsEnabled,
       preferredWalkingPeriods,
+      endWalkMode: (result.end_walk_mode === 'confirm' ? 'confirm' : 'quick') as EndWalkMode,
     };
   },
   
@@ -103,14 +106,16 @@ export const preferencesRepo = {
     const preferredWalkingPeriodsEnabled =
       prefs.preferredWalkingPeriodsEnabled && preferredWalkingPeriods.length > 0 ? 1 : 0;
 
+    const endWalkMode = prefs.endWalkMode === 'confirm' ? 'confirm' : 'quick';
+
     await db.runAsync(
-      `INSERT OR REPLACE INTO preferences 
-       (id, daily_target_minutes, buffer_minutes, notification_count_per_day, 
+      `INSERT OR REPLACE INTO preferences
+       (id, daily_target_minutes, buffer_minutes, notification_count_per_day,
         notification_min_gap_minutes, quiet_hours_start, quiet_hours_end, min_walk_minutes,
         grace_period_minutes, when_to_notify, notify_delay_minutes,
         preferred_walking_periods_enabled, preferred_walking_periods_json,
-        strictness_mode, step_goal_enabled, step_goal, updated_at)
-       VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+        strictness_mode, step_goal_enabled, step_goal, end_walk_mode, updated_at)
+       VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
       [
         prefs.dailyTargetMinutes,
         prefs.bufferMinutes,
@@ -127,6 +132,7 @@ export const preferencesRepo = {
         strictnessMode,
         stepGoalEnabled,
         stepGoal,
+        endWalkMode,
       ]
     );
   },
@@ -134,6 +140,11 @@ export const preferencesRepo = {
   async exists(): Promise<boolean> {
     const prefs = await this.get();
     return prefs !== null;
+  },
+
+  async clear(): Promise<void> {
+    const db = await getDatabase();
+    await db.runAsync('DELETE FROM preferences');
   },
   
   async getOrDefault(): Promise<Preferences> {

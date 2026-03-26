@@ -46,7 +46,7 @@ type Props = NativeStackScreenProps<RootStackParamList, 'ScheduleSetup'>;
 type ScheduleOption = 'google' | 'import' | 'manual' | null;
 type DialogAction = {
   label: string;
-  variant?: 'primary' | 'secondary' | 'outline' | 'muted' | 'danger';
+  variant?: 'primary' | 'secondary' | 'outline' | 'muted' | 'danger' | 'info';
   onPress?: () => void;
 };
 

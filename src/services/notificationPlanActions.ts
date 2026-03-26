@@ -13,14 +13,18 @@ const terminalStatuses = new Set(['cancelled', 'completed', 'skipped']);
 const rescheduleFutureNudges = async () => {
   const prefs = await preferencesRepo.get();
   if (!prefs || !isNotificationsSupported) return;
-  const futurePlans = await plansRepo.getUpcomingPlans(100);
   try {
-    await notificationService.cancelWalkNudges();
-    await notificationService.scheduleMultipleNudges(futurePlans, prefs);
+    await notificationService.recoverScheduledNotifications({
+      prefs,
+      requestPermissions: false,
+    });
   } catch (error) {
     // If scheduling failed after cancellation, retry once
     try {
-      await notificationService.scheduleMultipleNudges(futurePlans, prefs);
+      await notificationService.recoverScheduledNotifications({
+        prefs,
+        requestPermissions: false,
+      });
     } catch {
       if (__DEV__) console.error('Failed to reschedule nudges:', error);
     }
@@ -335,6 +339,127 @@ export const notificationPlanActions = {
       gapStart: plan.gapStart,
       gapEnd: plan.gapEnd,
     });
+    return true;
+  },
+
+  /**
+   * Skip a plan silently — marks it as skipped, finds a replacement gap,
+   * and adds it to walking opportunities WITHOUT sending any notification
+   * about the new gap. Used by "Not Now" on Phase 2 walk ready prompt.
+   */
+  async skipPlanSilently(planId: string): Promise<boolean> {
+    const plan = await plansRepo.getById(planId);
+    if (!plan || terminalStatuses.has(plan.status)) return false;
+
+    await plansRepo.updateStatus(plan.id, 'skipped');
+    if (isNotificationsSupported) {
+      await notificationService.clearPlanNotifications(plan.id);
+    }
+    analyticsService.track('plan_skipped_silently', {
+      planId: plan.id,
+      gapStart: plan.gapStart,
+      gapEnd: plan.gapEnd,
+    });
+
+    // Find and add replacement gap silently (no notification about it)
+    void this.findAndAddAlternativeGapSilently(planId).catch((e) => {
+      if (__DEV__) console.warn('Silent alt gap failed:', e);
+    });
+
+    await rescheduleFutureNudges();
+    return true;
+  },
+
+  /**
+   * Find the next available gap and add it as a planned walk opportunity
+   * WITHOUT sending any notification about the new gap itself.
+   * The new opportunity will just appear on the Dashboard silently.
+   */
+  async findAndAddAlternativeGapSilently(skippedPlanId: string): Promise<boolean> {
+    const prefs = await preferencesRepo.get();
+    if (!prefs) return false;
+
+    const events = await eventsRepo.getAll();
+    const now = new Date();
+    const dayStart = startOfDay(now);
+    const dayEnd = endOfDay(now);
+
+    const rawGaps = gapEngine.findGaps(dayStart, dayEnd, events, prefs);
+
+    const skippedPlan = await plansRepo.getById(skippedPlanId);
+
+    const bufferMinutes = prefs.bufferMinutes ?? 2;
+    const gracePeriod = prefs.gracePeriodMinutes ?? 2;
+    const minWalkMinutes = prefs.minWalkMinutes ?? 6;
+    const minRequired = bufferMinutes + gracePeriod + minWalkMinutes;
+
+    // Also exclude gaps that already have active plans
+    const todayPlans = await plansRepo.getTodayPlans();
+    const activePlanGapKeys = new Set(
+      todayPlans
+        .filter((p) => p.status === 'planned' || p.status === 'notified')
+        .map((p) => `${p.gapStart}|${p.gapEnd}`),
+    );
+
+    const nextGap = rawGaps.find((gap) => {
+      if (gap.end <= now) return false;
+
+      // Don't suggest the same gap the user just skipped
+      if (
+        skippedPlan &&
+        gap.start.toISOString() === skippedPlan.gapStart &&
+        gap.end.toISOString() === skippedPlan.gapEnd
+      ) {
+        return false;
+      }
+
+      // Don't suggest gaps that already have active plans
+      const gapKey = `${gap.start.toISOString()}|${gap.end.toISOString()}`;
+      if (activePlanGapKeys.has(gapKey)) return false;
+
+      const effectiveStart = gap.start > now ? gap.start : now;
+      const remainingMinutes = (gap.end.getTime() - effectiveStart.getTime()) / 60000;
+      return remainingMinutes >= minRequired;
+    });
+
+    if (!nextGap) return false;
+
+    const effectiveGapStart = nextGap.start > now ? nextGap.start : now;
+    const walkStart = addMinutes(effectiveGapStart, bufferMinutes + gracePeriod);
+    const availableMinutes = Math.floor(
+      (nextGap.end.getTime() - walkStart.getTime()) / 60000
+    );
+    const suggestedDuration = Math.max(
+      minWalkMinutes,
+      Math.min(availableMinutes, prefs.dailyTargetMinutes)
+    );
+
+    const newPlan: NudgePlan = {
+      id: `plan-silent-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`,
+      date: format(now, 'yyyy-MM-dd'),
+      gapStart: nextGap.start.toISOString(),
+      gapEnd: nextGap.end.toISOString(),
+      walkStart: walkStart.toISOString(),
+      suggestedDurationMinutes: suggestedDuration,
+      status: 'planned',
+      reason: undefined, // auto-generated, not alt_gap_suggestion
+      createdAt: new Date().toISOString(),
+    };
+
+    await plansRepo.save(newPlan);
+
+    // Schedule two-phase notifications for the new plan (but NO immediate notification about it)
+    if (isNotificationsSupported) {
+      await notificationService.schedulePlanNotifications(newPlan, prefs);
+    }
+
+    analyticsService.track('silent_alt_gap_added', {
+      originalPlanId: skippedPlanId,
+      newPlanId: newPlan.id,
+      gapStart: newPlan.gapStart,
+      gapEnd: newPlan.gapEnd,
+    });
+
     return true;
   },
 };

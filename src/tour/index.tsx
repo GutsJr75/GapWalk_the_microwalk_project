@@ -5,8 +5,8 @@ import {
   Pressable,
   Animated,
   Easing,
-  Dimensions,
   Modal,
+  useWindowDimensions,
   type LayoutRectangle,
 } from 'react-native';
 import Svg, { Path as SvgPath } from 'react-native-svg';
@@ -125,8 +125,11 @@ interface TourOverlayProps {
 
 const SPOTLIGHT_PADDING = 14;
 const SPOTLIGHT_RADIUS = 14;
-const TOOLTIP_MAX_WIDTH = 300;
-const TOOLTIP_MARGIN = 20;
+const PHONE_TOOLTIP_MAX_WIDTH = 300;
+const TABLET_TOOLTIP_MAX_WIDTH = 420;
+const PHONE_TOOLTIP_MARGIN = 20;
+const TABLET_TOOLTIP_MARGIN = 28;
+const TABLET_BREAKPOINT = 600;
 const ANIMATION_DURATION = 320;
 const STEP_TRANSITION_DURATION = 260;
 const TOOLTIP_REVEAL_DURATION = 220;
@@ -171,6 +174,7 @@ export const TourOverlay: React.FC<TourOverlayProps> = ({
 }) => {
   const { themeMode } = useAppStore();
   const palette = getThemePalette(themeMode as ThemeMode);
+  const { width: viewportWidth, height: viewportHeight } = useWindowDimensions();
 
   const [currentStep, setCurrentStep] = useState(0);
   const [backdropCutoffY, setBackdropCutoffY] = useState<number | null>(null);
@@ -204,9 +208,17 @@ export const TourOverlay: React.FC<TourOverlayProps> = ({
   const spotYRef = useRef(0);
   const spotWRef = useRef(0);
   const spotHRef = useRef(0);
+  const [tooltipHeight, setTooltipHeight] = useState(0);
 
-  const screenHeight = Dimensions.get('window').height;
-  const screenWidth = Dimensions.get('window').width;
+  const screenHeight = viewportHeight;
+  const screenWidth = viewportWidth;
+  const isTabletLike = screenWidth >= TABLET_BREAKPOINT;
+  const tooltipMargin = isTabletLike ? TABLET_TOOLTIP_MARGIN : PHONE_TOOLTIP_MARGIN;
+  const tooltipWidth = Math.min(
+    screenWidth - tooltipMargin * 2,
+    isTabletLike ? TABLET_TOOLTIP_MAX_WIDTH : PHONE_TOOLTIP_MAX_WIDTH,
+  );
+  const tooltipOffset = isTabletLike ? 18 : 14;
 
   /* ── Batch SVG rerenders via rAF ── */
 
@@ -489,7 +501,10 @@ export const TourOverlay: React.FC<TourOverlayProps> = ({
         return;
       }
 
-      const padX = stepIdx === 2 ? 4 : SPOTLIGHT_PADDING;
+      const isViewportClampedStep =
+        !!spotlightClampRef && steps[stepIdx]?.name === 'sched-grid-body';
+
+      const padX = isViewportClampedStep ? 4 : SPOTLIGHT_PADDING;
       const padY = SPOTLIGHT_PADDING;
 
       let sX = rect.x - padX;
@@ -497,7 +512,7 @@ export const TourOverlay: React.FC<TourOverlayProps> = ({
       let sW = rect.width + padX * 2;
       let sH = rect.height + padY * 2;
 
-      if (stepIdx === 2) {
+      if (isViewportClampedStep) {
         const trimLeft = sW * 0.02;
         sX += trimLeft;
         sW -= trimLeft;
@@ -514,7 +529,7 @@ export const TourOverlay: React.FC<TourOverlayProps> = ({
       // Step 2: clamp spotlight height to the visible grid viewport.
       // This prevents the spotlight from extending to the full ScrollView
       // content height.
-      if (stepIdx === 2 && spotlightClampRef?.current) {
+      if (isViewportClampedStep && spotlightClampRef?.current) {
         const clampRect = await measureRefRect(spotlightClampRef);
         if (clampRect) {
           const visibleTop = clampRect.y;
@@ -666,6 +681,7 @@ export const TourOverlay: React.FC<TourOverlayProps> = ({
       onBeforeStep,
       preferAboveStepIndices,
       backdropCutoffY,
+      steps,
       spotlightClampRef,
     ],
   );
@@ -737,25 +753,42 @@ export const TourOverlay: React.FC<TourOverlayProps> = ({
   const useBackdropCutoff = isFirst && backdropCutoffY != null;
   const darkRectHeight = useBackdropCutoff ? Math.max(0, backdropCutoffY as number) : screenHeight;
 
+  const spotlightCenterX = spotXRef.current + spotWRef.current / 2;
   const tooltipLeft = hasSpotlight
     ? Math.max(
-        TOOLTIP_MARGIN,
+        tooltipMargin,
         Math.min(
-          screenWidth - TOOLTIP_MAX_WIDTH - TOOLTIP_MARGIN,
-          spotXRef.current,
+          screenWidth - tooltipWidth - tooltipMargin,
+          spotlightCenterX - tooltipWidth / 2,
         ),
       )
-    : TOOLTIP_MARGIN;
+    : tooltipMargin;
 
-  const tooltipTopValue =
-    tooltipPosition === 'below'
-      ? spotYRef.current + spotHRef.current + 14
-      : undefined;
+  // Clamp tooltip so it is always fully visible on screen.
+  // The spotlight can be partially covered — the instruction frame cannot.
+  const TOOLTIP_SAFE_TOP = 12;
+  const TOOLTIP_SAFE_BOTTOM = 12;
 
-  const tooltipBottomValue =
-    tooltipPosition === 'above'
-      ? screenHeight - spotYRef.current + 14
-      : undefined;
+  let tooltipTopValue: number | undefined;
+  let tooltipBottomValue: number | undefined;
+
+  if (tooltipPosition === 'below') {
+    const idealTop = spotYRef.current + spotHRef.current + tooltipOffset;
+    if (tooltipHeight > 0) {
+      const maxTop = screenHeight - tooltipHeight - TOOLTIP_SAFE_BOTTOM;
+      tooltipTopValue = Math.min(idealTop, Math.max(TOOLTIP_SAFE_TOP, maxTop));
+    } else {
+      tooltipTopValue = idealTop;
+    }
+  } else {
+    const idealBottom = screenHeight - spotYRef.current + tooltipOffset;
+    if (tooltipHeight > 0) {
+      const maxBottom = screenHeight - tooltipHeight - TOOLTIP_SAFE_TOP;
+      tooltipBottomValue = Math.min(idealBottom, Math.max(TOOLTIP_SAFE_BOTTOM, maxBottom));
+    } else {
+      tooltipBottomValue = idealBottom;
+    }
+  }
 
   return (
     <Modal
@@ -833,26 +866,22 @@ export const TourOverlay: React.FC<TourOverlayProps> = ({
           </Svg>
         </Animated.View>
 
-        {/* Tap-anywhere advances the tour */}
+        {/* Swallow all taps outside the instruction card while the tour is active. */}
         <Pressable
-          style={
-            useBackdropCutoff
-              ? {
-                  position: 'absolute',
-                  top: 0,
-                  left: 0,
-                  right: 0,
-                  height: darkRectHeight,
-                }
-              : StyleSheet.absoluteFill
-          }
-          onPress={handleNext}
+          style={StyleSheet.absoluteFill}
+          onPress={() => undefined}
+          accessibilityRole="none"
+          accessible={false}
         />
 
         {/* Tooltip card */}
         {hasSpotlight && !measuring && (
           <Animated.View
             pointerEvents="box-none"
+            onLayout={(e) => {
+              const h = e.nativeEvent.layout.height;
+              if (h > 0 && h !== tooltipHeight) setTooltipHeight(h);
+            }}
             style={[
               overlayStyles.tooltipContainer,
               {
@@ -861,9 +890,14 @@ export const TourOverlay: React.FC<TourOverlayProps> = ({
                 borderWidth: 1,
                 shadowColor: palette.shadow,
                 left: tooltipLeft,
-                maxWidth: TOOLTIP_MAX_WIDTH,
+                width: tooltipWidth,
+                maxWidth: tooltipWidth,
                 opacity: tooltipOpacity,
                 transform: [{ translateY: tooltipTranslateY }],
+                borderRadius: isTabletLike ? 16 : 12,
+                padding: isTabletLike ? 22 : 18,
+                gap: isTabletLike ? 14 : 12,
+                shadowRadius: isTabletLike ? 16 : 12,
                 ...(tooltipTopValue !== undefined
                   ? { top: tooltipTopValue }
                   : {}),
@@ -909,7 +943,13 @@ export const TourOverlay: React.FC<TourOverlayProps> = ({
             </View>
 
             {/* Step text */}
-            <Text variant="body" style={overlayStyles.stepText}>
+            <Text
+              variant="body"
+              style={[
+                overlayStyles.stepText,
+                isTabletLike && overlayStyles.stepTextTablet,
+              ]}
+            >
               {step?.text ?? ''}
             </Text>
 
@@ -931,7 +971,10 @@ export const TourOverlay: React.FC<TourOverlayProps> = ({
                 >
                   <Text
                     variant="bodySmall"
-                    style={overlayStyles.btnOutlineText}
+                    style={[
+                      overlayStyles.btnOutlineText,
+                      isTabletLike && overlayStyles.btnTextTablet,
+                    ]}
                     color={palette.textMuted}
                   >
                     Back
@@ -951,7 +994,10 @@ export const TourOverlay: React.FC<TourOverlayProps> = ({
                 >
                   <Text
                     variant="bodySmall"
-                    style={overlayStyles.btnOutlineText}
+                    style={[
+                      overlayStyles.btnOutlineText,
+                      isTabletLike && overlayStyles.btnTextTablet,
+                    ]}
                     color={palette.textMuted}
                   >
                     Skip
@@ -970,7 +1016,10 @@ export const TourOverlay: React.FC<TourOverlayProps> = ({
               >
                 <Text
                   variant="bodySmall"
-                  style={overlayStyles.btnPrimaryText}
+                  style={[
+                    overlayStyles.btnPrimaryText,
+                    isTabletLike && overlayStyles.btnTextTablet,
+                  ]}
                   color={palette.accentOnSolid}
                 >
                   {isLast ? 'Got it' : 'Next'}
@@ -1022,6 +1071,10 @@ const overlayStyles = StyleSheet.create({
     fontSize: theme.fontSize.sm,
     lineHeight: 21,
   },
+  stepTextTablet: {
+    fontSize: theme.fontSize.md,
+    lineHeight: 24,
+  },
   actionsRow: {
     flexDirection: 'row',
     justifyContent: 'flex-end',
@@ -1046,5 +1099,8 @@ const overlayStyles = StyleSheet.create({
   btnPrimaryText: {
     fontFamily: appFontFamily.medium,
     fontSize: 13,
+  },
+  btnTextTablet: {
+    fontSize: theme.fontSize.sm,
   },
 });

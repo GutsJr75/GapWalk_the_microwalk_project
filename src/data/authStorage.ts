@@ -12,8 +12,10 @@ const SETTINGS_DISTANCE_UNIT_KEY = 'gapwalk_settings_distance_unit';
 const SETTINGS_VIBRATION_KEY = 'gapwalk_settings_vibration';
 const SETTINGS_WALK_DISPLAY_CARDS_KEY = 'gapwalk_settings_walk_display_cards';
 const SETTINGS_NOTIFICATION_TIMER_MODE_KEY = 'gapwalk_settings_notification_timer_mode';
+const SETTINGS_NOTIFICATION_STATS_MODE_KEY = 'gapwalk_settings_notification_stats_mode';
 const LAST_SYNCED_AT_KEY = 'gapwalk_last_synced_at';
 const LAST_LOGIN_AT_KEY = 'gapwalk_last_login_at';
+const SETTINGS_END_WALK_MODE_KEY = 'gapwalk_settings_end_walk_mode';
 
 export interface StoredAuthUser {
   email?: string;
@@ -149,6 +151,30 @@ export const authStorage = {
     if (Platform.OS === 'web') return null;
     const val = await SecureStore.getItemAsync(SETTINGS_NOTIFICATION_TIMER_MODE_KEY);
     if (val === 'smart' || val === 'elapsed' || val === 'remaining') return val;
+    return null;
+  },
+
+  async saveNotificationStatsMode(mode: string): Promise<void> {
+    if (Platform.OS === 'web') return;
+    await SecureStore.setItemAsync(SETTINGS_NOTIFICATION_STATS_MODE_KEY, mode);
+  },
+
+  async getNotificationStatsMode(): Promise<'all' | 'steps' | 'distance' | 'none' | null> {
+    if (Platform.OS === 'web') return null;
+    const val = await SecureStore.getItemAsync(SETTINGS_NOTIFICATION_STATS_MODE_KEY);
+    if (val === 'all' || val === 'steps' || val === 'distance' || val === 'none') return val;
+    return null;
+  },
+
+  async saveEndWalkMode(mode: string): Promise<void> {
+    if (Platform.OS === 'web') return;
+    await SecureStore.setItemAsync(SETTINGS_END_WALK_MODE_KEY, mode);
+  },
+
+  async getEndWalkMode(): Promise<'quick' | 'confirm' | null> {
+    if (Platform.OS === 'web') return null;
+    const val = await SecureStore.getItemAsync(SETTINGS_END_WALK_MODE_KEY);
+    if (val === 'quick' || val === 'confirm') return val;
     return null;
   },
 
