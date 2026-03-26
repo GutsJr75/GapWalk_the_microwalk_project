@@ -301,6 +301,7 @@ const runMigrations = async () => {
   await ensureColumn('preferences', 'strictness_mode', "TEXT NOT NULL DEFAULT 'easygoing'");
   await ensureColumn('preferences', 'step_goal_enabled', 'INTEGER NOT NULL DEFAULT 0');
   await ensureColumn('preferences', 'step_goal', 'INTEGER NOT NULL DEFAULT 1000');
+  await ensureColumn('preferences', 'end_walk_mode', "TEXT NOT NULL DEFAULT 'quick'");
 
   // Achievements table
   await db.execAsync(`

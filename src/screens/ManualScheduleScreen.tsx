@@ -30,6 +30,7 @@ import {
 import { RootStackParamList } from '../../App';
 import { Text } from '../components/Text';
 import { Button } from '../components/Button';
+import { IconButton } from '../components/IconButton';
 import { Modal as AppModal } from '../components/Modal';
 import { ScreenHeader } from '../components/ScreenHeader';
 import { TwoDigitTimeInput } from '../components/TwoDigitTimeInput';
@@ -648,9 +649,8 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
   ], []);
 
   useEffect(() => {
-    // The schedule editor tour should keep showing until the user has visited
-    // the dashboard for the first time.
-    if (manageMode || guidanceSeen.dashboard_welcome) return;
+    // Auto-show until the user completes/skips the schedule tour at least once.
+    if (manageMode || guidanceSeen.schedule_editor_tour) return;
     let timer: ReturnType<typeof setTimeout> | null = null;
     const task = InteractionManager.runAfterInteractions(() => {
       timer = setTimeout(() => setShowScheduleTour(true), 600);
@@ -659,7 +659,16 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
       task.cancel();
       if (timer) clearTimeout(timer);
     };
-  }, [manageMode, guidanceSeen.dashboard_welcome]);
+  }, [manageMode, guidanceSeen.schedule_editor_tour]);
+
+  useEffect(() => {
+    if (!route.params?.replayScheduleTour) return;
+    navigation.setParams({ replayScheduleTour: undefined });
+    const task = InteractionManager.runAfterInteractions(() => {
+      setShowScheduleTour(true);
+    });
+    return () => task.cancel();
+  }, [navigation, route.params?.replayScheduleTour]);
 
   const handleTourFinish = useCallback(() => {
     setShowScheduleTour(false);
@@ -723,120 +732,118 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
   const scheduleSourceRef = useRef(scheduleSource);
   scheduleSourceRef.current = scheduleSource;
 
-  useFocusEffect(
-    useCallback(() => {
-      let active = true;
-      const loadSavedTemplate = async () => {
-        const resolveSourceState = async (): Promise<{ type: 'manual' | 'import' | 'google'; filename?: string }> => {
-          const src = scheduleSourceRef.current ?? (await scheduleSourceRepo.get());
-          if (!src) {
-            return {
-              type: routeImportedFilename ? 'import' : 'manual',
-              filename: routeImportedFilename,
-            };
-          }
-          if (src.type === 'ics') {
-            return { type: 'import', filename: src.filename ?? routeImportedFilename };
-          }
-          if (src.type === 'google') {
-            return { type: 'google' };
-          }
-          return { type: 'manual' };
-        };
+  useEffect(() => {
+    let active = true;
+    const loadSavedTemplate = async () => {
+      const resolveSourceState = async (): Promise<{ type: 'manual' | 'import' | 'google'; filename?: string }> => {
+        const src = scheduleSourceRef.current ?? (await scheduleSourceRepo.get());
+        if (!src) {
+          return {
+            type: routeImportedFilename ? 'import' : 'manual',
+            filename: routeImportedFilename,
+          };
+        }
+        if (src.type === 'ics') {
+          return { type: 'import', filename: src.filename ?? routeImportedFilename };
+        }
+        if (src.type === 'google') {
+          return { type: 'google' };
+        }
+        return { type: 'manual' };
+      };
 
-        if (Array.isArray(prefillTemplate) && !didApplyPrefillTemplateRef.current) {
-          didApplyPrefillTemplateRef.current = true;
-          const grouped = groupTemplateEntries(prefillTemplate);
-          if (!active) return;
-          setEntriesByDay(grouped);
-          setSavedEntriesByDay(cloneEntriesByDay(grouped));
-          setInitialSignature(buildScheduleSignature(grouped));
-          setHasSavedSchedule(false);
-          const resolvedSource = routeImportedFilename
-            ? { type: 'import' as const, filename: routeImportedFilename }
-            : await resolveSourceState();
-          if (!active) return;
-          setSourceType(resolvedSource.type);
-          setSavedSourceType(resolvedSource.type);
-          setImportedFilename(resolvedSource.type === 'import' ? resolvedSource.filename : undefined);
-          setSavedImportedFilename(resolvedSource.type === 'import' ? resolvedSource.filename : undefined);
-          setSheetSourceType(resolvedSource.type);
-          setSheetImportedFilename(resolvedSource.type === 'import' ? resolvedSource.filename : undefined);
-          setSheetImportedTemplate(null);
-          return;
-        }
-        if (startWithEmpty && !didApplyStartWithEmptyRef.current) {
-          didApplyStartWithEmptyRef.current = true;
-          const empty = createEmptyEntriesByDay();
-          if (!active) return;
-          setEntriesByDay(empty);
-          setSavedEntriesByDay(cloneEntriesByDay(empty));
-          setInitialSignature(buildScheduleSignature(empty));
-          setHasSavedSchedule(false);
-          // Manual onboarding should always reset the editor to a true manual source,
-          // even if the user previously imported from Google/ICS.
-          setSourceType('manual');
-          setSavedSourceType('manual');
-          setImportedFilename(undefined);
-          setSavedImportedFilename(undefined);
-          setSheetSourceType('manual');
-          setSheetImportedFilename(undefined);
-          setSheetImportedTemplate(null);
-          return;
-        }
-        try {
-          const saved = await manualScheduleRepo.getAll();
-          const todayKey = toDateKey(new Date());
-          const cleaned = saved.filter(
-            (entry) => !(entry.isOneTime && entry.oneTimeDate && entry.oneTimeDate < todayKey)
-          );
-          if (cleaned.length !== saved.length) {
-            await manualScheduleRepo.replaceAll(cleaned);
-          }
-          const grouped = groupTemplateEntries(cleaned);
-          if (!active) return;
-          setEntriesByDay(grouped);
-          setSavedEntriesByDay(cloneEntriesByDay(grouped));
-          setInitialSignature(buildScheduleSignature(grouped));
-          setHasSavedSchedule(cleaned.length > 0);
-          const resolvedSource = await resolveSourceState();
-          if (!active) return;
-          setSourceType(resolvedSource.type);
-          setSavedSourceType(resolvedSource.type);
-          setImportedFilename(resolvedSource.type === 'import' ? resolvedSource.filename : undefined);
-          setSavedImportedFilename(resolvedSource.type === 'import' ? resolvedSource.filename : undefined);
-          setSheetSourceType(resolvedSource.type);
-          setSheetImportedFilename(resolvedSource.type === 'import' ? resolvedSource.filename : undefined);
-          setSheetImportedTemplate(null);
-        } catch (error) {
-          if (!active) return;
-          const empty = createEmptyEntriesByDay();
-          setEntriesByDay(empty);
-          setSavedEntriesByDay(cloneEntriesByDay(empty));
-          setInitialSignature(buildScheduleSignature(empty));
-          setHasSavedSchedule(false);
-          const resolvedSource = await resolveSourceState();
-          if (!active) return;
-          setSourceType(resolvedSource.type);
-          setSavedSourceType(resolvedSource.type);
-          setImportedFilename(resolvedSource.type === 'import' ? resolvedSource.filename : undefined);
-          setSavedImportedFilename(resolvedSource.type === 'import' ? resolvedSource.filename : undefined);
-          setSheetSourceType(resolvedSource.type);
-          setSheetImportedFilename(resolvedSource.type === 'import' ? resolvedSource.filename : undefined);
-          setSheetImportedTemplate(null);
-          if (__DEV__) console.error('Failed to load saved manual schedule:', error);
-        }
-      };
-      const interactionTask = InteractionManager.runAfterInteractions(() => {
+      if (Array.isArray(prefillTemplate) && !didApplyPrefillTemplateRef.current) {
+        didApplyPrefillTemplateRef.current = true;
+        const grouped = groupTemplateEntries(prefillTemplate);
         if (!active) return;
-        void loadSavedTemplate();
-      });
-      return () => {
-        active = false;
-        interactionTask.cancel();
-      };
-    }, [prefillTemplate, requireSaveBeforeContinue, routeImportedFilename, startWithEmpty])
-  );
+        setEntriesByDay(grouped);
+        setSavedEntriesByDay(cloneEntriesByDay(grouped));
+        setInitialSignature(buildScheduleSignature(grouped));
+        setHasSavedSchedule(false);
+        const resolvedSource = routeImportedFilename
+          ? { type: 'import' as const, filename: routeImportedFilename }
+          : await resolveSourceState();
+        if (!active) return;
+        setSourceType(resolvedSource.type);
+        setSavedSourceType(resolvedSource.type);
+        setImportedFilename(resolvedSource.type === 'import' ? resolvedSource.filename : undefined);
+        setSavedImportedFilename(resolvedSource.type === 'import' ? resolvedSource.filename : undefined);
+        setSheetSourceType(resolvedSource.type);
+        setSheetImportedFilename(resolvedSource.type === 'import' ? resolvedSource.filename : undefined);
+        setSheetImportedTemplate(null);
+        return;
+      }
+      if (startWithEmpty && !didApplyStartWithEmptyRef.current) {
+        didApplyStartWithEmptyRef.current = true;
+        const empty = createEmptyEntriesByDay();
+        if (!active) return;
+        setEntriesByDay(empty);
+        setSavedEntriesByDay(cloneEntriesByDay(empty));
+        setInitialSignature(buildScheduleSignature(empty));
+        setHasSavedSchedule(false);
+        // Manual onboarding should always reset the editor to a true manual source,
+        // even if the user previously imported from Google/ICS.
+        setSourceType('manual');
+        setSavedSourceType('manual');
+        setImportedFilename(undefined);
+        setSavedImportedFilename(undefined);
+        setSheetSourceType('manual');
+        setSheetImportedFilename(undefined);
+        setSheetImportedTemplate(null);
+        return;
+      }
+      try {
+        const saved = await manualScheduleRepo.getAll();
+        const todayKey = toDateKey(new Date());
+        const cleaned = saved.filter(
+          (entry) => !(entry.isOneTime && entry.oneTimeDate && entry.oneTimeDate < todayKey)
+        );
+        if (cleaned.length !== saved.length) {
+          await manualScheduleRepo.replaceAll(cleaned);
+        }
+        const grouped = groupTemplateEntries(cleaned);
+        if (!active) return;
+        setEntriesByDay(grouped);
+        setSavedEntriesByDay(cloneEntriesByDay(grouped));
+        setInitialSignature(buildScheduleSignature(grouped));
+        setHasSavedSchedule(cleaned.length > 0);
+        const resolvedSource = await resolveSourceState();
+        if (!active) return;
+        setSourceType(resolvedSource.type);
+        setSavedSourceType(resolvedSource.type);
+        setImportedFilename(resolvedSource.type === 'import' ? resolvedSource.filename : undefined);
+        setSavedImportedFilename(resolvedSource.type === 'import' ? resolvedSource.filename : undefined);
+        setSheetSourceType(resolvedSource.type);
+        setSheetImportedFilename(resolvedSource.type === 'import' ? resolvedSource.filename : undefined);
+        setSheetImportedTemplate(null);
+      } catch (error) {
+        if (!active) return;
+        const empty = createEmptyEntriesByDay();
+        setEntriesByDay(empty);
+        setSavedEntriesByDay(cloneEntriesByDay(empty));
+        setInitialSignature(buildScheduleSignature(empty));
+        setHasSavedSchedule(false);
+        const resolvedSource = await resolveSourceState();
+        if (!active) return;
+        setSourceType(resolvedSource.type);
+        setSavedSourceType(resolvedSource.type);
+        setImportedFilename(resolvedSource.type === 'import' ? resolvedSource.filename : undefined);
+        setSavedImportedFilename(resolvedSource.type === 'import' ? resolvedSource.filename : undefined);
+        setSheetSourceType(resolvedSource.type);
+        setSheetImportedFilename(resolvedSource.type === 'import' ? resolvedSource.filename : undefined);
+        setSheetImportedTemplate(null);
+        if (__DEV__) console.error('Failed to load saved manual schedule:', error);
+      }
+    };
+    const interactionTask = InteractionManager.runAfterInteractions(() => {
+      if (!active) return;
+      void loadSavedTemplate();
+    });
+    return () => {
+      active = false;
+      interactionTask.cancel();
+    };
+  }, [prefillTemplate, requireSaveBeforeContinue, routeImportedFilename, startWithEmpty]);
 
   const pickAndParseIcsTemplate = async (): Promise<{
     grouped: Record<number, TemplateEvent[]>;
@@ -1032,21 +1039,6 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
       return;
     }
     showBinaryConfirm(title, message, 'Yes', onDiscard, 'destructive');
-  };
-
-  const handleBack = () => {
-    const totalEntries = Object.values(entriesByDay).reduce((sum, arr) => sum + arr.length, 0);
-    if (totalEntries === 0) {
-      runAllowedNavigation(() => navigation.goBack());
-      return;
-    }
-    showBinaryConfirm(
-      'Go back?',
-      'Going back will remove all progress on this screen. Are you sure?',
-      'Yes',
-      () => runAllowedNavigation(() => navigation.goBack()),
-      'destructive'
-    );
   };
 
   useEffect(() => {
@@ -2666,8 +2658,6 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
           <ScreenHeader
             title={manageMode ? 'Manage schedule' : 'Set up your schedule'}
             style={[styles.compactScreenHeader, manageMode && styles.manageHeaderTitle]}
-            onBack={manageMode ? undefined : handleBack}
-            backTestID="manual-schedule-back"
           />
           {!manageMode && sourceType === 'import' && importedFilename ? (
             <View style={[styles.icsBadge, { backgroundColor: palette.accentMuted, borderColor: palette.accentBorder }]}>
@@ -3554,23 +3544,14 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
         onClose={handleCancelEventModal}
         title={editingEventId ? 'Edit Event' : 'Add Event'}
         rightAccessory={editingEventId ? (
-          <TouchableOpacity
-            style={[
-              styles.modalHeaderIconBtn,
-              {
-                backgroundColor: palette.bgSurface,
-                borderColor: palette.borderSoft,
-              },
-            ]}
+          <IconButton
             onPress={confirmDelete}
-            activeOpacity={0.8}
-            delayPressIn={0}
-            accessibilityRole="button"
             accessibilityLabel="Delete event"
             testID="manual-schedule-delete-event"
-          >
-            <AppIcon name="trash" size={17} color={theme.colors.error} />
-          </TouchableOpacity>
+            iconName="trash"
+            variant="danger"
+            size="icon"
+          />
         ) : null}
       >
         <View style={styles.mForm}>
@@ -3863,40 +3844,22 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
           </View>
         }
         leftAccessory={
-          <TouchableOpacity
-            style={[
-              styles.modalHeaderIconBtn,
-              {
-                backgroundColor: 'rgba(220,38,38,0.12)',
-                borderColor: 'rgba(220,38,38,0.28)',
-              },
-            ]}
+          <IconButton
             onPress={handleEventInfoDelete}
-            activeOpacity={0.8}
-            delayPressIn={0}
-            accessibilityRole="button"
             accessibilityLabel="Delete event"
-          >
-            <AppIcon name="trash" size={17} color={theme.colors.error} />
-          </TouchableOpacity>
+            iconName="trash"
+            variant="danger"
+            size="icon"
+          />
         }
         rightAccessory={
-          <TouchableOpacity
-            style={[
-              styles.modalHeaderIconBtn,
-              {
-                backgroundColor: 'rgba(220,38,38,0.12)',
-                borderColor: 'rgba(220,38,38,0.28)',
-              },
-            ]}
+          <IconButton
             onPress={closeEventInfoModal}
-            activeOpacity={0.75}
-            delayPressIn={0}
-            accessibilityRole="button"
             accessibilityLabel="Close"
-          >
-            <AppIcon name="close" size={17} color={theme.colors.error} />
-          </TouchableOpacity>
+            iconName="close"
+            variant="secondary"
+            size="icon"
+          />
         }
       >
         {viewOnlyEventInfo && !eventInfoEditMode && (() => {
@@ -4399,7 +4362,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   manageBackBtnPressed: {
-    transform: [{ translateX: -2 }, { scale: 0.95 }],
     opacity: 0.86,
   },
   viewOnlyBadge: {

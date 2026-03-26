@@ -4,8 +4,9 @@ import { theme } from '../theme';
 import { useThemePalette } from '../theme/palette';
 import { Button } from './Button';
 import { Text } from './Text';
+import { screenChrome } from '../theme/screenChrome';
 
-type ActionVariant = 'primary' | 'secondary' | 'outline' | 'muted' | 'danger';
+type ActionVariant = 'primary' | 'secondary' | 'outline' | 'muted' | 'danger' | 'info';
 
 interface ActionConfig {
   title: string;
@@ -81,7 +82,7 @@ const styles = StyleSheet.create({
   },
   row: {
     flexDirection: 'row',
-    gap: 50,
+    gap: screenChrome.FOOTER_BUTTON_GAP,
   },
   halfBtn: {
     flex: 1,

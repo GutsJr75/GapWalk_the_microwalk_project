@@ -44,18 +44,17 @@ export async function syncNudgePlansForCurrentSchedule(
 
   if (isNotificationsSupported) {
     try {
-      await notificationService.cancelWalkNudges();
-      const futurePlans = await plansRepo.getUpcomingPlans(100);
-      if (futurePlans.length > 0) {
-        await notificationService.scheduleMultipleNudges(futurePlans, prefs);
-      }
+      await notificationService.recoverScheduledNotifications({
+        prefs,
+        requestPermissions: false,
+      });
     } catch (error) {
       // If scheduling failed after cancellation, retry once
       try {
-        const futurePlans = await plansRepo.getUpcomingPlans(100);
-        if (futurePlans.length > 0) {
-          await notificationService.scheduleMultipleNudges(futurePlans, prefs);
-        }
+        await notificationService.recoverScheduledNotifications({
+          prefs,
+          requestPermissions: false,
+        });
       } catch {
         if (__DEV__) console.error('Failed to reschedule nudges after sync:', error);
       }

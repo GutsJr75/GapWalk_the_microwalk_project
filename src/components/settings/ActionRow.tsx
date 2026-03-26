@@ -4,8 +4,9 @@ import { Ionicons } from "@expo/vector-icons";
 import { Text } from "../Text";
 import { theme } from "../../theme";
 import { getThemePalette } from "../../theme/palette";
-import { motion } from "../../theme/motion";
-import { usePressMotion } from "../../hooks/usePressMotion";
+import { useButtonPressMotion } from "../../hooks/useButtonPressMotion";
+import { getButtonVisualState } from "../buttonSystem";
+import { PressGlowOverlay } from "../PressGlowOverlay";
 import { AnimatedPressable } from "./settingsAnimated";
 import { settingsStyles } from "./settingsStyles";
 
@@ -32,17 +33,24 @@ export const ActionRow: React.FC<{
   testID,
   palette,
 }) => {
+  const rowVariant = destructive ? "danger" as const : "secondary" as const;
+  const visualState = React.useMemo(
+    () => getButtonVisualState(rowVariant, palette),
+    [rowVariant, palette],
+  );
   const {
     animatedTransformStyle,
     isPressActive,
+    scaleAnim,
+    pressScale,
     handlePress,
     handlePressIn,
     handlePressOut,
-  } = usePressMotion({
+  } = useButtonPressMotion({
     onPress: onPress ?? (() => {}),
     enabled: !!onPress && !(disabled || busy),
     hapticIntent: destructive ? "destructive" : "selection",
-    pressScale: motion.scale.pressSubtle,
+    size: "compact",
   });
   const content = (
     <View
@@ -115,10 +123,18 @@ export const ActionRow: React.FC<{
       disabled={disabled || busy}
       testID={testID}
       style={[
+        { overflow: 'hidden' as const },
         animatedTransformStyle,
         isPressActive && !disabled && !busy && settingsStyles.actionRowPressed,
       ]}
     >
+      <PressGlowOverlay
+        scaleAnim={scaleAnim}
+        pressScale={pressScale}
+        glowColor={disabled || busy ? null : visualState.glowColor}
+        glowOpacity={visualState.glowOpacity}
+        borderRadius={0}
+      />
       {content}
     </AnimatedPressable>
   );

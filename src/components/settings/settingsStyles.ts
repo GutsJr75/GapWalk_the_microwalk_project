@@ -1,6 +1,7 @@
 import { StyleSheet } from "react-native";
 import { appFontFamily, theme } from "../../theme";
 import { screenChrome } from "../../theme/screenChrome";
+import { compactActionTokens } from "../buttonSystem";
 
 export const settingsStyles = StyleSheet.create({
   content: {
@@ -77,10 +78,10 @@ export const settingsStyles = StyleSheet.create({
     width: "100%",
   },
   choiceChip: {
-    minHeight: 40,
-    borderRadius: 12,
-    borderWidth: 1,
-    paddingHorizontal: 16,
+    minHeight: compactActionTokens.minHeight,
+    borderRadius: compactActionTokens.borderRadius,
+    borderWidth: compactActionTokens.borderWidth,
+    paddingHorizontal: compactActionTokens.paddingHorizontal,
     alignItems: "center",
     justifyContent: "center",
   },
@@ -89,7 +90,8 @@ export const settingsStyles = StyleSheet.create({
   },
   choiceChipLabel: {
     fontFamily: appFontFamily.semibold,
-    fontSize: theme.fontSize.sm,
+    fontSize: compactActionTokens.labelFontSize,
+    lineHeight: compactActionTokens.labelLineHeight,
     textAlign: "center",
   },
   toggleTrack: {

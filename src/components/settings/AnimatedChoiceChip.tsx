@@ -2,8 +2,10 @@ import React, { useEffect, useRef } from "react";
 import { Animated } from "react-native";
 import { getThemePalette } from "../../theme/palette";
 import { getMotionDuration, motion } from "../../theme/motion";
-import { usePressMotion } from "../../hooks/usePressMotion";
 import { useReducedMotionPreference } from "../../hooks/useReducedMotionPreference";
+import { useButtonPressMotion } from "../../hooks/useButtonPressMotion";
+import { compactActionTokens, getButtonVisualState } from "../buttonSystem";
+import { PressGlowOverlay } from "../PressGlowOverlay";
 import { AnimatedPressable } from "./settingsAnimated";
 import { settingsStyles } from "./settingsStyles";
 import type { ThemeMode } from "./types";
@@ -19,12 +21,22 @@ export const AnimatedChoiceChip: React.FC<{
   const palette = getThemePalette(themeMode);
   const { reduceMotion } = useReducedMotionPreference();
   const progress = useRef(new Animated.Value(selected ? 1 : 0)).current;
-  const { animatedTransformStyle, handlePress, handlePressIn, handlePressOut } =
-    usePressMotion({
-      onPress,
-      hapticIntent: "selection",
-      pressScale: motion.scale.pressSubtle,
-    });
+  const chipVariant = selected ? "primary" as const : "secondary" as const;
+  const visualState = React.useMemo(
+    () => getButtonVisualState(chipVariant, palette),
+    [chipVariant, palette],
+  );
+  const {
+    animatedTransformStyle,
+    scaleAnim,
+    pressScale,
+    handlePress,
+    handlePressIn,
+    handlePressOut,
+  } = useButtonPressMotion({
+    onPress,
+    size: "compact",
+  });
 
   useEffect(() => {
     Animated.timing(progress, {
@@ -69,9 +81,17 @@ export const AnimatedChoiceChip: React.FC<{
           {
             backgroundColor,
             borderColor,
+            overflow: 'hidden' as const,
           },
         ]}
       >
+        <PressGlowOverlay
+          scaleAnim={scaleAnim}
+          pressScale={pressScale}
+          glowColor={visualState.glowColor}
+          glowOpacity={visualState.glowOpacity}
+          borderRadius={compactActionTokens.borderRadius}
+        />
         <Animated.Text
           style={[settingsStyles.choiceChipLabel, { color: textColor }]}
         >

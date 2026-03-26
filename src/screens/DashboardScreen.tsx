@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
-import { View, StyleSheet, ScrollView, RefreshControl, Pressable, Animated, Easing, useWindowDimensions, Platform, InteractionManager, Dimensions } from 'react-native';
+import { View, StyleSheet, ScrollView, RefreshControl, Pressable, Animated, Easing, LayoutAnimation, useWindowDimensions, Platform, InteractionManager, Dimensions, AppState } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
@@ -7,10 +7,12 @@ import * as Haptics from 'expo-haptics';
 import { RootStackParamList } from '../../App';
 import { Text } from '../components/Text';
 import { Button } from '../components/Button';
+import { IconButton } from '../components/IconButton';
 import { StatCard } from '../components/StatCard';
 import { GapItem } from '../components/GapItem';
 import { Card } from '../components/Card';
 import { AppIcon } from '../components/AppIcon';
+import { WalkCompletionSummary } from '../components/WalkCompletionSummary';
 import { theme } from '../theme';
 import { withAlpha } from '../theme/colorUtils';
 import { getThemePalette } from '../theme/palette';
@@ -28,11 +30,17 @@ import {
   notificationService,
 } from '../services/notifications';
 import { notificationPlanActions } from '../services/notificationPlanActions';
-import { NudgePlan, Preferences } from '../types';
+import { analyticsService } from '../services/analytics';
+import { NudgePlan, Preferences, WalkSession } from '../types';
 import { calculateStreak, calculateWeeklyStats, getMotivationalMessage, StreakData, WeeklyStats } from '../utils/statsUtils';
 import { addMinutes, format, isAfter, isBefore, parseISO, subMinutes, subDays } from 'date-fns';
 import { timeUtils } from '../utils/time';
-import { requestAllPermissions } from '../services/permissions';
+import {
+  getNotificationPermissionState,
+  openAppSettings,
+  requestNotificationPermission,
+  type NotificationPermissionState,
+} from '../services/permissions';
 import { toUserFriendlyError } from '../utils/errorMessages';
 import { authStorage } from '../data/authStorage';
 import { firebaseAuthService } from '../services/firebaseAuth';
@@ -40,6 +48,8 @@ import { guidanceStorage } from '../data/guidanceStorage';
 import { SuccessToast } from '../components/SuccessToast';
 import { Modal as AppModal } from '../components/Modal';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { androidExactNotifications } from '../services/androidExactNotifications';
+import { registerCurrentDeviceForNotifications } from '../services/deviceRegistration';
 
 // Extracted dashboard components
 import { StreakCard } from './dashboard/StreakCard';
@@ -126,27 +136,19 @@ const to12HourParts = (iso: string): { hour: string; minute: string; period: Tim
 
 const BurgerIcon = ({
   onPress,
-  color,
   testID,
 }: {
   onPress: () => void;
-  color: string;
   testID?: string;
 }) => (
-  <Pressable
-    onPress={() => {
-      if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => { });
-      onPress();
-    }}
-    style={({ pressed }) => [styles.burgerBtn, pressed && { opacity: 0.6, transform: [{ scale: 0.9 }] }]}
-    hitSlop={10}
+  <IconButton
+    onPress={onPress}
+    iconName="menu"
+    variant="secondary"
+    size="icon"
     testID={testID}
-    accessibilityLabel={testID}
-  >
-    <View style={[styles.burgerLine, { backgroundColor: color }]} />
-    <View style={[styles.burgerLine, { backgroundColor: color }]} />
-    <View style={[styles.burgerLine, { backgroundColor: color }]} />
-  </Pressable>
+    accessibilityLabel={testID ?? 'Open menu'}
+  />
 );
 
 
@@ -157,7 +159,6 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
     todayMinutesWalked, todayNotificationCount, upcomingPlans,
     todaySteps, setTodaySteps,
     setTodayStats, setUpcomingPlans,
-    hasRequestedPermissions, setHasRequestedPermissions,
     themeMode, language,
     authUser,
     profileDisplayName,
@@ -167,6 +168,10 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
     setAuthUser,
     guidanceSeen,
     setGuidanceSeen,
+    pendingInAppWalkPrompt,
+    setPendingInAppWalkPrompt,
+    activeWalkSnapshot,
+    distanceUnit,
   } = useAppStore();
   const [refreshing, setRefreshing] = useState(false);
   const [menuVisible, setMenuVisible] = useState(false);
@@ -240,12 +245,29 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
       changePeriod !== changeInitialState.period || changeDuration !== changeInitialState.duration ||
       changeNotifyChoice !== changeInitialState.notifyChoice);
 
+  // ── In-app walk prompt state ──
+  const [walkCountdown, setWalkCountdown] = useState<number | null>(null);
+  const walkCountdownScaleAnim = useRef(new Animated.Value(0)).current;
+  const [postWalkSummarySession, setPostWalkSummarySession] = useState<WalkSession | null>(null);
+
   // ── Themed dialog state ──
   const [messageDialog, setMessageDialog] = useState<{ title: string; message: string } | null>(null);
   const [confirmDialog, setConfirmDialog] = useState<{ title: string; message: string; confirmText: string; confirmStyle: 'default' | 'destructive'; onConfirm: () => void } | null>(null);
   const showMessage = (title: string, message: string) => setMessageDialog({ title, message });
   const showBinaryConfirm = (title: string, message: string, confirmText: string, onConfirm: () => void, style: 'default' | 'destructive' = 'default') =>
     setConfirmDialog({ title, message, confirmText, confirmStyle: style, onConfirm });
+  const [notificationPermissionState, setNotificationPermissionState] = useState<NotificationPermissionState | null>(null);
+  const [isRepairingNotifications, setIsRepairingNotifications] = useState(false);
+  const lastNotificationPermissionGrantedRef = useRef<boolean | null>(null);
+  const preferencesRef = useRef(preferences);
+  preferencesRef.current = preferences;
+  const hasActiveWalkSession = !!activeWalkSnapshot?.sessionId;
+  const walkActionTitle = hasActiveWalkSession
+    ? (activeWalkSnapshot?.paused ? 'Resume Walk Session' : 'Go to Walk Session')
+    : 'Start Manual Walk';
+  const walkActionHint = hasActiveWalkSession
+    ? 'Your walk is still running in the background. Jump back in anytime.'
+    : 'Your privacy matters. So does your health.';
 
   // ── Add walk modal state ──
   const [showAddWalkModal, setShowAddWalkModal] = useState(false);
@@ -415,14 +437,15 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
       (plan) => (plan.status === 'planned' || plan.status === 'notified') && isAfter(parseISO(plan.gapEnd), now)
     );
     const autoPlans = activePlans.filter((plan) => plan.reason !== 'manual');
-    const manualPlans = activePlans.filter((plan) => plan.reason === 'manual');
 
     const remainingTargetMinutes = Math.max(0, prefs.dailyTargetMinutes - minutesWalked);
     if (remainingTargetMinutes <= 0) {
       for (const plan of autoPlans) await plansRepo.updateStatus(plan.id, 'cancelled');
       if (isNotificationsSupported) {
-        await notificationService.cancelWalkNudges();
-        for (const plan of manualPlans) await notificationService.scheduleManualNudge(plan);
+        await notificationService.recoverScheduledNotifications({
+          prefs,
+          requestPermissions: false,
+        });
       }
       return;
     }
@@ -446,12 +469,10 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
     }
 
     if (isNotificationsSupported) {
-      await notificationService.cancelWalkNudges();
-      const futurePlans = await plansRepo.getUpcomingPlans(100);
-      await notificationService.scheduleMultipleNudges(futurePlans.filter(p => p.reason !== 'manual'), prefs);
-      for (const plan of futurePlans.filter(p => p.reason === 'manual')) {
-        await notificationService.scheduleManualNudge(plan);
-      }
+      await notificationService.recoverScheduledNotifications({
+        prefs,
+        requestPermissions: false,
+      });
     }
   }, []);
 
@@ -500,16 +521,79 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
     return refreshedUpcoming;
   }, [reconcileTodayPlans, setHasSetPreferences, setPreferences, setTodayStats, setUpcomingPlans]);
 
+  const applyNotificationPermissionGrant = useCallback(async () => {
+    const resolvedPrefs = preferencesRef.current ?? (await preferencesRepo.get());
+
+    if (resolvedPrefs && isNotificationsSupported) {
+      try {
+        await notificationPlanActions.reconcileExpiredPlansAndNotifications();
+        await notificationService.recoverScheduledNotifications({
+          prefs: resolvedPrefs,
+          requestPermissions: false,
+        });
+        if (androidExactNotifications.isSupported()) {
+          await androidExactNotifications.clearRecoveryNeeded();
+        }
+      } catch (error) {
+        if (androidExactNotifications.isSupported()) {
+          await androidExactNotifications.markRecoveryNeeded('dashboard_permission_repair_failed');
+        }
+        if (__DEV__) console.warn('Failed to recover notifications after permission grant:', error);
+      }
+    }
+
+    await registerCurrentDeviceForNotifications();
+    await load();
+  }, [load]);
+
+  const refreshNotificationPermissionState = useCallback(async (
+    options: { syncOnGrantTransition?: boolean } = {},
+  ): Promise<NotificationPermissionState | null> => {
+    if (!isNotificationsSupported) {
+      setNotificationPermissionState(null);
+      return null;
+    }
+
+    const nextState = await getNotificationPermissionState();
+    const wasGranted = lastNotificationPermissionGrantedRef.current;
+    setNotificationPermissionState(nextState);
+    lastNotificationPermissionGrantedRef.current = nextState.granted;
+
+    if (options.syncOnGrantTransition && nextState.granted && wasGranted === false) {
+      await applyNotificationPermissionGrant();
+    }
+
+    return nextState;
+  }, [applyNotificationPermissionGrant]);
+
+  const handleRepairNotifications = useCallback(async () => {
+    if (isRepairingNotifications || !notificationPermissionState) return;
+
+    setIsRepairingNotifications(true);
+    try {
+      if (!notificationPermissionState.canAskAgain) {
+        await openAppSettings();
+        return;
+      }
+
+      const nextState = await requestNotificationPermission();
+      setNotificationPermissionState(nextState);
+      lastNotificationPermissionGrantedRef.current = nextState.granted;
+
+      if (nextState.granted) {
+        await applyNotificationPermissionGrant();
+      }
+    } catch (error) {
+      if (__DEV__) console.warn('Notification repair failed:', error);
+    } finally {
+      setIsRepairingNotifications(false);
+    }
+  }, [applyNotificationPermissionGrant, isRepairingNotifications, notificationPermissionState]);
+
   useFocusEffect(
     useCallback(() => {
       load().catch((e) => console.error('Dashboard load failed:', e));
-      if (!hasRequestedPermissions) {
-        requestAllPermissions().then(() => {
-          setHasRequestedPermissions(true);
-        }).catch((e) => {
-          if (__DEV__) console.warn('Permission request failed:', e);
-        });
-      }
+      void refreshNotificationPermissionState({ syncOnGrantTransition: true });
       // Stagger card entrance animations
       cardAnims.forEach((a) => a.setValue(0));
       Animated.stagger(
@@ -523,8 +607,17 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
           })
         )
       ).start();
-    }, [load, hasRequestedPermissions])
+    }, [load, refreshNotificationPermissionState])
   );
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (nextState) => {
+      if (nextState === 'active') {
+        void refreshNotificationPermissionState({ syncOnGrantTransition: true });
+      }
+    });
+    return () => subscription.remove();
+  }, [refreshNotificationPermissionState]);
 
   // ── Celebration trigger ──
   useEffect(() => {
@@ -576,9 +669,27 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    try { await load(); } catch (e) { if (__DEV__) console.error('Dashboard refresh failed:', e); }
+    try {
+      await load();
+      await refreshNotificationPermissionState({ syncOnGrantTransition: true });
+    } catch (e) {
+      if (__DEV__) console.error('Dashboard refresh failed:', e);
+    }
     finally { setRefreshing(false); }
-  }, [load]);
+  }, [load, refreshNotificationPermissionState]);
+
+  const handleWalkActionPress = useCallback(() => {
+    if (hasActiveWalkSession && activeWalkSnapshot) {
+      navigation.navigate('Walking', {
+        planId: activeWalkSnapshot.planId,
+        prompt: activeWalkSnapshot.prompt,
+        startedFromNotification: activeWalkSnapshot.startedFromNotification ?? false,
+      });
+      return;
+    }
+
+    navigation.navigate('Walking', {});
+  }, [activeWalkSnapshot, hasActiveWalkSession, navigation]);
 
   // ── Cancel / change opportunity handlers ──
   const cancelOpportunity = useCallback((opportunity: PlanOpportunity) => {
@@ -600,12 +711,10 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
         const refreshedUpcoming = await plansRepo.getUpcomingPlans(20);
         setUpcomingPlans(refreshedUpcoming);
         if (isNotificationsSupported && preferences) {
-          await notificationService.cancelWalkNudges();
-          const futurePlans = await plansRepo.getUpcomingPlans(100);
-          await notificationService.scheduleMultipleNudges(futurePlans.filter((p) => p.reason !== 'manual'), preferences);
-          for (const plan of futurePlans.filter((p) => p.reason === 'manual')) {
-            await notificationService.scheduleManualNudge(plan);
-          }
+          await notificationService.recoverScheduledNotifications({
+            prefs: preferences,
+            requestPermissions: false,
+          });
         }
         const remainingToday = refreshedUpcoming
           .filter((plan) => plan.date === todayKey)
@@ -639,6 +748,65 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
     }
     showBinaryConfirm(confirmTitle, confirmMessage, 'Yes, cancel', () => { void performCancel(); }, 'destructive');
   }, [preferences, setUpcomingPlans]);
+
+  // ── In-app walk prompt handlers ──
+  const handleWalkPromptYes = useCallback(async () => {
+    const prompt = pendingInAppWalkPrompt;
+    if (!prompt) return;
+    setPendingInAppWalkPrompt(null);
+
+    // Run 3-2-1 countdown
+    for (let i = 3; i >= 1; i--) {
+      setWalkCountdown(i);
+      walkCountdownScaleAnim.setValue(0);
+      Animated.spring(walkCountdownScaleAnim, {
+        toValue: 1,
+        friction: 5,
+        tension: 80,
+        useNativeDriver: true,
+      }).start();
+      await new Promise<void>((resolve) => setTimeout(resolve, 1000));
+    }
+    setWalkCountdown(null);
+
+    navigation.navigate('Walking', {
+      planId: prompt.planId,
+      startedFromNotification: false,
+      skipStartCountdown: true,
+    });
+  }, [navigation, pendingInAppWalkPrompt, setPendingInAppWalkPrompt, walkCountdownScaleAnim]);
+
+  const handleWalkPromptNotNow = useCallback(async () => {
+    const prompt = pendingInAppWalkPrompt;
+    if (!prompt) return;
+    setPendingInAppWalkPrompt(null);
+
+    await notificationPlanActions.skipPlanSilently(prompt.planId);
+    // Animate the list change when opportunities update
+    LayoutAnimation.configureNext(LayoutAnimation.create(
+      300,
+      LayoutAnimation.Types.easeInEaseOut,
+      LayoutAnimation.Properties.opacity,
+    ));
+    const refreshedUpcoming = await plansRepo.getUpcomingPlans(20);
+    setUpcomingPlans(refreshedUpcoming);
+    analyticsService.track('walk_ready_not_now_inapp', { planId: prompt.planId });
+  }, [pendingInAppWalkPrompt, setPendingInAppWalkPrompt, setUpcomingPlans]);
+
+  const handleWalkPromptDismiss = useCallback(() => {
+    if (!pendingInAppWalkPrompt) return;
+    setPendingInAppWalkPrompt(null);
+    // Scroll to opportunities section
+    setTimeout(() => {
+      tourOpportunitiesRef.current?.measureInWindow((_x: number, y: number) => {
+        void smoothScrollTo(Math.max(0, y + scrollYRef.current - 80));
+      });
+    }, 200);
+  }, [pendingInAppWalkPrompt, setPendingInAppWalkPrompt, smoothScrollTo]);
+
+  const closePostWalkSummary = useCallback(() => {
+    setPostWalkSummarySession(null);
+  }, []);
 
   // ── Change walk handlers ──
   const openChangeOpportunity = (opportunity: PlanOpportunity) => {
@@ -770,15 +938,10 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
         reason: nextReason, status: 'planned',
       });
       if (isNotificationsSupported) {
-        await notificationService.cancelWalkNudges();
-        const futurePlans = await plansRepo.getUpcomingPlans(100);
-        await notificationService.scheduleMultipleNudges(
-          futurePlans.filter((plan) => plan.reason !== 'manual'),
-          preferences,
-        );
-        for (const plan of futurePlans.filter((plan) => plan.reason === 'manual')) {
-          await notificationService.scheduleManualNudge(plan);
-        }
+        await notificationService.recoverScheduledNotifications({
+          prefs: preferences,
+          requestPermissions: false,
+        });
       }
       const refreshedUpcoming = await plansRepo.getUpcomingPlans(20);
       setUpcomingPlans(refreshedUpcoming);
@@ -996,26 +1159,66 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
   // Post-walk summary: scroll to Quick Status and pulse a highlight glow
   useEffect(() => {
     if (!route.params?.showPostWalkSummary) return;
-    navigation.setParams({ showPostWalkSummary: undefined });
+    const requestedSessionId = route.params?.postWalkSessionId;
+    navigation.setParams({
+      showPostWalkSummary: undefined,
+      postWalkSessionId: undefined,
+    });
 
-    // Wait for entrance animations to settle, then scroll and glow
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    const triggerQuickStatusHighlight = () => {
+      timer = setTimeout(() => {
+        quickStatusRef.current?.measureInWindow((_x, y) => {
+          dashboardScrollRef.current?.scrollTo({ y: Math.max(0, y - 80), animated: true });
+        });
+
+        postWalkGlowAnim.setValue(0);
+        Animated.sequence([
+          Animated.timing(postWalkGlowAnim, { toValue: 1, duration: 400, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
+          Animated.timing(postWalkGlowAnim, { toValue: 0.3, duration: 300, useNativeDriver: true }),
+          Animated.timing(postWalkGlowAnim, { toValue: 0.8, duration: 300, useNativeDriver: true }),
+          Animated.timing(postWalkGlowAnim, { toValue: 0, duration: 800, easing: Easing.in(Easing.cubic), useNativeDriver: true }),
+        ]).start();
+      }, 500);
+    };
+
+    if (!requestedSessionId) {
+      triggerQuickStatusHighlight();
+      return () => {
+        cancelled = true;
+        if (timer) clearTimeout(timer);
+      };
+    }
+
+    void (async () => {
+      const session = await sessionsRepo.getById(requestedSessionId);
+      if (cancelled) return;
+      if (session) {
+        setPostWalkSummarySession(session);
+        return;
+      }
+      triggerQuickStatusHighlight();
+    })();
+
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [route.params?.postWalkSessionId, route.params?.showPostWalkSummary, navigation, postWalkGlowAnim]);
+
+  // Scroll to walking opportunities when navigated with scrollToOpportunities param
+  useEffect(() => {
+    if (!route.params?.scrollToOpportunities) return;
+    navigation.setParams({ scrollToOpportunities: undefined });
     const timer = setTimeout(() => {
-      quickStatusRef.current?.measureInWindow((_x, y) => {
-        dashboardScrollRef.current?.scrollTo({ y: Math.max(0, y - 80), animated: true });
+      tourOpportunitiesRef.current?.measureInWindow((_x: number, y: number) => {
+        void smoothScrollTo(Math.max(0, y + scrollYRef.current - 80));
       });
-
-      // Pulse glow: fade in then fade out
-      postWalkGlowAnim.setValue(0);
-      Animated.sequence([
-        Animated.timing(postWalkGlowAnim, { toValue: 1, duration: 400, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
-        Animated.timing(postWalkGlowAnim, { toValue: 0.3, duration: 300, useNativeDriver: true }),
-        Animated.timing(postWalkGlowAnim, { toValue: 0.8, duration: 300, useNativeDriver: true }),
-        Animated.timing(postWalkGlowAnim, { toValue: 0, duration: 800, easing: Easing.in(Easing.cubic), useNativeDriver: true }),
-      ]).start();
-    }, 500);
-
+    }, 300);
     return () => clearTimeout(timer);
-  }, [route.params?.showPostWalkSummary, navigation, postWalkGlowAnim]);
+  }, [route.params?.scrollToOpportunities, navigation, smoothScrollTo]);
 
   const navigateToManageSchedule = () => { closeMenu(); navigation.navigate('ManualSchedule', { manageMode: true }); };
   const navigateToProfile = () => { closeMenu(); navigation.navigate('Profile'); };
@@ -1177,6 +1380,14 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
   );
   const resolvedDashboardHeading = `Welcome, ${resolvedDisplayName}`;
   const dashboardHeadingStyle = resolvedDashboardHeading.length > 14 ? styles.headingCompact : styles.heading;
+  const showNotificationPermissionCard =
+    isNotificationsSupported &&
+    notificationPermissionState !== null &&
+    !notificationPermissionState.granted;
+  const notificationRepairLabel =
+    notificationPermissionState?.canAskAgain
+      ? 'Allow notifications'
+      : 'Open settings';
 
   // ── Variant A: no preferences ──
   if (!hasSetPreferences || !preferences) {
@@ -1212,7 +1423,7 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
             <Text variant="bodySmall" color={palette.textMuted} style={styles.headingDate}>{dayName}, {monthDay}</Text>
           </View>
           <View ref={tourMenuRef} style={styles.headerRight} collapsable={false}>
-            <BurgerIcon onPress={openMenu} color={palette.textPrimary} testID="dashboard-open-menu" />
+            <BurgerIcon onPress={openMenu} testID="dashboard-open-menu" />
           </View>
         </View>
       </View>
@@ -1233,6 +1444,30 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
             <View style={styles.statusIntroStack}>
               <Text variant="body" style={styles.readyText}>{readyPrompt}</Text>
               {yesterdayMessage && <YesterdayCard message={yesterdayMessage} />}
+              {showNotificationPermissionCard && (
+                <Card elevated style={styles.permissionCard}>
+                  <View style={styles.permissionCardHeader}>
+                    <View style={[styles.permissionIconWrap, { backgroundColor: withAlpha(theme.colors.warning, themeMode === 'dark' ? 0.18 : 0.12) }]}>
+                      <AppIcon name="bell" size={16} color={theme.colors.warning} />
+                    </View>
+                    <View style={styles.permissionCopy}>
+                      <Text variant="body" style={styles.permissionTitle}>Reminders are turned off</Text>
+                      <Text variant="bodySmall" color={palette.textMuted} style={styles.permissionBody}>
+                        GapWalk can still show your schedule and let you start manual walks, but it will not proactively remind you when a walk window opens until notifications are enabled.
+                      </Text>
+                    </View>
+                  </View>
+                  <View style={styles.permissionButtonRow}>
+                    <Button
+                      title={notificationRepairLabel}
+                      onPress={() => { void handleRepairNotifications(); }}
+                      loading={isRepairingNotifications}
+                      variant={notificationPermissionState?.canAskAgain ? 'primary' : 'secondary'}
+                      style={styles.permissionButton}
+                    />
+                  </View>
+                </Card>
+              )}
             </View>
           </Animated.View>
 
@@ -1250,9 +1485,9 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
             </Animated.View>
           )}
 
-          <View ref={quickStatusRef} collapsable={false}>
+          <View collapsable={false}>
             <View style={styles.quickStatusStack} collapsable={false}>
-              <View collapsable={false}>
+              <View ref={quickStatusRef} collapsable={false}>
                 <Animated.View style={[
                   { opacity: cardAnims[3], transform: [{ translateY: cardAnims[3].interpolate({ inputRange: [0, 1], outputRange: [12, 0] }) }] },
                   { borderRadius: 16, overflow: 'hidden' },
@@ -1304,20 +1539,16 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
                   <Text variant="muted" style={styles.gapSubtitle}>See your next walk windows and reminder times.</Text>
                 </View>
                 <View>
-                  <Pressable
-                    onPress={() => { if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => { }); openAddWalkModal(); }}
-                    hitSlop={12}
-                    style={({ pressed }) => [
-                      styles.addWalkBtn,
-                      {
-                        borderColor: withAlpha(palette.accentPrimary, themeMode === 'dark' ? 0.5 : 0.3),
-                        backgroundColor: withAlpha(palette.accentPrimary, themeMode === 'dark' ? 0.16 : 0.1),
-                      },
-                      pressed && { opacity: 0.7, transform: [{ scale: 0.92 }] },
-                    ]}
-                  >
-                    <AppIcon name="plus" size={18} color={palette.accentOnTint} strokeWidth={2.4} />
-                  </Pressable>
+                  <IconButton
+                    onPress={() => { openAddWalkModal(); }}
+                    iconName="plus"
+                    iconStrokeWidth={2.4}
+                    variant="info"
+                    size="icon"
+                    accessibilityLabel="Add walk"
+                    testID="dashboard-add-walk"
+                    style={styles.addWalkBtn}
+                  />
                 </View>
               </View>
 
@@ -1364,8 +1595,8 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
               </View>
 
               <View ref={tourManualWalkRef} style={styles.footerStack} collapsable={false}>
-                <Button title="Start Manual Walk" onPress={() => navigation.navigate('Walking', {})} testID="dashboard-start-manual-walk" />
-                <Text variant="muted" style={styles.dashboardFooter}>Your privacy matters. So does your health.</Text>
+                <Button title={walkActionTitle} onPress={handleWalkActionPress} testID="dashboard-start-manual-walk" />
+                <Text variant="muted" style={styles.dashboardFooter}>{walkActionHint}</Text>
               </View>
             </View>
           </Animated.View>
@@ -1460,7 +1691,7 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
         <View style={{ paddingBottom: 8 }}>
           <Text variant="body" style={{ color: palette.textMuted, textAlign: 'center', marginBottom: 24 }}>{confirmDialog?.message}</Text>
           <View style={{ flexDirection: 'row', gap: 12 }}>
-            <Button title="Cancel" onPress={() => setConfirmDialog(null)} variant="muted" style={{ flex: 1 }} />
+            <Button title="Cancel" onPress={() => setConfirmDialog(null)} variant="secondary" style={{ flex: 1 }} />
             <Button
               title={confirmDialog?.confirmText ?? 'Confirm'}
               onPress={() => { confirmDialog?.onConfirm(); setConfirmDialog(null); }}
@@ -1470,6 +1701,69 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
           </View>
         </View>
       </AppModal>
+
+      {/* In-app walk ready prompt */}
+      <AppModal
+        visible={pendingInAppWalkPrompt !== null && walkCountdown === null}
+        onClose={handleWalkPromptDismiss}
+        title={pendingInAppWalkPrompt ? `Ready for your ${pendingInAppWalkPrompt.walkStart} - ${pendingInAppWalkPrompt.walkEnd} MicroWalk?` : ''}
+      >
+        <View style={{ paddingBottom: 8 }}>
+          <Text variant="body" style={{ color: palette.textMuted, textAlign: 'center', marginBottom: 24 }}>
+            {pendingInAppWalkPrompt ? `${pendingInAppWalkPrompt.duration} min walk session` : ''}
+          </Text>
+          <View style={{ flexDirection: 'row', gap: 12 }}>
+            <Button
+              title="Not Now"
+              onPress={() => { void handleWalkPromptNotNow(); }}
+              variant="danger"
+              style={{ flex: 1 }}
+            />
+            <Button
+              title="Yes"
+              onPress={() => { void handleWalkPromptYes(); }}
+              variant="primary"
+              style={{ flex: 1 }}
+            />
+          </View>
+        </View>
+      </AppModal>
+
+      <AppModal
+        visible={postWalkSummarySession !== null}
+        onClose={closePostWalkSummary}
+      >
+        {postWalkSummarySession ? (
+          <WalkCompletionSummary
+            themeMode={themeMode}
+            palette={palette}
+            stats={{
+              activeSeconds: postWalkSummarySession.activeSeconds,
+              distanceMeters: postWalkSummarySession.distanceMeters ?? 0,
+              steps: postWalkSummarySession.steps ?? 0,
+            }}
+            distanceUnit={distanceUnit}
+            actionLabel="Close summary"
+            onAction={closePostWalkSummary}
+          />
+        ) : null}
+      </AppModal>
+
+      {/* Walk countdown overlay */}
+      {walkCountdown !== null && (
+        <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'center', alignItems: 'center', zIndex: 999 }]}>
+          <Animated.Text
+            style={{
+              fontSize: 120,
+              fontWeight: '800',
+              color: '#fff',
+              transform: [{ scale: walkCountdownScaleAnim }],
+            }}
+          >
+            {walkCountdown}
+          </Animated.Text>
+        </View>
+      )}
 
       <TourOverlay
         visible={showDashboardTour}
@@ -1494,12 +1788,10 @@ const styles = StyleSheet.create({
   glowBottom: { bottom: -130, left: -70 },
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingTop: 20, paddingBottom: 18 },
   headerCenter: { flex: 1, alignItems: 'flex-start' },
-  headerRight: { width: 32, alignItems: 'flex-end' },
+  headerRight: { width: 38, minHeight: 38, alignItems: 'center', justifyContent: 'center' },
   heading: { textAlign: 'left', fontSize: theme.fontSize.xl + 2 },
   headingCompact: { textAlign: 'left', fontSize: theme.fontSize.lg + 3, lineHeight: theme.fontSize.lg + 8 },
   headingDate: { textAlign: 'left', marginTop: 2 },
-  burgerBtn: { padding: 3, transform: [{ scale: 0.8 }] },
-  burgerLine: { width: 18, height: 2, backgroundColor: theme.colors.textPrimary, marginVertical: 2, borderRadius: 1 },
   scroll: { width: '100%' },
   dashboardStack: { gap: theme.spacing.md },
   emptyStateStack: { gap: theme.spacing.md },
@@ -1516,13 +1808,28 @@ const styles = StyleSheet.create({
   gapHeaderRow: { flexDirection: 'row', alignItems: 'flex-start' },
   gapTitle: { fontWeight: theme.fontWeight.semibold, fontSize: theme.fontSize.md + 2, marginBottom: 4 },
   gapSubtitle: { fontSize: theme.fontSize.sm, lineHeight: 20 },
-  addWalkBtn: { width: 36, height: 36, borderRadius: 18, borderWidth: 1.5, alignItems: 'center' as const, justifyContent: 'center' as const, marginLeft: 10, marginTop: 2 },
+  addWalkBtn: { marginLeft: 10, marginTop: 2 },
   emptyCard: { alignItems: 'center', paddingVertical: 28, paddingHorizontal: 20 },
   emptyText: { fontWeight: theme.fontWeight.semibold, marginBottom: 4 },
   emptyHint: { textAlign: 'center', lineHeight: 18 },
   promptCard: { gap: 10 },
   promptTitle: { fontWeight: theme.fontWeight.semibold },
   promptText: { lineHeight: 18 },
+  permissionCard: { gap: 14, paddingVertical: 18, paddingHorizontal: 18 },
+  permissionCardHeader: { flexDirection: 'row', alignItems: 'flex-start', gap: 12 },
+  permissionIconWrap: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 2,
+  },
+  permissionCopy: { flex: 1, gap: 4 },
+  permissionTitle: { fontWeight: theme.fontWeight.semibold },
+  permissionBody: { lineHeight: 20 },
+  permissionButtonRow: { alignItems: 'flex-end', marginTop: 10 },
+  permissionButton: {},
   dashboardFooter: { textAlign: 'center', lineHeight: 20 },
   readyText: { textAlign: 'center', fontSize: theme.fontSize.lg, fontWeight: theme.fontWeight.semibold },
   headingSub: { textAlign: 'left', marginTop: 4 },

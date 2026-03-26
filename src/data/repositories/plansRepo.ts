@@ -181,6 +181,32 @@ export const plansRepo = {
     return rows.map(mapRowToPlan);
   },
 
+  async getUpcomingPlansThrough(endIso: string, limit = 200): Promise<NudgePlan[]> {
+    const db = await getDatabase();
+    const now = new Date().toISOString();
+
+    const rows = await db.getAllAsync<{
+      id: string;
+      date: string;
+      gap_start: string;
+      gap_end: string;
+      walk_start: string;
+      suggested_duration_minutes: number;
+      manual_notify_lead_minutes: number;
+      notifications_enabled: number;
+      status: string;
+      reason: string | null;
+      created_at: string;
+    }>(
+      `SELECT * FROM nudge_plans
+       WHERE walk_start > ? AND walk_start <= ? AND status IN ('planned', 'notified')
+       ORDER BY walk_start ASC LIMIT ?`,
+      [now, endIso, limit]
+    );
+
+    return rows.map(mapRowToPlan);
+  },
+
   async findBestMatchingPlanForSession(session: Pick<WalkSession, 'start' | 'end'>): Promise<NudgePlan | null> {
     const sessionStartMs = new Date(session.start).getTime();
     const sessionEndMs = new Date(session.end).getTime();
@@ -293,5 +319,10 @@ export const plansRepo = {
   async deleteByDate(date: string): Promise<void> {
     const db = await getDatabase();
     await db.runAsync('DELETE FROM nudge_plans WHERE date = ?', [date]);
+  },
+
+  async deleteAll(): Promise<void> {
+    const db = await getDatabase();
+    await db.runAsync('DELETE FROM nudge_plans');
   },
 };
