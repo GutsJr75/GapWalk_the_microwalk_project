@@ -140,7 +140,7 @@
     <h2>1. Information We Collect</h2>
     <p>We collect the following types of information when you use GapWalk:</p>
 
-    <p><strong>Account information</strong> (via Google Sign-In):</p>
+    <p><strong>Account information</strong> (via Firebase Authentication, including optional Google sign-in):</p>
     <ul>
       <li>Your name and email address</li>
       <li>Your Google profile picture</li>
@@ -189,14 +189,14 @@
     <ul>
       <li><strong>On-device:</strong> Walk sessions and routes are stored in a local SQLite database on your phone.</li>
       <li><strong>Backend server:</strong> Session data may be synced to our secure server at <code>api.gapwalk.com</code> for backup and cross-device access.</li>
-      <li><strong>Google services:</strong> Authentication is handled by Google OAuth. We do not store your Google password.</li>
+      <li><strong>Firebase services:</strong> Authentication is handled through Firebase Authentication. We do not store your password outside Firebase.</li>
     </ul>
 
     <!-- 5 -->
     <h2>5. Data Sharing</h2>
     <p>We do not sell or share your personal data. The only third-party services involved are:</p>
     <ul>
-      <li><strong>Google Sign-In</strong> - for authentication. Governed by <a href="https://policies.google.com/privacy" target="_blank" rel="noopener">Google's Privacy Policy</a>.</li>
+      <li><strong>Firebase Authentication</strong> - for account authentication and session management. Google sign-in remains governed by <a href="https://policies.google.com/privacy" target="_blank" rel="noopener">Google's Privacy Policy</a>.</li>
       <li><strong>Google Maps</strong> - to display the map background in the walking screen. No walk data is sent to Google Maps.</li>
     </ul>
 

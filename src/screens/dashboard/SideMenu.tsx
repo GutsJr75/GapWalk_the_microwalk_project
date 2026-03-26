@@ -17,6 +17,7 @@ import { AppIcon, type AppIconName } from '../../components/AppIcon';
 import { theme } from '../../theme';
 import { withAlpha } from '../../theme/colorUtils';
 import { useThemePalette } from '../../theme/palette';
+import { type StoredAuthUser } from '../../data/authStorage';
 
 export interface SideMenuItem {
   key: string;
@@ -31,7 +32,7 @@ interface SideMenuProps {
   onClose: () => void;
   menuItems: SideMenuItem[];
   onLogout: () => void;
-  authUser: { email?: string; name?: string; sub?: string } | null;
+  authUser: StoredAuthUser | null;
   displayName: string;
   hasSetPreferences: boolean;
   menuPanelWidth: number;

@@ -9,7 +9,7 @@ REST API server for **GapWalk** - a micro-walk research intervention platform th
 | Framework | NestJS 11, TypeScript 5.7             |
 | Database  | PostgreSQL 16 (Prisma 7.4 ORM)        |
 | Queue     | Redis 7 + BullMQ                      |
-| Auth      | Auth0 (RS256 JWT via JWKS)            |
+| Auth      | Firebase Authentication + Admin SDK   |
 | Push      | Expo Server SDK                       |
 | Docs      | Swagger (OpenAPI 3) at `/docs`        |
 | Dashboard | Served at `/dashboard` (Chart.js SPA) |
@@ -20,7 +20,7 @@ REST API server for **GapWalk** - a micro-walk research intervention platform th
 
 - Node.js 22 LTS (Node.js ≥ 20 supported)
 - Docker & Docker Compose (for PostgreSQL + Redis)
-- Auth0 tenant with an API configured
+- Firebase project with Authentication enabled
 - Expo access token (for push notifications)
 
 ### 1. Start infrastructure
@@ -33,7 +33,7 @@ docker compose up -d postgres redis
 
 ```bash
 cp .env.example .env
-# Edit .env with your Auth0, Expo, and database credentials
+# Edit .env with your Firebase, Expo, and database credentials
 ```
 
 ### 3. Install dependencies
@@ -80,10 +80,10 @@ The API will be available at `http://localhost:3000`.
 | ------------------------ | -------- | ------------------------ | ----------------------------------------------------------- |
 | `DATABASE_URL`           | Yes      | -                        | PostgreSQL connection string                                |
 | `REDIS_URL`              | Yes      | `redis://localhost:6379` | Redis connection URL                                        |
-| `AUTH0_DOMAIN`           | Yes      | -                        | Auth0 tenant domain                                         |
-| `AUTH0_AUDIENCE`         | Yes      | -                        | Auth0 API audience                                          |
-| `AUTH0_CLIENT_ID`        | Yes      | -                        | Auth0 application client ID                                 |
-| `AUTH0_CLIENT_SECRET`    | Yes      | -                        | Auth0 application client secret                             |
+| `FIREBASE_PROJECT_ID`    | Yes      | -                        | Firebase project ID                                         |
+| `FIREBASE_CLIENT_EMAIL`  | Yes      | -                        | Firebase Admin service account client email                 |
+| `FIREBASE_PRIVATE_KEY`   | Yes      | -                        | Firebase Admin private key                                  |
+| `FIREBASE_SERVICE_ACCOUNT_JSON` | No | -                        | Optional JSON alternative to the Firebase Admin env trio    |
 | `EXPO_ACCESS_TOKEN`      | Yes      | -                        | Expo push notification access token                         |
 | `PORT`                   | No       | `3000`                   | HTTP port                                                   |
 | `NODE_ENV`               | No       | `development`            | `development` or `production`                               |
@@ -146,7 +146,7 @@ backend/
 │   ├── prisma/                # PrismaService (global DB client)
 │   ├── config/                # ConfigModule (typed env config)
 │   ├── common/                # Guards, filters, interceptors, decorators, DTOs
-│   ├── auth/                  # Auth0 JWT strategy, auto-registration
+│   ├── auth/                  # Firebase token verification, auto-registration
 │   ├── users/                 # User profile CRUD + user-profile DTO
 │   ├── devices/               # Expo push token management
 │   ├── preferences/           # Walk goals, notification settings
@@ -197,7 +197,7 @@ curl http://localhost:3000/health
 
 ### Production Checklist
 
-- [ ] All secrets rotated (Auth0, Expo, DB password)
+- [ ] All secrets rotated (Firebase, Expo, DB password)
 - [ ] `NODE_ENV=production` set
 - [ ] `CORS_ORIGIN` set to your production domain
 - [ ] SSL configured (database, Redis, reverse proxy)

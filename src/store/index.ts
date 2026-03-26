@@ -11,6 +11,7 @@ import {
   NotificationTimerMode,
 } from '../types';
 import { type GuidanceKey } from '../data/guidanceStorage';
+import { type StoredAuthUser } from '../data/authStorage';
 
 interface AppState {
   // Onboarding state
@@ -51,8 +52,8 @@ interface AppState {
   // Auth state
   isAuthenticated: boolean;
   setIsAuthenticated: (value: boolean) => void;
-  authUser: { email?: string; name?: string; sub?: string } | null;
-  setAuthUser: (user: { email?: string; name?: string; sub?: string } | null) => void;
+  authUser: StoredAuthUser | null;
+  setAuthUser: (user: StoredAuthUser | null) => void;
   profileDisplayName: string | null;
   setProfileDisplayName: (name: string | null) => void;
   rememberMe: boolean;

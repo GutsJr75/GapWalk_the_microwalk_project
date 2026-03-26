@@ -18,6 +18,7 @@ import { screenChrome } from '../theme/screenChrome';
 import { useThemePalette } from '../theme/palette';
 import { useAppStore } from '../store';
 import { authStorage } from '../data/authStorage';
+import { firebaseAuthService } from '../services/firebaseAuth';
 import { sessionsRepo } from '../data/repositories/sessionsRepo';
 import { achievementsRepo, ACHIEVEMENTS, getAchievementDef, type UnlockedAchievement } from '../data/repositories/achievementsRepo';
 import { calculateStreak, calculateWeeklyStats } from '../utils/statsUtils';
@@ -74,7 +75,7 @@ export const ProfileScreen: React.FC<Props> = ({ navigation }) => {
     const localName = profileDisplayName?.trim();
     if (localName) return localName;
     const authName = authUser?.name?.trim();
-    // Ignore auth name if it looks like an email address (Auth0 often sets name = email)
+    // Ignore provider names that are just an email address.
     if (authName && !authName.includes('@')) return authName;
     return 'GapWalker';
   }, [authUser?.name, profileDisplayName]);
@@ -173,6 +174,7 @@ export const ProfileScreen: React.FC<Props> = ({ navigation }) => {
 
   const handleLogout = () => {
     const doLogout = async () => {
+      await firebaseAuthService.signOut();
       await authStorage.clearAll();
       setIsAuthenticated(false);
       setAuthUser(null);

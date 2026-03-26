@@ -19,7 +19,7 @@ GapWalk is a **hybrid nudging** platform for micro-walk research interventions. 
 ┌──────────────────────────────────────────────────────────────────────┐
 │                        NestJS API Server                             │
 │  ┌────────────────────────────────────────────────────────────────┐  │
-│  │                      Auth0 JWT Guard                           │  │
+│  │                  Firebase Auth Token Guard                     │  │
 │  └────────────────────────────────────────────────────────────────┘  │
 │                                                                      │
 │  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐  │
@@ -77,10 +77,10 @@ WorkersModule       ←── BullModule, PrismaModule, NudgeEngineModule,
 
 ### Flow
 
-1. Mobile app authenticates with **Auth0** and receives an RS256-signed JWT.
+1. Mobile app authenticates with **Firebase Authentication** and receives a Firebase ID token.
 2. Every API request includes `Authorization: Bearer <token>`.
-3. `JwtStrategy` validates the token using Auth0's JWKS endpoint (`/.well-known/jwks.json`).
-4. On first valid JWT, if no user exists with that `auth0Sub`, a `User` record is **auto-created** with role `participant`.
+3. `JwtStrategy` validates the token using Firebase Admin token verification.
+4. On first valid token, if no user exists with that `firebaseUid`, a `User` record is **auto-created** with role `participant`.
 5. `RolesGuard` checks the `@Roles()` decorator on each endpoint. No decorator = open to all authenticated users.
 
 ### Roles
@@ -380,7 +380,7 @@ A static HTML/JS SPA served at `/dashboard`, backed by the `/api/dashboard-api/*
 
 ### Authentication
 
-Simple JWT token paste form. In production, this would integrate with Auth0 login.
+Simple JWT token paste form. In production, this should use a Firebase-authenticated researcher token.
 
 ---
 

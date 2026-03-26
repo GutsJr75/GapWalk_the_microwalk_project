@@ -36,7 +36,8 @@ import { androidWalkTracking } from './src/services/androidWalkTracking';
 import { requestAllPermissions } from './src/services/permissions';
 import { authStorage } from './src/data/authStorage';
 import { guidanceStorage } from './src/data/guidanceStorage';
-import { runBackendSync, registerDevice, apiFetch } from './src/services/backendSync';
+import { runBackendSync, registerDevice, apiFetch, canUseBackendSync } from './src/services/backendSync';
+import { firebaseAuthService, requiresEmailVerification } from './src/services/firebaseAuth';
 
 // Screens
 import { IntroScreen } from './src/screens/IntroScreen';
@@ -279,6 +280,22 @@ function App() {
     return clearBootGreetingTimers;
   }, [clearBootGreetingTimers, isBootstrapDone]);
 
+  useEffect(() => {
+    const unsubscribe = firebaseAuthService.onAuthStateChanged((user) => {
+      setAuthUser(user);
+      if (user) {
+        void authStorage.saveUser(user);
+        if (requiresEmailVerification(user)) {
+          setIsAuthenticated(false);
+        }
+      } else {
+        void authStorage.clearAll();
+        setIsAuthenticated(false);
+      }
+    });
+    return unsubscribe;
+  }, [setAuthUser, setIsAuthenticated]);
+
   const refreshDashboardSnapshot = useCallback(async () => {
     const mins = await sessionsRepo.getTodayMinutes();
     const notifiedCount = await plansRepo.getTodayNotifiedCount();
@@ -290,14 +307,17 @@ function App() {
 
   /** Register device push token + timezone with the backend. Safe to call multiple times. */
   const tryRegisterDevice = useCallback(async () => {
+    if (!canUseBackendSync()) return;
+
     const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
     // Fallback: update the timezone explicitly via /users/me if push isn't available
     const updateTimezoneFallback = async () => {
+      if (!canUseBackendSync()) return;
       try {
-        const token = await authStorage.getToken();
+        const token = await firebaseAuthService.getIdToken();
         if (token) {
-          await apiFetch('/users/me', { timezone: tz }, token, 'PATCH');
+          await apiFetch('/users/me', { timezone: tz }, 'PATCH');
         }
       } catch (e) {
         if (__DEV__) console.warn('Failed to update timezone fallback:', e);
@@ -513,12 +533,18 @@ function App() {
       }
 
       // Restore auth session.
-      // The session is always persisted — no "Remember me" gate.
-      // Exception: if it has been more than 30 days since the last login
-      // we clear the stored credentials and require the user to log in again.
+      // Firebase persists the session natively. We still enforce a 30 day
+      // re-authentication limit via local metadata.
       try {
         const storedUser = await authStorage.getUser();
         if (storedUser) setAuthUser(storedUser);
+
+        await firebaseAuthService.waitForAuthReady();
+        const currentUser = firebaseAuthService.getCurrentUser();
+        if (currentUser) {
+          setAuthUser(currentUser);
+          await authStorage.saveUser(currentUser);
+        }
 
         const lastLoginAt = await authStorage.getLastLoginAt();
         const thirtyDaysMs = 30 * 24 * 60 * 60 * 1000;
@@ -527,14 +553,14 @@ function App() {
           Date.now() - new Date(lastLoginAt).getTime() > thirtyDaysMs;
 
         if (sessionExpired) {
-          // Force re-auth — clear credentials but keep user profile for display
+          await firebaseAuthService.signOut();
           await authStorage.clearAll();
+          setAuthUser(null);
+        } else if (currentUser && !requiresEmailVerification(currentUser)) {
+          setIsAuthenticated(true);
+          hasRestoredAuthenticatedSession = true;
         } else {
-          const storedToken = await authStorage.getToken();
-          if (storedToken) {
-            setIsAuthenticated(true);
-            hasRestoredAuthenticatedSession = true;
-          }
+          setIsAuthenticated(false);
         }
       } catch (e) {
         if (__DEV__) console.warn('Failed to restore auth session:', e);

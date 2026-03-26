@@ -1,7 +1,9 @@
 import { UserRole } from '@prisma/client';
 
 export interface JwtPayload {
-  sub: string; // Auth0 subject
+  sub: string; // Firebase UID
+  uid?: string;
+  firebaseUid?: string;
   email?: string;
   email_verified?: boolean;
   name?: string;
@@ -9,6 +11,7 @@ export interface JwtPayload {
   family_name?: string;
   picture?: string;
   locale?: string;
+  providerId?: string;
   roles?: UserRole[];
   [key: string]: unknown;
 }

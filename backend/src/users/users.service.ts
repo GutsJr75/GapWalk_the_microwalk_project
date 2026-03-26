@@ -14,8 +14,8 @@ export class UsersService {
     return user;
   }
 
-  async findByAuth0Sub(auth0Sub: string): Promise<User | null> {
-    return this.prisma.user.findUnique({ where: { auth0Sub } });
+  async findByFirebaseUid(firebaseUid: string): Promise<User | null> {
+    return this.prisma.user.findUnique({ where: { firebaseUid } });
   }
 
   async update(id: string, dto: UpdateUserDto): Promise<User> {

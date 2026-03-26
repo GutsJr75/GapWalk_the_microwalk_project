@@ -29,7 +29,7 @@
 | **Node.js** | 20 LTS or 22 LTS | Required for `npm run start:prod` |
 | **PostgreSQL** | 16+ | Primary database |
 | **Redis** | 7+ | BullMQ job queue backend |
-| **Auth0 tenant** | - | With an API configured (RS256) |
+| **Firebase project** | - | With Authentication enabled and Admin credentials available |
 | **Expo access token** | - | For push notifications |
 | **Docker** (optional) | 24+ | For containerized deployment |
 
@@ -47,11 +47,10 @@ DATABASE_URL=postgresql://user:password@host:5432/gapwalk?sslmode=require
 REDIS_URL=redis://host:6379
 # or: REDIS_URL=rediss://host:6380 (TLS)
 
-# Auth0
-AUTH0_DOMAIN=your-tenant.auth0.com
-AUTH0_AUDIENCE=https://api.gapwalk.com
-AUTH0_CLIENT_ID=your_client_id
-AUTH0_CLIENT_SECRET=your_client_secret
+# Firebase Admin
+FIREBASE_PROJECT_ID=your-project-id
+FIREBASE_CLIENT_EMAIL=firebase-adminsdk-xxxxx@your-project-id.iam.gserviceaccount.com
+FIREBASE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n"
 
 # Expo Push
 EXPO_ACCESS_TOKEN=your_expo_access_token
@@ -66,7 +65,7 @@ ENABLE_WORKERS=true
 ### Security Rules for Production Variables
 
 - **POSTGRES_PASSWORD**: Generate with `openssl rand -base64 32` - minimum 32 characters
-- **AUTH0_CLIENT_SECRET**: Obtained from Auth0 Dashboard → Applications
+- **FIREBASE_PRIVATE_KEY**: Obtained from your Firebase service account JSON
 - **EXPO_ACCESS_TOKEN**: Generated at https://expo.dev/accounts/[your-account]/settings/access-tokens
 - **Never commit** `.env` to version control (already in `.gitignore`)
 - **Rotate all secrets** before the first production deployment if they were ever used in development
@@ -368,14 +367,14 @@ Before going to production, verify each item:
 
 - [ ] **`.env` not in git** - Already in `.gitignore`, verify with `git ls-files .env`
 - [ ] **Strong database password** - Minimum 32 characters, randomly generated
-- [ ] **All secrets rotated** - Don't reuse development Auth0/Expo credentials
+- [ ] **All secrets rotated** - Don't reuse development Firebase/Expo credentials
 - [ ] **`NODE_ENV=production`** - Set in environment (reduces verbose logging)
 - [ ] **`CORS_ORIGIN` set correctly** - Only allow your app's domain, not `*`
 - [ ] **SSL on database** - `?sslmode=require` in `DATABASE_URL`
 - [ ] **Reverse proxy with HTTPS** - Never expose port 3000 directly to the internet
 - [ ] **Non-root Docker user** - Dockerfile already creates and uses `appuser`
 - [ ] **Rate limiting configured** - Consider adding `@nestjs/throttler` for API rate limits
-- [ ] **Auth0 API permissions configured** - Ensure audience and scopes are correct
+- [ ] **Firebase Authentication configured** - Ensure Google and email/password providers are enabled
 - [ ] **Expo access token scoped** - Use project-scoped tokens when possible
 - [ ] **Database backups enabled** - Automated daily backups with point-in-time recovery
 - [ ] **Firewall rules** - Only expose port 443 (HTTPS) externally

@@ -1,7 +1,7 @@
 import * as SecureStore from 'expo-secure-store';
 import { Platform } from 'react-native';
 
-const AUTH_TOKEN_KEY = 'gapwalk_auth_token';
+const LEGACY_AUTH_TOKEN_KEY = 'gapwalk_auth_token';
 const AUTH_USER_KEY = 'gapwalk_auth_user';
 const REMEMBER_ME_KEY = 'gapwalk_remember_me';
 const PROFILE_DISPLAY_NAME_KEY = 'gapwalk_profile_display_name';
@@ -18,20 +18,12 @@ const LAST_LOGIN_AT_KEY = 'gapwalk_last_login_at';
 export interface StoredAuthUser {
   email?: string;
   name?: string;
-  sub?: string;
+  uid?: string;
+  providerId?: string;
+  emailVerified?: boolean;
 }
 
 export const authStorage = {
-  async saveToken(token: string): Promise<void> {
-    if (Platform.OS === 'web') return;
-    await SecureStore.setItemAsync(AUTH_TOKEN_KEY, token);
-  },
-
-  async getToken(): Promise<string | null> {
-    if (Platform.OS === 'web') return null;
-    return SecureStore.getItemAsync(AUTH_TOKEN_KEY);
-  },
-
   async saveUser(user: StoredAuthUser): Promise<void> {
     if (Platform.OS === 'web') return;
     await SecureStore.setItemAsync(AUTH_USER_KEY, JSON.stringify(user));
@@ -182,7 +174,7 @@ export const authStorage = {
 
   async clearAll(): Promise<void> {
     if (Platform.OS === 'web') return;
-    await SecureStore.deleteItemAsync(AUTH_TOKEN_KEY);
+    await SecureStore.deleteItemAsync(LEGACY_AUTH_TOKEN_KEY);
     await SecureStore.deleteItemAsync(AUTH_USER_KEY);
     await SecureStore.deleteItemAsync(REMEMBER_ME_KEY);
     await SecureStore.deleteItemAsync(LAST_LOGIN_AT_KEY);
