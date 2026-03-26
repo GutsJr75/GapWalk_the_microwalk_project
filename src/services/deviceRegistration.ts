@@ -3,7 +3,6 @@ import Constants from 'expo-constants';
 import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
 import { apiFetch, registerDevice } from './backendSync';
-import { authStorage } from '../data/authStorage';
 import {
   getExpoPushProjectId,
   getRemotePushRegistrationError,
@@ -17,9 +16,7 @@ export async function registerCurrentDeviceForNotifications(): Promise<boolean> 
 
   const updateTimezoneFallback = async (): Promise<boolean> => {
     try {
-      const token = await authStorage.getToken();
-      if (!token) return false;
-      await apiFetch('/users/me', { timezone }, token, 'PATCH');
+      await apiFetch('/users/me', { timezone }, 'PATCH');
       return true;
     } catch (error) {
       if (__DEV__) console.warn('Failed to update timezone fallback:', error);
