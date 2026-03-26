@@ -52,10 +52,26 @@ def localProps = new Properties()
 def localPropsFile = rootProject.file('local.properties')
 if (localPropsFile.exists()) localProps.load(new FileInputStream(localPropsFile))
 def googleMapsApiKey = localProps.getProperty('GOOGLE_MAPS_API_KEY', System.getenv('GOOGLE_MAPS_API_KEY') ?: '')
-def releaseStoreFile = localProps.getProperty('RELEASE_STORE_FILE', System.getenv('RELEASE_STORE_FILE') ?: '')
-def releaseStorePassword = localProps.getProperty('RELEASE_STORE_PASSWORD', System.getenv('RELEASE_STORE_PASSWORD') ?: '')
-def releaseKeyAlias = localProps.getProperty('RELEASE_KEY_ALIAS', System.getenv('RELEASE_KEY_ALIAS') ?: '')
-def releaseKeyPassword = localProps.getProperty('RELEASE_KEY_PASSWORD', System.getenv('RELEASE_KEY_PASSWORD') ?: '')
+def releaseStoreFilePath = System.getenv('GAPWALK_RELEASE_STORE_FILE') ?: localProps.getProperty('GAPWALK_RELEASE_STORE_FILE', '')
+def releaseStorePassword = System.getenv('GAPWALK_RELEASE_STORE_PASSWORD') ?: localProps.getProperty('GAPWALK_RELEASE_STORE_PASSWORD', '')
+def releaseKeyAlias = System.getenv('GAPWALK_RELEASE_KEY_ALIAS') ?: localProps.getProperty('GAPWALK_RELEASE_KEY_ALIAS', '')
+def releaseKeyPassword = System.getenv('GAPWALK_RELEASE_KEY_PASSWORD') ?: localProps.getProperty('GAPWALK_RELEASE_KEY_PASSWORD', '')
+def hasLocalReleaseSigning = [
+    releaseStoreFilePath,
+    releaseStorePassword,
+    releaseKeyAlias,
+    releaseKeyPassword,
+].every { value -> value != null && value.toString().trim() }
+def isEasBuild = (System.getenv('EAS_BUILD') ?: 'false').toBoolean() || System.getenv('EAS_BUILD_PROFILE') != null
+def requestedTasks = gradle.startParameter.taskNames.collect { it.toLowerCase() }.join(' ')
+def isReleaseTaskRequested = requestedTasks.contains('release') || requestedTasks.contains('bundle')
+
+if (isReleaseTaskRequested && !isEasBuild && !hasLocalReleaseSigning) {
+    throw new GradleException(
+        "Release signing credentials are missing. Set GAPWALK_RELEASE_* env vars " +
+        "or local.properties entries before running a local release build."
+    )
+}
 
 /**
  * This is the configuration block to customize your React Native Android app.
@@ -159,10 +175,12 @@ android {
             keyPassword 'android'
         }
         release {
-            storeFile file(releaseStoreFile)
-            storePassword releaseStorePassword
-            keyAlias releaseKeyAlias
-            keyPassword releaseKeyPassword
+            if (hasLocalReleaseSigning) {
+                storeFile file(releaseStoreFilePath)
+                storePassword releaseStorePassword
+                keyAlias releaseKeyAlias
+                keyPassword releaseKeyPassword
+            }
         }
     }
     buildTypes {
@@ -170,7 +188,13 @@ android {
             signingConfig signingConfigs.debug
         }
         release {
-            signingConfig signingConfigs.release
+            if (hasLocalReleaseSigning) {
+                signingConfig signingConfigs.release
+            } else if (isEasBuild) {
+                // EAS injects managed signing during cloud builds; keep a placeholder config
+                // so local release builds still fail fast instead of silently using debug signing.
+                signingConfig signingConfigs.debug
+            }
             def enableShrinkResources = findProperty('android.enableShrinkResourcesInReleaseBuilds') ?: 'false'
             shrinkResources enableShrinkResources.toBoolean()
             minifyEnabled enableMinifyInReleaseBuilds

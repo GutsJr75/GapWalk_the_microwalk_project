@@ -44,6 +44,10 @@ import {
   WALK_DISPLAY_CARD_LABELS,
   NotificationTimerMode,
   NOTIFICATION_TIMER_MODE_LABELS,
+  NotificationStatsMode,
+  NOTIFICATION_STATS_MODE_LABELS,
+  EndWalkMode,
+  WalkSession,
 } from "../types";
 import { translateLiteral } from "../i18n";
 import { plansRepo } from "../data/repositories/plansRepo";
@@ -87,8 +91,12 @@ export const SettingsScreen: React.FC<Props> = ({ navigation }) => {
     setVibrationEnabled,
     notificationTimerMode,
     setNotificationTimerMode,
+    notificationStatsMode,
+    setNotificationStatsMode,
     walkDisplayCards,
     setWalkDisplayCards,
+    endWalkMode,
+    setEndWalkMode,
   } = useAppStore();
   const { reduceMotion } = useReducedMotionPreference();
   const palette = getThemePalette(themeMode);
@@ -113,13 +121,18 @@ export const SettingsScreen: React.FC<Props> = ({ navigation }) => {
       await authStorage.saveDistanceUnit(s.distanceUnit);
       await authStorage.saveVibrationEnabled(s.vibrationEnabled);
       await authStorage.saveNotificationTimerMode(s.notificationTimerMode);
+      await authStorage.saveNotificationStatsMode(s.notificationStatsMode);
       await authStorage.saveWalkDisplayCards(s.walkDisplayCards);
+      await authStorage.saveEndWalkMode(s.endWalkMode);
 
       await notificationService.setReminderVibrationEnabled(s.vibrationEnabled);
 
       if (androidWalkTracking.isSupported()) {
         await androidWalkTracking.updateNotificationTimerMode(
           s.notificationTimerMode,
+        );
+        await androidWalkTracking.updateNotificationStatsMode(
+          s.notificationStatsMode,
         );
       }
     } catch (error) {
@@ -279,12 +292,16 @@ export const SettingsScreen: React.FC<Props> = ({ navigation }) => {
     navigation.navigate("Dashboard", { replayDashboardTour: true });
   }, [closeInfoOverlay, navigation]);
 
+  const getFirstUpcomingPlan = useCallback(async () => {
+    return (await plansRepo.getUpcomingPlans(1))[0] ?? null;
+  }, []);
+
   const simulateNotificationStart = useCallback(async () => {
-    const first = (await plansRepo.getUpcomingPlans(1))[0];
+    const first = await getFirstUpcomingPlan();
     if (!first) {
       Alert.alert(
         "No upcoming plan",
-        "Create a schedule first so we can simulate the start action.",
+        "Create a schedule first so we can simulate the ready action.",
       );
       return;
     }
@@ -292,28 +309,68 @@ export const SettingsScreen: React.FC<Props> = ({ navigation }) => {
     if (!result.allowed) {
       Alert.alert(
         "Action blocked",
-        "The start action was blocked, likely because today's goal is already complete.",
+        "The ready action was blocked, likely because today's goal is already complete.",
       );
       return;
     }
     navigation.navigate("Walking", {
       planId: first.id,
       startedFromNotification: true,
+      skipStartCountdown: true,
     });
-  }, [navigation]);
+  }, [getFirstUpcomingPlan, navigation]);
 
   const simulateNotificationSkip = useCallback(async () => {
-    const first = (await plansRepo.getUpcomingPlans(1))[0];
+    const first = await getFirstUpcomingPlan();
     if (!first) {
       Alert.alert(
         "No upcoming plan",
-        "Create a schedule first so we can simulate the skip action.",
+        "Create a schedule first so we can simulate the Not Now action.",
       );
       return;
     }
-    await notificationPlanActions.skipGap(first.id);
-    Alert.alert("Done", "Skip action simulated for the next upcoming plan.");
-  }, []);
+    await notificationPlanActions.skipPlanSilently(first.id);
+    Alert.alert(
+      "Ready Action Simulated",
+      "Not Now was simulated for the next upcoming plan and any replacement gap was rescheduled silently.",
+    );
+  }, [getFirstUpcomingPlan]);
+
+  const simulateQuickEndSummary = useCallback(async () => {
+    const now = new Date();
+    const endIso = now.toISOString();
+    const activeSeconds = 12 * 60;
+    const distanceMeters = 1094;
+    const steps = 1247;
+    const session: WalkSession = {
+      id: `e2e-quick-end-${now.getTime()}`,
+      start: new Date(now.getTime() - activeSeconds * 1000).toISOString(),
+      end: endIso,
+      activeSeconds,
+      pausedSeconds: 0,
+      distanceMeters,
+      steps,
+      usedLocation: true,
+      createdAt: endIso,
+      pauseCount: 0,
+      stepSource: "sensor",
+      motionConfidence: "high",
+      sensorHealthAtStart: "active",
+    };
+
+    await sessionsRepo.save(session);
+    await notificationService.showPostWalkSummaryNotification({
+      sessionId: session.id,
+      durationSeconds: session.activeSeconds,
+      steps: session.steps ?? 0,
+      distanceMeters: session.distanceMeters ?? 0,
+      distanceUnit,
+    });
+    navigation.navigate("Dashboard", {
+      showPostWalkSummary: true,
+      postWalkSessionId: session.id,
+    });
+  }, [distanceUnit, navigation]);
 
   const showTelemetrySnapshot = useCallback(async () => {
     const events = await analyticsRepo.getRecentEvents(20);
@@ -432,6 +489,39 @@ export const SettingsScreen: React.FC<Props> = ({ navigation }) => {
       notificationTimerMode,
       persistSettingsFromStore,
       setNotificationTimerMode,
+    ],
+  );
+
+  const setNotificationStatsWithAnimation = useCallback(
+    (nextMode: NotificationStatsMode) => {
+      if (nextMode === notificationStatsMode) return;
+      animateSettingChange();
+      setNotificationStatsMode(nextMode);
+      void persistSettingsFromStore();
+    },
+    [
+      animateSettingChange,
+      notificationStatsMode,
+      persistSettingsFromStore,
+      setNotificationStatsMode,
+    ],
+  );
+
+  const setEndWalkModeWithAnimation = useCallback(
+    (nextMode: EndWalkMode) => {
+      if (nextMode === endWalkMode) return;
+      animateSettingChange();
+      setEndWalkMode(nextMode);
+      void persistSettingsFromStore();
+      if (Platform.OS === 'android') {
+        void androidWalkTracking.setEndWalkMode(nextMode);
+      }
+    },
+    [
+      animateSettingChange,
+      endWalkMode,
+      persistSettingsFromStore,
+      setEndWalkMode,
     ],
   );
 
@@ -570,6 +660,79 @@ export const SettingsScreen: React.FC<Props> = ({ navigation }) => {
               ]}
               themeMode={themeMode}
               orientation="vertical"
+            />
+          </SettingShell>
+          <SectionDivider color={palette.borderSoft} />
+          <SettingShell
+            icon="list-outline"
+            title="Live Notification Stats"
+            description="Choose how much detail appears under the walk timer."
+            infoText={
+              "Show both steps and distance, keep only one stat visible, or hide extra stats for a cleaner notification."
+            }
+            infoId="live-notification-stats"
+            activeInfoId={activeInfo?.id ?? null}
+            onInfoToggle={handleInfoToggle}
+          >
+            <AnimatedChoiceGroup
+              value={notificationStatsMode}
+              onChange={(next) =>
+                setNotificationStatsWithAnimation(next as NotificationStatsMode)
+              }
+              options={[
+                {
+                  label: NOTIFICATION_STATS_MODE_LABELS.all,
+                  value: "all",
+                  testID: "settings-notification-stats-all",
+                },
+                {
+                  label: NOTIFICATION_STATS_MODE_LABELS.steps,
+                  value: "steps",
+                  testID: "settings-notification-stats-steps",
+                },
+                {
+                  label: NOTIFICATION_STATS_MODE_LABELS.distance,
+                  value: "distance",
+                  testID: "settings-notification-stats-distance",
+                },
+                {
+                  label: NOTIFICATION_STATS_MODE_LABELS.none,
+                  value: "none",
+                  testID: "settings-notification-stats-none",
+                },
+              ]}
+              themeMode={themeMode}
+              orientation="vertical"
+            />
+          </SettingShell>
+          <SectionDivider color={palette.borderSoft} />
+          <SettingShell
+            icon="stop-circle-outline"
+            title="End Walk Behavior"
+            description="How ending a walk from the notification works."
+            infoText={"Quick End stops the walk immediately from the notification and shows a summary. Confirm First opens the app so you can review before ending."}
+            infoId="end-walk-behavior"
+            activeInfoId={activeInfo?.id ?? null}
+            onInfoToggle={handleInfoToggle}
+          >
+            <AnimatedChoiceGroup
+              value={endWalkMode}
+              onChange={(next) =>
+                setEndWalkModeWithAnimation(next as EndWalkMode)
+              }
+              options={[
+                {
+                  label: "Quick End",
+                  value: "quick",
+                  testID: "settings-end-walk-quick",
+                },
+                {
+                  label: "Confirm First",
+                  value: "confirm",
+                  testID: "settings-end-walk-confirm",
+                },
+              ]}
+              themeMode={themeMode}
             />
           </SettingShell>
           <SectionDivider color={palette.borderSoft} />
@@ -755,7 +918,7 @@ export const SettingsScreen: React.FC<Props> = ({ navigation }) => {
             </Text>
             <View style={settingsStyles.e2eStack}>
               <Button
-                title="Simulate Start Action"
+                title="Simulate Ready Yes"
                 onPress={() => {
                   void simulateNotificationStart();
                 }}
@@ -763,11 +926,20 @@ export const SettingsScreen: React.FC<Props> = ({ navigation }) => {
                 full
               />
               <Button
-                title="Simulate Skip Action"
+                title="Simulate Ready Not Now"
                 onPress={() => {
                   void simulateNotificationSkip();
                 }}
                 testID="e2e-notification-skip"
+                full
+                variant="secondary"
+              />
+              <Button
+                title="Simulate Quick End Summary"
+                onPress={() => {
+                  void simulateQuickEndSummary();
+                }}
+                testID="e2e-notification-quick-end"
                 full
                 variant="secondary"
               />

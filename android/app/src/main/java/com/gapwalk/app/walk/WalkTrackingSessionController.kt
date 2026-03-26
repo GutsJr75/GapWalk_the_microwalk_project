@@ -28,10 +28,12 @@ object WalkTrackingSessionController {
     targetDurationMinutes: Int?,
     startedFromNotification: Boolean,
     notificationTimerMode: String?,
+    notificationStatsMode: String?,
     distanceUnit: String?,
   ): WalkTrackingSnapshot {
     val nowMs = System.currentTimeMillis()
     val normalizedTimerMode = WalkNotificationContent.normalizeTimerMode(notificationTimerMode)
+    val normalizedStatsMode = WalkNotificationContent.normalizeStatsMode(notificationStatsMode)
     val normalizedDistanceUnit = WalkNotificationContent.normalizeDistanceUnit(distanceUnit)
     val normalizedTargetDuration = targetDurationMinutes?.takeIf { it > 0 }
     val existing = WalkTrackingStorage.load(context)
@@ -42,6 +44,7 @@ object WalkTrackingSessionController {
         targetDurationMinutes = normalizedTargetDuration,
         startedFromNotification = startedFromNotification,
         notificationTimerMode = normalizedTimerMode,
+        notificationStatsMode = normalizedStatsMode,
         distanceUnit = normalizedDistanceUnit,
         startIso = isoTimestamp(nowMs),
         sessionStartMs = nowMs,
@@ -57,6 +60,7 @@ object WalkTrackingSessionController {
         targetDurationMinutes = normalizedTargetDuration ?: snapshot.targetDurationMinutes,
         startedFromNotification = startedFromNotification || snapshot.startedFromNotification,
         notificationTimerMode = normalizedTimerMode,
+        notificationStatsMode = normalizedStatsMode,
         distanceUnit = normalizedDistanceUnit,
         stepFallbackBlockedUntilMs = snapshot.stepFallbackBlockedUntilMs ?: WalkTrackingClassifier.fallbackBlockedUntilMs(nowMs),
       ),
@@ -107,6 +111,14 @@ object WalkTrackingSessionController {
     return refreshAndSave(
       context,
       snapshot.copy(notificationTimerMode = WalkNotificationContent.normalizeTimerMode(notificationTimerMode)),
+    )
+  }
+
+  fun updateNotificationStatsMode(context: Context, notificationStatsMode: String?): WalkTrackingSnapshot? {
+    val snapshot = WalkTrackingStorage.load(context) ?: return null
+    return refreshAndSave(
+      context,
+      snapshot.copy(notificationStatsMode = WalkNotificationContent.normalizeStatsMode(notificationStatsMode)),
     )
   }
 

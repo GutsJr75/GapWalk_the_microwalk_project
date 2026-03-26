@@ -1,5 +1,7 @@
 package com.gapwalk.app.walk
 
+import android.content.Context
+import com.facebook.react.bridge.Arguments
 import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReactContextBaseJavaModule
@@ -15,6 +17,26 @@ class WalkTrackingModule(
 
     fun emitSnapshot(snapshot: WalkTrackingSnapshot?) {
       instance?.emitWalkUpdate(snapshot)
+    }
+
+    fun emitQuickEndEvent(context: Context, snapshot: WalkTrackingSnapshot?) {
+      val payload = WalkTrackingStorage.buildQuickEndCompletionPayload(snapshot) ?: return
+      val inst = instance
+      if (inst == null) {
+        WalkTrackingStorage.savePendingQuickEndCompletion(context, payload)
+        return
+      }
+      if (!inst.reactApplicationContext.hasActiveReactInstance()) {
+        WalkTrackingStorage.savePendingQuickEndCompletion(context, payload)
+        return
+      }
+
+      inst.reactApplicationContext
+        .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
+        .emit(
+          "walkQuickEndCompleted",
+          WalkTrackingStorage.quickEndPayloadToWritableMap(payload),
+        )
     }
   }
 
@@ -36,6 +58,7 @@ class WalkTrackingModule(
     targetDurationMinutes: Double?,
     startedFromNotification: Boolean,
     notificationTimerMode: String?,
+    notificationStatsMode: String?,
     distanceUnit: String?,
     promise: Promise,
   ) {
@@ -46,6 +69,7 @@ class WalkTrackingModule(
         targetDurationMinutes = targetDurationMinutes?.toInt()?.takeIf { it > 0 },
         startedFromNotification = startedFromNotification,
         notificationTimerMode = notificationTimerMode,
+        notificationStatsMode = notificationStatsMode,
         distanceUnit = distanceUnit,
       )
       WalkTrackingService.startOrSync(reactApplicationContext)
@@ -134,12 +158,53 @@ class WalkTrackingModule(
   }
 
   @ReactMethod
+  fun updateNotificationStatsMode(mode: String, promise: Promise) {
+    try {
+      val snapshot = WalkTrackingSessionController.updateNotificationStatsMode(
+        reactApplicationContext,
+        mode,
+      )
+      if (snapshot != null) {
+        WalkTrackingService.startOrSync(reactApplicationContext)
+      }
+      emitWalkUpdate(snapshot)
+      promise.resolve(WalkTrackingStorage.toWritableMap(snapshot))
+    } catch (error: Throwable) {
+      promise.reject("walk_update_notification_stats_mode_failed", error)
+    }
+  }
+
+  @ReactMethod
+  fun setEndWalkMode(mode: String, promise: Promise) {
+    try {
+      reactApplicationContext.getSharedPreferences("gapwalk_settings", Context.MODE_PRIVATE)
+        .edit().putString("end_walk_mode", mode).apply()
+      promise.resolve(true)
+    } catch (error: Throwable) {
+      promise.reject("walk_set_end_walk_mode_failed", error)
+    }
+  }
+
+  @ReactMethod
   fun getSnapshot(promise: Promise) {
     try {
       val snapshot = WalkTrackingSessionController.refreshTick(reactApplicationContext)
       promise.resolve(WalkTrackingStorage.toWritableMap(snapshot))
     } catch (error: Throwable) {
       promise.reject("walk_snapshot_failed", error)
+    }
+  }
+
+  @ReactMethod
+  fun consumePendingQuickEndCompletion(promise: Promise) {
+    try {
+      promise.resolve(
+        WalkTrackingStorage.quickEndPayloadToWritableMap(
+          WalkTrackingStorage.takePendingQuickEndCompletion(reactApplicationContext),
+        ),
+      )
+    } catch (error: Throwable) {
+      promise.reject("walk_consume_pending_quick_end_failed", error)
     }
   }
 

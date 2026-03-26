@@ -2,7 +2,7 @@ import React, { useEffect, useRef } from "react";
 import { Animated } from "react-native";
 import { getThemePalette } from "../../theme/palette";
 import { motion } from "../../theme/motion";
-import { usePressMotion } from "../../hooks/usePressMotion";
+import { useButtonPressMotion } from "../../hooks/useButtonPressMotion";
 import { AnimatedPressable } from "./settingsAnimated";
 import { settingsStyles } from "./settingsStyles";
 import type { ThemeMode } from "./types";
@@ -16,13 +16,16 @@ export const AnimatedToggle: React.FC<{
 }> = ({ value, onValueChange, disabled = false, testID, themeMode }) => {
   const palette = getThemePalette(themeMode);
   const progress = useRef(new Animated.Value(value ? 1 : 0)).current;
-  const { animatedTransformStyle, handlePress, handlePressIn, handlePressOut } =
-    usePressMotion({
-      onPress: onValueChange,
-      enabled: !disabled,
-      hapticIntent: "selection",
-      pressScale: motion.scale.pressSubtle,
-    });
+  const {
+    animatedTransformStyle,
+    handlePress,
+    handlePressIn,
+    handlePressOut,
+  } = useButtonPressMotion({
+    onPress: onValueChange,
+    enabled: !disabled,
+    size: "compact",
+  });
 
   useEffect(() => {
     Animated.spring(progress, {

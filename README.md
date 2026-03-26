@@ -512,6 +512,7 @@ eas build --platform=android --profile=production
 ```
 
 Official Android release builds use EAS-managed credentials from [eas.json](/Users/mdamdadhossain/GapWalk/eas.json).
+Use the production release checklist in [docs/PLAY_STORE_RELEASE_CHECKLIST.md](/Users/mdamdadhossain/GapWalk/docs/PLAY_STORE_RELEASE_CHECKLIST.md) before each Play submission.
 
 For a manual local release build, export `GAPWALK_RELEASE_STORE_FILE`, `GAPWALK_RELEASE_STORE_PASSWORD`, `GAPWALK_RELEASE_KEY_ALIAS`, and `GAPWALK_RELEASE_KEY_PASSWORD` before running:
 
@@ -571,6 +572,7 @@ GapWalk is designed with a privacy-first philosophy:
 - **Data stays on device** - calendar events, walk history, and preferences are stored in a local SQLite database and never leave the device unless the user explicitly enables cloud sync
 - **No advertising or tracking** - the app contains no analytics SDKs, ad networks, or third-party tracking
 - **Minimal permissions** - permissions are requested only when the relevant feature is used, with clear in-app explanations
+- **Active-walk background location only** - if enabled, background location is used only while a walk is in progress so distance can continue updating when the app is not in use
 - **Optional sync** - the research backend is opt-in; users who do not enable it share no data externally
 
 ---

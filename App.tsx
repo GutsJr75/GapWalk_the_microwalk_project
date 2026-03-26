@@ -3,12 +3,11 @@ import { Animated, AppState, BackHandler, Image, Platform, StyleSheet, Text, Toa
 import { StatusBar } from 'expo-status-bar';
 import * as Font from 'expo-font';
 import * as SplashScreen from 'expo-splash-screen';
-import * as Device from 'expo-device';
-import Constants from 'expo-constants';
 import { NavigationContainer, createNavigationContainerRef } from '@react-navigation/native';
 import * as Notifications from 'expo-notifications';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { addMinutes, format, isAfter, parseISO } from 'date-fns';
 import { getDatabase } from './src/data/db';
 import { useAppStore } from './src/store';
 import { WalkDisplayCard, ALL_WALK_DISPLAY_CARDS } from './src/types';
@@ -16,28 +15,43 @@ import { preferencesRepo } from './src/data/repositories/preferencesRepo';
 import { plansRepo } from './src/data/repositories/plansRepo';
 import { scheduleSourceRepo } from './src/data/repositories/scheduleSourceRepo';
 import { sessionsRepo } from './src/data/repositories/sessionsRepo';
+import { pauseEventsRepo } from './src/data/repositories/pauseEventsRepo';
+import { eventsRepo } from './src/data/repositories/eventsRepo';
+import { manualScheduleRepo } from './src/data/repositories/manualScheduleRepo';
 import { appFontAssets, appFontFamily } from './src/theme';
 import { getThemePalette } from './src/theme/palette';
 import {
   isNotificationsSupported,
-  getExpoPushProjectId,
-  getRemotePushRegistrationError,
-  isAndroidFirebaseInitializationError,
   notificationService,
   WALK_NUDGE_ACTION_SKIP,
   WALK_NUDGE_ACTION_START,
   ALT_GAP_ACTION_ACCEPT,
+  WALK_ALERT_NOTIFICATION_TYPE,
+  WALK_READY_NOTIFICATION_TYPE,
+  WALK_READY_ACTION_YES,
+  WALK_READY_ACTION_NOT_NOW,
+  WALK_SUMMARY_NOTIFICATION_TYPE,
+  getWalkAlertNotificationId,
 } from './src/services/notifications';
 import { recoverOrphanedSession } from './src/services/walkCheckpoint';
 import { notificationPlanActions } from './src/services/notificationPlanActions';
 import { crashReporting } from './src/services/crashReporting';
 import { analyticsService } from './src/services/analytics';
-import { androidWalkTracking } from './src/services/androidWalkTracking';
-import { requestAllPermissions } from './src/services/permissions';
+import { AndroidQuickEndPayload, androidWalkTracking } from './src/services/androidWalkTracking';
+import { androidExactNotifications } from './src/services/androidExactNotifications';
+import { getNotificationPermissionState } from './src/services/permissions';
 import { authStorage } from './src/data/authStorage';
-import { guidanceStorage } from './src/data/guidanceStorage';
-import { runBackendSync, registerDevice, apiFetch, canUseBackendSync } from './src/services/backendSync';
-import { firebaseAuthService, requiresEmailVerification } from './src/services/firebaseAuth';
+import { GUIDANCE_KEYS, guidanceStorage, type GuidanceKey } from './src/data/guidanceStorage';
+import { runBackendSync } from './src/services/backendSync';
+import { registerCurrentDeviceForNotifications } from './src/services/deviceRegistration';
+import {
+  firebaseAuthService,
+  requiresEmailVerification,
+} from './src/services/firebaseAuth';
+import {
+  buildWalkSessionFromAndroidCompletion,
+  persistCompletedWalkSession,
+} from './src/services/walkSessionPersistence';
 
 // Screens
 import { IntroScreen } from './src/screens/IntroScreen';
@@ -69,6 +83,7 @@ export type RootStackParamList = {
     }[];
     requireSaveBeforeContinue?: boolean;
     startWithEmpty?: boolean;
+    replayScheduleTour?: boolean;
   }
   | undefined;
   Preferences:
@@ -81,10 +96,19 @@ export type RootStackParamList = {
   | {
     openMenu?: boolean;
     showPostWalkSummary?: boolean;
+    postWalkSessionId?: string;
     replayDashboardTour?: boolean;
+    scrollToOpportunities?: boolean;
   }
   | undefined;
-  Walking: { planId?: string; prompt?: 'end_confirmation'; startedFromNotification?: boolean } | undefined;
+  Walking:
+  | {
+    planId?: string;
+    prompt?: 'end_confirmation';
+    startedFromNotification?: boolean;
+    skipStartCountdown?: boolean;
+  }
+  | undefined;
   WalkingExpanded: undefined;
   Settings: undefined;
   WeeklyData: undefined;
@@ -107,6 +131,24 @@ const BOOT_BRAND_TILE_DARK = '#071a2e';
 const BOOT_BRAND_TILE_LIGHT = '#edf1f7';
 const BOOT_BRAND_MARK_DARK = '#2ee9a6';
 const BOOT_BRAND_MARK_LIGHT = '#047857';
+
+type UnifiedNotificationPayload = {
+  notificationId: string;
+  actionIdentifier?: string;
+  type?: string;
+  planId?: string;
+  sessionId?: string;
+};
+
+type PendingRootRoute =
+  | {
+      name: 'Dashboard';
+      params: RootStackParamList['Dashboard'];
+    }
+  | {
+      name: 'Walking';
+      params: RootStackParamList['Walking'];
+    };
 
 class ErrorBoundary extends React.Component<
   { children: React.ReactNode },
@@ -171,8 +213,6 @@ function App() {
     setTodayStats,
     setTodaySteps,
     setUpcomingPlans,
-    setHasRequestedPermissions,
-    hasRequestedPermissions,
     themeMode,
     setThemeMode,
     setLanguage,
@@ -184,11 +224,14 @@ function App() {
     setPendingWalkPrompt,
     setWalkDisplayCards,
     setNotificationTimerMode,
+    setNotificationStatsMode,
+    setEndWalkMode,
     setAllGuidanceSeen,
   } = useAppStore();
-  const pendingWalkPlanIdRef = useRef<{ planId: string; startedFromNotification?: boolean } | null>(null);
-  const pendingWalkRouteRef = useRef<{ planId?: string; prompt?: 'end_confirmation'; startedFromNotification?: boolean } | null>(null);
-  const lastHandledResponseRef = useRef<string | null>(null);
+  const pendingRootRouteRef = useRef<PendingRootRoute | null>(null);
+  const handledResponseKeysRef = useRef<Set<string>>(new Set());
+  const handledResponseNotificationIdsRef = useRef<Set<string>>(new Set());
+  const handledDeliveryIdsRef = useRef<Set<string>>(new Set());
   const [isBootstrapDone, setIsBootstrapDone] = useState(false);
   const [isBootGreetingDone, setIsBootGreetingDone] = useState(false);
   const [bootGreetingText, setBootGreetingText] = useState('');
@@ -305,107 +348,226 @@ function App() {
     setUpcomingPlans(upcoming);
   }, [setTodayStats, setTodaySteps, setUpcomingPlans]);
 
-  /** Register device push token + timezone with the backend. Safe to call multiple times. */
-  const tryRegisterDevice = useCallback(async () => {
-    if (!canUseBackendSync()) return;
-
-    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-
-    // Fallback: update the timezone explicitly via /users/me if push isn't available
-    const updateTimezoneFallback = async () => {
-      if (!canUseBackendSync()) return;
+  const lastNotificationRecoveryAtRef = useRef<number>(0);
+  const emptyGuidanceFlags = useRef(
+    Object.fromEntries(GUIDANCE_KEYS.map((key) => [key, false])) as Record<GuidanceKey, boolean>,
+  ).current;
+  const resetIncompleteOnboarding = useCallback(async () => {
+    if (isNotificationsSupported) {
       try {
-        const token = await firebaseAuthService.getIdToken();
-        if (token) {
-          await apiFetch('/users/me', { timezone: tz }, 'PATCH');
-        }
-      } catch (e) {
-        if (__DEV__) console.warn('Failed to update timezone fallback:', e);
+        await notificationService.cancelAllNotifications();
+      } catch (error) {
+        if (__DEV__) console.warn('Failed to cancel notifications during onboarding reset:', error);
       }
-    };
-
-    if (!isNotificationsSupported) {
-      void updateTimezoneFallback();
-      return;
     }
 
-    const remotePushRegistrationError = getRemotePushRegistrationError();
-    if (remotePushRegistrationError) {
-      if (__DEV__) console.info(remotePushRegistrationError);
-      void updateTimezoneFallback();
-      return;
+    if (androidExactNotifications.isSupported()) {
+      try {
+        await androidExactNotifications.clearRecoveryNeeded();
+      } catch (error) {
+        if (__DEV__) console.warn('Failed to clear exact-notification recovery state during onboarding reset:', error);
+      }
     }
+
+    await Promise.all([
+      preferencesRepo.clear(),
+      scheduleSourceRepo.clear(),
+      eventsRepo.deleteAll(),
+      manualScheduleRepo.deleteAll(),
+      plansRepo.deleteAll(),
+      guidanceStorage.resetAll(),
+    ]);
+
+    setPreferences(null);
+    setScheduleSource(null);
+    setHasCompletedOnboarding(false);
+    setHasSetPreferences(false);
+    setTodayStats(0, 0, 0);
+    setTodaySteps(0);
+    setUpcomingPlans([]);
+    setAllGuidanceSeen(emptyGuidanceFlags);
+  }, [
+    emptyGuidanceFlags,
+    setAllGuidanceSeen,
+    setHasCompletedOnboarding,
+    setHasSetPreferences,
+    setPreferences,
+    setScheduleSource,
+    setTodayStats,
+    setTodaySteps,
+    setUpcomingPlans,
+  ]);
+
+  const runScheduledNotificationRecovery = useCallback(async (options?: {
+    force?: boolean;
+    refreshDashboard?: boolean;
+    reason?: string;
+  }) => {
+    if (!isNotificationsSupported) return 0;
+
+    const nativeRecoveryNeeded = androidExactNotifications.isSupported()
+      ? await androidExactNotifications.isRecoveryNeeded()
+      : false;
+    const nowMs = Date.now();
+    const recoveryThrottleMs = 5 * 60 * 1000;
+
+    if (
+      !options?.force &&
+      !nativeRecoveryNeeded &&
+      nowMs - lastNotificationRecoveryAtRef.current < recoveryThrottleMs
+    ) {
+      return 0;
+    }
+
+    const prefs = await preferencesRepo.get();
+    if (!prefs) return 0;
+
+    lastNotificationRecoveryAtRef.current = nowMs;
 
     try {
-      const projectId = getExpoPushProjectId();
-      const tokenData = projectId
-        ? await Notifications.getExpoPushTokenAsync({ projectId })
-        : await Notifications.getExpoPushTokenAsync();
-      if (tokenData?.data) {
-        void registerDevice({
-          expoPushToken: tokenData.data,
-          platform: Platform.OS as 'ios' | 'android',
-          appVersion: Constants.expoConfig?.version,
-          osVersion: String(Platform.Version),
-          deviceModel: Device.modelName ?? undefined,
-          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-        });
+      await notificationPlanActions.reconcileExpiredPlansAndNotifications();
+      const recoveredCount = await notificationService.recoverScheduledNotifications({
+        prefs,
+        requestPermissions: false,
+      });
+      if (androidExactNotifications.isSupported()) {
+        await androidExactNotifications.clearRecoveryNeeded();
       }
-    } catch (e) {
+      if (options?.refreshDashboard) {
+        await refreshDashboardSnapshot();
+      }
+      return recoveredCount;
+    } catch (error) {
+      if (androidExactNotifications.isSupported()) {
+        await androidExactNotifications.markRecoveryNeeded(
+          options?.reason ?? 'app_notification_recovery_failed',
+        );
+      }
       if (__DEV__) {
-        if (isAndroidFirebaseInitializationError(e)) {
-          console.info(
-            'Skipping backend device registration because Android Firebase push is not configured. Add google-services.json and rebuild if you need server push notifications.'
-          );
-        } else {
-          console.warn('Failed to obtain push token for device registration:', e);
-        }
+        console.warn('Failed to recover scheduled notifications:', error);
       }
-      void updateTimezoneFallback();
+      return 0;
     }
-  }, []);
+  }, [refreshDashboardSnapshot]);
 
-  const navigateToActiveWalk = useCallback((params: { planId?: string; prompt?: 'end_confirmation'; startedFromNotification?: boolean }) => {
+  const navigateToActiveWalk = useCallback((params: {
+    planId?: string;
+    prompt?: 'end_confirmation';
+    startedFromNotification?: boolean;
+    skipStartCountdown?: boolean;
+  }) => {
     if (navigationRef.isReady()) {
       navigationRef.navigate('Walking', params);
       return;
     }
-    pendingWalkRouteRef.current = params;
+    pendingRootRouteRef.current = {
+      name: 'Walking',
+      params,
+    };
   }, []);
 
-  const handleNotificationResponse = useCallback(async (response: Notifications.NotificationResponse) => {
-    const data = response.notification.request.content.data as { type?: string; planId?: string };
-    if (!data.planId) return;
+  const navigateToDashboard = useCallback((params: RootStackParamList['Dashboard']) => {
+    if (navigationRef.isReady()) {
+      navigationRef.navigate('Dashboard', params);
+      return;
+    }
+    pendingRootRouteRef.current = {
+      name: 'Dashboard',
+      params,
+    };
+  }, []);
 
-    const responseKey = `${response.notification.request.identifier}:${response.actionIdentifier}`;
-    if (lastHandledResponseRef.current === responseKey) return;
-    lastHandledResponseRef.current = responseKey;
+  const resolveWalkPromptDetails = useCallback(async (planId?: string) => {
+    if (!planId) return null;
+    const plan = await plansRepo.getById(planId);
+    if (!plan) return null;
 
-    // Dismiss the notification from the tray on any action
+    const walkStart = parseISO(plan.walkStart);
+    const rawWalkEnd = addMinutes(walkStart, Math.max(1, plan.suggestedDurationMinutes));
+    const gapEnd = parseISO(plan.gapEnd);
+    const walkEnd = isAfter(rawWalkEnd, gapEnd) ? gapEnd : rawWalkEnd;
+
+    return {
+      planId: plan.id,
+      walkStart: format(walkStart, 'h:mm a'),
+      walkEnd: format(walkEnd, 'h:mm a'),
+      duration: plan.suggestedDurationMinutes,
+    };
+  }, []);
+
+  const handleUnifiedNotificationResponse = useCallback(async (payload: UnifiedNotificationPayload) => {
+    const actionId = payload.actionIdentifier ?? Notifications.DEFAULT_ACTION_IDENTIFIER;
+    const responseKey = `${payload.notificationId}:${actionId}`;
+    if (handledResponseKeysRef.current.has(responseKey)) return;
+    handledResponseKeysRef.current.add(responseKey);
+    handledResponseNotificationIdsRef.current.add(payload.notificationId);
+
     try {
-      await Notifications.dismissNotificationAsync(response.notification.request.identifier);
-    } catch { /* already dismissed */ }
+      await notificationService.dismissNotification(payload.notificationId);
+    } catch {
+      // notification may already be gone
+    }
 
     try {
-      // Handle alternative gap suggestion responses
-      if (data.type === 'alt_gap_suggestion') {
-        const actionId = response.actionIdentifier;
+      if (payload.type === WALK_ALERT_NOTIFICATION_TYPE) {
+        navigateToDashboard({ scrollToOpportunities: true });
+        return;
+      }
+
+      if (payload.type === WALK_READY_NOTIFICATION_TYPE && payload.planId) {
+        try {
+          await notificationService.cancelNotification(getWalkAlertNotificationId(payload.planId));
+          await notificationService.dismissNotification(getWalkAlertNotificationId(payload.planId));
+        } catch {
+          // Phase 1 may already be gone
+        }
+
+        if (actionId === WALK_READY_ACTION_YES) {
+          const startCheck = await notificationPlanActions.canStartPlan(payload.planId);
+          await refreshDashboardSnapshot();
+          if (!startCheck.allowed) return;
+          analyticsService.track('walk_ready_yes', { planId: payload.planId });
+          navigateToActiveWalk({ planId: payload.planId, startedFromNotification: true });
+          return;
+        }
+
+        if (actionId === WALK_READY_ACTION_NOT_NOW) {
+          await notificationPlanActions.skipPlanSilently(payload.planId);
+          await refreshDashboardSnapshot();
+          analyticsService.track('walk_ready_not_now', { planId: payload.planId });
+          return;
+        }
+
+        if (Platform.OS === 'android') {
+          await notificationPlanActions.skipPlanSilently(payload.planId);
+        }
+        navigateToDashboard({ scrollToOpportunities: true });
+        await refreshDashboardSnapshot();
+        return;
+      }
+
+      if (payload.type === WALK_SUMMARY_NOTIFICATION_TYPE && payload.sessionId) {
+        navigateToDashboard({
+          showPostWalkSummary: true,
+          postWalkSessionId: payload.sessionId,
+        });
+        return;
+      }
+
+      if (payload.type === 'alt_gap_suggestion' && payload.planId) {
         if (actionId === ALT_GAP_ACTION_ACCEPT) {
-          await notificationPlanActions.acceptAlternativeGap(data.planId);
+          await notificationPlanActions.acceptAlternativeGap(payload.planId);
           await refreshDashboardSnapshot();
         } else {
-          // "No" button, or tapping notification body — decline
-          await notificationPlanActions.declineAlternativeGap(data.planId);
+          await notificationPlanActions.declineAlternativeGap(payload.planId);
         }
         return;
       }
 
-      // Handle walk nudge responses
-      if (data.type !== 'walk_nudge') return;
+      if (payload.type !== 'walk_nudge' || !payload.planId) return;
 
-      const actionId = response.actionIdentifier;
       if (actionId === WALK_NUDGE_ACTION_SKIP) {
-        await notificationPlanActions.skipPlan(data.planId);
+        await notificationPlanActions.skipPlan(payload.planId);
         await refreshDashboardSnapshot();
         return;
       }
@@ -417,43 +579,100 @@ function App() {
         return;
       }
 
-      const startCheck = await notificationPlanActions.canStartPlan(data.planId);
+      const startCheck = await notificationPlanActions.canStartPlan(payload.planId);
       await refreshDashboardSnapshot();
       if (!startCheck.allowed) return;
 
-      // Track that user tapped "Start" on the nudge and the app foregrounded
-      analyticsService.track('nudge_action_start', { planId: data.planId });
-      analyticsService.track('app_foreground_from_nudge', { planId: data.planId });
-
-      if (navigationRef.isReady()) {
-        navigationRef.navigate('Walking', { planId: data.planId, startedFromNotification: true });
-      } else {
-        pendingWalkPlanIdRef.current = { planId: data.planId, startedFromNotification: true };
-      }
+      analyticsService.track('nudge_action_start', { planId: payload.planId });
+      analyticsService.track('app_foreground_from_nudge', { planId: payload.planId });
+      navigateToActiveWalk({ planId: payload.planId, startedFromNotification: true });
     } catch (error) {
       if (__DEV__) console.error('Failed to process notification response:', error);
     }
-  }, [refreshDashboardSnapshot]);
+  }, [navigateToActiveWalk, navigateToDashboard, refreshDashboardSnapshot]);
+
+  const handleUnifiedNotificationDelivery = useCallback(async (payload: UnifiedNotificationPayload) => {
+    if (handledDeliveryIdsRef.current.has(payload.notificationId)) return;
+    if (handledResponseNotificationIdsRef.current.has(payload.notificationId)) return;
+    handledDeliveryIdsRef.current.add(payload.notificationId);
+
+    if (
+      payload.planId &&
+      (
+        payload.type === WALK_ALERT_NOTIFICATION_TYPE ||
+        payload.type === WALK_READY_NOTIFICATION_TYPE ||
+        payload.type === 'walk_nudge'
+      )
+    ) {
+      try {
+        await notificationPlanActions.markNotifiedIfPlanned(payload.planId);
+      } catch (error) {
+        if (__DEV__) console.error('Failed to mark delivered plan as notified:', error);
+      }
+    }
+
+    if (payload.type === WALK_READY_NOTIFICATION_TYPE && payload.planId) {
+      try {
+        await notificationService.cancelNotification(getWalkAlertNotificationId(payload.planId));
+        await notificationService.dismissNotification(getWalkAlertNotificationId(payload.planId));
+      } catch {
+        // Phase 1 may not exist
+      }
+
+      const promptDetails = await resolveWalkPromptDetails(payload.planId);
+      if (promptDetails) {
+        const { setPendingInAppWalkPrompt } = useAppStore.getState();
+        setPendingInAppWalkPrompt(promptDetails);
+      }
+      await refreshDashboardSnapshot();
+      return;
+    }
+
+    if (payload.type === 'walk_nudge' && payload.planId) {
+      await refreshDashboardSnapshot();
+    }
+  }, [refreshDashboardSnapshot, resolveWalkPromptDetails]);
 
   useEffect(() => {
     if (!isNotificationsSupported) return;
 
     const responseSubscription = notificationService.addNotificationResponseListener((response) => {
-      void handleNotificationResponse(response);
+      const data = response.notification.request.content.data as {
+        type?: string;
+        planId?: string;
+        sessionId?: string;
+      };
+      void handleUnifiedNotificationResponse({
+        notificationId: response.notification.request.identifier,
+        actionIdentifier: response.actionIdentifier,
+        type: data.type,
+        planId: data.planId,
+        sessionId: data.sessionId,
+      });
     });
 
     void Notifications.getLastNotificationResponseAsync()
       .then(async (response) => {
         if (!response) return;
-        // Cross-session dedup: skip if we already handled this exact response in a prior session.
         const responseKey =
           `${response.notification.request.identifier}:${response.actionIdentifier}`;
         try {
           const storedKey = await authStorage.getLastHandledNotificationKey();
           if (storedKey === responseKey) return;
         } catch { /* proceed */ }
-        void handleNotificationResponse(response);
-        // Persist the key so a subsequent cold start doesn't replay this action.
+
+        const data = response.notification.request.content.data as {
+          type?: string;
+          planId?: string;
+          sessionId?: string;
+        };
+        void handleUnifiedNotificationResponse({
+          notificationId: response.notification.request.identifier,
+          actionIdentifier: response.actionIdentifier,
+          type: data.type,
+          planId: data.planId,
+          sessionId: data.sessionId,
+        });
         void authStorage.saveLastHandledNotificationKey(responseKey);
         const clearLastResponse = (Notifications as any).clearLastNotificationResponseAsync;
         if (typeof clearLastResponse === 'function') {
@@ -465,22 +684,131 @@ function App() {
       });
 
     const receivedSubscription = notificationService.addNotificationReceivedListener(async (notification) => {
-      const data = notification.request.content.data as { type?: string; planId?: string };
-      if (data.type !== 'walk_nudge' || !data.planId) return;
-
-      try {
-        await notificationPlanActions.markNotifiedIfPlanned(data.planId);
-        await refreshDashboardSnapshot();
-      } catch (error) {
-        if (__DEV__) console.error('Failed to process foreground notification:', error);
-      }
+      const data = notification.request.content.data as {
+        type?: string;
+        planId?: string;
+        sessionId?: string;
+      };
+      void handleUnifiedNotificationDelivery({
+        notificationId: notification.request.identifier,
+        type: data.type,
+        planId: data.planId,
+        sessionId: data.sessionId,
+      });
     });
+
+    const exactResponseSubscription = androidExactNotifications.isSupported()
+      ? androidExactNotifications.subscribe((payload) => {
+          void handleUnifiedNotificationResponse({
+            notificationId: payload.notificationId,
+            actionIdentifier: payload.actionIdentifier,
+            type: payload.type,
+            planId: payload.planId,
+            sessionId: payload.sessionId,
+          });
+        })
+      : null;
+
+    const exactDeliverySubscription = androidExactNotifications.isSupported()
+      ? androidExactNotifications.subscribeToDelivery((payload) => {
+          void handleUnifiedNotificationDelivery({
+            notificationId: payload.notificationId,
+            type: payload.type,
+            planId: payload.planId,
+            sessionId: payload.sessionId,
+          });
+        })
+      : null;
+
+    if (androidExactNotifications.isSupported()) {
+      void (async () => {
+        try {
+          const pendingExactResponse = await androidExactNotifications.consumePendingResponse();
+          if (pendingExactResponse) {
+            await handleUnifiedNotificationResponse({
+              notificationId: pendingExactResponse.notificationId,
+              actionIdentifier: pendingExactResponse.actionIdentifier,
+              type: pendingExactResponse.type,
+              planId: pendingExactResponse.planId,
+              sessionId: pendingExactResponse.sessionId,
+            });
+          }
+
+          const pendingExactDeliveries = await androidExactNotifications.consumePendingDeliveries();
+          for (const pendingExactDelivery of pendingExactDeliveries) {
+            await handleUnifiedNotificationDelivery({
+              notificationId: pendingExactDelivery.notificationId,
+              type: pendingExactDelivery.type,
+              planId: pendingExactDelivery.planId,
+              sessionId: pendingExactDelivery.sessionId,
+            });
+          }
+        } catch (error) {
+          if (__DEV__) console.error('Failed to consume pending exact notifications:', error);
+        }
+      })();
+    }
 
     return () => {
       responseSubscription.remove();
       receivedSubscription.remove();
+      exactResponseSubscription?.remove();
+      exactDeliverySubscription?.remove();
     };
-  }, [handleNotificationResponse, refreshDashboardSnapshot]);
+  }, [handleUnifiedNotificationDelivery, handleUnifiedNotificationResponse]);
+
+  const handleAndroidQuickEndCompletion = useCallback(async (payload: AndroidQuickEndPayload) => {
+    setActiveWalkSnapshot(null);
+    setPendingWalkPrompt(null);
+
+    const existingSession = await sessionsRepo.getById(payload.sessionId);
+    if (existingSession) {
+      return;
+    }
+
+    const [plan, pauseEvents] = await Promise.all([
+      payload.planId ? plansRepo.getById(payload.planId) : Promise.resolve(null),
+      pauseEventsRepo.getBySessionId(payload.sessionId),
+    ]);
+
+    const session = buildWalkSessionFromAndroidCompletion(payload, {
+      plan,
+      fallbackPlanId: payload.planId,
+      pauseCount: pauseEvents.length,
+    });
+    const resolvedSession = await persistCompletedWalkSession(session, {
+      hadWalkingSignal: payload.hadWalkingSignal,
+    });
+
+    if (isNotificationsSupported) {
+      await notificationService.showPostWalkSummaryNotification({
+        sessionId: resolvedSession.id,
+        durationSeconds: resolvedSession.activeSeconds,
+        steps: resolvedSession.steps ?? 0,
+        distanceMeters: resolvedSession.distanceMeters ?? 0,
+        distanceUnit: payload.distanceUnit,
+      });
+    }
+
+    analyticsService.track('walk_quick_end_completed', {
+      planId: resolvedSession.nudgePlanId || null,
+      activeSeconds: resolvedSession.activeSeconds,
+      steps: resolvedSession.steps ?? 0,
+      distanceMeters: Math.round(resolvedSession.distanceMeters ?? 0),
+    });
+
+    await refreshDashboardSnapshot();
+
+    if (navigationRef.isReady()) {
+      const currentRoute = navigationRef.getCurrentRoute();
+      if (currentRoute?.name === 'Walking') {
+        navigationRef.navigate('Dashboard', {
+          showPostWalkSummary: true,
+          postWalkSessionId: resolvedSession.id,
+        });
+      }
+    }
+  }, [refreshDashboardSnapshot, setActiveWalkSnapshot, setPendingWalkPrompt]);
 
   const initializeApp = async () => {
     try {
@@ -503,10 +831,13 @@ function App() {
           if (snapshot) {
             setActiveWalkSnapshot(snapshot);
             setPendingWalkPrompt(snapshot.prompt ?? null);
-            pendingWalkRouteRef.current = {
-              planId: snapshot.planId,
-              prompt: snapshot.prompt,
-              startedFromNotification: snapshot.startedFromNotification ?? false,
+            pendingRootRouteRef.current = {
+              name: 'Walking',
+              params: {
+                planId: snapshot.planId,
+                prompt: snapshot.prompt,
+                startedFromNotification: snapshot.startedFromNotification ?? false,
+              },
             };
           } else {
             if (isNotificationsSupported) {
@@ -583,6 +914,15 @@ function App() {
         if (storedLang) setLanguage(storedLang);
         const storedNotificationTimerMode = await authStorage.getNotificationTimerMode();
         if (storedNotificationTimerMode) setNotificationTimerMode(storedNotificationTimerMode);
+        const storedNotificationStatsMode = await authStorage.getNotificationStatsMode();
+        if (storedNotificationStatsMode) setNotificationStatsMode(storedNotificationStatsMode);
+        const storedEndWalkMode = await authStorage.getEndWalkMode();
+        if (storedEndWalkMode) {
+          setEndWalkMode(storedEndWalkMode);
+          if (Platform.OS === 'android' && androidWalkTracking.isSupported()) {
+            void androidWalkTracking.setEndWalkMode(storedEndWalkMode);
+          }
+        }
         const storedCards = await authStorage.getWalkDisplayCards();
         if (storedCards && storedCards.length >= 2) {
           const valid = storedCards.filter((c): c is WalkDisplayCard =>
@@ -595,8 +935,10 @@ function App() {
       }
 
       // Load guidance "seen" flags so hint cards render correctly on first frame
+      let guidanceFlags = emptyGuidanceFlags;
       try {
         const flags = await guidanceStorage.loadAll();
+        guidanceFlags = flags;
         setAllGuidanceSeen(flags);
       } catch (e) {
         if (__DEV__) console.warn('Failed to load guidance flags:', e);
@@ -607,6 +949,16 @@ function App() {
       // create a default manual source so we open to Dashboard.
       const prefsExist = await preferencesRepo.exists();
       let sourceExists = await scheduleSourceRepo.exists();
+      const shouldResetIncompleteOnboarding =
+        Platform.OS !== 'web' &&
+        !guidanceFlags.dashboard_welcome &&
+        (prefsExist || sourceExists);
+
+      if (shouldResetIncompleteOnboarding) {
+        await resetIncompleteOnboarding();
+        return;
+      }
+
       if (prefsExist && !sourceExists) {
         await scheduleSourceRepo.save({
           type: 'manual',
@@ -625,22 +977,16 @@ function App() {
         setPreferences(prefs);
         setScheduleSource(source);
         await refreshDashboardSnapshot();
-
-        // Request permissions (notifications + activity for steps; no location for now)
-        if (!hasRequestedPermissions) {
-          void (async () => {
-            try {
-              const permResults = await requestAllPermissions();
-              setHasRequestedPermissions(true);
-
-              // Register device with backend after push permission is resolved
-              if (permResults.notifications && hasRestoredAuthenticatedSession) {
-                void tryRegisterDevice();
-              }
-            } catch (e) {
-              if (__DEV__) console.warn('Permission request during init failed:', e);
-            }
-          })();
+        void runScheduledNotificationRecovery({
+          force: true,
+          refreshDashboard: true,
+          reason: 'app_init',
+        });
+        if (hasRestoredAuthenticatedSession) {
+          const notificationPermission = await getNotificationPermissionState();
+          if (notificationPermission.granted) {
+            void registerCurrentDeviceForNotifications();
+          }
         }
       }
     } catch (error) {
@@ -714,6 +1060,28 @@ function App() {
     return () => subscription.remove();
   }, [navigateToActiveWalk, setActiveWalkSnapshot, setPendingWalkPrompt]);
 
+  // Listen for Android quick-end walk events (End Walk from notification in quick mode)
+  useEffect(() => {
+    if (!androidWalkTracking.isSupported()) return;
+
+    void (async () => {
+      try {
+        const pendingQuickEnd = await androidWalkTracking.consumePendingQuickEndCompletion();
+        if (pendingQuickEnd) {
+          await handleAndroidQuickEndCompletion(pendingQuickEnd);
+        }
+      } catch (error) {
+        if (__DEV__) console.error('Failed to consume pending quick-end completion:', error);
+      }
+    })();
+
+    const subscription = androidWalkTracking.subscribeToQuickEnd((payload) => {
+      void handleAndroidQuickEndCompletion(payload);
+    });
+
+    return () => subscription.remove();
+  }, [handleAndroidQuickEndCompletion]);
+
   // Sync unsynchronised local data to the backend whenever the app comes to foreground.
   // Throttled to at most once every 5 minutes to avoid hammering the API.
   const lastSyncAtRef = useRef<number>(0);
@@ -724,10 +1092,13 @@ function App() {
       const now = Date.now();
       if (now - lastSyncAtRef.current < SYNC_THROTTLE_MS) return;
       lastSyncAtRef.current = now;
+      void runScheduledNotificationRecovery({
+        reason: 'app_foreground',
+      });
       void runBackendSync();
     });
     return () => subscription.remove();
-  }, []);
+  }, [runScheduledNotificationRecovery]);
 
   if (showBootScreen) {
     return (
@@ -791,15 +1162,14 @@ function App() {
           <NavigationContainer
             ref={navigationRef}
             onReady={() => {
-              const pendingWalkRoute = pendingWalkRouteRef.current;
-              if (pendingWalkRoute && navigationRef.isReady()) {
-                navigationRef.navigate('Walking', pendingWalkRoute);
-                pendingWalkRouteRef.current = null;
-              }
-              const pendingPlan = pendingWalkPlanIdRef.current;
-              if (pendingPlan && navigationRef.isReady()) {
-                navigationRef.navigate('Walking', pendingPlan);
-                pendingWalkPlanIdRef.current = null;
+              const pendingRoute = pendingRootRouteRef.current;
+              if (pendingRoute && navigationRef.isReady()) {
+                if (pendingRoute.name === 'Walking') {
+                  navigationRef.navigate('Walking', pendingRoute.params);
+                } else {
+                  navigationRef.navigate('Dashboard', pendingRoute.params);
+                }
+                pendingRootRouteRef.current = null;
               }
             }}
           >
@@ -819,6 +1189,7 @@ function App() {
                 contentStyle: { backgroundColor: palette.bgApp },
                 animation: 'slide_from_right',
                 gestureEnabled: true,
+                freezeOnBlur: true,
               }}
             >
               <Stack.Screen
@@ -830,7 +1201,7 @@ function App() {
                     onAuthenticated={() => {
                       setIsAuthenticated(true);
                       // Register device + timezone with backend on fresh login
-                      void tryRegisterDevice();
+                      void registerCurrentDeviceForNotifications();
                     }}
                   />
                 )}

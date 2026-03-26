@@ -4,10 +4,16 @@ import android.content.Context
 import com.facebook.react.bridge.Arguments
 import com.facebook.react.bridge.WritableMap
 import org.json.JSONObject
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import java.util.TimeZone
+import kotlin.math.max
 
 object WalkTrackingStorage {
   private const val PREFS_NAME = "gapwalk_walk_tracking"
   private const val KEY_SNAPSHOT = "snapshot"
+  private const val KEY_PENDING_QUICK_END_COMPLETION = "pending_quick_end_completion"
 
   fun load(context: Context): WalkTrackingSnapshot? {
     val jsonString = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -21,6 +27,7 @@ object WalkTrackingStorage {
         targetDurationMinutes = json.optIntOrNull("targetDurationMinutes"),
         startedFromNotification = json.optBoolean("startedFromNotification", false),
         notificationTimerMode = WalkNotificationContent.normalizeTimerMode(json.optStringOrNull("notificationTimerMode")),
+        notificationStatsMode = WalkNotificationContent.normalizeStatsMode(json.optStringOrNull("notificationStatsMode")),
         distanceUnit = WalkNotificationContent.normalizeDistanceUnit(
           json.optStringOrNull("distanceUnit") ?: WalkNotificationContent.DISTANCE_UNIT_MI,
         ),
@@ -88,6 +95,7 @@ object WalkTrackingStorage {
       .put("hadWalkingSignal", snapshot.hadWalkingSignal)
       .put("startedFromNotification", snapshot.startedFromNotification)
       .put("notificationTimerMode", WalkNotificationContent.normalizeTimerMode(snapshot.notificationTimerMode))
+      .put("notificationStatsMode", WalkNotificationContent.normalizeStatsMode(snapshot.notificationStatsMode))
       .put("distanceUnit", WalkNotificationContent.normalizeDistanceUnit(snapshot.distanceUnit))
       .put("stepCounterAvailable", snapshot.stepCounterAvailable)
       .put("stepCounterDisabledForSession", snapshot.stepCounterDisabledForSession)
@@ -125,6 +133,48 @@ object WalkTrackingStorage {
       .apply()
   }
 
+  fun buildQuickEndCompletionPayload(
+    snapshot: WalkTrackingSnapshot?,
+    endedAtMs: Long = System.currentTimeMillis(),
+  ): JSONObject? {
+    if (snapshot == null) return null
+
+    val currentPauseMs = snapshot.pauseStartedAtMs?.let { max(0L, endedAtMs - it) } ?: 0L
+    val pausedSeconds = ((snapshot.totalPausedMs + currentPauseMs) / 1000L).toInt()
+
+    return JSONObject().apply {
+      put("sessionId", snapshot.sessionId)
+      put("planId", snapshot.planId ?: JSONObject.NULL)
+      put("startIso", snapshot.startIso)
+      put("endIso", isoTimestamp(endedAtMs))
+      put("activeSeconds", snapshot.computedElapsedSeconds(endedAtMs))
+      put("pausedSeconds", pausedSeconds)
+      put("distanceMeters", snapshot.distanceMeters)
+      put("steps", snapshot.steps)
+      put("usedLocation", snapshot.usedLocation)
+      put("stepSource", snapshot.stepSource)
+      put("motionConfidence", snapshot.motionConfidence)
+      put("sensorHealthAtStart", snapshot.pedometerHealth)
+      put("hadWalkingSignal", snapshot.hadWalkingSignal)
+      put("distanceUnit", snapshot.distanceUnit)
+    }
+  }
+
+  fun savePendingQuickEndCompletion(context: Context, payload: JSONObject?) {
+    if (payload == null) return
+    context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+      .edit()
+      .putString(KEY_PENDING_QUICK_END_COMPLETION, payload.toString())
+      .apply()
+  }
+
+  fun takePendingQuickEndCompletion(context: Context): JSONObject? {
+    val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    val raw = prefs.getString(KEY_PENDING_QUICK_END_COMPLETION, null) ?: return null
+    prefs.edit().remove(KEY_PENDING_QUICK_END_COMPLETION).apply()
+    return runCatching { JSONObject(raw) }.getOrNull()
+  }
+
   fun toWritableMap(snapshot: WalkTrackingSnapshot?): WritableMap? {
     if (snapshot == null) return null
 
@@ -138,6 +188,7 @@ object WalkTrackingStorage {
       }
       putBoolean("startedFromNotification", snapshot.startedFromNotification)
       putString("notificationTimerMode", WalkNotificationContent.normalizeTimerMode(snapshot.notificationTimerMode))
+      putString("notificationStatsMode", WalkNotificationContent.normalizeStatsMode(snapshot.notificationStatsMode))
       putString("distanceUnit", WalkNotificationContent.normalizeDistanceUnit(snapshot.distanceUnit))
       putString("startIso", snapshot.startIso)
       putDouble("sessionStartMs", snapshot.sessionStartMs.toDouble())
@@ -172,6 +223,34 @@ object WalkTrackingStorage {
       putNullableDouble("lastAcceptedLocationAtMs", snapshot.lastAcceptedLocationAtMs)
       putNullableDouble("lastAccelMotionAtMs", snapshot.lastAccelMotionAtMs)
     }
+  }
+
+  fun quickEndPayloadToWritableMap(payload: JSONObject?): WritableMap? {
+    if (payload == null) return null
+
+    return Arguments.createMap().apply {
+      putString("sessionId", payload.optString("sessionId"))
+      val planId = payload.optString("planId")
+      if (planId.isNotEmpty()) putString("planId", planId)
+      putString("startIso", payload.optString("startIso"))
+      putString("endIso", payload.optString("endIso"))
+      putInt("activeSeconds", payload.optInt("activeSeconds", 0))
+      putInt("pausedSeconds", payload.optInt("pausedSeconds", 0))
+      putDouble("distanceMeters", payload.optDouble("distanceMeters", 0.0))
+      putInt("steps", payload.optInt("steps", 0))
+      putBoolean("usedLocation", payload.optBoolean("usedLocation", false))
+      putString("stepSource", payload.optString("stepSource", "none"))
+      putString("motionConfidence", payload.optString("motionConfidence", "low"))
+      putString("sensorHealthAtStart", payload.optString("sensorHealthAtStart", "stale"))
+      putBoolean("hadWalkingSignal", payload.optBoolean("hadWalkingSignal", false))
+      putString("distanceUnit", payload.optString("distanceUnit", "mi"))
+    }
+  }
+
+  private fun isoTimestamp(nowMs: Long): String {
+    val formatter = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US)
+    formatter.timeZone = TimeZone.getTimeZone("UTC")
+    return formatter.format(Date(nowMs))
   }
 
   private fun JSONObject.putNullable(key: String, value: Any?) {

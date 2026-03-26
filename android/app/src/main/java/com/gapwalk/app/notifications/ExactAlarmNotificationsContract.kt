@@ -17,11 +17,17 @@ const val EXACT_ALARM_MODULE_NAME = "ExactAlarmNotifications"
 const val EXACT_NOTIFICATION_RESPONSE_EVENT = "exactNotificationResponse"
 const val EXACT_NOTIFICATION_DELIVERED_EVENT = "exactNotificationDelivered"
 const val EXACT_NOTIFICATION_ACTION_SHOW = "com.gapwalk.app.notifications.SHOW_PLAN_NOTIFICATION"
+const val EXACT_NOTIFICATION_ACTION_BUTTON = "com.gapwalk.app.notifications.NOTIFICATION_BUTTON_ACTION"
+const val EXACT_NOTIFICATION_ACTION_RECOVER = "com.gapwalk.app.notifications.RECOVER_PLAN_NOTIFICATIONS"
+const val HEADLESS_TASK_NAME = "ExactNotificationActionTask"
+const val RECOVERY_HEADLESS_TASK_NAME = "ExactNotificationRecoveryTask"
 const val EXTRA_IS_EXACT_NOTIFICATION_RESPONSE = "exact_notification_response"
 const val EXTRA_NOTIFICATION_ID = "notification_id"
 const val EXTRA_NOTIFICATION_TYPE = "notification_type"
 const val EXTRA_PLAN_ID = "plan_id"
+const val EXTRA_SESSION_ID = "session_id"
 const val EXTRA_ACTION_IDENTIFIER = "action_identifier"
+const val EXTRA_RECOVERY_REASON = "recovery_reason"
 const val EXTRA_NOTIFICATION_TITLE = "notification_title"
 const val EXTRA_NOTIFICATION_BODY = "notification_body"
 const val EXTRA_NOTIFICATION_TRIGGER_AT_MS = "notification_trigger_at_ms"
@@ -32,11 +38,29 @@ private const val PREF_SCHEDULED_IDS = "scheduled_ids"
 private const val PREF_PENDING_RESPONSE_JSON = "pending_response_json"
 private const val PREF_PENDING_DELIVERIES_JSON = "pending_deliveries_json"
 private const val PREF_REMINDER_VIBRATION_ENABLED = "reminder_vibration_enabled"
+private const val PREF_RECOVERY_NEEDED = "recovery_needed"
+private const val PREF_RECOVERY_REASON = "recovery_reason"
 private const val PLATFORM_NOTIFICATION_ID = 4107
 
 fun getWalkNudgeNotificationId(planId: String): String = "walk-nudge:$planId"
 
 fun getWalkMissedNotificationId(planId: String): String = "walk-missed:$planId"
+
+fun getWalkAlertNotificationId(planId: String): String = "walk-alert:$planId"
+
+fun getWalkReadyNotificationId(planId: String): String = "walk-ready:$planId"
+
+fun getWalkSummaryNotificationId(sessionId: String): String = "walk-summary:$sessionId"
+
+const val WALK_NUDGE_NOTIFICATION_TYPE = "walk_nudge"
+const val WALK_MISSED_NOTIFICATION_TYPE = "walk_missed"
+const val WALK_ALERT_NOTIFICATION_TYPE = "walk_alert"
+const val WALK_READY_NOTIFICATION_TYPE = "walk_ready"
+const val WALK_SUMMARY_NOTIFICATION_TYPE = "walk_summary"
+const val WALK_NUDGE_ACTION_START = "START_WALK"
+const val WALK_NUDGE_ACTION_SKIP = "SKIP_GAP"
+const val WALK_READY_ACTION_YES = "YES_WALK_READY"
+const val WALK_READY_ACTION_NOT_NOW = "NOT_NOW_WALK_READY"
 
 fun notificationTag(notificationId: String): String = notificationId
 
@@ -49,6 +73,21 @@ fun buildAlarmIntent(context: Context, notificationId: String): Intent =
   Intent(context, ExactAlarmNotificationReceiver::class.java).apply {
     action = EXACT_NOTIFICATION_ACTION_SHOW
     data = Uri.parse("gapwalk://plan-notification/$notificationId")
+  }
+
+fun buildActionBroadcastIntent(
+  context: Context,
+  notificationId: String,
+  planId: String,
+  type: String,
+  actionIdentifier: String,
+): Intent =
+  Intent(context, ExactNotificationActionReceiver::class.java).apply {
+    action = EXACT_NOTIFICATION_ACTION_BUTTON
+    putExtra(EXTRA_NOTIFICATION_ID, notificationId)
+    putExtra(EXTRA_PLAN_ID, planId)
+    putExtra(EXTRA_NOTIFICATION_TYPE, type)
+    putExtra(EXTRA_ACTION_IDENTIFIER, actionIdentifier)
   }
 
 fun buildResponseIntent(
@@ -93,13 +132,14 @@ fun savePendingResponse(context: Context, payload: JSONObject) {
 
 fun buildDeliveredPayload(
   notificationId: String,
-  planId: String,
+  planId: String?,
   type: String,
 ): JSONObject =
   JSONObject().apply {
     put("notificationId", notificationId)
-    put("planId", planId)
+    put("planId", planId ?: JSONObject.NULL)
     put("type", type)
+    put("sessionId", sessionIdForNotification(notificationId, type) ?: JSONObject.NULL)
   }
 
 private fun readPendingDeliveries(context: Context): JSONArray {
@@ -147,6 +187,26 @@ fun setReminderVibrationEnabled(context: Context, enabled: Boolean) {
 
 fun isReminderVibrationEnabled(context: Context): Boolean =
   prefs(context).getBoolean(PREF_REMINDER_VIBRATION_ENABLED, true)
+
+fun markNotificationsRecoveryNeeded(context: Context, reason: String?) {
+  prefs(context).edit()
+    .putBoolean(PREF_RECOVERY_NEEDED, true)
+    .putString(PREF_RECOVERY_REASON, reason)
+    .apply()
+}
+
+fun isNotificationsRecoveryNeeded(context: Context): Boolean =
+  prefs(context).getBoolean(PREF_RECOVERY_NEEDED, false)
+
+fun getNotificationsRecoveryReason(context: Context): String? =
+  prefs(context).getString(PREF_RECOVERY_REASON, null)
+
+fun clearNotificationsRecoveryNeeded(context: Context) {
+  prefs(context).edit()
+    .putBoolean(PREF_RECOVERY_NEEDED, false)
+    .remove(PREF_RECOVERY_REASON)
+    .apply()
+}
 
 fun ensureNotificationChannel(context: Context) {
   if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
@@ -198,7 +258,19 @@ fun parseResponsePayload(intent: Intent?): JSONObject? {
     put("actionIdentifier", actionIdentifier)
     put("planId", intent.getStringExtra(EXTRA_PLAN_ID))
     put("type", intent.getStringExtra(EXTRA_NOTIFICATION_TYPE))
+    put(
+      "sessionId",
+      intent.getStringExtra(EXTRA_SESSION_ID)
+        ?: sessionIdForNotification(notificationId, intent.getStringExtra(EXTRA_NOTIFICATION_TYPE))
+        ?: JSONObject.NULL,
+    )
   }
+}
+
+private fun sessionIdForNotification(notificationId: String, type: String?): String? {
+  if (type != WALK_SUMMARY_NOTIFICATION_TYPE) return null
+  return notificationId.substringAfter("walk-summary:", "")
+    .takeIf { it.isNotEmpty() }
 }
 
 fun payloadToWritableMap(payload: JSONObject?): WritableMap? {
@@ -209,6 +281,8 @@ fun payloadToWritableMap(payload: JSONObject?): WritableMap? {
     if (planId.isNotEmpty()) putString("planId", planId)
     val type = payload.optString("type")
     if (type.isNotEmpty()) putString("type", type)
+    val sessionId = payload.optString("sessionId")
+    if (sessionId.isNotEmpty()) putString("sessionId", sessionId)
     putString(
       "actionIdentifier",
       payload.optString("actionIdentifier", DEFAULT_NOTIFICATION_ACTION_IDENTIFIER),
@@ -224,6 +298,8 @@ fun deliveredPayloadToWritableMap(payload: JSONObject?): WritableMap? {
     if (planId.isNotEmpty()) putString("planId", planId)
     val type = payload.optString("type")
     if (type.isNotEmpty()) putString("type", type)
+    val sessionId = payload.optString("sessionId")
+    if (sessionId.isNotEmpty()) putString("sessionId", sessionId)
   }
 }
 

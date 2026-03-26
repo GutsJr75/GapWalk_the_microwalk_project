@@ -9,6 +9,8 @@ import {
   WalkDisplayCard,
   ALL_WALK_DISPLAY_CARDS,
   NotificationTimerMode,
+  NotificationStatsMode,
+  EndWalkMode,
 } from '../types';
 import { type GuidanceKey } from '../data/guidanceStorage';
 import { type StoredAuthUser } from '../data/authStorage';
@@ -45,6 +47,20 @@ interface AppState {
   pendingWalkPrompt: WalkPrompt | null;
   setPendingWalkPrompt: (prompt: WalkPrompt | null) => void;
 
+  // In-app walk ready prompt (shown when Phase 2 notification fires while app is foregrounded)
+  pendingInAppWalkPrompt: {
+    planId: string;
+    walkStart: string;
+    walkEnd: string;
+    duration: number;
+  } | null;
+  setPendingInAppWalkPrompt: (prompt: {
+    planId: string;
+    walkStart: string;
+    walkEnd: string;
+    duration: number;
+  } | null) => void;
+
   // Whether initial permissions have been requested
   hasRequestedPermissions: boolean;
   setHasRequestedPermissions: (value: boolean) => void;
@@ -72,6 +88,10 @@ interface AppState {
   setVibrationEnabled: (val: boolean) => void;
   notificationTimerMode: NotificationTimerMode;
   setNotificationTimerMode: (mode: NotificationTimerMode) => void;
+  notificationStatsMode: NotificationStatsMode;
+  setNotificationStatsMode: (mode: NotificationStatsMode) => void;
+  endWalkMode: EndWalkMode;
+  setEndWalkMode: (mode: EndWalkMode) => void;
 
   // Walk display cards
   walkDisplayCards: WalkDisplayCard[];
@@ -119,6 +139,8 @@ export const useAppStore = create<AppState>((set) => ({
   setActiveWalkSnapshot: (snapshot) => set({ activeWalkSnapshot: snapshot }),
   pendingWalkPrompt: null,
   setPendingWalkPrompt: (prompt) => set({ pendingWalkPrompt: prompt }),
+  pendingInAppWalkPrompt: null,
+  setPendingInAppWalkPrompt: (prompt) => set({ pendingInAppWalkPrompt: prompt }),
 
   // Permissions
   hasRequestedPermissions: false,
@@ -147,6 +169,10 @@ export const useAppStore = create<AppState>((set) => ({
   setVibrationEnabled: (val) => set({ vibrationEnabled: val }),
   notificationTimerMode: 'smart',
   setNotificationTimerMode: (mode) => set({ notificationTimerMode: mode }),
+  notificationStatsMode: 'all',
+  setNotificationStatsMode: (mode) => set({ notificationStatsMode: mode }),
+  endWalkMode: 'quick',
+  setEndWalkMode: (mode) => set({ endWalkMode: mode }),
 
   // Walk display cards
   walkDisplayCards: [...ALL_WALK_DISPLAY_CARDS],

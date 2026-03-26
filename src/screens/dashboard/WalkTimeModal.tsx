@@ -14,11 +14,78 @@ import {
 import * as Haptics from 'expo-haptics';
 import { Text } from '../../components/Text';
 import { Button } from '../../components/Button';
+import { compactActionTokens, getButtonVisualState } from '../../components/buttonSystem';
+import { PressGlowOverlay } from '../../components/PressGlowOverlay';
 import { TwoDigitTimeInput } from '../../components/TwoDigitTimeInput';
+import { useButtonPressMotion } from '../../hooks/useButtonPressMotion';
 import { theme } from '../../theme';
-import { useThemePalette } from '../../theme/palette';
+import { type ThemePalette, useThemePalette } from '../../theme/palette';
 
 type TimePeriod = 'AM' | 'PM';
+const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
+
+const PeriodToggleButton: React.FC<{
+  period: TimePeriod;
+  selected: boolean;
+  onPress: () => void;
+  activeTextColor: string;
+  inactiveTextColor: string;
+  palette: ThemePalette;
+}> = ({
+  period,
+  selected,
+  onPress,
+  activeTextColor,
+  inactiveTextColor,
+  palette,
+}) => {
+  const chipVariant = selected ? 'primary' as const : 'secondary' as const;
+  const visualState = React.useMemo(
+    () => getButtonVisualState(chipVariant, palette),
+    [chipVariant, palette],
+  );
+  const {
+    animatedTransformStyle,
+    scaleAnim,
+    pressScale,
+    handlePress,
+    handlePressIn,
+    handlePressOut,
+  } = useButtonPressMotion({
+    onPress,
+    size: 'compact',
+  });
+
+  return (
+    <AnimatedPressable
+      style={[
+        styles.periodBtn,
+        { overflow: 'hidden' as const, borderRadius: compactActionTokens.borderRadius },
+        animatedTransformStyle,
+      ]}
+      onPress={handlePress}
+      onPressIn={handlePressIn}
+      onPressOut={handlePressOut}
+    >
+      <PressGlowOverlay
+        scaleAnim={scaleAnim}
+        pressScale={pressScale}
+        glowColor={visualState.glowColor}
+        glowOpacity={visualState.glowOpacity}
+        borderRadius={compactActionTokens.borderRadius}
+      />
+      <Text
+        variant="bodySmall"
+        style={[
+          selected ? styles.periodBtnTextActive : styles.periodBtnText,
+          { color: selected ? activeTextColor : inactiveTextColor },
+        ]}
+      >
+        {period}
+      </Text>
+    </AnimatedPressable>
+  );
+};
 
 const PeriodToggle: React.FC<{
   value: TimePeriod;
@@ -37,6 +104,7 @@ const PeriodToggle: React.FC<{
   backgroundColor,
   borderColor,
 }) => {
+  const palette = useThemePalette();
   const slideAnim = React.useRef(new Animated.Value(value === 'PM' ? 1 : 0)).current;
   const [containerWidth, setContainerWidth] = React.useState(0);
 
@@ -82,21 +150,15 @@ const PeriodToggle: React.FC<{
         />
       )}
       {(['AM', 'PM'] as const).map((p) => (
-        <Pressable
+        <PeriodToggleButton
           key={p}
-          style={styles.periodBtn}
+          period={p}
+          selected={p === value}
           onPress={() => onChange(p)}
-        >
-          <Text
-            variant="bodySmall"
-            style={[
-              p === value ? styles.periodBtnTextActive : styles.periodBtnText,
-              { color: p === value ? activeTextColor : inactiveTextColor },
-            ]}
-          >
-            {p}
-          </Text>
-        </Pressable>
+          activeTextColor={activeTextColor}
+          inactiveTextColor={inactiveTextColor}
+          palette={palette}
+        />
       ))}
     </View>
   );
@@ -284,7 +346,7 @@ export const WalkTimeModal: React.FC<WalkTimeModalProps> = ({
                               backgroundColor: selected ? palette.accentMuted : palette.bgSurface,
                               borderColor: selected ? palette.accentPrimary : palette.borderStrong,
                             },
-                            pressed && { opacity: 0.82, transform: [{ scale: 0.99 }] },
+                            pressed && { opacity: 0.82 },
                           ]}
                           onPress={() => {
                             if (Platform.OS !== 'web') {
@@ -401,18 +463,23 @@ const styles = StyleSheet.create({
     opacity: 0.7,
   },
   timeControls: {
-    gap: theme.spacing.sm,
-    alignItems: 'center',
+    flexDirection: 'row',
+    alignSelf: 'center',
+    justifyContent: 'center',
+    alignItems: 'flex-end',
+    flexWrap: 'nowrap',
+    gap: theme.spacing.md + 2,
   },
   timeDisplay: {
     flexDirection: 'row',
     alignItems: 'center',
-    alignSelf: 'center',
+    justifyContent: 'center',
     gap: 4,
+    minWidth: 138,
     minHeight: 51,
     borderRadius: theme.borderRadius.md,
     borderWidth: 1.5,
-    paddingHorizontal: theme.spacing.sm + 1,
+    paddingHorizontal: theme.spacing.md + 2,
   },
   timeDisplayInput: {
     minWidth: 32,
@@ -434,53 +501,57 @@ const styles = StyleSheet.create({
   },
   periodToggleContainer: {
     flexDirection: 'row',
-    borderRadius: theme.borderRadius.md,
-    borderWidth: 1.5,
+    borderRadius: compactActionTokens.borderRadius,
+    borderWidth: compactActionTokens.borderWidth,
     overflow: 'hidden',
-    alignSelf: 'center',
   },
   periodActivePill: {
     position: 'absolute',
     left: 0,
     top: 0,
     bottom: 0,
-    borderRadius: theme.borderRadius.md,
+    borderRadius: compactActionTokens.borderRadius,
   },
   periodBtn: {
-    minWidth: 48,
-    minHeight: 28,
-    flex: 1,
+    minWidth: compactActionTokens.minWidth,
+    minHeight: compactActionTokens.minHeight,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: theme.spacing.md,
+    paddingHorizontal: compactActionTokens.paddingHorizontal,
     zIndex: 1,
   },
   periodBtnText: {
     fontFamily: theme.fontFamily.semibold,
     fontWeight: theme.fontWeight.medium,
-    fontSize: theme.fontSize.sm,
+    fontSize: compactActionTokens.labelFontSize,
+    lineHeight: compactActionTokens.labelLineHeight,
   },
   periodBtnTextActive: {
     fontFamily: theme.fontFamily.bold,
     fontWeight: theme.fontWeight.bold,
-    fontSize: theme.fontSize.sm,
+    fontSize: compactActionTokens.labelFontSize,
+    lineHeight: compactActionTokens.labelLineHeight,
   },
   durationField: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
+    width: '100%',
     minHeight: 46,
     borderRadius: theme.borderRadius.md,
     borderWidth: 1.5,
-    paddingHorizontal: theme.spacing.sm,
+    paddingHorizontal: theme.spacing.lg,
+    gap: theme.spacing.xs + 2,
   },
   durationInput: {
-    flex: 1,
+    width: 56,
     minHeight: 44,
     fontFamily: theme.fontFamily.bold,
-    fontSize: theme.fontSize.md,
+    fontSize: theme.fontSize.md + 3,
     fontWeight: theme.fontWeight.semibold,
+    textAlign: 'center',
     paddingVertical: Platform.OS === 'android' ? 6 : 7,
-    paddingRight: theme.spacing.sm,
+    paddingHorizontal: 0,
     lineHeight: 20,
     textAlignVertical: 'center',
     borderWidth: 0,

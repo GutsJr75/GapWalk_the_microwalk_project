@@ -28,7 +28,7 @@ class ExactAlarmNotificationsModule(
     fun handleNotificationDelivered(
       context: Context,
       notificationId: String,
-      planId: String,
+      planId: String?,
       type: String,
     ) {
       val payload = buildDeliveredPayload(notificationId, planId, type)
@@ -180,6 +180,35 @@ class ExactAlarmNotificationsModule(
       promise.resolve(deliveredPayloadsToWritableArray(takePendingDeliveries(reactApplicationContext)))
     } catch (error: Throwable) {
       promise.reject("exact_alarm_consume_deliveries_failed", error)
+    }
+  }
+
+  @ReactMethod
+  fun isRecoveryNeeded(promise: Promise) {
+    try {
+      promise.resolve(isNotificationsRecoveryNeeded(reactApplicationContext))
+    } catch (error: Throwable) {
+      promise.reject("exact_alarm_is_recovery_needed_failed", error)
+    }
+  }
+
+  @ReactMethod
+  fun markRecoveryNeeded(reason: String?, promise: Promise) {
+    try {
+      markNotificationsRecoveryNeeded(reactApplicationContext, reason)
+      promise.resolve(null)
+    } catch (error: Throwable) {
+      promise.reject("exact_alarm_mark_recovery_needed_failed", error)
+    }
+  }
+
+  @ReactMethod
+  fun clearRecoveryNeeded(promise: Promise) {
+    try {
+      clearNotificationsRecoveryNeeded(reactApplicationContext)
+      promise.resolve(null)
+    } catch (error: Throwable) {
+      promise.reject("exact_alarm_clear_recovery_needed_failed", error)
     }
   }
 

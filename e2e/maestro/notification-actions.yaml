@@ -26,9 +26,11 @@ name: notification-actions
     id: walking-end
 - tapOn:
     id: walking-end-confirm
+- extendedWaitUntil:
+    visible: Back to dashboard
+    timeout: 30000
 - tapOn:
-    id: walking-location-deny
-    optional: true
+    text: Back to dashboard
 - extendedWaitUntil:
     visible:
       id: dashboard-open-menu
@@ -47,25 +49,21 @@ name: notification-actions
     text: OK
     optional: true
 - tapOn:
-    id: e2e-notification-timing
-- assertVisible: Timing Snapshot
-- assertVisible: "Nudge second: 00"
-- assertVisible: "Missed second: 00"
+    id: e2e-notification-quick-end
+- extendedWaitUntil:
+    visible: Walk recorded
+    timeout: 20000
+- assertVisible: Close summary
 - tapOn:
-    text: OK
+    text: Close summary
+- extendedWaitUntil:
+    visible:
+      id: dashboard-open-menu
+    timeout: 20000
 - tapOn:
-    id: e2e-notification-quiet-hours
-- assertVisible: Quiet Hours Save
-- assertVisible: "Notifications enabled: no"
+    id: dashboard-open-menu
 - tapOn:
-    text: OK
-- tapOn:
-    id: e2e-notification-missed
-- assertVisible: Missed Walk Result
-- assertVisible: "Status: cancelled"
-- assertVisible: "Reason: missed"
-- tapOn:
-    text: OK
+    id: dashboard-menu-settings
 - tapOn:
     id: e2e-telemetry-snapshot
 - assertVisible: Telemetry Snapshot

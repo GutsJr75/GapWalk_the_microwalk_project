@@ -1,10 +1,11 @@
 import React from 'react';
-import { View, StyleSheet, Pressable, Platform } from 'react-native';
+import { View, StyleSheet } from 'react-native';
 import { Text } from './Text';
 import { theme } from '../theme';
 import { useAppStore } from '../store';
 import { useThemePalette } from '../theme/palette';
-import { useTapFeedbackAction } from '../hooks/useTapFeedbackAction';
+import { Button } from './Button';
+import { compactActionTokens } from './buttonSystem';
 
 interface GapItemProps {
   /** Time range when gap is available (e.g. "3:00 PM - 7:00 PM") */
@@ -51,31 +52,7 @@ export const GapItem: React.FC<GapItemProps> = ({
   const barTrackTheme = {
     backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(15,23,42,0.14)',
   };
-
-  const cancelBtnTheme = {
-    backgroundColor: isDark ? 'rgba(239,68,68,0.1)' : 'rgba(239,68,68,0.14)',
-  };
-  const changeBtnTheme = {
-    backgroundColor: isDark ? 'rgba(56,189,248,0.14)' : 'rgba(56,189,248,0.18)',
-  };
   const badgeTextColor = palette.accentOnTint;
-  const changeTextColor = palette.info;
-  const {
-    isTapActive: isChangeTapActive,
-    handlePress: handleChangePress,
-    handlePressIn: handleChangePressIn,
-    handlePressOut: handleChangePressOut,
-  } = useTapFeedbackAction({
-    onPress: onChange,
-  });
-  const {
-    isTapActive: isCancelTapActive,
-    handlePress: handleCancelPress,
-    handlePressIn: handleCancelPressIn,
-    handlePressOut: handleCancelPressOut,
-  } = useTapFeedbackAction({
-    onPress: onCancel,
-  });
 
   return (
     <View style={[styles.container, containerTheme]}>
@@ -100,50 +77,20 @@ export const GapItem: React.FC<GapItemProps> = ({
       </View>
 
       <View style={styles.actions}>
-        <Pressable
-          onPress={handleChangePress}
-          onPressIn={handleChangePressIn}
-          onPressOut={handleChangePressOut}
-          hitSlop={8}
-          style={({ pressed }) => [
-            styles.actionBtn,
-            changeBtnTheme,
-            (pressed || isChangeTapActive) && {
-              shadowColor: palette.info,
-              shadowOpacity: 0.28,
-              shadowRadius: 8,
-              shadowOffset: { width: 0, height: 0 },
-              elevation: 4,
-            },
-            (pressed || isChangeTapActive) && styles.actionBtnActive,
-            pressed && styles.actionBtnPressed,
-          ]}
-          android_ripple={{ color: 'rgba(56,189,248,0.22)', borderless: false }}
-        >
-          <Text variant="bodySmall" style={[styles.changeText, { color: changeTextColor }]}>Change</Text>
-        </Pressable>
-        <Pressable
-          onPress={handleCancelPress}
-          onPressIn={handleCancelPressIn}
-          onPressOut={handleCancelPressOut}
-          hitSlop={8}
-          style={({ pressed }) => [
-            styles.actionBtn,
-            cancelBtnTheme,
-            (pressed || isCancelTapActive) && {
-              shadowColor: theme.colors.error,
-              shadowOpacity: 0.28,
-              shadowRadius: 8,
-              shadowOffset: { width: 0, height: 0 },
-              elevation: 4,
-            },
-            (pressed || isCancelTapActive) && styles.actionBtnActive,
-            pressed && styles.actionBtnPressed,
-          ]}
-          android_ripple={{ color: 'rgba(239,68,68,0.22)', borderless: false }}
-        >
-          <Text variant="bodySmall" style={styles.cancelText}>Cancel</Text>
-        </Pressable>
+        <Button
+          title="Change"
+          onPress={onChange}
+          variant="info"
+          size="compact"
+          style={styles.actionBtn}
+        />
+        <Button
+          title="Cancel"
+          onPress={onCancel}
+          variant="danger"
+          size="compact"
+          style={styles.actionBtn}
+        />
       </View>
     </View>
   );
@@ -159,13 +106,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     // native depth
     ...theme.shadow.card,
-  },
-  actionBtnActive: {
-    opacity: Platform.OS === 'ios' ? 0.94 : 0.98,
-  },
-  actionBtnPressed: {
-    transform: [{ scale: 0.97 }],
-    opacity: Platform.OS === 'ios' ? 0.92 : 0.95,
   },
   left: { flex: 1 },
   time: { fontWeight: theme.fontWeight.semibold, marginBottom: 2 },
@@ -194,17 +134,9 @@ const styles = StyleSheet.create({
   barLabel: {
     fontSize: theme.fontSize.xxs,
   },
-  actions: { alignItems: 'stretch' as const, marginLeft: theme.spacing.ml, paddingTop: 2, gap: theme.spacing.sm, width: 80 },
+  actions: { alignItems: 'stretch' as const, marginLeft: theme.spacing.ml, paddingTop: 2, gap: theme.spacing.sm, width: 96 },
   actionBtn: {
-    paddingVertical: theme.spacing.ms,
-    borderRadius: theme.borderRadius.sm,
-    alignItems: 'center' as const,
-  },
-  cancelText: {
-    color: theme.colors.error,
-    fontWeight: theme.fontWeight.medium,
-  },
-  changeText: {
-    fontWeight: theme.fontWeight.medium,
+    width: '100%',
+    minHeight: compactActionTokens.minHeight,
   },
 });

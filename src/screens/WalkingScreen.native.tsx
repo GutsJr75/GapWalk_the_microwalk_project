@@ -10,17 +10,20 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { RootStackParamList } from '../../App';
 import { Text } from '../components/Text';
 import { Button } from '../components/Button';
+import { IconButton } from '../components/IconButton';
 import { Modal } from '../components/Modal';
 import { AppIcon } from '../components/AppIcon';
+import { WalkCompletionSummary } from '../components/WalkCompletionSummary';
 import { theme } from '../theme';
 import { useThemePalette } from '../theme/palette';
 import { SensorHealth, ActiveWalkSnapshot, NudgePlan, WalkDisplayState, WalkMotionConfidence, WalkMotionState, WalkSession, WalkStepSource, WalkDisplayCard } from '../types';
 import { plansRepo } from '../data/repositories/plansRepo';
-import { sessionsRepo } from '../data/repositories/sessionsRepo';
 import { analyticsService } from '../services/analytics';
 import { androidWalkTracking } from '../services/androidWalkTracking';
 import { isNotificationsSupported, notificationService } from '../services/notifications';
 import {
+  ForegroundLocationPermissionState,
+  getForegroundLocationPermissionState,
   getWalkTrackingPermissionStatus,
   requestWalkTrackingPermissions,
   WalkTrackingPermissionResults,
@@ -28,9 +31,14 @@ import {
 import { saveWalkCheckpoint, clearWalkCheckpoint } from '../services/walkCheckpoint';
 import { routeRepo } from '../data/repositories/routeRepo';
 import { pauseEventsRepo } from '../data/repositories/pauseEventsRepo';
-import { runBackendSync } from '../services/backendSync';
 import { useAppStore } from '../store';
-import { useTapFeedbackAction } from '../hooks/useTapFeedbackAction';
+import { useButtonPressMotion } from '../hooks/useButtonPressMotion';
+import { getButtonVisualState } from '../components/buttonSystem';
+import { PressGlowOverlay } from '../components/PressGlowOverlay';
+import {
+  buildWalkSessionFromAndroidCompletion,
+  persistCompletedWalkSession,
+} from '../services/walkSessionPersistence';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Walking'>;
 type IoniconName = React.ComponentProps<typeof Ionicons>['name'];
@@ -81,6 +89,10 @@ const START_COUNTDOWN_SECONDS = 3;
 const MAP_LATITUDE_DELTA = 0.005;
 const MAP_LONGITUDE_DELTA = 0.005;
 const WALK_STATE_UPDATE_ERROR_MESSAGE = 'Something went wrong updating your walk. Please try again.';
+const METRIC_UPDATE_DURATION_MS = 180;
+const STEP_METRIC_SCALE = 1.035;
+const DISTANCE_METRIC_SCALE = 1.025;
+const SPEED_METRIC_SCALE = 1.02;
 
 const formatClock = (seconds: number): string => {
   const clamped = Math.max(0, Math.floor(seconds));
@@ -126,19 +138,6 @@ const computeSnapshotElapsedSeconds = (snapshot: ActiveWalkSnapshot | null, nowM
   return Math.max(snapshot.elapsedSeconds ?? 0, computed);
 };
 
-const resolveStatusIconName = (
-  displayState: WalkDisplayState,
-  options?: {
-    startupIssue?: boolean;
-  },
-): IoniconName => {
-  if (options?.startupIssue) return 'alert-circle-outline';
-  if (displayState === 'walking') return 'walk';
-  if (displayState === 'paused') return 'pause-circle-outline';
-  if (displayState === 'not_moving') return 'body-outline';
-  if (displayState === 'location_off') return 'location-outline';
-  return 'radio-outline';
-};
 
 interface WalkNoticeCardProps {
   palette: ReturnType<typeof useThemePalette>;
@@ -266,43 +265,35 @@ const WalkActionButton: React.FC<WalkActionButtonProps> = ({
   disabled = false,
   testID,
 }) => {
-  const scaleAnim = useRef(new Animated.Value(1)).current;
-  const showGlow = tone !== 'neutral';
   const accentColor = tone === 'danger' ? theme.colors.white : palette.accentPrimary;
   const backgroundColor = tone === 'danger' ? theme.colors.danger : palette.bgSurface;
   const borderColor = tone === 'danger'
     ? 'rgba(239,68,68,0.18)'
     : palette.borderStrong;
-  const { isTapActive, handlePress, handlePressIn, handlePressOut } = useTapFeedbackAction({
+  const btnVariant = tone === 'danger' ? 'danger' as const : 'primary' as const;
+  const visualState = React.useMemo(
+    () => getButtonVisualState(btnVariant, palette),
+    [btnVariant, palette],
+  );
+  const {
+    animatedTransformStyle,
+    scaleAnim,
+    pressScale,
+    handlePress,
+    handlePressIn,
+    handlePressOut,
+  } = useButtonPressMotion({
     onPress,
     enabled: !disabled,
+    size: 'default',
+    hapticIntent: tone === 'danger' ? 'destructive' : 'selection',
   });
-
-  const onPressIn = useCallback(() => {
-    handlePressIn();
-    Animated.spring(scaleAnim, {
-      toValue: 0.96,
-      tension: 160,
-      friction: 10,
-      useNativeDriver: true,
-    }).start();
-  }, [handlePressIn, scaleAnim]);
-
-  const onPressOut = useCallback(() => {
-    handlePressOut();
-    Animated.spring(scaleAnim, {
-      toValue: 1,
-      tension: 140,
-      friction: 10,
-      useNativeDriver: true,
-    }).start();
-  }, [handlePressOut, scaleAnim]);
 
   return (
     <AnimatedPressable
       onPress={handlePress}
-      onPressIn={onPressIn}
-      onPressOut={onPressOut}
+      onPressIn={handlePressIn}
+      onPressOut={handlePressOut}
       disabled={disabled}
       testID={testID}
       style={[
@@ -311,11 +302,18 @@ const WalkActionButton: React.FC<WalkActionButtonProps> = ({
           backgroundColor,
           borderColor,
           opacity: disabled ? 0.6 : 1,
-          transform: [{ scale: scaleAnim }],
+          overflow: 'hidden' as const,
         },
-        showGlow && isTapActive && styles.walkActionButtonGlow,
+        animatedTransformStyle,
       ]}
     >
+      <PressGlowOverlay
+        scaleAnim={scaleAnim}
+        pressScale={pressScale}
+        glowColor={disabled ? null : visualState.glowColor}
+        glowOpacity={visualState.glowOpacity}
+        borderRadius={16}
+      />
       <Ionicons name={iconName} size={18} color={accentColor} />
       <Text variant="body" style={[styles.walkActionButtonLabel, { color: accentColor }]}>
         {label}
@@ -330,90 +328,30 @@ interface WalkingBackButtonProps {
 }
 
 const WalkingBackButton: React.FC<WalkingBackButtonProps> = ({
-  palette,
   onPress,
 }) => {
-  const { isTapActive, handlePress, handlePressIn, handlePressOut } = useTapFeedbackAction({
-    onPress,
-    enabled: true,
-  });
-
   return (
-    <Pressable
-      onPress={handlePress}
-      onPressIn={handlePressIn}
-      onPressOut={handlePressOut}
-      accessibilityRole="button"
+    <IconButton
+      onPress={onPress}
+      iconName="back"
+      variant="secondary"
+      size="icon"
       accessibilityLabel="Back"
-      hitSlop={6}
-      android_ripple={{ color: palette.inputBg }}
-      style={({ pressed }) => [
-        styles.topBarBackBtn,
-        {
-          backgroundColor: palette.bgSurface,
-          borderColor: palette.borderStrong,
-        },
-        isTapActive && {
-          shadowColor: palette.accentPrimary,
-          shadowOpacity: 0.3,
-          shadowRadius: 8,
-          shadowOffset: { width: 0, height: 0 },
-          elevation: 4,
-        },
-        pressed && styles.topBarBackBtnPressed,
-      ]}
-    >
-      <AppIcon name="back" size={18} color={palette.textPrimary} />
-    </Pressable>
+    />
   );
 };
 
 const displayLabel = (displayState: WalkDisplayState): string => {
   switch (displayState) {
     case 'walking':
-      return 'Great pace';
+      return 'Walking';
     case 'paused':
       return 'Paused';
-    case 'location_off':
-      return 'Tracking is limited';
     case 'not_moving':
-      return 'Ready when you are';
-    case 'sensor_issue':
-      return 'Step sensor is warming up';
+      return 'Idle';
     default:
-      return 'Checking movement...';
+      return 'Walking';
   }
-};
-
-const displayDetail = (
-  displayState: WalkDisplayState,
-  statusReason: string | null | undefined,
-  hasPlan: boolean,
-): string => {
-  if (displayState === 'walking') {
-    if (statusReason === 'Using GPS step backup') {
-      return 'You are moving well. GapWalk is using GPS for steps until your sensor catches up.';
-    }
-    if (statusReason === 'Step sensor waiting') {
-      return 'Movement is confirmed. Your step sensor is still warming up.';
-    }
-    return hasPlan
-      ? 'Nice work. Keep a steady pace and this walk stays on track.'
-      : 'Nice work. Steps and distance update live while you move.';
-  }
-  if (displayState === 'paused') {
-    return 'Your walk is paused. Resume anytime when you feel ready.';
-  }
-  if (displayState === 'location_off') {
-    return 'Location is off. GapWalk can still track time and steps, and distance will be limited.';
-  }
-  if (displayState === 'not_moving') {
-    return 'You can take a short break. Start moving again whenever you are ready.';
-  }
-  if (displayState === 'sensor_issue') {
-    return statusReason ?? 'Your step sensor is still getting ready. Keep walking and GapWalk will keep up.';
-  }
-  return statusReason ?? 'Take a few steps and GapWalk will tune in to your movement.';
 };
 
 const haversineMeters = (a: Coord, b: Coord): number => {
@@ -455,10 +393,17 @@ const createFallbackState = (): FallbackState => {
   };
 };
 
+const createForegroundLocationAccessState = (): ForegroundLocationPermissionState => ({
+  granted: false,
+  canAskAgain: true,
+  status: Location.PermissionStatus.UNDETERMINED,
+});
+
 export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
   const planId = route.params?.planId;
   const prompt = route.params?.prompt;
   const startedFromNotification = route.params?.startedFromNotification === true;
+  const skipStartCountdown = route.params?.skipStartCountdown === true;
   const insets = useSafeAreaInsets();
   const palette = useThemePalette();
   const {
@@ -471,6 +416,8 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
     setPendingWalkPrompt,
     walkDisplayCards,
     notificationTimerMode,
+    notificationStatsMode,
+    endWalkMode,
   } = useAppStore();
 
   const isAndroidService = Platform.OS === 'android' && androidWalkTracking.isSupported();
@@ -479,8 +426,8 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
   const [showEndModal, setShowEndModal] = useState(false);
   const [showIdleModal, setShowIdleModal] = useState(false);
   const [showCompletion, setShowCompletion] = useState(false);
-  const [showBackgroundLimitModal, setShowBackgroundLimitModal] = useState(false);
   const [completionKind, setCompletionKind] = useState<CompletionKind>('completed');
+  const [completionSessionId, setCompletionSessionId] = useState<string | null>(null);
   const [completionStats, setCompletionStats] = useState<{ activeSeconds: number; distanceMeters: number; steps: number }>({
     activeSeconds: 0,
     distanceMeters: 0,
@@ -492,11 +439,15 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
   const [sessionStarted, setSessionStarted] = useState(false);
   const [startupError, setStartupError] = useState<string | null>(null);
   const [isStartingWalk, setIsStartingWalk] = useState(false);
-  const [statusDetailsExpanded, setStatusDetailsExpanded] = useState(false);
+
   const [routeCoords, setRouteCoords] = useState<Coord[]>([]);
   const [liveLocation, setLiveLocation] = useState<Coord | null>(null);
   const [liveHeading, setLiveHeading] = useState<number>(0);
   const [isMapFollowingUser, setIsMapFollowingUser] = useState(true);
+  const [foregroundLocationAccess, setForegroundLocationAccess] = useState<ForegroundLocationPermissionState>(
+    createForegroundLocationAccessState,
+  );
+  const [showMapPermissionHelp, setShowMapPermissionHelp] = useState(false);
 
   const mapRef = useRef<MapView>(null);
   const isMountedRef = useRef(true);
@@ -536,27 +487,46 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
   const statusChangeAnim = useRef(new Animated.Value(1)).current;
   const clockColonAnim = useRef(new Animated.Value(1)).current;
   const dockGlowAnim = useRef(new Animated.Value(0)).current;
+  const skipInitialStartCountdownRef = useRef(skipStartCountdown);
   const prevStepsRef = useRef(0);
   const prevDistanceRef = useRef(0);
   const prevSpeedRef = useRef('0.0');
   const lastMilestoneRef = useRef(0);
+
+  const animateMetricScale = useCallback((
+    value: Animated.Value,
+    peakScale: number,
+  ) => {
+    value.stopAnimation();
+    value.setValue(peakScale);
+    Animated.timing(value, {
+      toValue: 1,
+      duration: METRIC_UPDATE_DURATION_MS,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }).start();
+  }, []);
 
   // Flippable card state
   const flipAnim = useRef(new Animated.Value(0)).current;
   const [isFlipped, setIsFlipped] = useState(false);
   const flipHintDone = useRef(false);
 
-  // Ref to track session started for background prompt timer callback
-  const sessionStartedRef = useRef(false);
-  // Ref to track whether background tracking is currently limited
-  const backgroundTrackingLimitedRef = useRef(false);
-  // Ref for the background prompt re-show timer
-  const backgroundPromptTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const clearBackgroundPromptTimer = useCallback(() => {
-    if (backgroundPromptTimerRef.current != null) {
-      clearTimeout(backgroundPromptTimerRef.current);
-      backgroundPromptTimerRef.current = null;
+  const syncForegroundLocationAccess = useCallback(async () => {
+    const status = await getForegroundLocationPermissionState();
+    if (!isMountedRef.current) return status;
+
+    setForegroundLocationAccess(status);
+
+    if (!status.granted) {
+      mapLocationSubscriptionRef.current?.remove();
+      mapLocationSubscriptionRef.current = null;
+      setLiveLocation(null);
+      setLiveHeading(0);
+      setIsMapFollowingUser(false);
     }
+
+    return status;
   }, []);
 
   useEffect(() => () => {
@@ -566,10 +536,6 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
   useEffect(() => {
     fallbackStateRef.current = fallbackState;
   }, [fallbackState]);
-
-  useEffect(() => {
-    sessionStartedRef.current = sessionStarted;
-  }, [sessionStarted]);
 
   useEffect(() => {
     lastAndroidSnapshotRef.current = activeWalkSnapshot;
@@ -628,6 +594,24 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
     ];
   }, [clearStartCountdown]);
 
+  const runOrSkipStartCountdown = useCallback((
+    shouldSkipCountdown: boolean,
+    onComplete: () => void,
+  ) => {
+    clearStartCountdown();
+    if (shouldSkipCountdown) {
+      setStartCountdown(null);
+      onComplete();
+      return;
+    }
+    runStartCountdown(onComplete);
+  }, [clearStartCountdown, runStartCountdown]);
+
+  useEffect(() => {
+    if (!route.params?.skipStartCountdown) return;
+    navigation.setParams({ skipStartCountdown: undefined });
+  }, [navigation, route.params?.skipStartCountdown]);
+
   const markPlanStarted = useCallback(async () => {
     if (!planId || hasMarkedPlanStartedRef.current) return;
     const found = await plansRepo.getById(planId);
@@ -662,13 +646,18 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
       targetDurationMinutes,
       startedFromNotification,
       notificationTimerMode,
+      notificationStatsMode,
       distanceUnit,
     });
-  }, [distanceUnit, notificationTimerMode, plan, planId, startedFromNotification]);
+  }, [distanceUnit, notificationTimerMode, notificationStatsMode, plan, planId, startedFromNotification]);
 
   useEffect(() => {
     void loadPlan();
   }, [loadPlan]);
+
+  useEffect(() => {
+    void syncForegroundLocationAccess();
+  }, [syncForegroundLocationAccess]);
 
   const centerMapOnCoord = useCallback((coord: Coord, duration = 700) => {
     mapRef.current?.animateToRegion({
@@ -697,9 +686,6 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
   const displayState: WalkDisplayState = isAndroidService
     ? (displayedSnapshot?.displayState ?? 'calibrating')
     : fallbackState.displayState;
-  const statusReason = isAndroidService
-    ? (displayedSnapshot?.statusReason ?? null)
-    : fallbackState.statusReason;
   const paused = isAndroidService
     ? !!displayedSnapshot?.paused
     : fallbackState.paused;
@@ -713,36 +699,43 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
     ? (displayedSnapshot?.steps ?? 0)
     : fallbackState.steps;
   const hasStartupIssue = !hasLiveSession && startupError != null;
+  const locationLostMidWalk = !isAndroidService
+    && sessionStarted
+    && fallbackState.hadWalkingSignal
+    && fallbackState.usedLocation
+    && fallbackState.locationHealth === 'stale'
+    && !fallbackState.paused;
+  const canShowMap = foregroundLocationAccess.granted;
+  const mapPermissionActionLabel = 'Go to settings';
+  const mapPermissionToggleLabel = showMapPermissionHelp ? 'Hide steps' : 'Show steps';
+  const mapPermissionTitle = 'Provide location permission to view the map';
+  const mapPermissionMessage = 'GapWalk shows your live position and route only after location access is enabled for this app.';
   const remainingSeconds = useMemo(() => {
     const elapsedSeconds = hasLiveSession ? activeSeconds : 0;
     if (!plan) return elapsedSeconds;
     return Math.max(0, plan.suggestedDurationMinutes * 60 - elapsedSeconds);
   }, [activeSeconds, hasLiveSession, plan]);
+  const canLeaveWalkScreenWithoutEnding = isAndroidService && sessionStarted;
 
   useEffect(() => {
     if (steps === prevStepsRef.current || steps === 0) return;
     prevStepsRef.current = steps;
-    stepScaleAnim.setValue(1.22);
-    Animated.spring(stepScaleAnim, { toValue: 1, tension: 280, friction: 9, useNativeDriver: true }).start();
-  }, [steps, stepScaleAnim]);
+    animateMetricScale(stepScaleAnim, STEP_METRIC_SCALE);
+  }, [animateMetricScale, stepScaleAnim, steps]);
 
   useEffect(() => {
     if (distanceMeters === prevDistanceRef.current || distanceMeters === 0) return;
     prevDistanceRef.current = distanceMeters;
-    distanceScaleAnim.setValue(1.16);
-    Animated.spring(distanceScaleAnim, { toValue: 1, tension: 280, friction: 9, useNativeDriver: true }).start();
-  }, [distanceMeters, distanceScaleAnim]);
+    animateMetricScale(distanceScaleAnim, DISTANCE_METRIC_SCALE);
+  }, [animateMetricScale, distanceMeters, distanceScaleAnim]);
 
-  // Speed value bounce animation
+  // Keep live metric updates subtle so numbers feel steady instead of bouncy.
   useEffect(() => {
-    const currentSpeed = activeSeconds > 0
-      ? ((distanceMeters / 1609.34) / (activeSeconds / 3600)).toFixed(1)
-      : '0.0';
+    const currentSpeed = computeSpeedMph(distanceMeters, activeSeconds);
     if (currentSpeed === prevSpeedRef.current) return;
     prevSpeedRef.current = currentSpeed;
-    speedScaleAnim.setValue(1.12);
-    Animated.spring(speedScaleAnim, { toValue: 1, tension: 280, friction: 9, useNativeDriver: true }).start();
-  }, [activeSeconds, distanceMeters, speedScaleAnim]);
+    animateMetricScale(speedScaleAnim, SPEED_METRIC_SCALE);
+  }, [activeSeconds, animateMetricScale, distanceMeters, speedScaleAnim]);
 
   // Blinking colon on duration timer while actively walking
   useEffect(() => {
@@ -794,78 +787,6 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
     anim.start();
     return () => anim.stop();
   }, [displayState, statusPulseAnim]);
-
-  // Milestone haptic feedback every 100 steps
-  useEffect(() => {
-    if (steps === 0) return;
-    const currentMilestone = Math.floor(steps / 100) * 100;
-    if (currentMilestone > lastMilestoneRef.current && currentMilestone > 0) {
-      lastMilestoneRef.current = currentMilestone;
-      if (Platform.OS !== 'web') {
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => { });
-      }
-    }
-  }, [steps]);
-
-  // Dock border glow while walking
-  useEffect(() => {
-    if (displayState === 'walking' && !paused) {
-      const anim = Animated.loop(
-        Animated.sequence([
-          Animated.timing(dockGlowAnim, {
-            toValue: 1,
-            duration: 2000,
-            easing: Easing.inOut(Easing.ease),
-            useNativeDriver: false,
-          }),
-          Animated.timing(dockGlowAnim, {
-            toValue: 0,
-            duration: 2000,
-            easing: Easing.inOut(Easing.ease),
-            useNativeDriver: false,
-          }),
-        ]),
-      );
-      anim.start();
-      return () => anim.stop();
-    }
-    dockGlowAnim.setValue(0);
-    return undefined;
-  }, [displayState, paused, dockGlowAnim]);
-
-  useEffect(() => {
-    const currentSpeed = computeSpeedMph(distanceMeters, activeSeconds);
-    if (currentSpeed === prevSpeedRef.current) return;
-    prevSpeedRef.current = currentSpeed;
-    speedScaleAnim.setValue(1.12);
-    Animated.spring(speedScaleAnim, { toValue: 1, tension: 280, friction: 9, useNativeDriver: true }).start();
-  }, [activeSeconds, distanceMeters, speedScaleAnim]);
-
-  // Blinking colon on duration timer while actively walking
-  useEffect(() => {
-    if (paused || displayState !== 'walking') {
-      clockColonAnim.setValue(1);
-      return undefined;
-    }
-    const anim = Animated.loop(
-      Animated.sequence([
-        Animated.timing(clockColonAnim, {
-          toValue: 0.3,
-          duration: 500,
-          easing: Easing.inOut(Easing.ease),
-          useNativeDriver: true,
-        }),
-        Animated.timing(clockColonAnim, {
-          toValue: 1,
-          duration: 500,
-          easing: Easing.inOut(Easing.ease),
-          useNativeDriver: true,
-        }),
-      ]),
-    );
-    anim.start();
-    return () => anim.stop();
-  }, [displayState, paused, clockColonAnim]);
 
   // Milestone haptic feedback every 100 steps
   useEffect(() => {
@@ -1023,8 +944,12 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
       try {
         await requestWalkTrackingPermissions();
         if (cancelled) return;
+        await syncForegroundLocationAccess();
+        if (cancelled) return;
 
-        runStartCountdown(() => {
+        const shouldSkipCountdown = skipInitialStartCountdownRef.current;
+        skipInitialStartCountdownRef.current = false;
+        runOrSkipStartCountdown(shouldSkipCountdown, () => {
           if (cancelled) return;
           void (async () => {
             try {
@@ -1070,6 +995,7 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
       const previousState = appStateRef.current;
       appStateRef.current = nextState;
       if (previousState.match(/background|inactive/) && nextState === 'active') {
+        void syncForegroundLocationAccess();
         void refreshAndroidSnapshot();
       }
     });
@@ -1081,10 +1007,10 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
       subscription.remove();
       appStateSubscription.remove();
     };
-  }, [applyAndroidSnapshot, clearStartCountdown, isAndroidService, markPlanStarted, prompt, refreshAndroidSnapshot, runStartCountdown, startAndroidSession]);
+  }, [applyAndroidSnapshot, clearStartCountdown, isAndroidService, markPlanStarted, prompt, refreshAndroidSnapshot, runOrSkipStartCountdown, startAndroidSession, syncForegroundLocationAccess]);
 
   useEffect(() => {
-    if (!isAndroidService) {
+    if (!isAndroidService || !foregroundLocationAccess.granted) {
       mapLocationSubscriptionRef.current?.remove();
       mapLocationSubscriptionRef.current = null;
       return;
@@ -1132,66 +1058,7 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
       mapLocationSubscriptionRef.current?.remove();
       mapLocationSubscriptionRef.current = null;
     };
-  }, [isAndroidService]);
-
-  useEffect(() => {
-    if (!isMapFollowingUser || !liveLocation) return;
-    const now = Date.now();
-    if (now - lastFollowAnimateAtRef.current < 450) return;
-    lastFollowAnimateAtRef.current = now;
-    centerMapOnCoord(liveLocation, 650);
-  }, [centerMapOnCoord, isMapFollowingUser, liveLocation]);
-
-  useEffect(() => {
-    if (!isAndroidService) {
-      mapLocationSubscriptionRef.current?.remove();
-      mapLocationSubscriptionRef.current = null;
-      return;
-    }
-
-    let cancelled = false;
-    mapLocationSubscriptionRef.current?.remove();
-    mapLocationSubscriptionRef.current = null;
-
-    void (async () => {
-      try {
-        const permission = await Location.getForegroundPermissionsAsync();
-        if (cancelled || !permission.granted) return;
-
-        const subscription = await Location.watchPositionAsync(
-          {
-            accuracy: Location.Accuracy.High,
-            timeInterval: 1000,
-            distanceInterval: 1,
-          },
-          (location) => {
-            if (cancelled) return;
-            setLiveLocation({
-              latitude: location.coords.latitude,
-              longitude: location.coords.longitude,
-            });
-            if (typeof location.coords.heading === 'number' && location.coords.heading >= 0) {
-              setLiveHeading(location.coords.heading);
-            }
-          },
-        );
-
-        if (cancelled) {
-          subscription.remove();
-          return;
-        }
-        mapLocationSubscriptionRef.current = subscription;
-      } catch {
-        // Ignore errors here; map location is an enhancement on top of walk tracking.
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-      mapLocationSubscriptionRef.current?.remove();
-      mapLocationSubscriptionRef.current = null;
-    };
-  }, [isAndroidService]);
+  }, [foregroundLocationAccess.granted, isAndroidService]);
 
   useEffect(() => {
     if (!isMapFollowingUser || !liveLocation) return;
@@ -1394,6 +1261,107 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
     }
   }, [hydrateFallbackState, updateFallbackState]);
 
+  const subscribeFallbackLocationUpdates = useCallback(async () => {
+    locationSubscriptionRef.current?.remove();
+    locationSubscriptionRef.current = null;
+
+    locationSubscriptionRef.current = await Location.watchPositionAsync(
+      {
+        accuracy: Location.Accuracy.High,
+        timeInterval: 1000,
+        distanceInterval: 1,
+      },
+      (location) => {
+        const nextCoord: Coord = {
+          latitude: location.coords.latitude,
+          longitude: location.coords.longitude,
+        };
+        setLiveLocation(nextCoord);
+        if (typeof location.coords.heading === 'number' && location.coords.heading >= 0) {
+          setLiveHeading(location.coords.heading);
+        }
+        const timestampMs = typeof location.timestamp === 'number' ? location.timestamp : Date.now();
+        const previous = lastCoordRef.current;
+        lastCoordRef.current = { coord: nextCoord, timestampMs };
+
+        setRouteCoords((prev) => [...prev, nextCoord]);
+
+        const lastSaved = lastSavedCoordRef.current;
+        if (!lastSaved || haversineMeters(lastSaved, nextCoord) >= 5) {
+          lastSavedCoordRef.current = nextCoord;
+          void routeRepo.appendPoint(
+            fallbackStateRef.current.sessionId,
+            {
+              latitude: location.coords.latitude,
+              longitude: location.coords.longitude,
+              accuracyMeters: typeof location.coords.accuracy === 'number' && location.coords.accuracy >= 0
+                ? location.coords.accuracy
+                : undefined,
+              altitudeMeters: typeof location.coords.altitude === 'number'
+                ? location.coords.altitude
+                : undefined,
+              speedMps: typeof location.coords.speed === 'number' && location.coords.speed >= 0
+                ? location.coords.speed
+                : undefined,
+              bearingDegrees: typeof location.coords.heading === 'number' && location.coords.heading >= 0
+                ? location.coords.heading
+                : undefined,
+              recordedAt: new Date(timestampMs).toISOString(),
+            }
+          );
+        }
+
+        updateFallbackState((current) => {
+          let nextState = current;
+
+          if (previous) {
+            const segmentMeters = haversineMeters(previous.coord, nextCoord);
+            const dtSeconds = Math.max(1, timestampMs - previous.timestampMs) / 1000;
+            const speedFromSensor = typeof location.coords.speed === 'number' && location.coords.speed >= 0
+              ? location.coords.speed
+              : null;
+            const effectiveSpeed = speedFromSensor ?? segmentMeters / dtSeconds;
+            const moving = !current.paused &&
+              segmentMeters <= MAX_VALID_JUMP_METERS &&
+              (
+                effectiveSpeed >= WALKING_SPEED_THRESHOLD_MPS ||
+                (segmentMeters >= GPS_MOTION_SEGMENT_METERS && dtSeconds <= GPS_MOTION_MAX_DT_SECONDS)
+              );
+
+            if (!current.paused && segmentMeters >= MIN_SEGMENT_METERS && segmentMeters <= MAX_VALID_JUMP_METERS) {
+              const nextDistance = current.distanceMeters + segmentMeters;
+              const pedometerStalled = lastPedometerEventAtRef.current == null ||
+                Date.now() - lastPedometerEventAtRef.current > WALKING_LATCH_MS;
+              const usingGpsFallback = !current.activityPermissionGranted || pedometerStalled;
+              const estimatedSteps = usingGpsFallback
+                ? Math.max(current.steps, Math.round(nextDistance / ESTIMATED_STRIDE_METERS))
+                : current.steps;
+              nextState = {
+                ...current,
+                distanceMeters: nextDistance,
+                steps: estimatedSteps,
+                stepSource: usingGpsFallback ? 'gps_fallback' : current.stepSource,
+                usedLocation: true,
+              };
+              lastAcceptedLocationAtRef.current = timestampMs;
+            }
+
+            if (moving) {
+              lastGpsMotionAtRef.current = timestampMs;
+              lastMotionAtRef.current = timestampMs;
+              nextState = {
+                ...nextState,
+                hadWalkingSignal: true,
+              };
+            }
+          }
+
+          return hydrateFallbackState(nextState, Date.now());
+        });
+      },
+    );
+  }, [hydrateFallbackState, updateFallbackState]);
+
   const refreshFallbackPermissionState = useCallback(async () => {
     const status = await getWalkTrackingPermissionStatus();
     if (!isMountedRef.current) return;
@@ -1402,6 +1370,18 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
     if (!status.locationForeground) {
       locationSubscriptionRef.current?.remove();
       locationSubscriptionRef.current = null;
+      setLiveLocation(null);
+      setLiveHeading(0);
+    } else if (sessionStarted && !locationSubscriptionRef.current) {
+      try {
+        await subscribeFallbackLocationUpdates();
+      } catch (error) {
+        if (__DEV__) console.warn('Failed to resume fallback location updates:', error);
+        applyFallbackPermissionResults(
+          status,
+          'GapWalk could not resume live location updates. Check location services and try again.',
+        );
+      }
     }
 
     if (!status.activityRecognition) {
@@ -1414,7 +1394,7 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
     ) {
       subscribeFallbackPedometer();
     }
-  }, [applyFallbackPermissionResults, sessionStarted, subscribeFallbackPedometer]);
+  }, [applyFallbackPermissionResults, sessionStarted, subscribeFallbackLocationUpdates, subscribeFallbackPedometer]);
 
   const startFallbackTracking = useCallback(async (permissionResults?: WalkTrackingPermissionResults) => {
     unsubscribeFallbackSensors();
@@ -1440,103 +1420,7 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
 
     if (resolvedPermissions.locationForeground) {
       try {
-        locationSubscriptionRef.current = await Location.watchPositionAsync(
-          {
-            accuracy: Location.Accuracy.High,
-            timeInterval: 1000,
-            distanceInterval: 1,
-          },
-          (location) => {
-            const nextCoord: Coord = {
-              latitude: location.coords.latitude,
-              longitude: location.coords.longitude,
-            };
-            setLiveLocation(nextCoord);
-            if (typeof location.coords.heading === 'number' && location.coords.heading >= 0) {
-              setLiveHeading(location.coords.heading);
-            }
-            const timestampMs = typeof location.timestamp === 'number' ? location.timestamp : Date.now();
-            const previous = lastCoordRef.current;
-            lastCoordRef.current = { coord: nextCoord, timestampMs };
-
-            // Accumulate route for map polyline
-            setRouteCoords((prev) => [...prev, nextCoord]);
-
-            // Throttled DB write: persist every >=5 m to avoid excessive writes
-            const lastSaved = lastSavedCoordRef.current;
-            if (!lastSaved || haversineMeters(lastSaved, nextCoord) >= 5) {
-              lastSavedCoordRef.current = nextCoord;
-              void routeRepo.appendPoint(
-                fallbackStateRef.current.sessionId,
-                {
-                  latitude: location.coords.latitude,
-                  longitude: location.coords.longitude,
-                  accuracyMeters: typeof location.coords.accuracy === 'number' && location.coords.accuracy >= 0
-                    ? location.coords.accuracy
-                    : undefined,
-                  altitudeMeters: typeof location.coords.altitude === 'number'
-                    ? location.coords.altitude
-                    : undefined,
-                  speedMps: typeof location.coords.speed === 'number' && location.coords.speed >= 0
-                    ? location.coords.speed
-                    : undefined,
-                  bearingDegrees: typeof location.coords.heading === 'number' && location.coords.heading >= 0
-                    ? location.coords.heading
-                    : undefined,
-                  recordedAt: new Date(timestampMs).toISOString(),
-                }
-              );
-            }
-
-            updateFallbackState((current) => {
-              let nextState = current;
-
-              if (previous) {
-                const segmentMeters = haversineMeters(previous.coord, nextCoord);
-                const dtSeconds = Math.max(1, timestampMs - previous.timestampMs) / 1000;
-                const speedFromSensor = typeof location.coords.speed === 'number' && location.coords.speed >= 0
-                  ? location.coords.speed
-                  : null;
-                const effectiveSpeed = speedFromSensor ?? segmentMeters / dtSeconds;
-                const moving = !current.paused &&
-                  segmentMeters <= MAX_VALID_JUMP_METERS &&
-                  (
-                    effectiveSpeed >= WALKING_SPEED_THRESHOLD_MPS ||
-                    (segmentMeters >= GPS_MOTION_SEGMENT_METERS && dtSeconds <= GPS_MOTION_MAX_DT_SECONDS)
-                  );
-
-                if (!current.paused && segmentMeters >= MIN_SEGMENT_METERS && segmentMeters <= MAX_VALID_JUMP_METERS) {
-                  const nextDistance = current.distanceMeters + segmentMeters;
-                  const pedometerStalled = lastPedometerEventAtRef.current == null ||
-                    Date.now() - lastPedometerEventAtRef.current > WALKING_LATCH_MS;
-                  const usingGpsFallback = !current.activityPermissionGranted || pedometerStalled;
-                  const estimatedSteps = usingGpsFallback
-                    ? Math.max(current.steps, Math.round(nextDistance / ESTIMATED_STRIDE_METERS))
-                    : current.steps;
-                  nextState = {
-                    ...current,
-                    distanceMeters: nextDistance,
-                    steps: estimatedSteps,
-                    stepSource: usingGpsFallback ? 'gps_fallback' : current.stepSource,
-                    usedLocation: true,
-                  };
-                  lastAcceptedLocationAtRef.current = timestampMs;
-                }
-
-                if (moving) {
-                  lastGpsMotionAtRef.current = timestampMs;
-                  lastMotionAtRef.current = timestampMs;
-                  nextState = {
-                    ...nextState,
-                    hadWalkingSignal: true,
-                  };
-                }
-              }
-
-              return hydrateFallbackState(nextState, Date.now());
-            });
-          },
-        );
+        await subscribeFallbackLocationUpdates();
       } catch (error) {
         applyFallbackPermissionResults(
           resolvedPermissions,
@@ -1558,6 +1442,7 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
         targetDurationMinutes: plan?.suggestedDurationMinutes ?? null,
         startedFromNotification,
         timerMode: notificationTimerMode,
+        statsMode: notificationStatsMode,
         steps: 0,
         distanceMeters: 0,
         distanceUnit,
@@ -1570,11 +1455,12 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
     plan?.suggestedDurationMinutes,
     startedFromNotification,
     subscribeFallbackPedometer,
+    subscribeFallbackLocationUpdates,
     unsubscribeFallbackSensors,
     updateFallbackState,
   ]);
 
-  const beginAndroidWalk = useCallback(async () => {
+  const beginAndroidWalk = useCallback(async (options?: { skipCountdown?: boolean }) => {
     if (!isAndroidService || startFlowLockedRef.current) return;
 
     startFlowLockedRef.current = true;
@@ -1585,7 +1471,9 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
       await requestWalkTrackingPermissions();
       if (!isMountedRef.current) return;
 
-      runStartCountdown(() => {
+      const shouldSkipCountdown = options?.skipCountdown === true;
+      skipInitialStartCountdownRef.current = false;
+      runOrSkipStartCountdown(shouldSkipCountdown, () => {
         void (async () => {
           try {
             const freshSnapshot = await startAndroidSession();
@@ -1610,9 +1498,9 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
     } catch (error) {
       handleStartupFailure(error);
     }
-  }, [applyAndroidSnapshot, handleStartupFailure, isAndroidService, markPlanStarted, runStartCountdown, startAndroidSession]);
+  }, [applyAndroidSnapshot, handleStartupFailure, isAndroidService, markPlanStarted, runOrSkipStartCountdown, startAndroidSession]);
 
-  const beginFallbackWalk = useCallback(async () => {
+  const beginFallbackWalk = useCallback(async (options?: { skipCountdown?: boolean }) => {
     if (isAndroidService || startFlowLockedRef.current) return;
 
     startFlowLockedRef.current = true;
@@ -1622,10 +1510,14 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
     try {
       const permissionResults = await requestWalkTrackingPermissions();
       if (!isMountedRef.current) return;
+      await syncForegroundLocationAccess();
+      if (!isMountedRef.current) return;
 
       applyFallbackPermissionResults(permissionResults);
 
-      runStartCountdown(() => {
+      const shouldSkipCountdown = options?.skipCountdown === true;
+      skipInitialStartCountdownRef.current = false;
+      runOrSkipStartCountdown(shouldSkipCountdown, () => {
         void (async () => {
           try {
             await startFallbackTracking(permissionResults);
@@ -1647,12 +1539,11 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
     } catch (error) {
       handleStartupFailure(error);
     }
-  }, [applyFallbackPermissionResults, handleStartupFailure, isAndroidService, markPlanStarted, runStartCountdown, startFallbackTracking]);
+  }, [applyFallbackPermissionResults, handleStartupFailure, isAndroidService, markPlanStarted, runOrSkipStartCountdown, startFallbackTracking]);
 
   const handleRetryStart = useCallback(async () => {
     if (hasLiveSession || isStartingWalk || startCountdown != null) return;
 
-    setStatusDetailsExpanded(false);
     if (isAndroidService) {
       await beginAndroidWalk();
       return;
@@ -1670,12 +1561,13 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
   useEffect(() => {
     if (isAndroidService) return;
 
-    void beginFallbackWalk();
+    void beginFallbackWalk({ skipCountdown: skipInitialStartCountdownRef.current });
 
     const appStateSubscription = AppState.addEventListener('change', (nextState) => {
       const previousState = appStateRef.current;
       appStateRef.current = nextState;
       if (previousState.match(/background|inactive/) && nextState === 'active') {
+        void syncForegroundLocationAccess();
         void refreshFallbackPermissionState();
       }
     });
@@ -1689,7 +1581,7 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
         void notificationService.dismissWalkSessionNotification();
       }
     };
-  }, [beginFallbackWalk, clearStartCountdown, isAndroidService, refreshFallbackPermissionState, unsubscribeFallbackSensors]);
+  }, [beginFallbackWalk, clearStartCountdown, isAndroidService, refreshFallbackPermissionState, syncForegroundLocationAccess, unsubscribeFallbackSensors]);
 
   useEffect(() => {
     if (isAndroidService || !sessionStarted) return;
@@ -1711,6 +1603,7 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
           targetDurationMinutes: plan?.suggestedDurationMinutes ?? null,
           startedFromNotification,
           timerMode: notificationTimerMode,
+          statsMode: notificationStatsMode,
           steps: fallbackStateRef.current.steps,
           distanceMeters: fallbackStateRef.current.distanceMeters,
           distanceUnit,
@@ -1734,6 +1627,7 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
     hydrateFallbackState,
     isAndroidService,
     notificationTimerMode,
+    notificationStatsMode,
     plan?.suggestedDurationMinutes,
     sessionStarted,
     startedFromNotification,
@@ -1781,21 +1675,14 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
   ]);
 
   useEffect(() => {
-    if (prompt === 'end_confirmation' || pendingWalkPrompt === 'end_confirmation') {
-      setShowIdleModal(false);
-      setShowEndModal(true);
-    }
-  }, [pendingWalkPrompt, prompt]);
-
-  useEffect(() => {
     const unsubscribe = navigation.addListener('beforeRemove', (event) => {
-      if (allowLeaveRef.current || !sessionStarted) return;
+      if (allowLeaveRef.current || !sessionStarted || canLeaveWalkScreenWithoutEnding) return;
       event.preventDefault();
       setShowIdleModal(false);
       setShowEndModal(true);
     });
     return unsubscribe;
-  }, [navigation, sessionStarted]);
+  }, [canLeaveWalkScreenWithoutEnding, navigation, sessionStarted]);
 
   const dismissCompletion = useCallback(() => {
     if (!showCompletion || completionDismissLockedRef.current) return;
@@ -1825,9 +1712,11 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
     ]).start(() => {
       setShowCompletion(false);
       allowLeaveRef.current = true;
-      navigation.navigate('Dashboard', { showPostWalkSummary: true });
+      navigation.navigate('Dashboard', {
+        postWalkSessionId: completionSessionId ?? undefined,
+      });
     });
-  }, [completionBackdropAnim, completionCardAnim, completionGlowAnim, completionStatAnims, navigation, showCompletion]);
+  }, [completionBackdropAnim, completionCardAnim, completionGlowAnim, completionSessionId, completionStatAnims, navigation, showCompletion]);
 
   const persistCompletedSession = useCallback(async (
     session: WalkSession,
@@ -1838,34 +1727,10 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
       showCompletion?: boolean;
     },
   ) => {
-    const shouldResolveMatchingPlan = !session.nudgePlanId && (options?.planStatus ?? 'completed') === 'completed';
-    const matchedPlan = shouldResolveMatchingPlan
-      ? await plansRepo.findBestMatchingPlanForSession(session)
-      : null;
-    const resolvedSession = matchedPlan
-      ? { ...session, nudgePlanId: matchedPlan.id }
-      : session;
-
-    await sessionsRepo.save(resolvedSession);
-    if (resolvedSession.nudgePlanId) {
-      await plansRepo.updateStatus(resolvedSession.nudgePlanId, options?.planStatus ?? 'completed');
-      if (isNotificationsSupported) {
-        await notificationService.clearPlanNotifications(resolvedSession.nudgePlanId);
-      }
-    }
-
-    // Fire-and-forget backend sync after every completed session
-    void runBackendSync();
-
-    analyticsService.track('walk_completed', {
-      planId: resolvedSession.nudgePlanId || null,
-      activeSeconds: resolvedSession.activeSeconds,
-      pausedSeconds: resolvedSession.pausedSeconds,
-      distanceMeters: Math.round(resolvedSession.distanceMeters ?? 0),
-      steps: resolvedSession.steps ?? 0,
-      usedLocation: resolvedSession.usedLocation,
-      hadWalkingSignal: options?.hadWalkingSignal ?? false,
-      endReason: options?.endReason ?? 'manual',
+    const resolvedSession = await persistCompletedWalkSession(session, {
+      planStatus: options?.planStatus,
+      endReason: options?.endReason,
+      hadWalkingSignal: options?.hadWalkingSignal,
     });
 
     if (!isAndroidService) {
@@ -1875,6 +1740,7 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
       }
     }
 
+    setCompletionSessionId(resolvedSession.id);
     setCompletionKind(options?.endReason === 'idle_later' ? 'saved_later' : 'completed');
     setCompletionStats({
       activeSeconds: resolvedSession.activeSeconds,
@@ -1884,11 +1750,15 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
 
     if (options?.showCompletion === false) {
       allowLeaveRef.current = true;
-      navigation.navigate('Dashboard', { showPostWalkSummary: true });
-      return;
+      navigation.navigate('Dashboard', {
+        showPostWalkSummary: true,
+        postWalkSessionId: resolvedSession.id,
+      });
+      return resolvedSession;
     }
 
     setShowCompletion(true);
+    return resolvedSession;
   }, [isAndroidService, navigation]);
 
   const saveAndroidSession = useCallback(async (
@@ -1899,41 +1769,35 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
       showCompletion?: boolean;
     },
   ) => {
-    if (!snapshot) return;
+    if (!snapshot) return null;
     const pauseDelta = snapshot.pauseStartedAtMs ? Date.now() - snapshot.pauseStartedAtMs : 0;
     const sessionEndMs = Date.now();
-    const resolvedActiveSeconds = computeSnapshotElapsedSeconds(snapshot, sessionEndMs);
-
-    // Compute nudge-to-start latency: seconds from plan's walkStart to actual session start
-    let nudgeToStartLatencySeconds: number | undefined;
-    if (plan?.walkStart) {
-      const latencyMs = new Date(snapshot.startIso).getTime() - new Date(plan.walkStart).getTime();
-      if (latencyMs >= 0) nudgeToStartLatencySeconds = Math.round(latencyMs / 1000);
-    }
-
     const pauseEvents = await pauseEventsRepo.getBySessionId(snapshot.sessionId);
 
-    const session: WalkSession = {
-      id: snapshot.sessionId,
-      nudgePlanId: snapshot.planId || planId,
-      start: snapshot.startIso,
-      end: new Date(sessionEndMs).toISOString(),
-      activeSeconds: resolvedActiveSeconds,
+    const session = buildWalkSessionFromAndroidCompletion({
+      sessionId: snapshot.sessionId,
+      planId: snapshot.planId || planId,
+      startIso: snapshot.startIso,
+      endIso: new Date(sessionEndMs).toISOString(),
+      activeSeconds: computeSnapshotElapsedSeconds(snapshot, sessionEndMs),
       pausedSeconds: Math.floor((snapshot.totalPausedMs + pauseDelta) / 1000),
       distanceMeters: snapshot.distanceMeters,
       steps: snapshot.steps,
       usedLocation: snapshot.usedLocation,
-      createdAt: new Date().toISOString(),
       stepSource: snapshot.stepSource,
       motionConfidence: snapshot.motionConfidence,
       sensorHealthAtStart: snapshot.pedometerHealth,
+      hadWalkingSignal: snapshot.hadWalkingSignal,
+      distanceUnit: snapshot.distanceUnit === 'mi' ? 'mi' : 'km',
+    }, {
       pauseCount: pauseEvents.length,
-      nudgeToStartLatencySeconds,
-    };
+      fallbackPlanId: planId,
+      plan,
+    });
 
     setActiveWalkSnapshot(null);
     setPendingWalkPrompt(null);
-    await persistCompletedSession(session, {
+    return persistCompletedSession(session, {
       ...options,
       hadWalkingSignal: snapshot.hadWalkingSignal,
     });
@@ -1975,7 +1839,7 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
     };
 
     unsubscribeFallbackSensors();
-    await persistCompletedSession(session, {
+    return persistCompletedSession(session, {
       ...options,
       hadWalkingSignal: current.hadWalkingSignal,
     });
@@ -2095,28 +1959,94 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
       prompt === 'end_confirmation' ||
       pendingWalkPrompt === 'end_confirmation' ||
       activeWalkSnapshot?.prompt === 'end_confirmation';
+    const isQuickEnd = endedFromNotificationPrompt && endWalkMode === 'quick';
     if (isAndroidService) {
       const snapshot = await androidWalkTracking.confirmEndSession();
-      await saveAndroidSession(snapshot, {
+      const resolvedSession = await saveAndroidSession(snapshot, {
         showCompletion: !endedFromNotificationPrompt,
       });
+      if (isQuickEnd && resolvedSession && isNotificationsSupported) {
+        await notificationService.showPostWalkSummaryNotification({
+          sessionId: resolvedSession.id,
+          durationSeconds: resolvedSession.activeSeconds,
+          steps: resolvedSession.steps ?? 0,
+          distanceMeters: resolvedSession.distanceMeters ?? 0,
+          distanceUnit,
+        });
+      }
       return;
     }
-    await saveFallbackSession({
+    const resolvedSession = await saveFallbackSession({
       showCompletion: !endedFromNotificationPrompt,
     });
-  }, [activeWalkSnapshot?.prompt, isAndroidService, pendingWalkPrompt, prompt, saveAndroidSession, saveFallbackSession]);
+    if (isQuickEnd && resolvedSession && isNotificationsSupported) {
+      await notificationService.showPostWalkSummaryNotification({
+        sessionId: resolvedSession.id,
+        durationSeconds: resolvedSession.activeSeconds,
+        steps: resolvedSession.steps ?? 0,
+        distanceMeters: resolvedSession.distanceMeters ?? 0,
+        distanceUnit,
+      });
+    }
+  }, [activeWalkSnapshot?.prompt, distanceUnit, endWalkMode, isAndroidService, pendingWalkPrompt, prompt, saveAndroidSession, saveFallbackSession]);
+
+  // Handle end_confirmation prompt — must be after confirmEnd declaration
+  useEffect(() => {
+    if (prompt === 'end_confirmation' || pendingWalkPrompt === 'end_confirmation') {
+      setShowIdleModal(false);
+      if (endWalkMode === 'quick') {
+        void confirmEnd();
+      } else {
+        setShowEndModal(true);
+      }
+    }
+  }, [confirmEnd, endWalkMode, pendingWalkPrompt, prompt]);
 
   const closeEndModal = useCallback(async () => {
-    if (isAndroidService && activeWalkSnapshot?.prompt === 'end_confirmation') {
-      const snapshot = await androidWalkTracking.cancelEndConfirmation();
-      applyAndroidSnapshot(snapshot);
+    if (isAndroidService) {
+      if (activeWalkSnapshot?.prompt === 'end_confirmation') {
+        const snapshot = await androidWalkTracking.cancelEndConfirmation();
+        applyAndroidSnapshot(snapshot);
+      }
+      // Auto-resume if paused due to end walk action
+      if (
+        activeWalkSnapshot?.paused &&
+        (
+          activeWalkSnapshot.lastActionSource === 'end_walk_notification' ||
+          activeWalkSnapshot.lastActionSource === 'end_walk_screen'
+        )
+      ) {
+        const snapshot = await androidWalkTracking.resumeSession('end_cancel');
+        applyAndroidSnapshot(snapshot);
+      }
+    } else {
+      // iOS fallback: resume if paused
+      const current = fallbackStateRef.current;
+      if (current.paused) {
+        await togglePause();
+      }
     }
     setShowEndModal(false);
-  }, [activeWalkSnapshot?.prompt, applyAndroidSnapshot, isAndroidService]);
+  }, [activeWalkSnapshot?.lastActionSource, activeWalkSnapshot?.paused, activeWalkSnapshot?.prompt, applyAndroidSnapshot, isAndroidService, togglePause]);
+
+  const handleEndWalkPress = useCallback(async () => {
+    // Pause timer immediately when End Walk is pressed from in-app button
+    if (!paused) {
+      if (isAndroidService) {
+        const snapshot = await androidWalkTracking.pauseSession('end_walk_screen');
+        applyAndroidSnapshot(snapshot);
+      } else {
+        await togglePause();
+      }
+    }
+    setShowEndModal(true);
+  }, [applyAndroidSnapshot, isAndroidService, paused, togglePause]);
 
   const handleLocatePress = useCallback(async () => {
     try {
+      const permissionState = await syncForegroundLocationAccess();
+      if (!permissionState.granted) return;
+
       const location = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
       const coord: Coord = { latitude: location.coords.latitude, longitude: location.coords.longitude };
       setLiveLocation(coord);
@@ -2129,7 +2059,20 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
     } catch {
       // Ignore locate failures; permission/warning UI already handles guidance.
     }
-  }, [centerMapOnCoord]);
+  }, [centerMapOnCoord, syncForegroundLocationAccess]);
+
+  const handleLeaveWalkingScreen = useCallback(() => {
+    setShowIdleModal(false);
+    setShowEndModal(false);
+
+    if (navigation.canGoBack()) {
+      allowLeaveRef.current = true;
+      navigation.goBack();
+      return;
+    }
+
+    navigation.navigate('Dashboard', {});
+  }, [navigation]);
 
   const openAppSettings = useCallback(async () => {
     if (Platform.OS === 'ios') {
@@ -2148,58 +2091,31 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
     }
   }, []);
 
-  const dismissBackgroundLimitModal = useCallback(() => {
-    setShowBackgroundLimitModal(false);
-    clearBackgroundPromptTimer();
-    backgroundPromptTimerRef.current = setTimeout(() => {
-      if (sessionStartedRef.current && backgroundTrackingLimitedRef.current) {
-        setShowBackgroundLimitModal(true);
-      }
-    }, 15_000);
-  }, [clearBackgroundPromptTimer]);
-
-  const goToSettingsForBackgroundLocation = useCallback(() => {
-    dismissBackgroundLimitModal();
+  const handleRequestMapAccess = useCallback(() => {
     void openAppSettings();
-  }, [dismissBackgroundLimitModal, openAppSettings]);
-
-  useEffect(() => {
-    return () => {
-      clearBackgroundPromptTimer();
-    };
-  }, [clearBackgroundPromptTimer]);
+  }, [openAppSettings]);
 
   const statusColor = useMemo(() => {
     if (displayState === 'paused') return '#f59e0b';
     if (displayState === 'walking') return palette.accentPrimary;
-    if (displayState === 'location_off') return palette.info;
-    if (displayState === 'sensor_issue') return '#ef4444';
-    if (displayState === 'not_moving') return themeMode === 'dark' ? '#94a3b8' : '#475569';
-    return themeMode === 'dark' ? '#8b9bbd' : '#64748b';
-  }, [displayState, palette.accentPrimary, palette.info, themeMode]);
+    return themeMode === 'dark' ? '#94a3b8' : '#475569';
+  }, [displayState, palette.accentPrimary, themeMode]);
 
   const statusTint = useMemo(() => {
     if (displayState === 'paused') return 'rgba(245,158,11,0.14)';
     if (displayState === 'walking') return themeMode === 'dark' ? 'rgba(46,233,166,0.14)' : 'rgba(5,150,105,0.12)';
-    if (displayState === 'location_off') return themeMode === 'dark' ? 'rgba(56,189,248,0.16)' : 'rgba(3,105,161,0.10)';
-    if (displayState === 'sensor_issue') return 'rgba(239,68,68,0.12)';
     return themeMode === 'dark' ? 'rgba(139,155,189,0.12)' : 'rgba(71,85,105,0.10)';
   }, [displayState, themeMode]);
 
   const statusBorderColor = useMemo(() => {
     if (displayState === 'walking') return themeMode === 'dark' ? 'rgba(46,233,166,0.30)' : 'rgba(5,150,105,0.24)';
     if (displayState === 'paused') return 'rgba(245,158,11,0.28)';
-    if (displayState === 'location_off') return themeMode === 'dark' ? 'rgba(56,189,248,0.30)' : 'rgba(3,105,161,0.20)';
-    if (displayState === 'sensor_issue') return 'rgba(239,68,68,0.24)';
     return palette.borderSoft;
   }, [displayState, palette.borderSoft, themeMode]);
 
   const heroStatusLabel = hasStartupIssue
     ? 'Walk not started'
     : displayLabel(displayState);
-  const heroStatusDetail = hasStartupIssue
-    ? (startupError ?? 'GapWalk could not start the walk. Please try again.')
-    : displayDetail(displayState, statusReason, !!plan);
   const statusDisplayColor = hasStartupIssue ? '#ef4444' : statusColor;
   const statusDisplayTint = hasStartupIssue
     ? 'rgba(239,68,68,0.12)'
@@ -2207,35 +2123,9 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
   const statusDisplayBorderColor = hasStartupIssue
     ? 'rgba(239,68,68,0.24)'
     : statusBorderColor;
-  const statusIconName = resolveStatusIconName(displayState, {
-    startupIssue: hasStartupIssue,
-  });
   const speedMph = computeSpeedMph(distanceMeters, activeSeconds);
   const activeTimerParts = getTimerDisplayParts(activeSeconds);
   const remainingTimerParts = getTimerDisplayParts(remainingSeconds);
-  const completionSavedForLater = completionKind === 'saved_later';
-  const completionAccent = completionSavedForLater ? '#38bdf8' : palette.accentPrimary;
-  const completionTitle = completionSavedForLater ? 'Progress saved for later' : 'Walk recorded';
-  const completionSubtitle = completionSavedForLater
-    ? 'Your progress is tucked away. Pick it back up whenever you are ready for the next stretch.'
-    : 'Nice work. That session is safely logged and ready to count toward today.';
-  const completionStatsItems = [
-    {
-      icon: completionSavedForLater ? 'time-outline' : 'timer-outline',
-      label: 'Active time',
-      value: formatClock(completionStats.activeSeconds),
-    },
-    {
-      icon: completionSavedForLater ? 'walk' : 'navigate-outline',
-      label: 'Distance',
-      value: formatMiles(completionStats.distanceMeters),
-    },
-    {
-      icon: completionSavedForLater ? 'bookmark' : 'footsteps',
-      label: 'Steps',
-      value: completionStats.steps.toLocaleString(),
-    },
-  ] as const;
 
   const hideClutterRules = [
     { featureType: 'poi', elementType: 'labels.icon', stylers: [{ visibility: 'off' }] },
@@ -2459,79 +2349,190 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: palette.bgApp }]} edges={['top', 'left', 'right']}>
       <View style={[styles.topBar, { backgroundColor: palette.bgSurface, borderBottomColor: palette.borderSoft }]}>
-        <WalkingBackButton palette={palette} onPress={() => navigation.goBack()} />
+        <WalkingBackButton palette={palette} onPress={handleLeaveWalkingScreen} />
         <Text variant="title" style={styles.topBarTitle}>Walking</Text>
         <View style={styles.topBarBtnPlaceholder} />
       </View>
 
       <View style={styles.body}>
         <View style={[styles.mapContainer, { backgroundColor: palette.bgSurface }]}>
-          <MapView
-            ref={mapRef}
-            style={StyleSheet.absoluteFillObject}
-            onPanDrag={() => setIsMapFollowingUser((current) => (current ? false : current))}
-            showsMyLocationButton={false}
-            showsCompass={false}
-            showsTraffic={false}
-            showsIndoorLevelPicker={false}
-            showsIndoors={false}
-            toolbarEnabled={false}
-            customMapStyle={themeMode === 'dark' ? darkMapStyle : lightMapStyle}
-          >
-            {liveLocation && (
-              <Marker coordinate={liveLocation} anchor={{ x: 0.5, y: 0.5 }} flat>
-                <View style={[styles.userArrowOuter, { transform: [{ rotate: `${liveHeading}deg` }] }]}>
-                  <View style={styles.userArrowHead} />
-                  <View style={styles.userArrowDot} />
-                </View>
-              </Marker>
-            )}
-            {routeCoords.length >= 2 && (
-              <Polyline
-                coordinates={routeCoords}
-                strokeColor={statusColor}
-                strokeWidth={4}
-                lineCap="round"
-                lineJoin="round"
-              />
-            )}
-          </MapView>
+          {canShowMap ? (
+            <>
+              <MapView
+                ref={mapRef}
+                style={StyleSheet.absoluteFillObject}
+                onPanDrag={() => setIsMapFollowingUser((current) => (current ? false : current))}
+                showsMyLocationButton={false}
+                showsCompass={false}
+                showsTraffic={false}
+                showsIndoorLevelPicker={false}
+                showsIndoors={false}
+                toolbarEnabled={false}
+                customMapStyle={themeMode === 'dark' ? darkMapStyle : lightMapStyle}
+              >
+                {liveLocation && (
+                  <Marker coordinate={liveLocation} anchor={{ x: 0.5, y: 0.5 }} flat>
+                    <View style={[styles.userArrowOuter, { transform: [{ rotate: `${liveHeading}deg` }] }]}>
+                      <View style={styles.userArrowHead} />
+                      <View style={styles.userArrowDot} />
+                    </View>
+                  </Marker>
+                )}
+                {routeCoords.length >= 2 && (
+                  <Polyline
+                    coordinates={routeCoords}
+                    strokeColor={statusColor}
+                    strokeWidth={4}
+                    lineCap="round"
+                    lineJoin="round"
+                  />
+                )}
+              </MapView>
 
-          <View style={styles.heroOverlay}>
-            <Animated.View style={[styles.heroStatusRow, { opacity: statusChangeAnim, transform: [{ scale: statusChangeAnim }] }]}>
-              {/* Status pill removed per user request */}
-              <Pressable
+              <View style={styles.heroOverlay}>
+                <Animated.View style={[styles.heroStatusRow, { opacity: statusChangeAnim, transform: [{ scale: statusChangeAnim }] }]}>
+                  {/* Status pill removed per user request */}
+                  <Pressable
+                    style={[
+                      styles.mapIcon,
+                      {
+                        backgroundColor: palette.bgSurfaceElevated,
+                        borderColor: isMapFollowingUser
+                          ? (themeMode === 'dark' ? 'rgba(46,233,166,0.30)' : 'rgba(5,150,105,0.24)')
+                          : palette.borderSoft,
+                      },
+                    ]}
+                    onPress={() => { void handleLocatePress(); }}
+                  >
+                    <Ionicons name={isMapFollowingUser ? 'locate' : 'locate-outline'} size={20} color={statusColor} />
+                  </Pressable>
+                </Animated.View>
+
+                <View style={styles.noticeStack}>
+                  {startupError && (
+                    <WalkNoticeCard
+                      palette={palette}
+                      themeMode={themeMode}
+                      iconName="alert-circle-outline"
+                      title="Walk could not start"
+                      message={startupError}
+                      tone="danger"
+                      actionLabel={isStartingWalk ? undefined : 'Retry start'}
+                      onAction={() => { void handleRetryStart(); }}
+                    />
+                  )}
+                  {locationLostMidWalk && (
+                    <WalkNoticeCard
+                      palette={palette}
+                      themeMode={themeMode}
+                      iconName="location-outline"
+                      title="Location signal lost"
+                      message="Distance and route tracking are paused. Time and steps still count."
+                    />
+                  )}
+                </View>
+              </View>
+            </>
+          ) : (
+            <View style={styles.mapPermissionGate}>
+              <View
                 style={[
-                  styles.mapIcon,
+                  styles.mapPermissionCard,
                   {
                     backgroundColor: palette.bgSurfaceElevated,
-                    borderColor: isMapFollowingUser
-                      ? (themeMode === 'dark' ? 'rgba(46,233,166,0.30)' : 'rgba(5,150,105,0.24)')
-                      : palette.borderSoft,
+                    borderColor: palette.borderSoft,
                   },
                 ]}
-                onPress={() => { void handleLocatePress(); }}
               >
-                <Ionicons name={isMapFollowingUser ? 'locate' : 'locate-outline'} size={20} color={statusColor} />
-              </Pressable>
-            </Animated.View>
-
-            <View style={styles.noticeStack}>
-              {startupError && (
-                <WalkNoticeCard
-                  palette={palette}
-                  themeMode={themeMode}
-                  iconName="alert-circle-outline"
-                  title="Walk could not start"
-                  message={startupError}
-                  tone="danger"
-                  actionLabel={isStartingWalk ? undefined : 'Retry start'}
-                  onAction={() => { void handleRetryStart(); }}
+                <View
+                  style={[
+                    styles.mapPermissionIconWrap,
+                    {
+                      backgroundColor: themeMode === 'dark' ? 'rgba(59,130,246,0.16)' : 'rgba(59,130,246,0.10)',
+                      borderColor: themeMode === 'dark' ? 'rgba(59,130,246,0.28)' : 'rgba(59,130,246,0.18)',
+                    },
+                  ]}
+                >
+                  <Ionicons name="location-outline" size={24} color={palette.accentPrimary} />
+                </View>
+                <Text variant="title" style={styles.mapPermissionTitle}>{mapPermissionTitle}</Text>
+                <Text variant="body" color={palette.textMuted} style={styles.mapPermissionMessage}>
+                  {mapPermissionMessage}
+                </Text>
+                <Text variant="bodySmall" color={palette.textMuted} style={styles.mapPermissionHint}>
+                  Your walk can still continue without the map. It comes back as soon as location access is enabled.
+                </Text>
+                <Button
+                  title={mapPermissionActionLabel}
+                  onPress={handleRequestMapAccess}
+                  full
+                  style={styles.mapPermissionButton}
+                  testID="walking-map-permission-action"
                 />
-              )}
-              {/* Background tracking notice removed per user request */}
+                <Pressable
+                  onPress={() => setShowMapPermissionHelp((current) => !current)}
+                  style={({ pressed }) => [
+                    styles.mapPermissionHelpToggle,
+                    {
+                      backgroundColor: palette.bgSurface,
+                      borderColor: palette.borderSoft,
+                    },
+                    pressed && { opacity: 0.82 },
+                  ]}
+                >
+                  <Text variant="bodySmall" style={styles.mapPermissionHelpToggleText}>
+                    {mapPermissionToggleLabel}
+                  </Text>
+                  <Ionicons
+                    name={showMapPermissionHelp ? 'chevron-up-outline' : 'chevron-down-outline'}
+                    size={16}
+                    color={palette.textMuted}
+                  />
+                </Pressable>
+                {showMapPermissionHelp ? (
+                  <View
+                    style={[
+                      styles.mapPermissionHelpCard,
+                      {
+                        backgroundColor: palette.bgSurface,
+                        borderColor: palette.borderSoft,
+                      },
+                    ]}
+                  >
+                    <Text variant="bodySmall" style={styles.mapPermissionHelpStep}>
+                      1. Tap <Text variant="bodySmall" style={styles.mapPermissionHelpEmphasis}>Go to settings</Text>.
+                    </Text>
+                    <Text variant="bodySmall" style={styles.mapPermissionHelpStep}>
+                      2. Open <Text variant="bodySmall" style={styles.mapPermissionHelpEmphasis}>Permissions</Text>.
+                    </Text>
+                    <Text variant="bodySmall" style={styles.mapPermissionHelpStep}>
+                      3. Choose <Text variant="bodySmall" style={styles.mapPermissionHelpEmphasis}>Location</Text>.
+                    </Text>
+                    <Text variant="bodySmall" style={styles.mapPermissionHelpStep}>
+                      4. Select <Text variant="bodySmall" style={styles.mapPermissionHelpEmphasis}>Allow only while using the app</Text>.
+                    </Text>
+                    <Text variant="bodySmall" color={palette.textMuted} style={styles.mapPermissionHelpNote}>
+                      Optional: choose <Text variant="bodySmall" style={styles.mapPermissionHelpEmphasis}>Allow all the time</Text> only if you want tracking to keep updating after locking your screen or switching apps.
+                    </Text>
+                  </View>
+                ) : null}
+                {startupError && (
+                  <View style={styles.mapPermissionNotice}>
+                    <WalkNoticeCard
+                      palette={palette}
+                      themeMode={themeMode}
+                      iconName="alert-circle-outline"
+                      title="Walk could not start"
+                      message={startupError}
+                      tone="danger"
+                      actionLabel={isStartingWalk ? undefined : 'Retry start'}
+                      onAction={() => { void handleRetryStart(); }}
+                    />
+                  </View>
+                )}
+              </View>
             </View>
-          </View>
+          )}
         </View>
 
         <Animated.View
@@ -2548,37 +2549,19 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
           ]}
         >
 
-          <View style={styles.statusCapsuleWrap}>
-            <Pressable
-              onPress={() => setStatusDetailsExpanded((current) => !current)}
-              style={[
-                styles.statusCapsule,
-                {
-                  backgroundColor: statusDisplayTint,
-                  borderColor: statusDisplayBorderColor,
-                },
-              ]}
-            >
-              <View style={styles.statusCapsuleMain}>
-                <View style={[styles.statusDot, { backgroundColor: statusDisplayColor }]} />
-                <Ionicons name={statusIconName} size={14} color={statusDisplayColor} />
-                <Text variant="bodySmall" style={[styles.statusCapsuleLabel, { color: statusDisplayColor }]}>
-                  {heroStatusLabel}
-                </Text>
-              </View>
-              <Ionicons
-                name={statusDetailsExpanded ? 'chevron-up-outline' : 'chevron-down-outline'}
-                size={16}
-                color={statusDisplayColor}
-              />
-            </Pressable>
-            {statusDetailsExpanded && (
-              <View style={styles.statusCapsuleDetailWrap}>
-                <Text variant="bodySmall" color={palette.textMuted} style={styles.statusCapsuleDetailText}>
-                  {heroStatusDetail}
-                </Text>
-              </View>
-            )}
+          <View
+            style={[
+              styles.statusCapsule,
+              {
+                backgroundColor: statusDisplayTint,
+                borderColor: statusDisplayBorderColor,
+              },
+            ]}
+          >
+            <View style={[styles.statusDot, { backgroundColor: statusDisplayColor }]} />
+            <Text variant="bodySmall" style={[styles.statusCapsuleLabel, { color: statusDisplayColor }]}>
+              {heroStatusLabel}
+            </Text>
           </View>
 
           <View style={styles.metricGrid}>
@@ -2600,7 +2583,7 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
                 label="End walk"
                 iconName="close"
                 tone="danger"
-                onPress={() => setShowEndModal(true)}
+                onPress={() => { void handleEndWalkPress(); }}
                 testID="walking-end"
               />
             </View>
@@ -2646,31 +2629,6 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
             onPress={() => { void saveForLater(); }}
             style={styles.modalButton}
             testID="walking-idle-later"
-          />
-        </View>
-      </Modal>
-
-      <Modal
-        visible={showBackgroundLimitModal}
-        onClose={() => { }}
-        title="Set location to Allow all the time"
-      >
-        <Text variant="body" style={styles.modalText}>
-          Set the location permission to "Allow all the time" so distance updates continue when GapWalk is in the background.
-        </Text>
-        <View style={styles.modalRow}>
-          <Button
-            title="Later"
-            onPress={dismissBackgroundLimitModal}
-            variant="outline"
-            style={styles.modalButton}
-            testID="walking-bg-limit-dismiss"
-          />
-          <Button
-            title="Go to Settings"
-            onPress={goToSettingsForBackgroundLocation}
-            style={styles.modalButton}
-            testID="walking-bg-limit-fix"
           />
         </View>
       </Modal>
@@ -2737,12 +2695,33 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
               },
             ]}
           >
-            <View style={styles.completionHeroWrap}>
+            <Animated.View
+              style={[
+                styles.completionSummaryWrap,
+                {
+                  opacity: completionGlowAnim.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [0.92, 1],
+                  }),
+                },
+              ]}
+            >
+              <WalkCompletionSummary
+                themeMode={themeMode}
+                palette={palette}
+                kind={completionKind}
+                stats={completionStats}
+                distanceUnit={distanceUnit}
+                actionLabel="Back to dashboard"
+                onAction={dismissCompletion}
+              />
+            </Animated.View>
+            <View style={styles.completionGlowAmbient} pointerEvents="none">
               <Animated.View
                 style={[
                   styles.completionGlow,
                   {
-                    backgroundColor: completionSavedForLater
+                    backgroundColor: completionKind === 'saved_later'
                       ? (themeMode === 'dark' ? 'rgba(56,189,248,0.24)' : 'rgba(56,189,248,0.18)')
                       : (themeMode === 'dark' ? 'rgba(46,233,166,0.22)' : 'rgba(5,150,105,0.18)'),
                     opacity: completionGlowAnim,
@@ -2757,81 +2736,7 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
                   },
                 ]}
               />
-              <View
-                style={[
-                  styles.completionHeroBadge,
-                  {
-                    backgroundColor: themeMode === 'dark'
-                      ? 'rgba(255,255,255,0.03)'
-                      : 'rgba(255,255,255,0.75)',
-                    borderColor: completionSavedForLater
-                      ? 'rgba(56,189,248,0.28)'
-                      : (themeMode === 'dark' ? 'rgba(46,233,166,0.28)' : 'rgba(5,150,105,0.24)'),
-                  },
-                ]}
-              >
-                <Ionicons
-                  name={completionSavedForLater ? 'bookmark' : 'footsteps'}
-                  size={38}
-                  color={completionAccent}
-                />
-                <View style={[styles.completionSatellite, styles.completionSatelliteLeft]}>
-                  <Ionicons
-                    name={completionSavedForLater ? 'walk' : 'sparkles'}
-                    size={18}
-                    color={completionAccent}
-                  />
-                </View>
-                <View style={[styles.completionSatellite, styles.completionSatelliteRight]}>
-                  <Ionicons
-                    name={completionSavedForLater ? 'time-outline' : 'checkmark-circle'}
-                    size={18}
-                    color={completionAccent}
-                  />
-                </View>
-              </View>
             </View>
-
-            <Text variant="title" style={styles.completionTitle}>
-              {completionTitle}
-            </Text>
-            <Text variant="body" color={palette.textMuted} style={styles.completionBody}>
-              {completionSubtitle}
-            </Text>
-
-            <View style={styles.completionStatsRow}>
-              {completionStatsItems.map((item, index) => (
-                <Animated.View
-                  key={item.label}
-                  style={[
-                    styles.completionStatChip,
-                    {
-                      backgroundColor: palette.bgSurface,
-                      borderColor: palette.borderSoft,
-                      opacity: completionStatAnims[index],
-                      transform: [
-                        {
-                          translateY: completionStatAnims[index].interpolate({
-                            inputRange: [0, 1],
-                            outputRange: [14, 0],
-                          }),
-                        },
-                      ],
-                    },
-                  ]}
-                >
-                  <Ionicons name={item.icon} size={16} color={completionAccent} />
-                  <Text variant="bodySmall" color={palette.textMuted}>{item.label}</Text>
-                  <Text variant="body" style={styles.completionStatValue}>{item.value}</Text>
-                </Animated.View>
-              ))}
-            </View>
-
-            <Button
-              title="Back to dashboard"
-              onPress={dismissCompletion}
-              style={styles.completionButton}
-            />
           </Animated.View>
         </Animated.View>
       )}
@@ -2881,6 +2786,82 @@ const styles = StyleSheet.create({
     flex: 1,
     borderRadius: 24,
     overflow: 'hidden',
+  },
+  mapPermissionGate: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 20,
+  },
+  mapPermissionCard: {
+    width: '100%',
+    borderRadius: 24,
+    borderWidth: 1,
+    paddingHorizontal: 20,
+    paddingVertical: 24,
+    alignItems: 'center',
+  },
+  mapPermissionIconWrap: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 16,
+  },
+  mapPermissionTitle: {
+    textAlign: 'center',
+    marginBottom: 10,
+  },
+  mapPermissionMessage: {
+    textAlign: 'center',
+    lineHeight: 22,
+  },
+  mapPermissionHint: {
+    textAlign: 'center',
+    lineHeight: 20,
+    marginTop: 10,
+  },
+  mapPermissionButton: {
+    marginTop: 18,
+  },
+  mapPermissionHelpToggle: {
+    width: '100%',
+    marginTop: 12,
+    borderRadius: 16,
+    borderWidth: 1,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  mapPermissionHelpToggleText: {
+    fontWeight: theme.fontWeight.semibold,
+  },
+  mapPermissionHelpCard: {
+    width: '100%',
+    marginTop: 10,
+    borderRadius: 18,
+    borderWidth: 1,
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+    gap: 8,
+  },
+  mapPermissionHelpStep: {
+    lineHeight: 20,
+  },
+  mapPermissionHelpEmphasis: {
+    fontWeight: theme.fontWeight.semibold,
+  },
+  mapPermissionHelpNote: {
+    lineHeight: 20,
+    marginTop: 2,
+  },
+  mapPermissionNotice: {
+    width: '100%',
+    marginTop: 14,
   },
   heroOverlay: {
     position: 'absolute',
@@ -3121,35 +3102,18 @@ const styles = StyleSheet.create({
     height: 14,
     borderRadius: 999,
   },
-  statusCapsuleWrap: {
-    gap: 6,
-  },
   statusCapsule: {
-    minHeight: 42,
     borderRadius: 999,
     borderWidth: 1,
     paddingHorizontal: 14,
-    paddingVertical: 10,
+    paddingVertical: 8,
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 10,
-  },
-  statusCapsuleMain: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    alignSelf: 'center',
     gap: 8,
-    paddingVertical: 3,
-    marginBottom: 2,
   },
   statusCapsuleLabel: {
     fontWeight: theme.fontWeight.semibold,
-  },
-  statusCapsuleDetailWrap: {
-    paddingHorizontal: 6,
-  },
-  statusCapsuleDetailText: {
-    lineHeight: 20,
   },
   metricGrid: {
     flexDirection: 'row',
@@ -3370,6 +3334,16 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.22,
     shadowRadius: 32,
     elevation: 14,
+  },
+  completionSummaryWrap: {
+    width: '100%',
+    zIndex: 1,
+  },
+  completionGlowAmbient: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    justifyContent: 'flex-start',
+    paddingTop: 24,
   },
   completionHeroWrap: {
     width: 120,
