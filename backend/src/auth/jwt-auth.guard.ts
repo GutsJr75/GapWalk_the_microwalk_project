@@ -30,7 +30,11 @@ export class JwtAuthGuard implements CanActivate {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       this.logger.warn(`Firebase token verification failed: ${message}`);
-      throw new UnauthorizedException('Invalid or expired Firebase ID token');
+      const clientMessage =
+        process.env.NODE_ENV === 'production'
+          ? 'Invalid or expired Firebase ID token'
+          : `Invalid or expired Firebase ID token: ${message}`;
+      throw new UnauthorizedException(clientMessage);
     }
 
     return true;
