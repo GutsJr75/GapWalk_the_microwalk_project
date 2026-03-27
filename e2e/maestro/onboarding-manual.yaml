@@ -43,8 +43,14 @@ name: onboarding-manual
 - tapOn:
     id: manual-e2e-seed
 - tapOn:
-    id: manual-done
+    id: manual-save
 - tapOn: Save
+- extendedWaitUntil:
+    visible:
+      id: manual-continue
+    timeout: 20000
+- tapOn:
+    id: manual-continue
 - extendedWaitUntil:
     visible:
       id: preferences-continue

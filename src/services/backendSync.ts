@@ -107,6 +107,34 @@ const buildNetworkFailureMessage = (apiBase: string, error: unknown): string => 
   return `Unable to reach backend at ${apiBase}. Make sure the server is running and reachable from this client.`;
 };
 
+const isFirebaseTokenUnauthorizedResponse = (
+  status: number,
+  responseText: string
+): boolean =>
+  status === 401 &&
+  /invalid or expired firebase id token/i.test(responseText);
+
+const performApiRequest = async (
+  apiBase: string,
+  path: string,
+  body: unknown,
+  method: string,
+  token: string
+): Promise<Response> => {
+  try {
+    return await fetch(`${apiBase}/api${path}`, {
+      method,
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(body),
+    });
+  } catch (error) {
+    throw new Error(buildNetworkFailureMessage(apiBase, error));
+  }
+};
+
 export async function apiFetch(
   path: string,
   body: unknown,
@@ -118,23 +146,19 @@ export async function apiFetch(
     throw new Error('Session expired. Please sign in again.');
   }
 
-  let response: Response;
-  try {
-    response = await fetch(`${apiBase}/api${path}`, {
-      method,
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify(body),
-    });
-  } catch (error) {
-    throw new Error(buildNetworkFailureMessage(apiBase, error));
+  let response = await performApiRequest(apiBase, path, body, method, token);
+  let responseText = response.ok ? '' : await response.text().catch(() => '');
+
+  if (isFirebaseTokenUnauthorizedResponse(response.status, responseText)) {
+    const refreshedToken = await firebaseAuthService.getIdToken(true);
+    if (refreshedToken) {
+      response = await performApiRequest(apiBase, path, body, method, refreshedToken);
+      responseText = response.ok ? '' : await response.text().catch(() => '');
+    }
   }
 
   if (!response.ok) {
-    const text = await response.text().catch(() => '');
-    throw new Error(`Backend sync failed [${response.status}]: ${text}`);
+    throw new Error(`Backend sync failed [${response.status}]: ${responseText}`);
   }
 
   return response.json();

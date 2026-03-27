@@ -3,7 +3,7 @@ import Constants from 'expo-constants';
 import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
 import { apiFetch, registerDevice } from './backendSync';
-import { firebaseAuthService } from './firebaseAuth';
+
 import {
   getExpoPushProjectId,
   getRemotePushRegistrationError,
@@ -17,8 +17,7 @@ export async function registerCurrentDeviceForNotifications(): Promise<boolean> 
 
   const updateTimezoneFallback = async (): Promise<boolean> => {
     try {
-      const user = firebaseAuthService.getCurrentUser();
-      if (!user) return false;
+
       await apiFetch('/users/me', { timezone }, 'PATCH');
       return true;
     } catch (error) {
