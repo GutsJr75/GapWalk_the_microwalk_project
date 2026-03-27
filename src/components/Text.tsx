@@ -161,6 +161,7 @@ const styles = StyleSheet.create({
   base: {
     color: theme.colors.textPrimary,
     fontFamily: theme.fontFamily.regular,
+    flexShrink: 1,
   },
   heading: {
     fontSize: theme.fontSize.heading,

@@ -134,7 +134,7 @@ const styles = StyleSheet.create({
   barLabel: {
     fontSize: theme.fontSize.xxs,
   },
-  actions: { alignItems: 'stretch' as const, marginLeft: theme.spacing.ml, paddingTop: 2, gap: theme.spacing.sm, width: 96 },
+  actions: { alignItems: 'stretch' as const, marginLeft: theme.spacing.ml, paddingTop: 2, gap: theme.spacing.sm, minWidth: 80, maxWidth: 96, flexShrink: 0 },
   actionBtn: {
     width: '100%',
     minHeight: compactActionTokens.minHeight,

@@ -741,7 +741,6 @@ const styles = StyleSheet.create({
   },
   headerFrame: {
     width: '100%',
-    maxWidth: 370,
     alignSelf: 'center',
     paddingHorizontal: theme.spacing.sm,
   },
@@ -775,12 +774,10 @@ const styles = StyleSheet.create({
     lineHeight: 22,
     fontSize: theme.fontSize.md,
     textAlign: 'center',
-    maxWidth: 356,
     alignSelf: 'center',
   },
   howSection: {
     width: '100%',
-    maxWidth: 370,
     alignSelf: 'center',
   },
   howCard: {

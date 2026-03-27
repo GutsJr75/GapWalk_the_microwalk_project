@@ -65,6 +65,17 @@ export function toUserFriendlyError(error: unknown): string {
   if (lower.includes('auth/popup-closed-by-user') || lower.includes('auth/cancelled-popup-request')) {
     return 'The sign-in window was closed before the process finished.';
   }
+  if (
+    lower.includes('developer_error') ||
+    lower.includes('google sign-in completed but no id token') ||
+    lower.includes('google sign-in completed but no access token') ||
+    lower.includes('follow troubleshooting instructions at https://react-native-google-signin.github.io/docs/troubleshooting')
+  ) {
+    return 'Google sign-in is misconfigured for this build. Confirm the app package and signing SHA-1 are registered in the same Google project as google-services.json, then rebuild the app.';
+  }
+  if (lower.includes('play_services_not_available')) {
+    return 'Google Play Services is unavailable or out of date on this device.';
+  }
 
   // File / import errors
   if (lower.includes('could not read') || lower.includes('file') && lower.includes('empty')) {
