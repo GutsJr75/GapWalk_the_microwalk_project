@@ -10,6 +10,31 @@ const getGoogleSignin = (): { GoogleSignin: any; statusCodes: any } => {
   return require('@react-native-google-signin/google-signin');
 };
 
+const createGoogleSignInCancelledError = (statusCode?: string): Error & { code?: string } => {
+  const error = new Error('Google sign-in was cancelled.') as Error & { code?: string };
+  if (statusCode) {
+    error.code = statusCode;
+  }
+  return error;
+};
+
+type GoogleServicesJson = {
+  client?: Array<{
+    client_info?: {
+      android_client_info?: {
+        package_name?: string;
+      };
+    };
+    oauth_client?: Array<{
+      client_id?: string;
+      client_type?: number;
+      android_info?: {
+        package_name?: string;
+      };
+    }>;
+  }>;
+};
+
 interface GoogleCalendarEventDateTime {
   date?: string;
   dateTime?: string;
@@ -42,27 +67,66 @@ export const isSignInCancelled = (error: unknown): boolean => {
  * (native SDK) to avoid the custom-URI-scheme restriction on Android.
  */
 export async function signInWithGoogle(): Promise<string> {
-  const { GoogleSignin } = getGoogleSignin();
+  const { GoogleSignin, statusCodes } = getGoogleSignin();
 
   GoogleSignin.configure({
     scopes: SCOPES,
-    webClientId: GOOGLE_WEB_CLIENT_ID,
+    webClientId: GOOGLE_WEB_CLIENT_ID || undefined,
+    iosClientId: GOOGLE_IOS_CLIENT_ID || undefined,
     offlineAccess: false,
   });
 
   await GoogleSignin.hasPlayServices({ showPlayServicesUpdateDialog: true });
-  await GoogleSignin.signIn();
+
+  // Sign out any previously cached account so the account picker always appears,
+  // allowing the user to choose a different Google account each time.
+  try { await GoogleSignin.signOut(); } catch { /* ignore if not signed in */ }
+
+  const response = await GoogleSignin.signIn();
+  if (response?.type !== 'success') {
+    throw createGoogleSignInCancelledError(statusCodes.SIGN_IN_CANCELLED);
+  }
 
   const tokens = await GoogleSignin.getTokens();
   if (!tokens.accessToken) {
     throw new Error(
-      'Google sign-in completed but no access token was returned.'
+      'Google sign-in completed but no access token was returned. Check the Google web client ID configuration for this build.'
     );
   }
   return tokens.accessToken;
 }
 
 const FALLBACK_NATIVE_APP_ID = 'com.gapwalk.app';
+
+const getAndroidGoogleServices = (): GoogleServicesJson | null => {
+  if (Platform.OS !== 'android') return null;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    return require('../../google-services.json') as GoogleServicesJson;
+  } catch {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      return require('../../android/app/google-services.json') as GoogleServicesJson;
+    } catch {
+      return null;
+    }
+  }
+};
+
+const androidGoogleServices = getAndroidGoogleServices();
+const androidGoogleClient = androidGoogleServices?.client?.[0];
+const androidGoogleWebClientId =
+  androidGoogleClient?.oauth_client
+    ?.find((client) => client.client_type === 3)
+    ?.client_id?.trim() ?? '';
+const hasAndroidOauthClient =
+  androidGoogleClient?.oauth_client?.some(
+    (client) =>
+      client.client_type === 1 &&
+      client.android_info?.package_name ===
+        (androidGoogleClient?.client_info?.android_client_info?.package_name ??
+          FALLBACK_NATIVE_APP_ID)
+  ) ?? false;
 
 /*
  * ── Google OAuth Configuration ──
@@ -71,20 +135,21 @@ const FALLBACK_NATIVE_APP_ID = 'com.gapwalk.app';
  * 1. Go to https://console.cloud.google.com
  * 2. Create a project (or select an existing one).
  * 3. Enable the "Google Calendar API" under APIs & Services → Library.
- * 4. Under APIs & Services → Credentials → Create Credentials → OAuth client ID:
- *    a. Create a Web client for browser auth.
- *    b. Create an Android client for your package name + SHA-1 fingerprint.
+ * 4. Use one Google project consistently:
+ *    a. Create a Web client for browser auth and token exchange.
+ *    b. Register Android package name + SHA-1 in the same project as google-services.json.
  *    c. Create an iOS client for your bundle identifier.
- * 5. Paste the platform-specific client IDs below. Do not reuse the web client ID on iOS/Android.
+ * 5. Do not create duplicate Android OAuth clients in a different Google project.
  *
  * Native builds in this app return to:
  *   com.gapwalk.app:/oauthredirect
  */
 
 // Prefer env vars so you can set in .env without editing code (restart app after changing).
-const GOOGLE_WEB_CLIENT_ID = process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID || 'YOUR_GOOGLE_WEB_CLIENT_ID';
-const GOOGLE_IOS_CLIENT_ID = process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID || 'YOUR_GOOGLE_IOS_CLIENT_ID';
-const GOOGLE_ANDROID_CLIENT_ID = process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID || 'YOUR_GOOGLE_ANDROID_CLIENT_ID';
+const GOOGLE_WEB_CLIENT_ID =
+  (Platform.OS === 'android' && androidGoogleWebClientId) ||
+  (process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID ?? '').trim();
+const GOOGLE_IOS_CLIENT_ID = (process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID ?? '').trim();
 
 const SCOPES = ['https://www.googleapis.com/auth/calendar.readonly'];
 
@@ -117,24 +182,24 @@ export function getGoogleConfigurationError(): string | null {
     return null;
   }
 
-  const envVarName =
-    Platform.OS === 'ios'
-      ? 'EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID'
-      : 'EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID';
-  const nativePlatformLabel = Platform.OS === 'ios' ? 'iOS' : 'Android';
-  const nativeAppId = getNativeAppId();
-  const nativeClientId =
-    Platform.OS === 'ios' ? GOOGLE_IOS_CLIENT_ID : GOOGLE_ANDROID_CLIENT_ID;
+  if (Platform.OS === 'ios') {
+    if (isPlaceholderClientId(GOOGLE_IOS_CLIENT_ID)) {
+      return `Google Calendar is not configured for iOS. Create an iOS OAuth client for ${getNativeAppId()} and set EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID in .env.`;
+    }
 
-  if (isPlaceholderClientId(nativeClientId)) {
-    return `Google Calendar is not configured for ${nativePlatformLabel}. Create a ${nativePlatformLabel} OAuth client for ${nativeAppId} and set ${envVarName} in .env.`;
+    if (GOOGLE_IOS_CLIENT_ID === GOOGLE_WEB_CLIENT_ID) {
+      return 'Google Calendar is misconfigured for iOS. EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID must use an iOS OAuth client ID, not the same value as EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID.';
+    }
+
+    return null;
   }
 
-  if (
-    !isPlaceholderClientId(GOOGLE_WEB_CLIENT_ID) &&
-    nativeClientId === GOOGLE_WEB_CLIENT_ID
-  ) {
-    return `Google Calendar is misconfigured for ${nativePlatformLabel}. ${envVarName} must use a platform-specific OAuth client ID, not the same value as EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID.`;
+  if (!androidGoogleServices) {
+    return `Google Calendar is not configured for Android. Add google-services.json for ${getNativeAppId()} and register its SHA-1 in the same Google project.`;
+  }
+
+  if (!hasAndroidOauthClient) {
+    return `Google Calendar is not configured for Android. Register ${getNativeAppId()} and its signing SHA-1 in the same Google project as google-services.json.`;
   }
 
   return null;

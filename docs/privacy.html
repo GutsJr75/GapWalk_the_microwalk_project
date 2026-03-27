@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Privacy Policy — GapWalk</title>
+  <title>Privacy Policy - GapWalk</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -124,7 +124,7 @@
   <div class="container">
     <p class="page-label">Legal</p>
     <h1>Privacy Policy</h1>
-    <p class="meta">Last updated: March 2025 &nbsp;·&nbsp; Effective: March 2025</p>
+    <p class="meta">Last updated: March 2025 &nbsp;/&nbsp; Effective: March 2025</p>
 
     <p>
       GapWalk ("we", "our", or "us") is a mobile walking tracker app for iOS and Android.
@@ -140,7 +140,7 @@
     <h2>1. Information We Collect</h2>
     <p>We collect the following types of information when you use GapWalk:</p>
 
-    <p><strong>Account information</strong> (via Google Sign-In):</p>
+    <p><strong>Account information</strong> (via Firebase Authentication, including optional Google sign-in):</p>
     <ul>
       <li>Your name and email address</li>
       <li>Your Google profile picture</li>
@@ -177,7 +177,8 @@
     <p>
       GapWalk uses your device's GPS to track your walk route and calculate distance.
       Location access is only active while you are recording a walk session.
-      We request background location permission so tracking continues if you lock your screen mid-walk.
+      If you enable background location, GapWalk uses location in the background, when the app is not in use,
+      only during an active walk so tracking can continue if you lock your screen or switch apps.
     </p>
     <p>
       Your GPS coordinates are stored locally on your device using SQLite and may be synced
@@ -189,15 +190,15 @@
     <ul>
       <li><strong>On-device:</strong> Walk sessions and routes are stored in a local SQLite database on your phone.</li>
       <li><strong>Backend server:</strong> Session data may be synced to our secure server at <code>api.gapwalk.com</code> for backup and cross-device access.</li>
-      <li><strong>Google services:</strong> Authentication is handled by Google OAuth. We do not store your Google password.</li>
+      <li><strong>Firebase services:</strong> Authentication is handled through Firebase Authentication. We do not store your password outside Firebase.</li>
     </ul>
 
     <!-- 5 -->
     <h2>5. Data Sharing</h2>
     <p>We do not sell or share your personal data. The only third-party services involved are:</p>
     <ul>
-      <li><strong>Google Sign-In</strong> — for authentication. Governed by <a href="https://policies.google.com/privacy" target="_blank" rel="noopener">Google's Privacy Policy</a>.</li>
-      <li><strong>Google Maps</strong> — to display the map background in the walking screen. No walk data is sent to Google Maps.</li>
+      <li><strong>Firebase Authentication</strong> - for account authentication and session management. Google sign-in remains governed by <a href="https://policies.google.com/privacy" target="_blank" rel="noopener">Google's Privacy Policy</a>.</li>
+      <li><strong>Google Maps</strong> - to display the map background in the walking screen. No walk data is sent to Google Maps.</li>
     </ul>
 
     <!-- 6 -->
@@ -258,7 +259,7 @@
     <p>&copy; 2025 GapWalk. All rights reserved.</p>
     <p style="margin-top:0.5rem;">
       <a href="index.html">Home</a>
-      &nbsp;·&nbsp;
+      &nbsp;/&nbsp;
       <a href="mailto:support@gapwalk.com">Contact</a>
     </p>
   </footer>

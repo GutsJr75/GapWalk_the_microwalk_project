@@ -1,4 +1,4 @@
-import React, { useRef, useCallback } from 'react';
+import React from 'react';
 import {
   Animated,
   Modal,
@@ -17,6 +17,7 @@ import { AppIcon, type AppIconName } from '../../components/AppIcon';
 import { theme } from '../../theme';
 import { withAlpha } from '../../theme/colorUtils';
 import { useThemePalette } from '../../theme/palette';
+import { type StoredAuthUser } from '../../data/authStorage';
 
 export interface SideMenuItem {
   key: string;
@@ -31,14 +32,12 @@ interface SideMenuProps {
   onClose: () => void;
   menuItems: SideMenuItem[];
   onLogout: () => void;
-  authUser: { email?: string; name?: string; sub?: string } | null;
+  authUser: StoredAuthUser | null;
   displayName: string;
   hasSetPreferences: boolean;
   menuPanelWidth: number;
   slideAnim: Animated.Value;
 }
-
-const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 
 const AnimatedMenuItem: React.FC<{
   item: SideMenuItem;
@@ -46,36 +45,14 @@ const AnimatedMenuItem: React.FC<{
   palette: ReturnType<typeof useThemePalette>;
   onAction: (action: () => void) => void;
 }> = ({ item, isLast, palette, onAction }) => {
-  const scaleAnim = useRef(new Animated.Value(1)).current;
-
-  const onPressIn = useCallback(() => {
-    Animated.spring(scaleAnim, {
-      toValue: 0.96,
-      tension: 150,
-      friction: 8,
-      useNativeDriver: true,
-    }).start();
-  }, [scaleAnim]);
-
-  const onPressOut = useCallback(() => {
-    Animated.spring(scaleAnim, {
-      toValue: 1,
-      tension: 120,
-      friction: 8,
-      useNativeDriver: true,
-    }).start();
-  }, [scaleAnim]);
-
   return (
-    <AnimatedPressable
-      style={[
+    <Pressable
+      style={({ pressed }) => [
         styles.menuItem,
         { borderBottomColor: isLast ? 'transparent' : palette.borderSoft },
-        { transform: [{ scale: scaleAnim }] },
+        pressed && { opacity: 0.86 },
       ]}
       onPress={() => onAction(item.onPress)}
-      onPressIn={onPressIn}
-      onPressOut={onPressOut}
       android_ripple={{ color: withAlpha(palette.accentPrimary, 0.12) }}
       testID={item.testID}
     >
@@ -86,7 +63,7 @@ const AnimatedMenuItem: React.FC<{
         </Text>
         <AppIcon name="chevronRight" size={16} color={palette.textMuted} />
       </View>
-    </AnimatedPressable>
+    </Pressable>
   );
 };
 

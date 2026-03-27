@@ -1,11 +1,8 @@
 import React from 'react';
-import { Pressable, StyleProp, StyleSheet, View, ViewStyle, useWindowDimensions } from 'react-native';
+import { StyleProp, StyleSheet, View, ViewStyle, useWindowDimensions } from 'react-native';
 import { theme } from '../theme';
-import { getThemePalette } from '../theme/palette';
-import { useAppStore } from '../store';
 import { Text } from './Text';
-import { AppIcon } from './AppIcon';
-import { useTapFeedbackAction } from '../hooks/useTapFeedbackAction';
+import { IconButton } from './IconButton';
 
 interface ScreenHeaderProps {
   title: string;
@@ -28,26 +25,13 @@ export const ScreenHeader: React.FC<ScreenHeaderProps> = ({
   align = 'center',
   style,
   rightAccessory,
-  themeMode: controlledThemeMode,
+  themeMode: _themeMode,
 }) => {
-  const { themeMode: storeThemeMode } = useAppStore();
   const { width: viewportWidth } = useWindowDimensions();
-  const themeMode = controlledThemeMode ?? storeThemeMode;
-  const palette = getThemePalette(themeMode);
-  const backChipBg = palette.bgSurface;
-  const backChipBorder = palette.borderStrong;
-  const backChipText = palette.textPrimary;
-  const backChipRipple = palette.inputBg;
   const [headerWidth, setHeaderWidth] = React.useState(0);
   const backAnchorOffset = headerWidth > 0
     ? theme.layout.contentHorizontal - (viewportWidth - headerWidth) / 2
     : -theme.layout.contentHorizontal;
-  const { isTapActive, handlePress, handlePressIn, handlePressOut } = useTapFeedbackAction({
-    onPress: () => {
-      onBack?.();
-    },
-    enabled: !!onBack,
-  });
 
   return (
     <View
@@ -61,33 +45,16 @@ export const ScreenHeader: React.FC<ScreenHeaderProps> = ({
         <View style={styles.topRow}>
           {onBack ? (
             <View style={[styles.backAnchor, { marginLeft: backAnchorOffset }]}>
-              <Pressable
-                onPress={handlePress}
-                onPressIn={handlePressIn}
-                onPressOut={handlePressOut}
+              <IconButton
+                onPress={() => {
+                  onBack?.();
+                }}
+                iconName="back"
+                variant="secondary"
+                size="icon"
                 testID={backTestID}
                 accessibilityLabel={backLabel}
-                accessibilityRole="button"
-                hitSlop={6}
-                android_ripple={{ color: backChipRipple }}
-                style={({ pressed }) => [
-                  styles.backIconBtn,
-                  {
-                    backgroundColor: backChipBg,
-                    borderColor: backChipBorder,
-                  },
-                  isTapActive && {
-                    shadowColor: palette.accentPrimary,
-                    shadowOpacity: 0.3,
-                    shadowRadius: 8,
-                    shadowOffset: { width: 0, height: 0 },
-                    elevation: 4,
-                  },
-                  pressed && styles.backIconBtnPressed,
-                ]}
-              >
-                <AppIcon name="back" size={18} color={backChipText} />
-              </Pressable>
+              />
             </View>
           ) : (
             <View />
@@ -135,17 +102,6 @@ const styles = StyleSheet.create({
   },
   backAnchor: {
     marginLeft: 0,
-  },
-  backIconBtn: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    borderWidth: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  backIconBtnPressed: {
-    transform: [{ translateX: -2 }, { scale: 0.94 }],
   },
   title: {
     marginBottom: theme.spacing.sm,

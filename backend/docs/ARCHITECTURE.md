@@ -1,4 +1,4 @@
-# GapWalk Backend — Architecture
+# GapWalk Backend - Architecture
 
 ## System Overview
 
@@ -19,7 +19,7 @@ GapWalk is a **hybrid nudging** platform for micro-walk research interventions. 
 ┌──────────────────────────────────────────────────────────────────────┐
 │                        NestJS API Server                             │
 │  ┌────────────────────────────────────────────────────────────────┐  │
-│  │                      Auth0 JWT Guard                           │  │
+│  │                  Firebase Auth Token Guard                     │  │
 │  └────────────────────────────────────────────────────────────────┘  │
 │                                                                      │
 │  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐  │
@@ -77,10 +77,10 @@ WorkersModule       ←── BullModule, PrismaModule, NudgeEngineModule,
 
 ### Flow
 
-1. Mobile app authenticates with **Auth0** and receives an RS256-signed JWT.
+1. Mobile app authenticates with **Firebase Authentication** and receives a Firebase ID token.
 2. Every API request includes `Authorization: Bearer <token>`.
-3. `JwtStrategy` validates the token using Auth0's JWKS endpoint (`/.well-known/jwks.json`).
-4. On first valid JWT, if no user exists with that `auth0Sub`, a `User` record is **auto-created** with role `participant`.
+3. `JwtStrategy` validates the token using Firebase Admin token verification.
+4. On first valid token, if no user exists with that `firebaseUid`, a `User` record is **auto-created** with role `participant`.
 5. `RolesGuard` checks the `@Roles()` decorator on each endpoint. No decorator = open to all authenticated users.
 
 ### Roles
@@ -373,14 +373,14 @@ A static HTML/JS SPA served at `/dashboard`, backed by the `/api/dashboard-api/*
 
 | Feature              | Chart Type     | Data Source                                                       |
 | -------------------- | -------------- | ----------------------------------------------------------------- |
-| Overview stats cards | —              | `GET /overview` (users, sessions, minutes, steps, plans, studies) |
+| Overview stats cards | -              | `GET /overview` (users, sessions, minutes, steps, plans, studies) |
 | Daily walk activity  | Bar chart      | `GET /daily-activity` (last 30 days)                              |
 | Nudge adherence      | Doughnut chart | `GET /nudge-adherence` (planned/completed/skipped/cancelled)      |
 | Top walkers          | Table          | `GET /leaderboard` (name, minutes, steps, sessions)               |
 
 ### Authentication
 
-Simple JWT token paste form. In production, this would integrate with Auth0 login.
+Simple JWT token paste form. In production, this should use a Firebase-authenticated researcher token.
 
 ---
 
@@ -456,7 +456,7 @@ Multi-stage Dockerfile:
 
 | Feature | Implementation |
 |---|---|
-| **Graceful shutdown** | `app.enableShutdownHooks()` — clean Prisma/Redis disconnect on SIGTERM |
+| **Graceful shutdown** | `app.enableShutdownHooks()` - clean Prisma/Redis disconnect on SIGTERM |
 | **Log levels** | Production: `error`, `warn`, `log` only |
 | **Non-root container** | Docker `appuser` with minimal permissions |
 | **Health check** | `GET /health` endpoint + Docker `HEALTHCHECK` |

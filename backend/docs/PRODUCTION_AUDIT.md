@@ -1,4 +1,4 @@
-# GapWalk Backend — Production Readiness Audit
+# GapWalk Backend - Production Readiness Audit
 
 > Review findings and changes applied to prepare the backend for production deployment.
 
@@ -8,7 +8,7 @@
 
 ## Summary
 
-The GapWalk backend is a well-structured NestJS 11 application with PostgreSQL, Redis/BullMQ, Auth0 authentication, and Expo push notifications. The codebase is production-ready with the following changes applied.
+The GapWalk backend is a well-structured NestJS 11 application with PostgreSQL, Redis/BullMQ, Firebase Authentication, and Expo push notifications. The codebase is production-ready with the following changes applied.
 
 ---
 
@@ -28,10 +28,10 @@ The GapWalk backend is a well-structured NestJS 11 application with PostgreSQL, 
 
 | Change | File | Details |
 |---|---|---|
-| Filter inactive users in nudge generation | `nudge-generation.processor.ts` | `generateForAllUsers()` now filters `isActive: true` — previously generated plans for all users including deactivated ones |
+| Filter inactive users in nudge generation | `nudge-generation.processor.ts` | `generateForAllUsers()` now filters `isActive: true` - previously generated plans for all users including deactivated ones |
 | Filter inactive users in daily aggregation | `aggregation.processor.ts` | `computeDailyAll()` now filters `isActive: true` |
 | Filter inactive users in weekly aggregation | `aggregation.processor.ts` | `computeWeeklyAll()` now filters `isActive: true` |
-| Dashboard copy in Docker | `Dockerfile` | Added `COPY --from=builder /app/dashboard ./dashboard` — dashboard SPA was not included in production image |
+| Dashboard copy in Docker | `Dockerfile` | Added `COPY --from=builder /app/dashboard ./dashboard` - dashboard SPA was not included in production image |
 
 ### ⚡ Production Hardening
 
@@ -56,7 +56,7 @@ The GapWalk backend is a well-structured NestJS 11 application with PostgreSQL, 
 
 | Area | Status | Notes |
 |---|---|---|
-| **Auth0 JWT validation** | ✅ | Proper JWKS endpoint, RS256 algorithm, rate-limited key requests |
+| **Firebase token validation** | ✅ | Firebase Admin ID-token verification protects authenticated API routes |
 | **Auto-registration** | ✅ | First JWT creates user record, subsequent JWTs sync email/displayName |
 | **Role-based access** | ✅ | `RolesGuard` correctly checks `@Roles()` decorator |
 | **Prisma error handling** | ✅ | Maps P2002/P2025/P2003/P2014 to proper HTTP status codes |

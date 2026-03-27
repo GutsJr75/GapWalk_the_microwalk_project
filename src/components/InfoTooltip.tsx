@@ -7,7 +7,6 @@ import {
   useWindowDimensions,
   View,
 } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { Text } from './Text';
 import { theme } from '../theme';
 import { withAlpha } from '../theme/colorUtils';
@@ -89,12 +88,14 @@ export const InfoTipButton: React.FC<InfoTipButtonProps> = ({
             animatedTransformStyle,
           ]}
         >
-          <Ionicons
-            name="information"
-            size={12}
-            color={palette.accentPrimary}
-            style={styles.infoGlyph}
-          />
+          <Text
+            style={[
+              styles.infoLetter,
+              { color: palette.accentPrimary },
+            ]}
+          >
+            i
+          </Text>
         </Animated.View>
       </Pressable>
     </View>
@@ -179,14 +180,17 @@ const styles = StyleSheet.create({
     padding: 2,
   },
   infoCircle: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
-    borderWidth: 1,
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+    borderWidth: 1.5,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  infoGlyph: {
+  infoLetter: {
+    fontSize: 9,
+    fontWeight: theme.fontWeight.bold,
+    lineHeight: 11,
     textAlign: 'center',
   },
   overlayRoot: {

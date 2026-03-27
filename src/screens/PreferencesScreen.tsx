@@ -10,17 +10,18 @@ import {
   LayoutAnimation,
   Platform,
   UIManager,
+  AppState,
   Modal as RNModal,
   useWindowDimensions,
   Easing,
 } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { useFocusEffect } from '@react-navigation/native';
 import { RootStackParamList } from '../../App';
 import { Container } from '../components/Container';
 import { Text } from '../components/Text';
 import { Button } from '../components/Button';
 import { Card } from '../components/Card';
+import { IconButton } from '../components/IconButton';
 import { Modal } from '../components/Modal';
 import { ScreenHeader } from '../components/ScreenHeader';
 import { SuccessToast } from '../components/SuccessToast';
@@ -41,7 +42,14 @@ import {
 } from '../utils/confirmMessages';
 import { analyticsService } from '../services/analytics';
 import { useAppStore } from '../store';
-import { requestAllPermissions } from '../services/permissions';
+import {
+  getNotificationPermissionState,
+  openAppSettings,
+  requestActivityRecognitionPermission,
+  requestNotificationPermission,
+  type NotificationPermissionState,
+} from '../services/permissions';
+import { registerCurrentDeviceForNotifications } from '../services/deviceRegistration';
 import { toUserFriendlyError } from '../utils/errorMessages';
 
 const isFabric = !!(globalThis as any).nativeFabricUIManager;
@@ -64,6 +72,15 @@ interface ActiveInfoState {
   id: string;
   text: string;
   anchor: InfoAnchorRect;
+}
+
+interface OnboardingPermissionDialogState {
+  title: string;
+  message: string;
+  primaryLabel: string;
+  secondaryLabel: string;
+  primaryVariant?: 'primary' | 'secondary' | 'danger';
+  resolve: (action: 'primary' | 'secondary') => void;
 }
 
 /* â”€â”€â”€â”€â”€ time-input helpers â”€â”€â”€â”€â”€ */
@@ -364,6 +381,7 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
   const [showSaveToast, setShowSaveToast] = useState(false);
   const [messageDialog, setMessageDialog] = useState<{ title: string; message: string } | null>(null);
   const [confirmDialog, setConfirmDialog] = useState<{ title: string; message: string; confirmText: string; onConfirm: () => void; destructive?: boolean } | null>(null);
+  const [onboardingPermissionDialog, setOnboardingPermissionDialog] = useState<OnboardingPermissionDialogState | null>(null);
   const showMessage = (title: string, message: string) => setMessageDialog({ title, message });
   const showBinaryConfirm = (title: string, message: string, confirmText: string, onConfirm: () => void, style: 'default' | 'destructive' = 'default') => setConfirmDialog({ title, message, confirmText, onConfirm, destructive: style === 'destructive' });
   const [activeInfo, setActiveInfo] = useState<ActiveInfoState | null>(null);
@@ -384,6 +402,115 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
 
   const palette = getThemePalette(themeMode);
   const isDark = themeMode === 'dark';
+
+  const promptOnboardingPermissionDialog = useCallback((options: Omit<OnboardingPermissionDialogState, 'resolve'>) => (
+    new Promise<'primary' | 'secondary'>((resolve) => {
+      setOnboardingPermissionDialog({ ...options, resolve });
+    })
+  ), []);
+
+  const closeOnboardingPermissionDialog = useCallback((action: 'primary' | 'secondary') => {
+    setOnboardingPermissionDialog((current) => {
+      if (!current) return null;
+      current.resolve(action);
+      return null;
+    });
+  }, []);
+
+  const waitForSettingsRoundTrip = useCallback(async () => {
+    await new Promise<void>((resolve) => {
+      let sawBackground = false;
+      let settled = false;
+      const subscription = AppState.addEventListener('change', (nextState) => {
+        if (nextState === 'background' || nextState === 'inactive') {
+          sawBackground = true;
+          return;
+        }
+        if (sawBackground && nextState === 'active' && !settled) {
+          settled = true;
+          subscription.remove();
+          resolve();
+        }
+      });
+
+      setTimeout(() => {
+        if (settled || sawBackground) return;
+        settled = true;
+        subscription.remove();
+        resolve();
+      }, 1500);
+    });
+  }, []);
+
+  const runOnboardingNotificationPermissionFlow = useCallback(async (): Promise<NotificationPermissionState> => {
+    let permissionState = await getNotificationPermissionState();
+    if (permissionState.granted) {
+      return permissionState;
+    }
+
+    const introAction = await promptOnboardingPermissionDialog({
+      title: 'Turn On Walk Reminders?',
+      message:
+        'Enable turns on walk reminders. Continue keeps going without reminder alerts.',
+      primaryLabel: 'Enable',
+      secondaryLabel: 'Continue',
+    });
+
+    if (introAction === 'secondary') {
+      return permissionState;
+    }
+
+    while (!permissionState.granted) {
+      if (!permissionState.canAskAgain) {
+        const blockedAction = await promptOnboardingPermissionDialog({
+          title: 'Turn On Reminders In Settings',
+          message:
+            'Enable opens Settings to turn reminders on. Continue keeps going without reminder alerts.',
+          primaryLabel: 'Enable',
+          secondaryLabel: 'Continue',
+          primaryVariant: 'primary',
+        });
+
+        if (blockedAction === 'secondary') {
+          return permissionState;
+        }
+
+        await openAppSettings();
+        await waitForSettingsRoundTrip();
+        permissionState = await getNotificationPermissionState();
+        return permissionState;
+      }
+
+      permissionState = await requestNotificationPermission();
+      if (permissionState.granted) {
+        return permissionState;
+      }
+
+      const retryAction = await promptOnboardingPermissionDialog({
+        title: 'Reminders Are Still Off',
+        message:
+          permissionState.canAskAgain
+            ? 'Enable lets GapWalk send walk reminders. Continue keeps going without reminder alerts.'
+            : 'Enable opens Settings to turn reminders on. Continue keeps going without reminder alerts.',
+        primaryLabel: 'Enable',
+        secondaryLabel: 'Continue',
+        primaryVariant: 'primary',
+      });
+
+      if (retryAction === 'secondary') {
+        return permissionState;
+      }
+
+      if (!permissionState.canAskAgain) {
+        await openAppSettings();
+        await waitForSettingsRoundTrip();
+        permissionState = await getNotificationPermissionState();
+        return permissionState;
+      }
+    }
+
+    return permissionState;
+  }, [promptOnboardingPermissionDialog, waitForSettingsRoundTrip]);
   const themedInput = {
     backgroundColor: isDark ? theme.colors.bgApp : palette.bgSurfaceElevated,
     borderColor: isDark ? 'rgba(255,255,255,0.06)' : palette.borderStrong,
@@ -433,30 +560,28 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
     setManageScreenMode(manageMode ? 'view' : 'edit');
   }, [manageMode]);
 
-  useFocusEffect(
-    useCallback(() => {
-      let active = true;
-      const load = async () => {
-        try {
-          const fromDb = await preferencesRepo.get();
-          if (!active) return;
-          const nextPrefs = fromDb ?? storedPreferences ?? DEFAULT_PREFERENCES;
-          setPrefs(nextPrefs);
-          setSavedPrefsSnapshot(nextPrefs);
-          setInitialPrefsSignature(buildPreferencesSignature(nextPrefs));
-          const periodSeed = nextPrefs.preferredWalkingPeriods.length > 0
-            ? nextPrefs.preferredWalkingPeriods
-            : [DEFAULT_PREFERRED_PERIOD];
-          setPreferredForm(periodSeed.slice(0, MAX_PREFERRED_PERIODS).map((p) => toPreferredForm(p)));
-        } catch (e) { console.error('Failed to load preferences:', e); }
-      };
-      load();
-      return () => {
-        active = false;
-        closeInfoOverlay();
-      };
-    }, [closeInfoOverlay, storedPreferences])
-  );
+  useEffect(() => {
+    let active = true;
+    const load = async () => {
+      try {
+        const fromDb = await preferencesRepo.get();
+        if (!active) return;
+        const nextPrefs = fromDb ?? storedPreferences ?? DEFAULT_PREFERENCES;
+        setPrefs(nextPrefs);
+        setSavedPrefsSnapshot(nextPrefs);
+        setInitialPrefsSignature(buildPreferencesSignature(nextPrefs));
+        const periodSeed = nextPrefs.preferredWalkingPeriods.length > 0
+          ? nextPrefs.preferredWalkingPeriods
+          : [DEFAULT_PREFERRED_PERIOD];
+        setPreferredForm(periodSeed.slice(0, MAX_PREFERRED_PERIODS).map((p) => toPreferredForm(p)));
+      } catch (e) { console.error('Failed to load preferences:', e); }
+    };
+    load();
+    return () => {
+      active = false;
+      closeInfoOverlay();
+    };
+  }, [closeInfoOverlay]);
 
   useEffect(() => {
     const unsubscribeBlur = navigation.addListener('blur', closeInfoOverlay);
@@ -649,8 +774,8 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
   const notifCount = prefs.notificationCountPerDay;
 
   let dailyTargetError: string | null = null;
-  if (dailyTarget < 5) dailyTargetError = 'Set at least 5 minutes for micro walks.';
-  else if (dailyTarget > 60) dailyTargetError = 'Keep it under 60 min for micro walks.';
+  if (dailyTarget < 5) dailyTargetError = 'Set at least 5 minutes for your daily MicroWalk goal.';
+  else if (dailyTarget > 60) dailyTargetError = 'Keep your daily MicroWalk goal under 60 minutes.';
 
   const allowedMaxByTarget = Math.max(1, Math.floor(dailyTarget / 4));
   const ruleMax = dailyTarget > 60 ? 5 : allowedMaxByTarget;
@@ -658,9 +783,8 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
   let notifError: string | null = null;
   if (notifCount < 1) notifError = 'At least 1 notification required.';
   else if (notifCount > 15) notifError = 'Maximum 15 notifications allowed.';
-  else if (notifCount > effectiveMax) notifError = dailyTarget > 60
-    ? 'Target > 60 min limits notifications to 5.'
-    : `Max ${effectiveMax} notifications for ${dailyTarget} min.`;
+  else if (notifCount > effectiveMax) notifError =
+    `At ${dailyTarget} minutes daily, you can have up to ${effectiveMax} reminders.`;
 
   let bufferError: string | null = null;
   if (prefs.bufferMinutes < 0) bufferError = 'Buffer cannot be negative.';
@@ -730,16 +854,28 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
         setHasSetPreferences(true);
         setHasCompletedOnboarding(true);
 
-        // Request ALL permissions (location, notifications, activity recognition)
-        try {
-          await requestAllPermissions();
-          setHasRequestedPermissions(true);
-        } catch (e) {
-          if (__DEV__) console.warn('Permission request failed during onboarding:', e);
+        let notificationsGranted = false;
+        if (!manageMode) {
+          try {
+            const notificationPermission = await runOnboardingNotificationPermissionFlow();
+            notificationsGranted = notificationPermission.granted;
+          } catch (e) {
+            if (__DEV__) console.warn('Notification permission flow failed during onboarding:', e);
+          }
+
+          try {
+            await requestActivityRecognitionPermission();
+            setHasRequestedPermissions(true);
+          } catch (e) {
+            if (__DEV__) console.warn('Activity permission request failed during onboarding:', e);
+          }
         }
 
         try {
           await syncNudgePlansForCurrentSchedule(normalizedPrefs);
+          if (!manageMode && notificationsGranted) {
+            await registerCurrentDeviceForNotifications();
+          }
         } catch (e) { console.error(e); }
         analyticsService.track('preferences_saved', {
           dailyTargetMinutes: normalizedPrefs.dailyTargetMinutes,
@@ -751,6 +887,7 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
           stepGoal: normalizedPrefs.stepGoal,
           preferredWalkingPeriodsEnabled: normalizedPrefs.preferredWalkingPeriodsEnabled,
           preferredWalkingPeriodsCount: normalizedPrefs.preferredWalkingPeriods.length,
+          notificationsGranted,
         });
         setSavingPrefs(false);
         if (manageMode) {
@@ -845,7 +982,7 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
     if (!hasChanges) {
       confirmAndSavePreferences(DEFAULT_PREFERENCES, {
         title: 'Use recommended preferences',
-        message: 'Continue with GapWalk recommended settings',
+        message: 'Continue with GapWalk recommended settings?',
         actionLabel: 'Yes, continue',
       });
       return;
@@ -959,7 +1096,7 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
                   <Text variant="bodySmall" style={styles.fieldLabel}>Walk buffer</Text>
                   <InfoTip
                     id="walk-buffer"
-                    text="Adds space before and after busy events so walk suggestions are not too tight. Example: 10 min means no walk suggestion in the 10 min before or after each event."
+                    text="Adds space before and after busy events so your walk windows are not too tight. Example: 10 min means GapWalk will avoid walk windows in the 10 min before or after each event."
                     activeInfoId={activeInfo?.id ?? null}
                     onToggle={handleInfoToggle}
                   />
@@ -1027,17 +1164,17 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
                 <View style={styles.radioGroup}>
                   <RadioOption
                     selected={notifyChoice === 'gap'}
-                    label="When the app finds a gap"
+                    label="When GapWalk finds a walk window"
                     onPress={() => setNotifyChoice('gap')}
                   />
                   <RadioOption
                     selected={notifyChoice === '5min'}
-                    label="5 minutes before the micro walk"
+                    label="5 minutes before the MicroWalk"
                     onPress={() => setNotifyChoice('5min')}
                   />
                   <RadioOption
                     selected={notifyChoice === '10min'}
-                    label="10 minutes before the micro walk"
+                    label="10 minutes before the MicroWalk"
                     onPress={() => setNotifyChoice('10min')}
                   />
                 </View>
@@ -1385,21 +1522,13 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
         onClose={() => setShowQuietModal(false)}
         title="Quiet Hours"
         rightAccessory={(
-          <TouchableOpacity
-            style={[
-              styles.modalHeaderIconBtn,
-              {
-                backgroundColor: 'rgba(220,38,38,0.12)',
-                borderColor: 'rgba(220,38,38,0.28)',
-              },
-            ]}
+          <IconButton
             onPress={() => setShowQuietModal(false)}
-            activeOpacity={0.75}
-            accessibilityRole="button"
             accessibilityLabel="Close quiet hours"
-          >
-            <AppIcon name="close" size={17} color={theme.colors.error} />
-          </TouchableOpacity>
+            iconName="close"
+            variant="secondary"
+            size="icon"
+          />
         )}
       >
         <Text variant="bodySmall" color={palette.textMuted} style={styles.qDesc}>Select the time frame when GapWalk will not send you notifications.</Text>
@@ -1486,21 +1615,13 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
         onClose={() => setShowPreferredModal(false)}
         title="Preferred Walking Periods"
         rightAccessory={(
-          <TouchableOpacity
-            style={[
-              styles.modalHeaderIconBtn,
-              {
-                backgroundColor: 'rgba(220,38,38,0.12)',
-                borderColor: 'rgba(220,38,38,0.28)',
-              },
-            ]}
+          <IconButton
             onPress={() => setShowPreferredModal(false)}
-            activeOpacity={0.75}
-            accessibilityRole="button"
             accessibilityLabel="Close preferred walking periods"
-          >
-            <AppIcon name="close" size={17} color={theme.colors.error} />
-          </TouchableOpacity>
+            iconName="close"
+            variant="secondary"
+            size="icon"
+          />
         )}
       >
         <Text variant="bodySmall" color={palette.textMuted} style={styles.qDesc}>
@@ -1628,6 +1749,40 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
           <View style={{ flexDirection: 'row', gap: 12 }}>
             <Button title="No" variant="secondary" onPress={() => setConfirmDialog(null)} style={{ flex: 1 }} />
             <Button title={confirmDialog?.confirmText ?? 'Yes'} variant={confirmDialog?.destructive ? 'danger' : 'primary'} onPress={() => { confirmDialog?.onConfirm(); setConfirmDialog(null); }} style={{ flex: 1 }} />
+          </View>
+        </View>
+      </Modal>
+      <Modal
+        visible={onboardingPermissionDialog !== null}
+        onClose={() => closeOnboardingPermissionDialog('secondary')}
+        title={onboardingPermissionDialog?.title ?? ''}
+        rightAccessory={(
+          <IconButton
+            onPress={() => closeOnboardingPermissionDialog('secondary')}
+            accessibilityLabel="Close permission dialog"
+            iconName="close"
+            variant="secondary"
+            size="icon"
+          />
+        )}
+      >
+        <View style={{ paddingBottom: 8 }}>
+          <Text variant="body" style={{ color: palette.textMuted, textAlign: 'center', marginBottom: 24 }}>
+            {onboardingPermissionDialog?.message}
+          </Text>
+          <View style={{ flexDirection: 'row', gap: 12 }}>
+            <Button
+              title={onboardingPermissionDialog?.secondaryLabel ?? 'Continue'}
+              variant="secondary"
+              onPress={() => closeOnboardingPermissionDialog('secondary')}
+              style={{ flex: 1 }}
+            />
+            <Button
+              title={onboardingPermissionDialog?.primaryLabel ?? 'Continue'}
+              variant={onboardingPermissionDialog?.primaryVariant ?? 'primary'}
+              onPress={() => closeOnboardingPermissionDialog('primary')}
+              style={{ flex: 1 }}
+            />
           </View>
         </View>
       </Modal>

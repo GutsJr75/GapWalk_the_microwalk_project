@@ -2,7 +2,17 @@
 
 This document covers critical gotchas and instructions for building the Android Release APK, specifically related to how Metro/Babel bundles Environment Variables in Expo and React Native.
 
-## 1. Environment Variable Gotcha (The Optional Chaining Bug)
+## 1. Native Android Is Authoritative
+
+GapWalk keeps a checked-in `android/` project and treats it as the source of truth for native Android behavior. `app.json` and `app.config.js` still provide shared Expo metadata and EAS build inputs, but release-critical Android settings must be mirrored in the native project.
+
+That means:
+
+- AndroidManifest changes must be verified in `android/app/src/main/AndroidManifest.xml`
+- Gradle changes must be verified in `android/app/build.gradle`
+- EAS profiles live in the tracked `eas.json`
+
+## 2. Environment Variable Gotcha (The Optional Chaining Bug)
 
 **Rule:** NEVER use optional chaining `?.` or dynamic object lookups when accessing `process.env` in Expo / React Native.
 
@@ -27,7 +37,7 @@ Expo uses a Babel plugin (`babel-plugin-transform-inline-environment-variables`)
 
 ---
 
-## 2. Resolving CMake / Ninja Build Crashes
+## 3. Resolving CMake / Ninja Build Crashes
 
 React Native uses C++ native modules heavily. Sometimes, the C++ build cache gets corrupt or out-of-sync with your Node modules, completely breaking Gradle builds with `ninja:` or `CMake` errors.
 
@@ -39,25 +49,131 @@ rm -rf android/app/.cxx
 
 ---
 
-## 3. Standard Release Build Commands
+## 4. Local Debug Installs and Emulator Storage
 
-If you need to build a manual Release APK without using EAS, follow these steps from the project root:
+React Native debug APKs can become large enough to fail with `INSTALL_FAILED_INSUFFICIENT_STORAGE`, especially on emulators where `/data` is already crowded. A universal debug APK for this project can exceed `140 MB` because it bundles native libraries for every ABI.
+
+GapWalk's local Android scripts now try to avoid that automatically:
+
+- `npm run android` and `npm run android:e2e` detect a single connected Android target with `adb`
+- If exactly one device or emulator is connected, they set `ORG_GRADLE_PROJECT_reactNativeArchitectures` to that target ABI before running `expo run:android`
+- If multiple devices are connected, set `ANDROID_SERIAL=<serial>` or `ORG_GRADLE_PROJECT_reactNativeArchitectures=<abi>` yourself
+- Local debug builds prefer `android/app/gapwalk-local-debug.jks` when present, then fall back to `android/app/debug.keystore`
+- Override the debug keystore with `GAPWALK_DEBUG_STORE_FILE`, `GAPWALK_DEBUG_STORE_PASSWORD`, `GAPWALK_DEBUG_KEY_ALIAS`, and `GAPWALK_DEBUG_KEY_PASSWORD` in `local.properties` or the shell if needed
+
+Useful commands when installs start failing:
+
+```bash
+adb shell df -h /data
+adb -s emulator-5554 uninstall com.gapwalk.app
+keytool -list -v -keystore android/app/gapwalk-local-debug.jks -alias androiddebugkey -storepass android -keypass android | rg "SHA1:"
+```
+
+If the emulator is still nearly full after uninstalling old builds, wipe the AVD data or increase its storage allocation in Android Studio.
+
+## 5. Standard Release Build Commands
+
+Official production builds should use EAS:
+
+```bash
+eas build --platform android --profile production
+```
+
+If you need to build a manual local Release APK without using EAS, follow these steps from the project root:
 
 1. **Inject Environment Variables** (Needed for certain shell setups):
    ```bash
    export $(grep -v '^#' .env | xargs)
    ```
 
-2. **Clear C++/Native Cache** (Optional, but recommended if builds are failing):
+2. **Provide release signing credentials**:
+   ```bash
+   export GAPWALK_RELEASE_STORE_FILE=/absolute/path/to/your-upload-keystore.jks
+   export GAPWALK_RELEASE_STORE_PASSWORD=your_store_password
+   export GAPWALK_RELEASE_KEY_ALIAS=your_key_alias
+   export GAPWALK_RELEASE_KEY_PASSWORD=your_key_password
+   ```
+
+3. **Clear C++/Native Cache** (Optional, but recommended if builds are failing):
    ```bash
    rm -rf android/app/.cxx
    ```
 
-3. **Build the APK**:
+4. **Build the APK**:
    ```bash
    cd android
    ./gradlew clean assembleRelease --no-build-cache
    ```
 
-**Output Location:** 
-Your APK will be generated at: `android/app/build/outputs/apk/release/app-release.apk`
+> `assembleRelease` now fails fast if neither EAS-managed credentials nor `GAPWALK_RELEASE_*` variables are present. GapWalk no longer falls back to the debug keystore for release builds.
+
+**Output Location:**
+Your APK will be generated under: `android/app/build/outputs/apk/release/`
+
+## 6. API Keys: Where to Set Them
+
+There are two separate places for API keys depending on the build type:
+
+| File | Used by | When |
+|------|---------|------|
+| `android/local.properties` | Gradle (native Android build) | `npm run android`, `eas build --local` |
+| `eas.json` + EAS secrets/env | EAS cloud builds | `eas build --platform android` |
+| `.env` | Expo/Metro (JS side only) | All builds, for `EXPO_PUBLIC_*` JS variables |
+
+**Google Maps API key** is injected into `AndroidManifest.xml` at build time via Gradle `manifestPlaceholders`. It must be set in `local.properties` for local builds and supplied through EAS secrets or environment variables referenced by `eas.json` for cloud builds. It cannot be changed at runtime - a new build is required.
+
+```
+# android/local.properties
+sdk.dir=/home/sadik/Android/Sdk
+GOOGLE_MAPS_API_KEY=your_key_here
+```
+
+---
+
+## 7. Google Calendar OAuth - Android SHA-1 Fingerprint
+
+`@react-native-google-signin/google-signin` validates the app's signing certificate against the Android OAuth client registered in Google Cloud Console. The SHA-1 must match the certificate that ends up on the device.
+
+| Build type | Correct SHA-1 source |
+|-----------|----------------------|
+| `npm run android` (debug) | `android/app/debug.keystore` |
+| EAS build (sideloaded APK) | EAS Credentials (`eas credentials --platform android`) |
+| Google Play Store distribution | **Google Play Console → Setup → App integrity → App signing key certificate** |
+
+> If distributing via the Play Store, Google re-signs the app - you must use the Play Console SHA-1, not the EAS keystore SHA-1.
+
+To update: Google Cloud Console → APIs & Services → Credentials → your Android OAuth client → update the SHA-1 fingerprint.
+
+Important:
+- Use the same Google project for `google-services.json`, Firebase Auth, and any Google Sign-In or Calendar OAuth clients.
+- If `google-services.json` already contains an Android OAuth client for `com.gapwalk.app`, do not create another Android OAuth client in a different project just to satisfy app configuration.
+- Deleting an OAuth client does not always free the package/SHA-1 immediately. If you are moving the app to a different project, remove the Android app/client from the original Firebase or Google Cloud project and allow time for Google to release the package/SHA registration.
+
+---
+
+## 8. Bumping the Version Code
+
+Google Play rejects uploads with a `versionCode` already in use. You must increment it in **two places** before every new build submitted to the Play Store:
+
+| File | Field |
+|------|-------|
+| `app.json` | `expo.android.versionCode` |
+| `android/app/build.gradle` | `defaultConfig.versionCode` |
+
+Both must match. Example - incrementing from `10103` to `10104`:
+
+**`app.json`:**
+```json
+"android": {
+  "versionCode": 10104
+}
+```
+
+**`android/app/build.gradle`:**
+```groovy
+defaultConfig {
+    versionCode 10104
+}
+```
+
+> `versionName` (e.g. `"1.0.3"`) is the human-readable version shown to users and does not need to change for every build - only `versionCode` must be unique and increasing.

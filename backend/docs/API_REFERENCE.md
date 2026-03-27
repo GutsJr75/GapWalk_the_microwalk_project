@@ -33,7 +33,7 @@ All successful responses are wrapped by the global `TransformInterceptor`:
 - [Sync](#sync)
 - [Analytics](#analytics)
 - [Behavior Log](#behavior-log)
-- [Researcher — Studies](#researcher--studies)
+- [Researcher - Studies](#researcher--studies)
 - [Dashboard API](#dashboard-api)
 - [Error Codes](#error-codes)
 - [Data Types & Enums](#data-types--enums)
@@ -71,7 +71,7 @@ Get the authenticated user's profile, including preferences, schedule source, an
 ```json
 {
   "id": "uuid",
-  "auth0Sub": "auth0|123",
+  "firebaseUid": "firebase-uid-123",
   "email": "user@example.com",
   "displayName": "Jane",
   "role": "participant",
@@ -103,7 +103,7 @@ Update current user profile.
 
 List all active participants. Paginated.
 
-**Auth:** JWT — `researcher` or `admin` only
+**Auth:** JWT - `researcher` or `admin` only
 
 **Query params:** `page` (default 1), `limit` (default 50, max 200)
 
@@ -398,7 +398,7 @@ Mark a plan as notified (transition from `planned`).
 
 ### `POST /api/nudge-plans/:id/skip`
 
-Skip an entire gap window — cancels all `planned`/`notified` plans in the same gap.
+Skip an entire gap window - cancels all `planned`/`notified` plans in the same gap.
 
 **Auth:** JWT
 
@@ -532,8 +532,8 @@ Full bidirectional offline-first sync. Client sends all changes since last sync;
 | Manual entries   | Full replace                | Return all                          |
 | Nudge plans      | Upsert by `localId`         | Return updated since `lastSyncedAt` |
 | Walk sessions    | Append (dedup by `localId`) | Return new since `lastSyncedAt`     |
-| Analytics events | Always append               | —                                   |
-| Crash reports    | Always append               | —                                   |
+| Analytics events | Always append               | -                                   |
+| Crash reports    | Always append               | -                                   |
 
 ---
 
@@ -600,7 +600,7 @@ Batch upload crash reports.
 
 Query analytics events.
 
-**Auth:** JWT — `researcher` or `admin` only
+**Auth:** JWT - `researcher` or `admin` only
 
 **Query params:** `userId`, `name`, `startDate`, `endDate`
 
@@ -608,7 +608,7 @@ Query analytics events.
 
 Get event name counts (grouped).
 
-**Auth:** JWT — `researcher` or `admin` only
+**Auth:** JWT - `researcher` or `admin` only
 
 **Query params:** `userId`, `startDate`, `endDate`
 
@@ -616,7 +616,7 @@ Get event name counts (grouped).
 
 Query crash reports.
 
-**Auth:** JWT — `researcher` or `admin` only
+**Auth:** JWT - `researcher` or `admin` only
 
 **Query params:** `userId`, `startDate`, `endDate`
 
@@ -706,7 +706,7 @@ Batch upload behavior logs.
 
 Query behavior logs.
 
-**Auth:** JWT — `researcher` or `admin` only
+**Auth:** JWT - `researcher` or `admin` only
 
 **Query params:** `userId`, `eventType`, `nudgePlanId`, `startDate`, `endDate`
 
@@ -714,7 +714,7 @@ Query behavior logs.
 
 Get event type counts.
 
-**Auth:** JWT — `researcher` or `admin` only
+**Auth:** JWT - `researcher` or `admin` only
 
 **Query params:** `userId`, `startDate`, `endDate`
 
@@ -722,7 +722,7 @@ Get event type counts.
 
 Get the nudge response funnel (received → opened → started → completed/dismissed/cancelled).
 
-**Auth:** JWT — `researcher` or `admin` only
+**Auth:** JWT - `researcher` or `admin` only
 
 **Query params:** `userId`, `startDate`, `endDate`
 
@@ -742,7 +742,7 @@ Get the nudge response funnel (received → opened → started → completed/dis
 
 ---
 
-## Researcher — Studies
+## Researcher - Studies
 
 All researcher endpoints require `researcher` or `admin` role.
 

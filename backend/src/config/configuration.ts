@@ -11,11 +11,11 @@ export default () => ({
     url: process.env.REDIS_URL ?? 'redis://localhost:6379',
   },
 
-  auth0: {
-    domain: process.env.AUTH0_DOMAIN,
-    audience: process.env.AUTH0_AUDIENCE,
-    clientId: process.env.AUTH0_CLIENT_ID,
-    clientSecret: process.env.AUTH0_CLIENT_SECRET,
+  firebase: {
+    projectId: process.env.FIREBASE_PROJECT_ID,
+    clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+    privateKey: process.env.FIREBASE_PRIVATE_KEY,
+    serviceAccountJson: process.env.FIREBASE_SERVICE_ACCOUNT_JSON,
   },
 
   expo: {

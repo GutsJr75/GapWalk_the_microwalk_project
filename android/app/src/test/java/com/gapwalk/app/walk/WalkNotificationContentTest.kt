@@ -15,7 +15,7 @@ class WalkNotificationContentTest {
     )
 
     assertEquals(
-      "7 min 13 seconds walked, Keep it up!",
+      "Walk Duration: 7 min 13 seconds",
       WalkNotificationContent.resolveTimerLine(snapshot),
     )
   }
@@ -33,7 +33,7 @@ class WalkNotificationContentTest {
     )
 
     assertEquals(
-      "1 min 30 seconds walked, Keep it up!\nSteps: 1,200\nDistance: 1.00 mi",
+      "Walk Duration: 1 min 30 seconds\nSteps: 1,200\nDistance: 1.00 mi",
       WalkNotificationContent.buildSummaryLine(snapshot),
     )
   }
@@ -51,7 +51,59 @@ class WalkNotificationContentTest {
     )
 
     assertEquals(
-      "4 min 0 seconds walked, Keep it up!\nSteps: 350\nDistance: 1.50 km",
+      "Walk Duration: 4 min 0 seconds\nSteps: 350\nDistance: 1.50 km",
+      WalkNotificationContent.buildSummaryLine(snapshot),
+    )
+  }
+
+  @Test
+  fun timerLineUsesRemainingTimeWhenPlanTargetExists() {
+    val snapshot = WalkTrackingSnapshot(
+      sessionId = "session-remaining",
+      startIso = "2026-02-28T10:00:00.000Z",
+      sessionStartMs = 1_000L,
+      elapsedSeconds = 90,
+      targetDurationMinutes = 15,
+      startedFromNotification = true,
+      notificationTimerMode = WalkNotificationContent.TIMER_MODE_SMART,
+    )
+
+    assertEquals(
+      "Remaining time: 13 min 30 seconds",
+      WalkNotificationContent.resolveTimerLine(snapshot),
+    )
+  }
+
+  @Test
+  fun timerLineFallsBackToElapsedWhenRemainingHasNoTarget() {
+    val snapshot = WalkTrackingSnapshot(
+      sessionId = "session-no-target",
+      startIso = "2026-02-28T10:00:00.000Z",
+      sessionStartMs = 1_000L,
+      elapsedSeconds = 125,
+      notificationTimerMode = WalkNotificationContent.TIMER_MODE_REMAINING,
+    )
+
+    assertEquals(
+      "Walk Duration: 2 min 5 seconds",
+      WalkNotificationContent.resolveTimerLine(snapshot),
+    )
+  }
+
+  @Test
+  fun summaryLineHidesExtraStatsInFocusMode() {
+    val snapshot = WalkTrackingSnapshot(
+      sessionId = "session-focus",
+      startIso = "2026-02-28T10:00:00.000Z",
+      sessionStartMs = 1_000L,
+      elapsedSeconds = 90,
+      distanceMeters = 1609.34,
+      steps = 1200,
+      notificationStatsMode = WalkNotificationContent.STATS_MODE_NONE,
+    )
+
+    assertEquals(
+      "Walk Duration: 1 min 30 seconds",
       WalkNotificationContent.buildSummaryLine(snapshot),
     )
   }

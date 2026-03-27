@@ -10,16 +10,12 @@ on a device to the production database at `http://136.115.63.96:3000`.
 
 ---
 
-## § 0 — Get a Test Auth Token
+## § 0 - Get a Test Auth Token
 
 1. Log into GapWalk on the device.
 2. Open the app's dev logs **or** use a reverse proxy (e.g. `mitmproxy`) to capture
    the `Authorization: Bearer eyJ…` header on any authenticated API call.
-3. Alternatively, from a rooted/debug build:
-   ```bash
-   adb shell run-as com.gapwalk cat /data/data/com.gapwalk/shared_prefs/...
-   ```
-   The token is stored under `expo-secure-store` key `gapwalk_auth_token`.
+3. Alternatively, capture a bearer token from app network logs after logging in with Firebase Authentication.
 4. Export for the automated tests:
    ```bash
    export TEST_AUTH_TOKEN=eyJ...
@@ -28,7 +24,7 @@ on a device to the production database at `http://136.115.63.96:3000`.
 
 ---
 
-## § 1 — Fresh Install → Onboarding
+## § 1 - Fresh Install → Onboarding
 
 **Steps**
 1. Uninstall and reinstall GapWalk.
@@ -40,7 +36,7 @@ on a device to the production database at `http://136.115.63.96:3000`.
 
 | Table | What to check |
 |---|---|
-| `User` | Row exists with `auth0Id` matching the token `sub` |
+| `User` | Row exists with `firebaseUid` matching the token `sub` |
 | `Preference` | Row for this userId with `dailyTargetMinutes` matching onboarding input |
 | `ScheduleSource` | Row for this userId with `type = 'manual'` |
 | `ManualScheduleEntry` | Rows matching the entries entered during onboarding |
@@ -57,7 +53,7 @@ SELECT * FROM "Device" WHERE user_id = '<userId>';
 
 ---
 
-## § 2 — Manual Schedule → Busy Events
+## § 2 - Manual Schedule → Busy Events
 
 **Steps**
 1. Open **Manage Schedule** and add or edit busy blocks.
@@ -78,7 +74,7 @@ SELECT * FROM "BusyEvent" WHERE user_id = '<userId>' ORDER BY start DESC LIMIT 2
 
 ---
 
-## § 3 — Start and Complete a Walk
+## § 3 - Start and Complete a Walk
 
 **Steps**
 1. From the Dashboard, tap **Start Walk** on a nudge plan.
@@ -107,7 +103,7 @@ SELECT name, created_at FROM "AnalyticsEvent"
 
 ---
 
-## § 4 — Check Achievements
+## § 4 - Check Achievements
 
 **Steps**
 1. Complete your first walk (triggers `first_walk` achievement).
@@ -127,7 +123,7 @@ SELECT * FROM "UserAchievement" WHERE user_id = '<userId>';
 
 ---
 
-## § 5 — Analytics Events (Screen Views, Button Taps)
+## § 5 - Analytics Events (Screen Views, Button Taps)
 
 **Steps**
 1. Navigate to **Weekly Data** and **Achievements** screens.
@@ -147,12 +143,12 @@ SELECT name, payload, created_at FROM "AnalyticsEvent"
 
 ---
 
-## § 6 — Crash Recovery and AppSession
+## § 6 - Crash Recovery and AppSession
 
 **Steps**
 1. Start a walk.
 2. Force-kill the app mid-walk (swipe away from the app switcher).
-3. Reopen the app — it should offer to recover the interrupted walk.
+3. Reopen the app - it should offer to recover the interrupted walk.
 4. Accept recovery, then complete and end the walk.
 
 **Expected DB rows**
@@ -175,7 +171,7 @@ SELECT session_start, session_end, source FROM "AppSession"
 
 ---
 
-## § 7 — Device Registration
+## § 7 - Device Registration
 
 **Steps**
 1. Grant notification permissions during onboarding (if not already granted).
@@ -197,7 +193,7 @@ FROM "Device" WHERE user_id = '<userId>';
 
 ---
 
-## § 8 — Full Row-Count Audit (All 23 Tables)
+## § 8 - Full Row-Count Audit (All 23 Tables)
 
 Run this after completing §§ 1–7 above. Every table should have at least one row
 for the test user (or globally for backend-only tables).
@@ -260,7 +256,7 @@ the study goes live.
 
 ---
 
-## § 9 — Run the Automated E2E Tests
+## § 9 - Run the Automated E2E Tests
 
 ```bash
 cd backend

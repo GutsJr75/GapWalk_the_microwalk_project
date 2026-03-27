@@ -8,8 +8,8 @@
  *   TEST_AUTH_TOKEN=eyJ... TEST_API_URL=http://136.115.63.96:3000 npx jest --config test/jest-e2e.json test/data-flow.e2e-spec.ts
  *
  * AUTH:
- *   Log into GapWalk on a device/emulator, then retrieve the token from
- *   expo-secure-store key `gapwalk_auth_token` or from the app network logs.
+ *   Log into GapWalk on a device/emulator, then retrieve the Firebase bearer
+ *   token from the app network logs.
  *   Pass it via the TEST_AUTH_TOKEN environment variable.
  *
  * NOTE: These tests validate the *backend acceptance* of all 23 table paths.
@@ -62,8 +62,7 @@ function authed(method: HttpMethod, path: string, body?: unknown): Promise<ApiRe
   if (!AUTH_TOKEN) {
     throw new Error(
       'TEST_AUTH_TOKEN env variable is required.\n' +
-        'Log into GapWalk, read the token from expo-secure-store key ' +
-        '`gapwalk_auth_token`, then run:\n' +
+        'Log into GapWalk, capture a Firebase bearer token from the app network logs, then run:\n' +
         '  TEST_AUTH_TOKEN=eyJ... npx jest --config test/jest-e2e.json test/data-flow.e2e-spec.ts',
     );
   }
@@ -455,7 +454,7 @@ describe('POST /api/behavior-log — Behavior event logging', () => {
     const { status } = await authed('POST', '/behavior-log/bulk', {
       logs: [
         { eventType: 'button_tap', screen: 'Dashboard', metadata: { button: 'start_walk' } },
-        { eventType: 'screen_view', screen: 'WalkingExpanded', metadata: {} },
+        { eventType: 'screen_view', screen: 'Walking', metadata: {} },
       ],
     });
     expect([200, 201]).toContain(status);

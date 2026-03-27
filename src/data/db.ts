@@ -31,7 +31,8 @@ export const getDatabase = async (): Promise<SQLite.SQLiteDatabase> => {
 const initializeTables = async () => {
   if (!db) return;
 
-  // ScheduleSource table
+  // Create all tables and indexes in a single native call to avoid
+  // Android GC releasing the native database handle between awaits.
   await db.execAsync(`
     CREATE TABLE IF NOT EXISTS schedule_source (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -43,10 +44,7 @@ const initializeTables = async () => {
       google_refresh_token TEXT,
       updated_at TEXT DEFAULT CURRENT_TIMESTAMP
     );
-  `);
 
-  // BusyEvents table
-  await db.execAsync(`
     CREATE TABLE IF NOT EXISTS busy_events (
       id TEXT PRIMARY KEY,
       title TEXT NOT NULL,
@@ -56,10 +54,7 @@ const initializeTables = async () => {
       is_all_day INTEGER DEFAULT 0,
       created_at TEXT DEFAULT CURRENT_TIMESTAMP
     );
-  `);
 
-  // Preferences table
-  await db.execAsync(`
     CREATE TABLE IF NOT EXISTS preferences (
       id INTEGER PRIMARY KEY CHECK (id = 1),
       daily_target_minutes INTEGER NOT NULL DEFAULT 20,
@@ -76,10 +71,7 @@ const initializeTables = async () => {
       step_goal INTEGER NOT NULL DEFAULT 1000,
       updated_at TEXT DEFAULT CURRENT_TIMESTAMP
     );
-  `);
 
-  // WalkSessions table
-  await db.execAsync(`
     CREATE TABLE IF NOT EXISTS walk_sessions (
       id TEXT PRIMARY KEY,
       nudge_plan_id TEXT,
@@ -93,10 +85,7 @@ const initializeTables = async () => {
       used_location INTEGER DEFAULT 0,
       created_at TEXT DEFAULT CURRENT_TIMESTAMP
     );
-  `);
 
-  // NudgePlans table
-  await db.execAsync(`
     CREATE TABLE IF NOT EXISTS nudge_plans (
       id TEXT PRIMARY KEY,
       date TEXT NOT NULL,
@@ -105,14 +94,12 @@ const initializeTables = async () => {
       walk_start TEXT NOT NULL,
       suggested_duration_minutes INTEGER NOT NULL,
       manual_notify_lead_minutes INTEGER NOT NULL DEFAULT 0,
+      notifications_enabled INTEGER NOT NULL DEFAULT 1,
       status TEXT NOT NULL DEFAULT 'planned',
       reason TEXT,
       created_at TEXT DEFAULT CURRENT_TIMESTAMP
     );
-  `);
 
-  // ManualScheduleEntries table
-  await db.execAsync(`
     CREATE TABLE IF NOT EXISTS manual_schedule_entries (
       id TEXT PRIMARY KEY,
       title TEXT NOT NULL,
@@ -123,20 +110,14 @@ const initializeTables = async () => {
       one_time_date TEXT,
       created_at TEXT DEFAULT CURRENT_TIMESTAMP
     );
-  `);
 
-  // Analytics events table
-  await db.execAsync(`
     CREATE TABLE IF NOT EXISTS analytics_events (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL,
       payload_json TEXT,
       created_at TEXT DEFAULT CURRENT_TIMESTAMP
     );
-  `);
 
-  // Crash reports table
-  await db.execAsync(`
     CREATE TABLE IF NOT EXISTS crash_reports (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       message TEXT NOT NULL,
@@ -145,11 +126,7 @@ const initializeTables = async () => {
       context_json TEXT,
       created_at TEXT DEFAULT CURRENT_TIMESTAMP
     );
-  `);
 
-  // Walk checkpoint table — stores in-progress session so it can be recovered
-  // if the app is force-killed mid-walk.
-  await db.execAsync(`
     CREATE TABLE IF NOT EXISTS walk_checkpoint (
       id INTEGER PRIMARY KEY CHECK (id = 1),
       session_id TEXT NOT NULL,
@@ -163,10 +140,7 @@ const initializeTables = async () => {
       used_location INTEGER NOT NULL DEFAULT 0,
       updated_at TEXT DEFAULT CURRENT_TIMESTAMP
     );
-  `);
 
-  // Walk routes table — stores GPS coordinates for each session's path.
-  await db.execAsync(`
     CREATE TABLE IF NOT EXISTS walk_routes (
       id          INTEGER PRIMARY KEY AUTOINCREMENT,
       session_id  TEXT    NOT NULL,
@@ -178,11 +152,7 @@ const initializeTables = async () => {
       bearing_degrees REAL,
       recorded_at TEXT    NOT NULL
     );
-    CREATE INDEX IF NOT EXISTS idx_walk_routes_session_id ON walk_routes(session_id);
-  `);
 
-  // Walk pause events table — each individual pause within a session.
-  await db.execAsync(`
     CREATE TABLE IF NOT EXISTS walk_pause_events (
       id                    INTEGER PRIMARY KEY AUTOINCREMENT,
       session_id            TEXT    NOT NULL,
@@ -193,11 +163,12 @@ const initializeTables = async () => {
       pause_reason          TEXT,
       created_at            TEXT    DEFAULT CURRENT_TIMESTAMP
     );
-    CREATE INDEX IF NOT EXISTS idx_walk_pause_events_session_id ON walk_pause_events(session_id);
-  `);
 
-  // Create indexes
-  await db.execAsync(`
+    CREATE TABLE IF NOT EXISTS achievements (
+      id TEXT PRIMARY KEY,
+      unlocked_at TEXT NOT NULL
+    );
+
     CREATE INDEX IF NOT EXISTS idx_busy_events_start ON busy_events(start);
     CREATE INDEX IF NOT EXISTS idx_busy_events_source ON busy_events(source);
     CREATE INDEX IF NOT EXISTS idx_nudge_plans_date ON nudge_plans(date);
@@ -206,128 +177,103 @@ const initializeTables = async () => {
     CREATE INDEX IF NOT EXISTS idx_analytics_events_name ON analytics_events(name);
     CREATE INDEX IF NOT EXISTS idx_analytics_events_created_at ON analytics_events(created_at);
     CREATE INDEX IF NOT EXISTS idx_crash_reports_created_at ON crash_reports(created_at);
+    CREATE INDEX IF NOT EXISTS idx_walk_routes_session_id ON walk_routes(session_id);
+    CREATE INDEX IF NOT EXISTS idx_walk_pause_events_session_id ON walk_pause_events(session_id);
   `);
 
   // Ensure older local databases are upgraded with newer columns.
   await runMigrations();
 };
 
-const ensureColumn = async (
-  tableName: string,
-  columnName: string,
-  columnDefinition: string
-) => {
-  if (!db) return;
-  const cols = await db.getAllAsync<{ name: string }>(`PRAGMA table_info(${tableName})`);
-  const exists = cols.some((c) => c.name === columnName);
-  if (!exists) {
-    await db.execAsync(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${columnDefinition};`);
-  }
+// Migration column definitions grouped by table.
+const MIGRATION_COLUMNS: Record<string, [column: string, definition: string][]> = {
+  schedule_source: [
+    ['google_connected', 'INTEGER DEFAULT 0'],
+    ['google_access_token', 'TEXT'],
+    ['google_refresh_token', 'TEXT'],
+    ['updated_at', 'TEXT DEFAULT CURRENT_TIMESTAMP'],
+  ],
+  busy_events: [
+    ['is_all_day', 'INTEGER DEFAULT 0'],
+    ['created_at', 'TEXT DEFAULT CURRENT_TIMESTAMP'],
+  ],
+  preferences: [
+    ['min_walk_minutes', 'INTEGER NOT NULL DEFAULT 6'],
+    ['updated_at', 'TEXT DEFAULT CURRENT_TIMESTAMP'],
+    ['grace_period_minutes', 'INTEGER DEFAULT 2'],
+    ['when_to_notify', "TEXT DEFAULT 'now'"],
+    ['notify_delay_minutes', 'INTEGER DEFAULT 5'],
+    ['notification_min_gap_minutes', 'INTEGER DEFAULT 60'],
+    ['preferred_walking_periods_enabled', 'INTEGER NOT NULL DEFAULT 0'],
+    ['preferred_walking_periods_json', "TEXT DEFAULT '[]'"],
+    ['strictness_mode', "TEXT NOT NULL DEFAULT 'easygoing'"],
+    ['step_goal_enabled', 'INTEGER NOT NULL DEFAULT 0'],
+    ['step_goal', 'INTEGER NOT NULL DEFAULT 1000'],
+    ['end_walk_mode', "TEXT NOT NULL DEFAULT 'quick'"],
+  ],
+  walk_sessions: [
+    ['distance_meters', 'REAL'],
+    ['steps', 'INTEGER DEFAULT 0'],
+    ['calories', 'REAL'],
+    ['used_location', 'INTEGER DEFAULT 0'],
+    ['created_at', 'TEXT DEFAULT CURRENT_TIMESTAMP'],
+    ['pause_count', 'INTEGER DEFAULT 0'],
+    ['max_speed_mps', 'REAL'],
+    ['avg_speed_mps', 'REAL'],
+    ['elevation_gain_meters', 'REAL'],
+    ['step_source', 'TEXT'],
+    ['motion_confidence', 'TEXT'],
+    ['sensor_health_at_start', 'TEXT'],
+    ['was_recovered', 'INTEGER DEFAULT 0'],
+    ['nudge_to_start_latency_seconds', 'INTEGER'],
+  ],
+  nudge_plans: [
+    ['status', "TEXT NOT NULL DEFAULT 'planned'"],
+    ['reason', 'TEXT'],
+    ['created_at', 'TEXT DEFAULT CURRENT_TIMESTAMP'],
+    ['manual_notify_lead_minutes', 'INTEGER NOT NULL DEFAULT 0'],
+    ['notifications_enabled', 'INTEGER NOT NULL DEFAULT 1'],
+  ],
+  manual_schedule_entries: [
+    ['created_at', 'TEXT DEFAULT CURRENT_TIMESTAMP'],
+    ['is_one_time', 'INTEGER DEFAULT 0'],
+    ['one_time_date', 'TEXT'],
+  ],
+  walk_routes: [
+    ['accuracy_meters', 'REAL'],
+    ['altitude_meters', 'REAL'],
+    ['speed_mps', 'REAL'],
+    ['bearing_degrees', 'REAL'],
+  ],
 };
 
 const runMigrations = async () => {
   if (!db) return;
-  await db.execAsync(`
-    CREATE TABLE IF NOT EXISTS analytics_events (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT NOT NULL,
-      payload_json TEXT,
-      created_at TEXT DEFAULT CURRENT_TIMESTAMP
-    );
-    CREATE TABLE IF NOT EXISTS crash_reports (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      message TEXT NOT NULL,
-      stack TEXT,
-      is_fatal INTEGER DEFAULT 0,
-      context_json TEXT,
-      created_at TEXT DEFAULT CURRENT_TIMESTAMP
-    );
-    CREATE INDEX IF NOT EXISTS idx_analytics_events_name ON analytics_events(name);
-    CREATE INDEX IF NOT EXISTS idx_analytics_events_created_at ON analytics_events(created_at);
-    CREATE INDEX IF NOT EXISTS idx_crash_reports_created_at ON crash_reports(created_at);
-  `);
 
-  // schedule_source expansions
-  await ensureColumn('schedule_source', 'google_connected', 'INTEGER DEFAULT 0');
-  await ensureColumn('schedule_source', 'google_access_token', 'TEXT');
-  await ensureColumn('schedule_source', 'google_refresh_token', 'TEXT');
-  await ensureColumn('schedule_source', 'updated_at', 'TEXT DEFAULT CURRENT_TIMESTAMP');
+  // Fetch existing columns for all tables that need migration in one loop.
+  // Each getAllAsync is a single native round-trip; we minimise the total count.
+  const tableColumns: Record<string, Set<string>> = {};
+  const tables = Object.keys(MIGRATION_COLUMNS);
+  for (const table of tables) {
+    const cols = await db.getAllAsync<{ name: string }>(`PRAGMA table_info(${table})`);
+    tableColumns[table] = new Set(cols.map((c) => c.name));
+  }
 
-  // busy_events expansions
-  await ensureColumn('busy_events', 'is_all_day', 'INTEGER DEFAULT 0');
-  await ensureColumn('busy_events', 'created_at', 'TEXT DEFAULT CURRENT_TIMESTAMP');
+  // Collect only the ALTER statements actually needed.
+  const alters: string[] = [];
+  for (const table of tables) {
+    const existing = tableColumns[table];
+    for (const [column, definition] of MIGRATION_COLUMNS[table]) {
+      if (!existing.has(column)) {
+        alters.push(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+      }
+    }
+  }
 
-  // preferences expansions
-  await ensureColumn('preferences', 'min_walk_minutes', 'INTEGER NOT NULL DEFAULT 6');
-  await ensureColumn('preferences', 'updated_at', 'TEXT DEFAULT CURRENT_TIMESTAMP');
-
-  // Walk sessions expansions
-  await ensureColumn('walk_sessions', 'distance_meters', 'REAL');
-  await ensureColumn('walk_sessions', 'steps', 'INTEGER DEFAULT 0');
-  await ensureColumn('walk_sessions', 'calories', 'REAL');
-  await ensureColumn('walk_sessions', 'used_location', 'INTEGER DEFAULT 0');
-  await ensureColumn('walk_sessions', 'created_at', 'TEXT DEFAULT CURRENT_TIMESTAMP');
-  // New research-grade walk session columns
-  await ensureColumn('walk_sessions', 'pause_count', 'INTEGER DEFAULT 0');
-  await ensureColumn('walk_sessions', 'max_speed_mps', 'REAL');
-  await ensureColumn('walk_sessions', 'avg_speed_mps', 'REAL');
-  await ensureColumn('walk_sessions', 'elevation_gain_meters', 'REAL');
-  await ensureColumn('walk_sessions', 'step_source', 'TEXT');
-  await ensureColumn('walk_sessions', 'motion_confidence', 'TEXT');
-  await ensureColumn('walk_sessions', 'sensor_health_at_start', 'TEXT');
-  await ensureColumn('walk_sessions', 'was_recovered', 'INTEGER DEFAULT 0');
-  await ensureColumn('walk_sessions', 'nudge_to_start_latency_seconds', 'INTEGER');
-
-  // nudge_plans expansions
-  await ensureColumn('nudge_plans', 'status', "TEXT NOT NULL DEFAULT 'planned'");
-  await ensureColumn('nudge_plans', 'reason', 'TEXT');
-  await ensureColumn('nudge_plans', 'created_at', 'TEXT DEFAULT CURRENT_TIMESTAMP');
-  await ensureColumn('nudge_plans', 'manual_notify_lead_minutes', 'INTEGER NOT NULL DEFAULT 0');
-
-  // manual_schedule_entries expansions
-  await ensureColumn('manual_schedule_entries', 'created_at', 'TEXT DEFAULT CURRENT_TIMESTAMP');
-  await ensureColumn('manual_schedule_entries', 'is_one_time', 'INTEGER DEFAULT 0');
-  await ensureColumn('manual_schedule_entries', 'one_time_date', 'TEXT');
-
-  // preferences: new notification-related columns
-  await ensureColumn('preferences', 'grace_period_minutes', 'INTEGER DEFAULT 2');
-  await ensureColumn('preferences', 'when_to_notify', "TEXT DEFAULT 'now'");
-  await ensureColumn('preferences', 'notify_delay_minutes', 'INTEGER DEFAULT 5');
-  await ensureColumn('preferences', 'notification_min_gap_minutes', 'INTEGER DEFAULT 60');
-  await ensureColumn('preferences', 'preferred_walking_periods_enabled', 'INTEGER NOT NULL DEFAULT 0');
-  await ensureColumn('preferences', 'preferred_walking_periods_json', "TEXT DEFAULT '[]'");
-  await ensureColumn('preferences', 'strictness_mode', "TEXT NOT NULL DEFAULT 'easygoing'");
-  await ensureColumn('preferences', 'step_goal_enabled', 'INTEGER NOT NULL DEFAULT 0');
-  await ensureColumn('preferences', 'step_goal', 'INTEGER NOT NULL DEFAULT 1000');
-
-  // Achievements table
-  await db.execAsync(`
-    CREATE TABLE IF NOT EXISTS achievements (
-      id TEXT PRIMARY KEY,
-      unlocked_at TEXT NOT NULL
-    );
-  `);
-
-  // walk_routes: add new columns for richer GPS data
-  await ensureColumn('walk_routes', 'accuracy_meters', 'REAL');
-  await ensureColumn('walk_routes', 'altitude_meters', 'REAL');
-  await ensureColumn('walk_routes', 'speed_mps', 'REAL');
-  await ensureColumn('walk_routes', 'bearing_degrees', 'REAL');
-
-  // walk_pause_events: create if missing (for older installs)
-  await db.execAsync(`
-    CREATE TABLE IF NOT EXISTS walk_pause_events (
-      id                    INTEGER PRIMARY KEY AUTOINCREMENT,
-      session_id            TEXT    NOT NULL,
-      pause_started_at      TEXT    NOT NULL,
-      pause_ended_at        TEXT,
-      pause_duration_seconds INTEGER,
-      pause_source          TEXT,
-      pause_reason          TEXT,
-      created_at            TEXT    DEFAULT CURRENT_TIMESTAMP
-    );
-    CREATE INDEX IF NOT EXISTS idx_walk_pause_events_session_id ON walk_pause_events(session_id);
-  `);
+  // Execute all pending ALTERs in a single native call.
+  if (alters.length > 0) {
+    await db.execAsync(alters.join(';\n') + ';');
+  }
 };
 
 /**
@@ -350,36 +296,4 @@ export const withTransaction = async <T>(
     result = await fn(instance);
   });
   return result!;
-};
-
-export const isDatabaseAvailable = async (): Promise<boolean> => {
-  try {
-    const instance = await getDatabase();
-    // Quick health check
-    await instance.getFirstAsync<{ x: number }>('SELECT 1 as x');
-    return true;
-  } catch {
-    return false;
-  }
-};
-
-export const resetDatabase = async () => {
-  if (!db) return;
-
-  await db.execAsync(`
-    DROP TABLE IF EXISTS schedule_source;
-    DROP TABLE IF EXISTS busy_events;
-    DROP TABLE IF EXISTS preferences;
-    DROP TABLE IF EXISTS walk_sessions;
-    DROP TABLE IF EXISTS nudge_plans;
-    DROP TABLE IF EXISTS manual_schedule_entries;
-    DROP TABLE IF EXISTS analytics_events;
-    DROP TABLE IF EXISTS crash_reports;
-    DROP TABLE IF EXISTS achievements;
-    DROP TABLE IF EXISTS walk_checkpoint;
-    DROP TABLE IF EXISTS walk_routes;
-    DROP TABLE IF EXISTS walk_pause_events;
-  `);
-
-  await initializeTables();
 };

@@ -1,4 +1,4 @@
-﻿import React from 'react';
+import React from 'react';
 import { Text as RNText, StyleSheet, TextStyle, Platform, StyleProp } from 'react-native';
 import { resolveAppFontFamily, theme } from '../theme';
 import { useAppStore } from '../store';
@@ -161,6 +161,7 @@ const styles = StyleSheet.create({
   base: {
     color: theme.colors.textPrimary,
     fontFamily: theme.fontFamily.regular,
+    flexShrink: 1,
   },
   heading: {
     fontSize: theme.fontSize.heading,

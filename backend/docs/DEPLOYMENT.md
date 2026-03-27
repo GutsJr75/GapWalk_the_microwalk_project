@@ -1,4 +1,4 @@
-# GapWalk Backend — Production Deployment Guide
+# GapWalk Backend - Production Deployment Guide
 
 > Step-by-step instructions for deploying the GapWalk backend to production.
 
@@ -29,8 +29,8 @@
 | **Node.js** | 20 LTS or 22 LTS | Required for `npm run start:prod` |
 | **PostgreSQL** | 16+ | Primary database |
 | **Redis** | 7+ | BullMQ job queue backend |
-| **Auth0 tenant** | — | With an API configured (RS256) |
-| **Expo access token** | — | For push notifications |
+| **Firebase project** | - | With Authentication enabled and Admin credentials available |
+| **Expo access token** | - | For push notifications |
 | **Docker** (optional) | 24+ | For containerized deployment |
 
 ---
@@ -40,18 +40,17 @@
 ### Required Environment Variables
 
 ```bash
-# Database — use SSL in production
+# Database - use SSL in production
 DATABASE_URL=postgresql://user:password@host:5432/gapwalk?sslmode=require
 
-# Redis — use TLS if using managed Redis
+# Redis - use TLS if using managed Redis
 REDIS_URL=redis://host:6379
 # or: REDIS_URL=rediss://host:6380 (TLS)
 
-# Auth0
-AUTH0_DOMAIN=your-tenant.auth0.com
-AUTH0_AUDIENCE=https://api.gapwalk.com
-AUTH0_CLIENT_ID=your_client_id
-AUTH0_CLIENT_SECRET=your_client_secret
+# Firebase Admin
+FIREBASE_PROJECT_ID=your-project-id
+FIREBASE_CLIENT_EMAIL=firebase-adminsdk-xxxxx@your-project-id.iam.gserviceaccount.com
+FIREBASE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n"
 
 # Expo Push
 EXPO_ACCESS_TOKEN=your_expo_access_token
@@ -65,8 +64,8 @@ ENABLE_WORKERS=true
 
 ### Security Rules for Production Variables
 
-- **POSTGRES_PASSWORD**: Generate with `openssl rand -base64 32` — minimum 32 characters
-- **AUTH0_CLIENT_SECRET**: Obtained from Auth0 Dashboard → Applications
+- **POSTGRES_PASSWORD**: Generate with `openssl rand -base64 32` - minimum 32 characters
+- **FIREBASE_PRIVATE_KEY**: Obtained from your Firebase service account JSON
 - **EXPO_ACCESS_TOKEN**: Generated at https://expo.dev/accounts/[your-account]/settings/access-tokens
 - **Never commit** `.env` to version control (already in `.gitignore`)
 - **Rotate all secrets** before the first production deployment if they were ever used in development
@@ -96,7 +95,7 @@ sudo usermod -aG docker $USER
 
 # Clone the repository
 git clone <your-repo-url>
-cd GapWalk_the_microwalk_project/backend
+cd GapWalk/backend
 ```
 
 ### Step 2: Configure environment
@@ -175,7 +174,7 @@ npm run build
 
 # 5. Start with PM2 (recommended for production)
 npm install -g pm2
-pm2 start dist/src/main.js --name gapwalk-api \
+pm2 start dist/main.js --name gapwalk-api \
   --max-memory-restart 512M \
   --instances 1 \
   --env production
@@ -193,7 +192,7 @@ Create `ecosystem.config.js`:
 module.exports = {
   apps: [{
     name: 'gapwalk-api',
-    script: 'dist/src/main.js',
+    script: 'dist/main.js',
     instances: 1,
     exec_mode: 'fork',
     max_memory_restart: '512M',
@@ -366,19 +365,19 @@ In production, the server logs at `error`, `warn`, and `log` levels. Key log lin
 
 Before going to production, verify each item:
 
-- [ ] **`.env` not in git** — Already in `.gitignore`, verify with `git ls-files .env`
-- [ ] **Strong database password** — Minimum 32 characters, randomly generated
-- [ ] **All secrets rotated** — Don't reuse development Auth0/Expo credentials
-- [ ] **`NODE_ENV=production`** — Set in environment (reduces verbose logging)
-- [ ] **`CORS_ORIGIN` set correctly** — Only allow your app's domain, not `*`
-- [ ] **SSL on database** — `?sslmode=require` in `DATABASE_URL`
-- [ ] **Reverse proxy with HTTPS** — Never expose port 3000 directly to the internet
-- [ ] **Non-root Docker user** — Dockerfile already creates and uses `appuser`
-- [ ] **Rate limiting configured** — Consider adding `@nestjs/throttler` for API rate limits
-- [ ] **Auth0 API permissions configured** — Ensure audience and scopes are correct
-- [ ] **Expo access token scoped** — Use project-scoped tokens when possible
-- [ ] **Database backups enabled** — Automated daily backups with point-in-time recovery
-- [ ] **Firewall rules** — Only expose port 443 (HTTPS) externally
+- [ ] **`.env` not in git** - Already in `.gitignore`, verify with `git ls-files .env`
+- [ ] **Strong database password** - Minimum 32 characters, randomly generated
+- [ ] **All secrets rotated** - Don't reuse development Firebase/Expo credentials
+- [ ] **`NODE_ENV=production`** - Set in environment (reduces verbose logging)
+- [ ] **`CORS_ORIGIN` set correctly** - Only allow your app's domain, not `*`
+- [ ] **SSL on database** - `?sslmode=require` in `DATABASE_URL`
+- [ ] **Reverse proxy with HTTPS** - Never expose port 3000 directly to the internet
+- [ ] **Non-root Docker user** - Dockerfile already creates and uses `appuser`
+- [ ] **Rate limiting configured** - Consider adding `@nestjs/throttler` for API rate limits
+- [ ] **Firebase Authentication configured** - Ensure Google and email/password providers are enabled
+- [ ] **Expo access token scoped** - Use project-scoped tokens when possible
+- [ ] **Database backups enabled** - Automated daily backups with point-in-time recovery
+- [ ] **Firewall rules** - Only expose port 443 (HTTPS) externally
 
 ---
 
@@ -417,10 +416,10 @@ ENABLE_WORKERS=true npm run start:prod
 
 ### Performance Bottlenecks to Watch
 
-1. **Nudge generation** runs sequentially per user — at 1000+ users, consider parallelizing
-2. **Route points** are high-volume (~720 rows per 1-hour walk) — consider archiving old data
-3. **Push send** processes plans sequentially — batch processing can improve throughput
-4. **Sync endpoint** does many sequential DB operations — could benefit from transactions
+1. **Nudge generation** runs sequentially per user - at 1000+ users, consider parallelizing
+2. **Route points** are high-volume (~720 rows per 1-hour walk) - consider archiving old data
+3. **Push send** processes plans sequentially - batch processing can improve throughput
+4. **Sync endpoint** does many sequential DB operations - could benefit from transactions
 
 ---
 
@@ -486,7 +485,7 @@ npx prisma migrate deploy
 1. Check `EXPO_ACCESS_TOKEN` is valid
 2. Verify devices have valid Expo push tokens: `GET /api/devices`
 3. Check push logs: query `push_logs` table for errors
-4. Verify `ENABLE_WORKERS=true` — workers must be running
+4. Verify `ENABLE_WORKERS=true` - workers must be running
 5. Check Redis is healthy: `redis-cli ping`
 
 ### Workers Not Running

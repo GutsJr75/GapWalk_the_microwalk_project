@@ -1,16 +1,16 @@
 {
   "name": "gapwalk",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "main": "index.js",
   "scripts": {
     "preinstall": "node setup-check.js",
     "start": "expo start",
-    "android": "expo run:android",
+    "android": "node scripts/run-android.js",
     "android:clean": "rm -rf android/app/.cxx android/app/build android/build",
     "ios": "expo run:ios",
     "web": "expo start --web",
     "start:e2e": "EXPO_PUBLIC_E2E=1 expo start --dev-client --clear",
-    "android:e2e": "EXPO_PUBLIC_E2E=1 expo run:android",
+    "android:e2e": "EXPO_PUBLIC_E2E=1 node scripts/run-android.js",
     "ios:e2e": "EXPO_PUBLIC_E2E=1 expo run:ios",
     "e2e:maestro:manual": "maestro test e2e/maestro/onboarding-manual.yaml",
     "e2e:maestro:import": "maestro test e2e/maestro/onboarding-import.yaml",
@@ -20,17 +20,14 @@
   },
   "dependencies": {
     "@expo/vector-icons": "^15.0.3",
-    "@react-native-community/datetimepicker": "8.4.4",
-    "@react-native-community/slider": "5.0.1",
+    "@react-native-async-storage/async-storage": "^2.2.0",
     "@react-native-google-signin/google-signin": "^16.1.2",
     "@react-navigation/native": "^6.1.9",
     "@react-navigation/native-stack": "^6.9.17",
     "date-fns": "^3.0.6",
     "expo": "~54.0.0",
     "expo-asset": "~12.0.12",
-    "expo-auth-session": "~7.0.10",
     "expo-constants": "~18.0.13",
-    "expo-crypto": "~15.0.8",
     "expo-device": "~8.0.10",
     "expo-document-picker": "~14.0.8",
     "expo-file-system": "~19.0.21",
@@ -46,12 +43,12 @@
     "expo-sqlite": "~16.0.10",
     "expo-status-bar": "~3.0.9",
     "expo-web-browser": "~15.0.10",
+    "firebase": "^12.11.0",
     "ical.js": "^2.0.1",
     "react": "19.1.0",
     "react-dom": "19.1.0",
     "react-native": "0.81.5",
-    "react-native-copilot": "^3.3.3",
-    "react-native-maps": "^1.27.1",
+    "react-native-maps": "1.20.1",
     "react-native-safe-area-context": "~5.6.0",
     "react-native-screens": "~4.16.0",
     "react-native-svg": "15.12.1",
@@ -62,6 +59,16 @@
     "@babel/core": "^7.25.2",
     "@types/react": "~19.1.10",
     "typescript": "~5.9.2"
+  },
+  "expo": {
+    "doctor": {
+      "reactNativeDirectoryCheck": {
+        "enabled": false
+      },
+      "appConfigFieldsNotSyncedCheck": {
+        "enabled": false
+      }
+    }
   },
   "private": true
 }

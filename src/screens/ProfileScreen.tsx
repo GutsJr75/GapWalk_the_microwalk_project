@@ -1,5 +1,5 @@
 import React, { useCallback, useMemo, useState } from 'react';
-import { View, StyleSheet, Platform, Pressable, TextInput } from 'react-native';
+import { View, StyleSheet, Platform, Pressable, TextInput, useWindowDimensions } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { Ionicons } from '@expo/vector-icons';
@@ -18,8 +18,9 @@ import { screenChrome } from '../theme/screenChrome';
 import { useThemePalette } from '../theme/palette';
 import { useAppStore } from '../store';
 import { authStorage } from '../data/authStorage';
+import { firebaseAuthService } from '../services/firebaseAuth';
 import { sessionsRepo } from '../data/repositories/sessionsRepo';
-import { achievementsRepo, ACHIEVEMENTS, getAchievementDef, type UnlockedAchievement } from '../data/repositories/achievementsRepo';
+
 import { calculateStreak, calculateWeeklyStats } from '../utils/statsUtils';
 import { toUserFriendlyError } from '../utils/errorMessages';
 
@@ -30,6 +31,11 @@ interface ProgressSnapshot {
   totalWalks: number;
   totalMinutes: number;
   activeDaysThisWeek: number;
+  totalDistance: number;
+  longestWalkMinutes: number;
+  avgWalkMinutes: number;
+  longestStreak: number;
+  firstWalkDate: string | null;
 }
 
 const EMPTY_PROGRESS: ProgressSnapshot = {
@@ -37,6 +43,16 @@ const EMPTY_PROGRESS: ProgressSnapshot = {
   totalWalks: 0,
   totalMinutes: 0,
   activeDaysThisWeek: 0,
+  totalDistance: 0,
+  longestWalkMinutes: 0,
+  avgWalkMinutes: 0,
+  longestStreak: 0,
+  firstWalkDate: null,
+};
+
+const formatDistance = (meters: number, unit: 'km' | 'mi'): string => {
+  if (unit === 'km') return `${(meters / 1000).toFixed(1)} km`;
+  return `${(meters / 1609.34).toFixed(1)} mi`;
 };
 
 const normalizeDisplayName = (value: string): string => value.trim().replace(/\s+/g, ' ');
@@ -56,10 +72,13 @@ export const ProfileScreen: React.FC<Props> = ({ navigation }) => {
     isAuthenticated,
     setIsAuthenticated,
     setAuthUser,
+    distanceUnit,
   } = useAppStore();
   const palette = useThemePalette();
+  const { width: windowWidth } = useWindowDimensions();
+  const compactProfile = windowWidth < 400;
+  const narrowAllTime = windowWidth < 360;
   const [progress, setProgress] = useState<ProgressSnapshot>(EMPTY_PROGRESS);
-  const [unlockedAchievements, setUnlockedAchievements] = useState<UnlockedAchievement[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [isEditingName, setIsEditingName] = useState(false);
@@ -74,13 +93,16 @@ export const ProfileScreen: React.FC<Props> = ({ navigation }) => {
     const localName = profileDisplayName?.trim();
     if (localName) return localName;
     const authName = authUser?.name?.trim();
-    // Ignore auth name if it looks like an email address (Auth0 often sets name = email)
+    // Ignore provider names that are just an email address.
     if (authName && !authName.includes('@')) return authName;
     return 'GapWalker';
   }, [authUser?.name, profileDisplayName]);
 
-  const hasCustomName = !!(profileDisplayName?.trim() ||
-    (authUser?.name?.trim() && !authUser.name.includes('@')));
+  const walkingSince = useMemo(() => {
+    if (!progress.firstWalkDate) return null;
+    const d = new Date(progress.firstWalkDate);
+    return `Walking since ${d.toLocaleDateString(undefined, { month: 'short', year: 'numeric' })}`;
+  }, [progress.firstWalkDate]);
 
   const normalizedDraftName = normalizeDisplayName(draftName);
   const draftNameValidationError = validateDisplayName(normalizedDraftName);
@@ -91,25 +113,31 @@ export const ProfileScreen: React.FC<Props> = ({ navigation }) => {
     setLoading(true);
     setLoadError(null);
     try {
-      const [sessions, unlocked] = await Promise.all([
-        sessionsRepo.getAll(),
-        achievementsRepo.getAll(),
-      ]);
+      const sessions = await sessionsRepo.getAll();
 
       const streak = calculateStreak(sessions);
       const weeklyStats = calculateWeeklyStats(sessions);
-      const totalMinutes = sessions.reduce((sum, session) => sum + Math.floor(session.activeSeconds / 60), 0);
+      const totalMinutes = sessions.reduce((sum, s) => sum + Math.floor(s.activeSeconds / 60), 0);
+      const totalDistance = sessions.reduce((sum, s) => sum + (s.distanceMeters ?? 0), 0);
+      const longestWalkMinutes = sessions.reduce((max, s) => Math.max(max, Math.floor(s.activeSeconds / 60)), 0);
+      const avgWalkMinutes = sessions.length > 0 ? Math.round(totalMinutes / sessions.length) : 0;
+
+      const sorted = [...sessions].sort((a, b) => a.start.localeCompare(b.start));
+      const firstWalkDate = sorted.length > 0 ? sorted[0].start : null;
 
       setProgress({
         currentStreak: streak.currentStreak,
         totalWalks: sessions.length,
         totalMinutes,
         activeDaysThisWeek: weeklyStats.daysActive,
+        totalDistance,
+        longestWalkMinutes,
+        avgWalkMinutes,
+        longestStreak: streak.longestStreak,
+        firstWalkDate,
       });
-      setUnlockedAchievements(unlocked);
     } catch (error) {
       setProgress(EMPTY_PROGRESS);
-      setUnlockedAchievements([]);
       setLoadError(toUserFriendlyError(error));
     } finally {
       setLoading(false);
@@ -173,6 +201,7 @@ export const ProfileScreen: React.FC<Props> = ({ navigation }) => {
 
   const handleLogout = () => {
     const doLogout = async () => {
+      await firebaseAuthService.signOut();
       await authStorage.clearAll();
       setIsAuthenticated(false);
       setAuthUser(null);
@@ -188,11 +217,6 @@ export const ProfileScreen: React.FC<Props> = ({ navigation }) => {
     showBinaryConfirm('Log out', 'Are you sure you want to log out?', 'Log out', () => void doLogout());
   };
 
-  const latestUnlocked = unlockedAchievements
-    .map((item) => ({ ...item, def: getAchievementDef(item.id) }))
-    .filter((item) => !!item.def)
-    .slice(0, 3);
-
   return (
     <Container scrollable>
       <View style={styles.content}>
@@ -204,10 +228,10 @@ export const ProfileScreen: React.FC<Props> = ({ navigation }) => {
         />
 
         <Card elevated style={styles.card}>
-          <View style={styles.heroRow}>
-            <View style={[styles.heroAvatar, { backgroundColor: palette.accentMuted }]}>
+          <View style={[styles.heroRow, compactProfile && styles.heroRowCompact]}>
+            <View style={[styles.heroAvatar, compactProfile && styles.heroAvatarCompact, { backgroundColor: palette.accentMuted }]}>
               {resolvedDisplayName && resolvedDisplayName !== 'GapWalker' ? (
-                <Text variant="title" style={[styles.avatarInitials, { color: palette.accentPrimary }]}>
+                <Text variant="title" style={[styles.avatarInitials, compactProfile && styles.avatarInitialsCompact, { color: palette.accentPrimary }]}>
                   {resolvedDisplayName
                     .split(' ')
                     .filter(Boolean)
@@ -216,106 +240,89 @@ export const ProfileScreen: React.FC<Props> = ({ navigation }) => {
                     .join('')}
                 </Text>
               ) : (
-                <Ionicons name="person" size={34} color={palette.accentPrimary} />
+                <Ionicons name="person" size={compactProfile ? 28 : 34} color={palette.accentPrimary} />
               )}
             </View>
             <View style={styles.heroInfo}>
               {!isEditingName ? (
                 <>
-                  <Text variant="title" style={styles.heroName}>{resolvedDisplayName}</Text>
+                  <View style={[styles.nameRow, compactProfile && styles.nameRowCompact]}>
+                    <Text variant="title" style={[styles.heroName, compactProfile && styles.heroNameCompact]}>{resolvedDisplayName}</Text>
+                    <Pressable
+                      onPress={handleStartEditName}
+                      hitSlop={10}
+                      testID="profile-name-update"
+                      style={({ pressed }) => pressed && styles.editIconPressed}
+                    >
+                      <Ionicons name="create-outline" size={16} color={palette.textMuted} />
+                    </Pressable>
+                  </View>
                   {authUser?.email ? (
-                    <Text variant="bodySmall" color={palette.textMuted}>
-                      {authUser.email.split('@')[0]}
+                    <Text variant="bodySmall" color={palette.textMuted} style={styles.emailLine}>
+                      {authUser.email}
+                    </Text>
+                  ) : null}
+                  {walkingSince ? (
+                    <Text variant="bodySmall" color={palette.textMuted} style={styles.walkingSince}>
+                      {walkingSince}
                     </Text>
                   ) : null}
                 </>
               ) : (
                 <>
-                  <TextInput
-                    value={draftName}
-                    onChangeText={(value) => {
-                      setDraftName(value);
-                      if (nameError) setNameError(null);
-                    }}
-                    maxLength={32}
-                    autoCapitalize="words"
-                    autoCorrect={false}
-                    editable={!savingName}
-                    style={[
-                      styles.nameInput,
-                      {
-                        color: palette.textPrimary,
-                        backgroundColor: palette.inputBg,
-                        borderColor: palette.borderStrong,
-                      },
-                    ]}
-                  />
+                  <View style={[styles.nameEditInlineRow, compactProfile && styles.nameEditInlineRowCompact]}>
+                    <TextInput
+                      value={draftName}
+                      onChangeText={(value) => {
+                        setDraftName(value);
+                        if (nameError) setNameError(null);
+                      }}
+                      maxLength={32}
+                      autoCapitalize="words"
+                      autoCorrect={false}
+                      autoFocus
+                      editable={!savingName}
+                      style={[
+                        styles.nameInput,
+                        {
+                          color: palette.textPrimary,
+                          backgroundColor: palette.inputBg,
+                          borderColor: palette.borderStrong,
+                        },
+                      ]}
+                    />
+                    <Pressable
+                      onPress={() => { void handleSaveName(); }}
+                      disabled={!canSaveName}
+                      hitSlop={8}
+                      testID="profile-name-save"
+                      style={styles.nameInlineIcon}
+                    >
+                      <Ionicons
+                        name="checkmark-circle"
+                        size={22}
+                        color={canSaveName ? palette.accentPrimary : palette.textMuted}
+                      />
+                    </Pressable>
+                    <Pressable
+                      onPress={handleCancelEditName}
+                      disabled={savingName}
+                      hitSlop={8}
+                      testID="profile-name-cancel"
+                      style={styles.nameInlineIcon}
+                    >
+                      <Ionicons name="close-circle" size={22} color={palette.textMuted} />
+                    </Pressable>
+                  </View>
                   {authUser?.email ? (
-                    <Text variant="bodySmall" color={palette.textMuted}>
-                      {authUser.email.split('@')[0]}
+                    <Text variant="bodySmall" color={palette.textMuted} style={styles.emailLine}>
+                      {authUser.email}
                     </Text>
                   ) : null}
                 </>
               )}
             </View>
           </View>
-
-          {isEditingName ? (
-            <View style={styles.nameEditRow}>
-              <Pressable
-                style={({ pressed }) => [
-                  styles.nameActionBtn,
-                  {
-                    backgroundColor: palette.bgSurface,
-                    borderColor: palette.borderStrong,
-                  },
-                  pressed && styles.nameActionBtnPressed,
-                ]}
-                onPress={handleCancelEditName}
-                disabled={savingName}
-                testID="profile-name-cancel"
-              >
-                <Text variant="bodySmall" style={{ color: palette.textPrimary }}>Cancel</Text>
-              </Pressable>
-              <Pressable
-                style={({ pressed }) => [
-                  styles.nameActionBtn,
-                  {
-                    backgroundColor: canSaveName ? palette.accentPrimary : palette.inputBg,
-                    borderColor: canSaveName ? palette.accentPrimary : palette.borderStrong,
-                  },
-                  pressed && canSaveName && styles.nameActionBtnPressed,
-                ]}
-                onPress={() => { void handleSaveName(); }}
-                disabled={!canSaveName}
-                testID="profile-name-save"
-              >
-                <Text
-                  variant="bodySmall"
-                  style={{ color: canSaveName ? palette.accentOnSolid : palette.textMuted }}
-                >
-                  {savingName ? 'Saving...' : 'Save'}
-                </Text>
-              </Pressable>
-            </View>
-          ) : (
-            <Pressable
-              style={({ pressed }) => [
-                styles.updateNameBtn,
-                {
-                  borderColor: palette.borderStrong,
-                  backgroundColor: palette.bgSurface,
-                },
-                pressed && styles.nameActionBtnPressed,
-              ]}
-              onPress={handleStartEditName}
-              testID="profile-name-update"
-            >
-              <Text variant="bodySmall" style={{ color: palette.textPrimary }}>
-                {hasCustomName ? 'Change Username' : 'Set Username'}
-              </Text>
-            </Pressable>
-          )}
 
           {(nameError || (isEditingName && draftNameValidationError)) ? (
             <Text variant="bodySmall" style={styles.nameError}>
@@ -337,27 +344,27 @@ export const ProfileScreen: React.FC<Props> = ({ navigation }) => {
           <>
             <Card elevated style={styles.card}>
               <Text variant="body" style={styles.sectionTitle}>Progress Snapshot</Text>
-              <View style={styles.statsGrid}>
-                <View style={[styles.statItem, styles.statTile, { backgroundColor: palette.bgSurfaceElevated }]}>
-                  <Ionicons name="flame-outline" size={18} color={palette.accentPrimary} style={styles.statIcon} />
-                  <Text variant="title" style={[styles.statValue, { color: palette.accentPrimary }]}>{progress.currentStreak}</Text>
+              <View style={[styles.statsRow, compactProfile && styles.statsRowCompact]}>
+                <View style={[styles.statColumn, compactProfile && styles.statColumnCompact]}>
+                  <Ionicons name="flame-outline" size={16} color={palette.trendDown} style={styles.statIcon} />
+                  <Text variant="title" style={[styles.statValue, compactProfile && styles.statValueCompact, { color: palette.trendDown }]}>{progress.currentStreak}</Text>
                   <Text variant="bodySmall" color={palette.textMuted} style={styles.statLabel}>Streak</Text>
                 </View>
-                <View style={[styles.statItem, styles.statTile, { backgroundColor: palette.bgSurfaceElevated }]}>
-                  <Ionicons name="walk-outline" size={18} color={palette.accentPrimary} style={styles.statIcon} />
-                  <Text variant="title" style={[styles.statValue, { color: palette.accentPrimary }]}>{progress.totalWalks}</Text>
+                <View style={[styles.statColumn, compactProfile && styles.statColumnCompact]}>
+                  <Ionicons name="walk-outline" size={16} color={palette.accentPrimary} style={styles.statIcon} />
+                  <Text variant="title" style={[styles.statValue, compactProfile && styles.statValueCompact, { color: palette.accentPrimary }]}>{progress.totalWalks}</Text>
                   <Text variant="bodySmall" color={palette.textMuted} style={styles.statLabel}>Walks</Text>
                 </View>
-                <View style={[styles.statItem, styles.statTile, { backgroundColor: palette.bgSurfaceElevated }]}>
-                  <Ionicons name="time-outline" size={18} color={palette.accentPrimary} style={styles.statIcon} />
-                  <Text variant="title" style={[styles.statValue, { color: palette.accentPrimary }]}>{progress.totalMinutes}</Text>
+                <View style={[styles.statColumn, compactProfile && styles.statColumnCompact]}>
+                  <Ionicons name="time-outline" size={16} color={palette.info} style={styles.statIcon} />
+                  <Text variant="title" style={[styles.statValue, compactProfile && styles.statValueCompact, { color: palette.info }]}>{progress.totalMinutes}</Text>
                   <Text variant="bodySmall" color={palette.textMuted} style={styles.statLabel}>Minutes</Text>
                 </View>
-                <View style={[styles.statItem, styles.statTile, { backgroundColor: palette.bgSurfaceElevated }]}>
-                  <Ionicons name="calendar-outline" size={18} color={palette.accentPrimary} style={styles.statIcon} />
-                  <Text variant="title" style={[styles.statValue, { color: palette.accentPrimary }]}>
+                <View style={[styles.statColumn, compactProfile && styles.statColumnCompact]}>
+                  <Ionicons name="calendar-outline" size={16} color={palette.success} style={styles.statIcon} />
+                  <Text variant="title" style={[styles.statValue, compactProfile && styles.statValueCompact, { color: palette.success }]}>
                     {progress.activeDaysThisWeek}
-                    <Text style={styles.statDenominator}>/7</Text>
+                    <Text style={[styles.statDenominator, compactProfile && styles.statDenominatorCompact, { color: palette.success }]}>/7</Text>
                   </Text>
                   <Text variant="bodySmall" color={palette.textMuted} style={styles.statLabel}>Active</Text>
                 </View>
@@ -365,40 +372,36 @@ export const ProfileScreen: React.FC<Props> = ({ navigation }) => {
             </Card>
 
             <Card elevated style={styles.card}>
-              <View style={styles.sectionHeadRow}>
-                <Text variant="body" style={styles.sectionTitle}>Achievements</Text>
-                <Text variant="bodySmall" color={palette.textMuted}>
-                  {unlockedAchievements.length}/{ACHIEVEMENTS.length}
-                </Text>
+              <View style={styles.allTimeHeader}>
+                <Ionicons name="trophy-outline" size={18} color={palette.accentPrimary} />
+                <Text variant="body" style={styles.allTimeTitle}>All Time</Text>
               </View>
-
-              {latestUnlocked.length === 0 ? (
-                <Text variant="bodySmall" color={palette.textMuted}>No achievements unlocked yet.</Text>
-              ) : (
-                latestUnlocked.map((item) => (
-                  <View key={item.id} style={styles.achievementRow}>
-                    <View style={[styles.achievementIconWrap, { backgroundColor: palette.accentMuted }]}>
-                      <Ionicons name={item.def!.icon as any} size={16} color={item.def!.color} />
-                    </View>
-                    <Text variant="bodySmall" style={styles.achievementTitle}>{item.def!.title}</Text>
-                  </View>
-                ))
-              )}
-
-              <Pressable
-                style={({ pressed }) => [
-                  styles.viewAllBtn,
-                  {
-                    borderColor: palette.borderStrong,
-                    backgroundColor: palette.bgSurface,
-                  },
-                  pressed && styles.nameActionBtnPressed,
-                ]}
-                onPress={() => navigation.navigate('Achievements', { source: 'profile' })}
-                testID="profile-view-all-achievements"
-              >
-                <Text variant="bodySmall">View all</Text>
-              </Pressable>
+              <View style={styles.allTimeGrid}>
+                <View style={[styles.allTimeItem, narrowAllTime && styles.allTimeItemFull]}>
+                  <Text variant="bodySmall" color={palette.textMuted}>Distance</Text>
+                  <Text variant="body" style={[styles.allTimeValue, { color: palette.info }]}>
+                    {formatDistance(progress.totalDistance, distanceUnit)}
+                  </Text>
+                </View>
+                <View style={[styles.allTimeItem, narrowAllTime && styles.allTimeItemFull]}>
+                  <Text variant="bodySmall" color={palette.textMuted}>Longest Walk</Text>
+                  <Text variant="body" style={[styles.allTimeValue, { color: palette.accentPrimary }]}>
+                    {progress.longestWalkMinutes} min
+                  </Text>
+                </View>
+                <View style={[styles.allTimeItem, narrowAllTime && styles.allTimeItemFull]}>
+                  <Text variant="bodySmall" color={palette.textMuted}>Avg Walk</Text>
+                  <Text variant="body" style={[styles.allTimeValue, { color: palette.trendDown }]}>
+                    {progress.avgWalkMinutes} min
+                  </Text>
+                </View>
+                <View style={[styles.allTimeItem, narrowAllTime && styles.allTimeItemFull]}>
+                  <Text variant="bodySmall" color={palette.textMuted}>Best Streak</Text>
+                  <Text variant="body" style={[styles.allTimeValue, { color: palette.success }]}>
+                    {progress.longestStreak} {progress.longestStreak === 1 ? 'day' : 'days'}
+                  </Text>
+                </View>
+              </View>
             </Card>
           </>
         )}
@@ -451,6 +454,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 14,
   },
+  heroRowCompact: {
+    alignItems: 'flex-start',
+  },
   heroAvatar: {
     width: 80,
     height: 80,
@@ -458,51 +464,72 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  heroAvatarCompact: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+  },
   avatarInitials: {
     fontWeight: theme.fontWeight.semibold,
     fontSize: theme.fontSize.xl,
   },
+  avatarInitialsCompact: {
+    fontSize: theme.fontSize.lg,
+  },
   heroInfo: {
     flex: 1,
+    minWidth: 0,
   },
   heroName: {
     fontWeight: theme.fontWeight.semibold,
+    flexShrink: 1,
+  },
+  heroNameCompact: {
+    fontSize: theme.fontSize.md + 2,
+    lineHeight: theme.fontSize.md + 8,
+  },
+  nameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 2,
+    flexWrap: 'wrap',
+  },
+  nameRowCompact: {
+    alignItems: 'flex-start',
+  },
+  editIconPressed: {
+    opacity: 0.5,
+  },
+  walkingSince: {
+    marginTop: 4,
+  },
+  emailLine: {
+    marginTop: 2,
+    flexShrink: 1,
+  },
+  nameEditInlineRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
     marginBottom: 4,
+    flexWrap: 'wrap',
+  },
+  nameEditInlineRowCompact: {
+    flexWrap: 'wrap',
+    rowGap: 8,
   },
   nameInput: {
+    flex: 1,
     borderWidth: 1,
     borderRadius: theme.borderRadius.md,
-    minHeight: 40,
+    minHeight: 36,
     paddingHorizontal: 10,
-    paddingVertical: Platform.OS === 'android' ? 6 : 8,
+    paddingVertical: Platform.OS === 'android' ? 4 : 6,
     fontSize: theme.fontSize.md,
-    marginBottom: 6,
   },
-  updateNameBtn: {
-    alignSelf: 'flex-start',
-    borderWidth: 1,
-    borderRadius: 999,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    marginTop: 12,
-  },
-  nameEditRow: {
-    flexDirection: 'row',
-    gap: 10,
-    marginTop: 12,
-  },
-  nameActionBtn: {
-    borderWidth: 1,
-    borderRadius: theme.borderRadius.md,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    minWidth: 90,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  nameActionBtnPressed: {
-    transform: [{ scale: 0.98 }],
-    opacity: 0.9,
+  nameInlineIcon: {
+    padding: 2,
   },
   nameError: {
     color: theme.colors.error,
@@ -524,66 +551,75 @@ const styles = StyleSheet.create({
     fontWeight: theme.fontWeight.semibold,
     marginBottom: 12,
   },
-  statsGrid: {
+  statsRow: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
-    rowGap: 10,
-    columnGap: 10,
+    flexWrap: 'nowrap',
     justifyContent: 'space-between',
   },
-  statItem: {
-    width: '48%',
+  statsRowCompact: {
+    flexWrap: 'wrap',
+    rowGap: 14,
+    justifyContent: 'space-between',
   },
-  statTile: {
-    borderRadius: theme.borderRadius.md,
-    paddingVertical: 12,
-    paddingHorizontal: 12,
+  statColumn: {
     alignItems: 'center',
+    flex: 1,
+    minWidth: 0,
+  },
+  statColumnCompact: {
+    flex: 0,
+    width: '47%',
+    maxWidth: '48%',
+    minWidth: '44%',
   },
   statIcon: {
-    marginBottom: 4,
+    marginBottom: 2,
   },
   statLabel: {
     fontSize: theme.fontSize.xs,
   },
   statValue: {
     fontWeight: theme.fontWeight.bold,
-    marginBottom: 3,
+    marginBottom: 2,
+  },
+  statValueCompact: {
+    fontSize: theme.fontSize.lg,
   },
   statDenominator: {
     fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.semibold,
     lineHeight: 18,
   },
-  sectionHeadRow: {
+  statDenominatorCompact: {
+    fontSize: theme.fontSize.xs,
+    lineHeight: 16,
+  },
+  allTimeHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 10,
+    gap: 8,
+    marginBottom: 12,
   },
-  achievementRow: {
+  allTimeTitle: {
+    fontWeight: theme.fontWeight.semibold,
+  },
+  allTimeGrid: {
     flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 8,
-    gap: 10,
+    flexWrap: 'wrap',
+    rowGap: 12,
   },
-  achievementIconWrap: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    alignItems: 'center',
-    justifyContent: 'center',
+  allTimeItem: {
+    width: '50%',
+    paddingRight: 8,
   },
-  achievementTitle: {
-    fontWeight: theme.fontWeight.medium,
+  allTimeItemFull: {
+    width: '100%',
+    paddingRight: 0,
   },
-  viewAllBtn: {
-    borderWidth: 1,
-    borderRadius: theme.borderRadius.md,
-    alignSelf: 'flex-start',
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-    marginTop: 6,
+  allTimeValue: {
+    fontWeight: theme.fontWeight.semibold,
+    marginTop: 2,
+    flexShrink: 1,
   },
   footer: {
     paddingHorizontal: theme.layout.contentHorizontal,

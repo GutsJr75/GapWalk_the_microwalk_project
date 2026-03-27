@@ -19,7 +19,7 @@ export const MissedPlansSection: React.FC<MissedPlansSectionProps> = ({ missedPl
     return (
       <View style={styles.section}>
         <Text variant="bodySmall" color={palette.textMuted} style={styles.emptyHint}>
-          Nothing missed yet — keep it up!
+          Nothing missed yet - keep it up!
         </Text>
       </View>
     );

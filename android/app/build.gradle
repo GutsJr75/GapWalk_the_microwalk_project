@@ -18,10 +18,18 @@ tasks.register("prepareGoogleServices") {
 
         def sourceFile = candidates.find { it?.exists() }
         if (!sourceFile) {
-            throw new GradleException(
-                "google-services.json not found. Set GOOGLE_SERVICES_JSON (EAS file secret), " +
-                "or provide google-services.json at project root or android/app."
-            )
+            // On EAS preview builds, google-services.json may not be available yet.
+            // Only error on release builds; preview builds can skip Firebase setup.
+            def isPreviewBuild = System.getenv("EAS_BUILD_PROFILE") == "preview" ||
+                                  System.getenv("EAS_BUILD_PROFILE") == null
+            if (!isPreviewBuild) {
+                throw new GradleException(
+                    "google-services.json not found. Set GOOGLE_SERVICES_JSON (EAS file secret), " +
+                    "or provide google-services.json at project root or android/app."
+                )
+            }
+            println("[GapWalk] google-services.json not found; Firebase will not be configured.")
+            return
         }
 
         if (sourceFile.absolutePath != appGoogleServicesFile.absolutePath) {
@@ -44,6 +52,34 @@ def localProps = new Properties()
 def localPropsFile = rootProject.file('local.properties')
 if (localPropsFile.exists()) localProps.load(new FileInputStream(localPropsFile))
 def googleMapsApiKey = localProps.getProperty('GOOGLE_MAPS_API_KEY', System.getenv('GOOGLE_MAPS_API_KEY') ?: '')
+def defaultDebugStoreFile = file("$projectDir/gapwalk-local-debug.jks")
+def debugStoreFilePath = System.getenv('GAPWALK_DEBUG_STORE_FILE') ?: localProps.getProperty(
+    'GAPWALK_DEBUG_STORE_FILE',
+    defaultDebugStoreFile.exists() ? defaultDebugStoreFile.absolutePath : "$projectDir/debug.keystore"
+)
+def debugStorePassword = System.getenv('GAPWALK_DEBUG_STORE_PASSWORD') ?: localProps.getProperty('GAPWALK_DEBUG_STORE_PASSWORD', 'android')
+def debugKeyAlias = System.getenv('GAPWALK_DEBUG_KEY_ALIAS') ?: localProps.getProperty('GAPWALK_DEBUG_KEY_ALIAS', 'androiddebugkey')
+def debugKeyPassword = System.getenv('GAPWALK_DEBUG_KEY_PASSWORD') ?: localProps.getProperty('GAPWALK_DEBUG_KEY_PASSWORD', 'android')
+def releaseStoreFilePath = System.getenv('GAPWALK_RELEASE_STORE_FILE') ?: localProps.getProperty('GAPWALK_RELEASE_STORE_FILE', '')
+def releaseStorePassword = System.getenv('GAPWALK_RELEASE_STORE_PASSWORD') ?: localProps.getProperty('GAPWALK_RELEASE_STORE_PASSWORD', '')
+def releaseKeyAlias = System.getenv('GAPWALK_RELEASE_KEY_ALIAS') ?: localProps.getProperty('GAPWALK_RELEASE_KEY_ALIAS', '')
+def releaseKeyPassword = System.getenv('GAPWALK_RELEASE_KEY_PASSWORD') ?: localProps.getProperty('GAPWALK_RELEASE_KEY_PASSWORD', '')
+def hasLocalReleaseSigning = [
+    releaseStoreFilePath,
+    releaseStorePassword,
+    releaseKeyAlias,
+    releaseKeyPassword,
+].every { value -> value != null && value.toString().trim() }
+def isEasBuild = (System.getenv('EAS_BUILD') ?: 'false').toBoolean() || System.getenv('EAS_BUILD_PROFILE') != null
+def requestedTasks = gradle.startParameter.taskNames.collect { it.toLowerCase() }.join(' ')
+def isReleaseTaskRequested = requestedTasks.contains('release') || requestedTasks.contains('bundle')
+
+if (isReleaseTaskRequested && !isEasBuild && !hasLocalReleaseSigning) {
+    throw new GradleException(
+        "Release signing credentials are missing. Set GAPWALK_RELEASE_* env vars " +
+        "or local.properties entries before running a local release build."
+    )
+}
 
 /**
  * This is the configuration block to customize your React Native Android app.
@@ -133,18 +169,26 @@ android {
         applicationId 'com.gapwalk.app'
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 10102
-        versionName "1.0.2"
+        versionCode 10106
+        versionName "7"
 
         manifestPlaceholders = [GOOGLE_MAPS_API_KEY: googleMapsApiKey]
         buildConfigField "String", "REACT_NATIVE_RELEASE_LEVEL", "\"${findProperty('reactNativeReleaseLevel') ?: 'stable'}\""
     }
     signingConfigs {
         debug {
-            storeFile file('debug.keystore')
-            storePassword 'android'
-            keyAlias 'androiddebugkey'
-            keyPassword 'android'
+            storeFile file(debugStoreFilePath)
+            storePassword debugStorePassword
+            keyAlias debugKeyAlias
+            keyPassword debugKeyPassword
+        }
+        release {
+            if (hasLocalReleaseSigning) {
+                storeFile file(releaseStoreFilePath)
+                storePassword releaseStorePassword
+                keyAlias releaseKeyAlias
+                keyPassword releaseKeyPassword
+            }
         }
     }
     buildTypes {
@@ -152,9 +196,13 @@ android {
             signingConfig signingConfigs.debug
         }
         release {
-            // Caution! In production, you need to generate your own keystore file.
-            // see https://reactnative.dev/docs/signed-apk-android.
-            signingConfig signingConfigs.debug
+            if (hasLocalReleaseSigning) {
+                signingConfig signingConfigs.release
+            } else if (isEasBuild) {
+                // EAS injects managed signing during cloud builds; keep a placeholder config
+                // so local release builds still fail fast instead of silently using debug signing.
+                signingConfig signingConfigs.debug
+            }
             def enableShrinkResources = findProperty('android.enableShrinkResourcesInReleaseBuilds') ?: 'false'
             shrinkResources enableShrinkResources.toBoolean()
             minifyEnabled enableMinifyInReleaseBuilds
@@ -176,7 +224,7 @@ android {
     applicationVariants.all { variant ->
         variant.outputs.all { output ->
             if (output.outputFileName != null && output.outputFileName.toString().endsWith(".apk")) {
-                output.outputFileName = "GapWalk_v1.0.2.apk"
+                output.outputFileName = "GapWalk_v${variant.versionName}.apk"
             }
         }
     }

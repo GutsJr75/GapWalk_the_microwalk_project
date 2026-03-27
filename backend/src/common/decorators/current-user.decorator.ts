@@ -8,7 +8,7 @@ interface AuthenticatedRequest extends Request {
 /**
  * Extract the authenticated user from the request.
  * Usage: @CurrentUser() user: JwtPayload
- * Or:    @CurrentUser('sub') sub: string
+ * Or:    @CurrentUser('firebaseUid') firebaseUid: string
  */
 export const CurrentUser = createParamDecorator(
   (data: string | undefined, ctx: ExecutionContext) => {

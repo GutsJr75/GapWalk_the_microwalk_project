@@ -1,5 +1,5 @@
 import { StrictnessMode, WalkSession } from '../types';
-import { startOfDay, startOfWeek, endOfWeek, startOfMonth, endOfMonth, subDays, format, parseISO, isSameDay, isValid } from 'date-fns';
+import { startOfDay, startOfWeek, endOfWeek, subDays, format, parseISO, isSameDay, isValid } from 'date-fns';
 
 export interface StreakData {
   currentStreak: number;
@@ -25,63 +25,6 @@ export interface WeeklyHistoryEntry {
   totalSteps: number;
   totalSessions: number;
   daysActive: number;
-}
-
-/** Per-day breakdown within a week (Sun=0 … Sat=6). */
-export interface DailyBreakdown {
-  /** 0-based day of week (0=Sun, 6=Sat) */
-  dayOfWeek: number;
-  /** 'yyyy-MM-dd' */
-  date: string;
-  minutes: number;
-  steps: number;
-  sessions: number;
-}
-
-/**
- * Given all sessions, return an array of 7 DailyBreakdown entries
- * for the week that starts on `weekStartISO` (a Sunday).
- */
-export function calculateDailyBreakdown(
-  sessions: WalkSession[],
-  weekStartISO: string,
-): DailyBreakdown[] {
-  const weekStart = parseISO(weekStartISO);
-  const days: DailyBreakdown[] = Array.from({ length: 7 }, (_, i) => {
-    const d = new Date(weekStart);
-    d.setDate(d.getDate() + i);
-    return {
-      dayOfWeek: i,
-      date: format(d, 'yyyy-MM-dd'),
-      minutes: 0,
-      steps: 0,
-      sessions: 0,
-    };
-  });
-
-  sessions.forEach((s) => {
-    const sessionDate = parseISO(s.start);
-    if (!isValid(sessionDate)) return;
-    const dayKey = format(sessionDate, 'yyyy-MM-dd');
-    const match = days.find((d) => d.date === dayKey);
-    if (match) {
-      match.minutes += Math.floor(s.activeSeconds / 60);
-      match.steps += s.steps ?? 0;
-      match.sessions += 1;
-    }
-  });
-
-  return days;
-}
-
-export interface MonthlyStats {
-  month: string;
-  totalMinutes: number;
-  totalSessions: number;
-  totalDistance: number;
-  totalCalories: number;
-  daysActive: number;
-  averageMinutesPerDay: number;
 }
 
 /**
@@ -236,45 +179,6 @@ export function calculateWeeklyHistory(
     .slice(0, maxWeeks);
 }
 
-/**
- * Calculate monthly stats
- */
-export function calculateMonthlyStats(sessions: WalkSession[], monthDate: Date = new Date()): MonthlyStats {
-  const monthStart = startOfMonth(monthDate);
-  const monthEnd = endOfMonth(monthDate);
-  
-  const monthSessions = sessions.filter(s => {
-    const sessionDate = parseISO(s.start);
-    return sessionDate >= monthStart && sessionDate <= monthEnd;
-  });
-
-  const daysWithWalks = new Set<string>();
-  let totalMinutes = 0;
-  let totalDistance = 0;
-  let totalCalories = 0;
-
-  monthSessions.forEach(s => {
-    const date = format(parseISO(s.start), 'yyyy-MM-dd');
-    daysWithWalks.add(date);
-    totalMinutes += Math.floor(s.activeSeconds / 60);
-    if (s.distanceMeters) totalDistance += s.distanceMeters;
-    if (s.calories) totalCalories += s.calories;
-  });
-
-  const daysInMonth = monthEnd.getDate();
-  const averageMinutesPerDay = daysInMonth > 0 ? Math.round(totalMinutes / daysInMonth) : 0;
-
-  return {
-    month: format(monthDate, 'MMMM yyyy'),
-    totalMinutes,
-    totalSessions: monthSessions.length,
-    totalDistance,
-    totalCalories,
-    daysActive: daysWithWalks.size,
-    averageMinutesPerDay,
-  };
-}
-
 interface MotivationalMessageInput {
   currentMinutes: number;
   targetMinutes: number;
@@ -414,7 +318,7 @@ export function getMotivationalMessage({
         ? [
             'Midday reset. A short walk can still steal this day back.',
             'This day is still very saveable.',
-            'Not too late. A micro-walk still counts big.',
+            'Not too late. A MicroWalk still counts big.',
             'Lunch-break energy, but make it useful.',
           ]
         : [

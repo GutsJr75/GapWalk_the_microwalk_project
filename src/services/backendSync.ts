@@ -21,22 +21,144 @@ import { scheduleSourceRepo } from '../data/repositories/scheduleSourceRepo';
 import { manualScheduleRepo } from '../data/repositories/manualScheduleRepo';
 import { analyticsRepo } from '../data/repositories/analyticsRepo';
 import { WalkSession, NudgePlan, BusyEvent } from '../types';
+import { firebaseAuthService } from './firebaseAuth';
+import { Platform } from 'react-native';
+import * as Device from 'expo-device';
 
-const API_BASE = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:3000';
+const RAW_API_BASE = (process.env.EXPO_PUBLIC_API_URL ?? '').trim();
+const API_BASE = RAW_API_BASE.replace(/\/+$/, '');
+const LOCALHOST_HOSTS = new Set(['localhost', '127.0.0.1', '0.0.0.0']);
+const ANDROID_EMULATOR_LOOPBACK = '10.0.2.2';
 
-export async function apiFetch(path: string, body: unknown, token: string, method: string = 'POST') {
-  const response = await fetch(`${API_BASE}/api${path}`, {
-    method,
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${token}`,
-    },
-    body: JSON.stringify(body),
-  });
+let lastBackendConfigWarning: string | null = null;
+
+const warnBackendConfigurationOnce = (message: string): void => {
+  if (!__DEV__ || lastBackendConfigWarning === message) return;
+  lastBackendConfigWarning = message;
+  console.warn(`[BackendSync] ${message}`);
+};
+
+const parseApiBase = (): URL | null => {
+  if (!API_BASE) return null;
+  try {
+    return new URL(API_BASE);
+  } catch {
+    return null;
+  }
+};
+
+export const isBackendSyncEnabled = (): boolean => API_BASE.length > 0;
+
+export const getBackendConfigurationError = (): string | null => {
+  if (!API_BASE) return null;
+
+  const parsed = parseApiBase();
+  if (!parsed) {
+    return `EXPO_PUBLIC_API_URL is invalid: "${RAW_API_BASE}".`;
+  }
+
+  if (Platform.OS !== 'android') return null;
+
+  const hostname = parsed.hostname.toLowerCase();
+  if (hostname === ANDROID_EMULATOR_LOOPBACK && Device.isDevice) {
+    return 'EXPO_PUBLIC_API_URL uses 10.0.2.2, which only works on the Android emulator. Use your computer\'s LAN IP on a physical Android device.';
+  }
+
+  if (LOCALHOST_HOSTS.has(hostname)) {
+    return Device.isDevice
+      ? 'EXPO_PUBLIC_API_URL uses localhost, which points at the Android device itself. Use your computer\'s LAN IP instead.'
+      : 'EXPO_PUBLIC_API_URL uses localhost, which does not reach your computer from the Android emulator. Use http://10.0.2.2:3000 instead.';
+  }
+
+  if (!__DEV__ && parsed.protocol === 'http:') {
+    return 'EXPO_PUBLIC_API_URL uses http://, but Android preview/release builds block cleartext traffic by default. Use https:// or allow cleartext traffic for that build variant.';
+  }
+
+  return null;
+};
+
+export const canUseBackendSync = (): boolean =>
+  isBackendSyncEnabled() && getBackendConfigurationError() === null;
+
+const ensureBackendApiBase = (): string => {
+  if (!API_BASE) {
+    throw new Error('Backend API is not configured. Add EXPO_PUBLIC_API_URL to enable research sync.');
+  }
+
+  const configurationError = getBackendConfigurationError();
+  if (configurationError) {
+    warnBackendConfigurationOnce(configurationError);
+    throw new Error(configurationError);
+  }
+
+  return API_BASE;
+};
+
+const buildNetworkFailureMessage = (apiBase: string, error: unknown): string => {
+  const raw = error instanceof Error ? error.message : String(error);
+  if (!raw.toLowerCase().includes('network request failed')) {
+    return raw;
+  }
+
+  if (Platform.OS === 'android') {
+    return `Unable to reach backend at ${apiBase}. Make sure the server is running and reachable from this ${Device.isDevice ? 'device' : 'emulator'}.`;
+  }
+
+  return `Unable to reach backend at ${apiBase}. Make sure the server is running and reachable from this client.`;
+};
+
+const isFirebaseTokenUnauthorizedResponse = (
+  status: number,
+  responseText: string
+): boolean =>
+  status === 401 &&
+  /invalid or expired firebase id token/i.test(responseText);
+
+const performApiRequest = async (
+  apiBase: string,
+  path: string,
+  body: unknown,
+  method: string,
+  token: string
+): Promise<Response> => {
+  try {
+    return await fetch(`${apiBase}/api${path}`, {
+      method,
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(body),
+    });
+  } catch (error) {
+    throw new Error(buildNetworkFailureMessage(apiBase, error));
+  }
+};
+
+export async function apiFetch(
+  path: string,
+  body: unknown,
+  method: string = 'POST'
+) {
+  const apiBase = ensureBackendApiBase();
+  const token = await firebaseAuthService.getIdToken();
+  if (!token) {
+    throw new Error('Session expired. Please sign in again.');
+  }
+
+  let response = await performApiRequest(apiBase, path, body, method, token);
+  let responseText = response.ok ? '' : await response.text().catch(() => '');
+
+  if (isFirebaseTokenUnauthorizedResponse(response.status, responseText)) {
+    const refreshedToken = await firebaseAuthService.getIdToken(true);
+    if (refreshedToken) {
+      response = await performApiRequest(apiBase, path, body, method, refreshedToken);
+      responseText = response.ok ? '' : await response.text().catch(() => '');
+    }
+  }
 
   if (!response.ok) {
-    const text = await response.text().catch(() => '');
-    throw new Error(`Backend sync failed [${response.status}]: ${text}`);
+    throw new Error(`Backend sync failed [${response.status}]: ${responseText}`);
   }
 
   return response.json();
@@ -47,7 +169,14 @@ export async function apiFetch(path: string, body: unknown, token: string, metho
  * Returns true on success, false on failure (e.g. no auth token).
  */
 export async function runBackendSync(): Promise<boolean> {
-  const token = await authStorage.getToken();
+  const configurationError = getBackendConfigurationError();
+  if (!isBackendSyncEnabled()) return false;
+  if (configurationError) {
+    warnBackendConfigurationOnce(configurationError);
+    return false;
+  }
+
+  const token = await firebaseAuthService.getIdToken();
   if (!token) return false;
 
   try {
@@ -198,7 +327,7 @@ export async function runBackendSync(): Promise<boolean> {
       })),
     };
 
-    const result = await apiFetch('/sync', syncPayload, token);
+    const result = await apiFetch('/sync', syncPayload);
     if (result?.syncedAt) {
       await authStorage.saveLastSyncedAt(result.syncedAt);
     }
@@ -226,11 +355,18 @@ export async function registerDevice(params: {
   activityPermissionGranted?: boolean;
   timezone?: string;
 }): Promise<boolean> {
-  const token = await authStorage.getToken();
+  const configurationError = getBackendConfigurationError();
+  if (!isBackendSyncEnabled()) return false;
+  if (configurationError) {
+    warnBackendConfigurationOnce(configurationError);
+    return false;
+  }
+
+  const token = await firebaseAuthService.getIdToken();
   if (!token) return false;
 
   try {
-    await apiFetch('/devices', params, token);
+    await apiFetch('/devices', params);
     return true;
   } catch (error) {
     if (__DEV__) console.warn('[BackendSync] Device registration failed:', error);

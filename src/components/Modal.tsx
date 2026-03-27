@@ -249,7 +249,8 @@ const styles = StyleSheet.create({
     flex: 1,
     textAlign: 'center',
     fontWeight: theme.fontWeight.bold,
-    fontSize: theme.fontSize.lg,
+    fontSize: theme.fontSize.lg + 2,
+    lineHeight: theme.fontSize.lg + 8,
   },
   titleSlot: {
     flex: 1,

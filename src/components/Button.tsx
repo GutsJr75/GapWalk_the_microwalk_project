@@ -1,16 +1,25 @@
-import React, { useRef, useCallback } from 'react';
-import { Pressable, StyleSheet, ActivityIndicator, ViewStyle, TextStyle, StyleProp, Platform, Animated } from 'react-native';
+import React from 'react';
+import { Platform, Pressable, StyleSheet, ActivityIndicator, View, ViewStyle, TextStyle, StyleProp, Animated } from 'react-native';
 import { theme } from '../theme';
 import { useThemePalette } from '../theme/palette';
-import { withAlpha } from '../theme/colorUtils';
 import { Text } from './Text';
-import { useTapFeedbackAction } from '../hooks/useTapFeedbackAction';
+import { useButtonPressMotion } from '../hooks/useButtonPressMotion';
 import { toDisplayTitleCase } from '../utils/textCase';
+import {
+  buttonSizeTokens,
+  getButtonContainerSizeStyle,
+  getButtonTextSizeStyle,
+  getButtonVisualState,
+  type ButtonSize,
+  type ButtonVariant,
+} from './buttonSystem';
+import { PressGlowOverlay } from './PressGlowOverlay';
 
 interface ButtonProps {
   title: string;
   onPress: () => void;
-  variant?: 'primary' | 'secondary' | 'outline' | 'muted' | 'danger';
+  variant?: ButtonVariant;
+  size?: ButtonSize;
   disabled?: boolean;
   loading?: boolean;
   style?: StyleProp<ViewStyle>;
@@ -25,6 +34,7 @@ export const Button: React.FC<ButtonProps> = ({
   title,
   onPress,
   variant = 'primary',
+  size = 'default',
   disabled = false,
   loading = false,
   style,
@@ -33,109 +43,80 @@ export const Button: React.FC<ButtonProps> = ({
   testID,
 }) => {
   const palette = useThemePalette();
-  const scaleAnim = useRef(new Animated.Value(1)).current;
-  const isPrimaryLike = variant === 'primary';
-  const isDanger = variant === 'danger';
-  const showPressGlow = isPrimaryLike;
-  const dangerTone = theme.colors.danger;
-  const dangerBg = withAlpha(dangerTone, 0.12);
-  const dangerBorder = withAlpha(dangerTone, 0.38);
-  const labelColor = disabled
-    ? palette.textMuted
-    : variant === 'primary'
-      ? palette.accentOnSolid
-    : variant === 'danger'
-        ? dangerTone
-        : variant === 'muted'
-          ? palette.textMuted
-          : palette.textPrimary;
-  const spinnerColor = disabled ? palette.textMuted : labelColor;
-  const glowColor = variant === 'danger' ? theme.colors.danger : palette.accentPrimary;
+  const visualState = React.useMemo(() => getButtonVisualState(variant, palette), [palette, variant]);
   const displayTitle = React.useMemo(() => toDisplayTitleCase(title), [title]);
-  const { isTapActive, handlePress, handlePressIn, handlePressOut } = useTapFeedbackAction({
+  const {
+    animatedTransformStyle,
+    scaleAnim,
+    pressScale,
+    handlePress,
+    handlePressIn,
+    handlePressOut,
+  } = useButtonPressMotion({
     onPress,
     enabled: !(disabled || loading),
+    size,
   });
-
-  const onPressIn = useCallback(() => {
-    handlePressIn();
-    if (!disabled && !loading) {
-      Animated.spring(scaleAnim, {
-        toValue: 0.95,
-        tension: 150,
-        friction: 8,
-        useNativeDriver: true,
-      }).start();
-    }
-  }, [scaleAnim, disabled, loading, handlePressIn]);
-
-  const onPressOut = useCallback(() => {
-    handlePressOut();
-    Animated.spring(scaleAnim, {
-      toValue: 1,
-      tension: 120,
-      friction: 8,
-      useNativeDriver: true,
-    }).start();
-  }, [scaleAnim, handlePressOut]);
 
   return (
     <AnimatedPressable
       style={[
         styles.button,
-        variant === 'primary' && { backgroundColor: palette.accentPrimary },
-        variant === 'secondary' && {
-          backgroundColor: palette.bgSurface,
-          borderWidth: 1,
-          borderColor: palette.borderStrong,
-        },
-        variant === 'outline' && [
-          styles.outlineButton,
-          { borderColor: palette.borderStrong },
-        ],
-        variant === 'muted' && styles.mutedButton,
-        variant === 'danger' && [
-          styles.dangerButton,
-          {
-            backgroundColor: dangerBg,
-            borderColor: dangerBorder,
-          },
-        ],
+        getButtonContainerSizeStyle(size),
+        visualState.containerStyle,
         disabled && styles.disabledButton,
-        full && styles.fullWidth,
-        showPressGlow && isTapActive && !disabled && !loading && {
-          shadowColor: glowColor,
-          shadowOffset: { width: 0, height: 0 },
-          shadowOpacity: Platform.OS === 'ios' ? 0.3 : 0.18,
-          shadowRadius: 10,
-          elevation: 5,
-        },
-        { transform: [{ scale: scaleAnim }] },
+        full && size !== 'icon' && styles.fullWidth,
+        animatedTransformStyle,
         style,
       ]}
       onPress={handlePress}
-      onPressIn={onPressIn}
-      onPressOut={onPressOut}
+      onPressIn={handlePressIn}
+      onPressOut={handlePressOut}
       disabled={disabled || loading}
       accessibilityRole="button"
       testID={testID}
       accessibilityLabel={testID}
       android_ripple={{
-        color: isPrimaryLike
-          ? 'rgba(255,255,255,0.18)'
-          : isDanger
-            ? withAlpha(dangerTone, 0.18)
-            : palette.inputBg,
+        color: visualState.rippleColor,
       }}
     >
+      <PressGlowOverlay
+        scaleAnim={scaleAnim}
+        pressScale={pressScale}
+        glowColor={disabled || loading ? null : visualState.glowColor}
+        glowOpacity={visualState.glowOpacity}
+        borderRadius={buttonSizeTokens[size].borderRadius}
+      />
       {loading ? (
-        <ActivityIndicator color={spinnerColor} />
+        <ActivityIndicator color={visualState.spinnerColor} />
+      ) : variant === 'muted' ? (
+        <View style={styles.mutedTextPill}>
+          <PressGlowOverlay
+            scaleAnim={scaleAnim}
+            pressScale={pressScale}
+            glowColor={disabled ? null : palette.accentPrimary}
+            glowOpacity={Platform.OS === 'ios' ? 0.14 : 0.10}
+            borderRadius={theme.borderRadius.sm}
+          />
+          <Text
+            variant="body"
+            style={[
+              styles.buttonText,
+              getButtonTextSizeStyle(size),
+              { color: visualState.labelColor },
+              textStyle,
+            ]}
+          >
+            {displayTitle}
+          </Text>
+        </View>
       ) : (
         <Text
           variant="body"
           style={[
             styles.buttonText,
-            { color: labelColor },
+            getButtonTextSizeStyle(size),
+            { color: visualState.labelColor },
             textStyle,
           ]}
         >
@@ -148,33 +129,23 @@ export const Button: React.FC<ButtonProps> = ({
 
 const styles = StyleSheet.create({
   button: {
-    height: theme.layout.buttonHeight,
-    paddingHorizontal: 18,
-    borderRadius: theme.borderRadius.md,
     alignItems: 'center',
     justifyContent: 'center',
-    minWidth: 120,
   },
   fullWidth: {
     width: '100%',
   },
-  outlineButton: {
-    backgroundColor: 'transparent',
-    borderWidth: 1.5,
-  },
-  mutedButton: {
-    backgroundColor: 'transparent',
-  },
-  dangerButton: {
-    borderWidth: 1,
-  },
   disabledButton: {
     opacity: 0.55,
   },
+  mutedTextPill: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: theme.borderRadius.sm,
+  },
   buttonText: {
-    fontSize: theme.fontSize.md,
-    fontWeight: theme.fontWeight.semibold,
     letterSpacing: 0,
     textAlign: 'center',
+    flexShrink: 1,
   },
 });

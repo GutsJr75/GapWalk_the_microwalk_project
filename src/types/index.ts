@@ -23,6 +23,7 @@ export interface BusyEvent {
 
 export type WhenToNotify = 'now' | 'delay' | 'next_gap';
 export type StrictnessMode = 'easygoing' | 'no_excuses';
+export type EndWalkMode = 'quick' | 'confirm';
 
 export interface PreferredWalkingPeriod {
   start: string; // "HH:mm"
@@ -45,6 +46,7 @@ export interface Preferences {
   stepGoal: number;
   preferredWalkingPeriodsEnabled: boolean;
   preferredWalkingPeriods: PreferredWalkingPeriod[];
+  endWalkMode: EndWalkMode;
 }
 
 export interface WalkSession {
@@ -99,6 +101,9 @@ export type WalkStepSource = 'sensor' | 'gps_fallback' | 'none';
 export type WalkActionSource =
   | 'screen'
   | 'notification'
+  | 'end_walk_notification'
+  | 'end_walk_screen'
+  | 'end_cancel'
   | 'auto_pause'
   | 'restore';
 
@@ -106,6 +111,14 @@ export type WalkPrompt = 'end_confirmation';
 
 export type WalkDisplayCard = 'walkDuration' | 'steps' | 'distance' | 'calories' | 'speed' | 'goalProgress';
 export type NotificationTimerMode = 'smart' | 'elapsed' | 'remaining';
+export type NotificationStatsMode = 'all' | 'steps' | 'distance' | 'none';
+
+export const NOTIFICATION_STATS_MODE_LABELS: Record<NotificationStatsMode, string> = {
+  all: 'Steps and distance',
+  steps: 'Steps only',
+  distance: 'Distance only',
+  none: 'Focus mode (hide stats)',
+};
 
 export const ALL_WALK_DISPLAY_CARDS: WalkDisplayCard[] = [
   'walkDuration', 'steps', 'distance', 'calories', 'speed', 'goalProgress',
@@ -132,6 +145,7 @@ export interface ActiveWalkSnapshot {
   targetDurationMinutes?: number | null;
   startedFromNotification?: boolean;
   notificationTimerMode?: NotificationTimerMode;
+  notificationStatsMode?: NotificationStatsMode;
   distanceUnit?: 'km' | 'mi';
   startIso: string;
   sessionStartMs: number;
@@ -179,6 +193,7 @@ export interface NudgePlan {
   walkStart: string; // ISO string (gapStart + bufferMinutes)
   suggestedDurationMinutes: number;
   manualNotifyLeadMinutes?: number; // per-manual-plan reminder lead time in minutes
+  notificationsEnabled?: boolean;
   status: NudgePlanStatus;
   reason?: string;
   createdAt: string;
@@ -211,4 +226,5 @@ export const DEFAULT_PREFERENCES: Preferences = {
   stepGoal: 1000,
   preferredWalkingPeriodsEnabled: false,
   preferredWalkingPeriods: [],
+  endWalkMode: 'quick',
 };
