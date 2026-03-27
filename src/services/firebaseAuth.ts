@@ -20,6 +20,14 @@ const getGoogleSignin = (): { GoogleSignin: any; statusCodes: any } => {
   return require('@react-native-google-signin/google-signin');
 };
 
+const createGoogleSignInCancelledError = (statusCode?: string): Error & { code?: string } => {
+  const error = new Error('Google sign-in was cancelled.') as Error & { code?: string };
+  if (statusCode) {
+    error.code = statusCode;
+  }
+  return error;
+};
+
 type GoogleServicesJson = {
   project_info?: {
     project_number?: string;
@@ -347,6 +355,7 @@ export const firebaseAuthService = {
       return persistAuthMetadata(result.user);
     }
 
+    const { statusCodes } = getGoogleSignin();
     const GoogleSignin = ensureGoogleSigninConfigured();
     await GoogleSignin.hasPlayServices({ showPlayServicesUpdateDialog: true });
     try {
@@ -356,12 +365,21 @@ export const firebaseAuthService = {
     }
 
     const response = await GoogleSignin.signIn();
-    if (response?.type !== 'success' || !response.data?.idToken) {
-      throw new Error('Google sign-in did not return an ID token.');
+    if (response?.type !== 'success') {
+      throw createGoogleSignInCancelledError(statusCodes.SIGN_IN_CANCELLED);
+    }
+
+    const idToken =
+      response.data?.idToken ||
+      (await GoogleSignin.getTokens().catch(() => null))?.idToken;
+    if (!idToken) {
+      throw new Error(
+        'Google sign-in completed but no ID token was returned. Check the Google web client ID configuration for this build.'
+      );
     }
 
     const credential = authModule.GoogleAuthProvider.credential(
-      response.data.idToken
+      idToken
     );
     const result = await authModule.signInWithCredential(auth, credential);
     return persistAuthMetadata(result.user);

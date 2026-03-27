@@ -3296,7 +3296,7 @@ const styles = StyleSheet.create({
   },
   countdownCard: {
     width: '100%',
-    maxWidth: 320,
+    maxWidth: '90%',
     borderRadius: 28,
     borderWidth: 1,
     paddingHorizontal: 24,
@@ -3326,7 +3326,7 @@ const styles = StyleSheet.create({
   },
   completionCard: {
     width: '100%',
-    maxWidth: 380,
+    maxWidth: '92%',
     borderRadius: 28,
     borderWidth: 1,
     paddingHorizontal: 22,

@@ -49,7 +49,29 @@ rm -rf android/app/.cxx
 
 ---
 
-## 4. Standard Release Build Commands
+## 4. Local Debug Installs and Emulator Storage
+
+React Native debug APKs can become large enough to fail with `INSTALL_FAILED_INSUFFICIENT_STORAGE`, especially on emulators where `/data` is already crowded. A universal debug APK for this project can exceed `140 MB` because it bundles native libraries for every ABI.
+
+GapWalk's local Android scripts now try to avoid that automatically:
+
+- `npm run android` and `npm run android:e2e` detect a single connected Android target with `adb`
+- If exactly one device or emulator is connected, they set `ORG_GRADLE_PROJECT_reactNativeArchitectures` to that target ABI before running `expo run:android`
+- If multiple devices are connected, set `ANDROID_SERIAL=<serial>` or `ORG_GRADLE_PROJECT_reactNativeArchitectures=<abi>` yourself
+- Local debug builds prefer `android/app/gapwalk-local-debug.jks` when present, then fall back to `android/app/debug.keystore`
+- Override the debug keystore with `GAPWALK_DEBUG_STORE_FILE`, `GAPWALK_DEBUG_STORE_PASSWORD`, `GAPWALK_DEBUG_KEY_ALIAS`, and `GAPWALK_DEBUG_KEY_PASSWORD` in `local.properties` or the shell if needed
+
+Useful commands when installs start failing:
+
+```bash
+adb shell df -h /data
+adb -s emulator-5554 uninstall com.gapwalk.app
+keytool -list -v -keystore android/app/gapwalk-local-debug.jks -alias androiddebugkey -storepass android -keypass android | rg "SHA1:"
+```
+
+If the emulator is still nearly full after uninstalling old builds, wipe the AVD data or increase its storage allocation in Android Studio.
+
+## 5. Standard Release Build Commands
 
 Official production builds should use EAS:
 
@@ -88,7 +110,7 @@ If you need to build a manual local Release APK without using EAS, follow these 
 **Output Location:**
 Your APK will be generated under: `android/app/build/outputs/apk/release/`
 
-## 5. API Keys: Where to Set Them
+## 6. API Keys: Where to Set Them
 
 There are two separate places for API keys depending on the build type:
 
@@ -108,7 +130,7 @@ GOOGLE_MAPS_API_KEY=your_key_here
 
 ---
 
-## 6. Google Calendar OAuth - Android SHA-1 Fingerprint
+## 7. Google Calendar OAuth - Android SHA-1 Fingerprint
 
 `@react-native-google-signin/google-signin` validates the app's signing certificate against the Android OAuth client registered in Google Cloud Console. The SHA-1 must match the certificate that ends up on the device.
 
@@ -122,9 +144,14 @@ GOOGLE_MAPS_API_KEY=your_key_here
 
 To update: Google Cloud Console → APIs & Services → Credentials → your Android OAuth client → update the SHA-1 fingerprint.
 
+Important:
+- Use the same Google project for `google-services.json`, Firebase Auth, and any Google Sign-In or Calendar OAuth clients.
+- If `google-services.json` already contains an Android OAuth client for `com.gapwalk.app`, do not create another Android OAuth client in a different project just to satisfy app configuration.
+- Deleting an OAuth client does not always free the package/SHA-1 immediately. If you are moving the app to a different project, remove the Android app/client from the original Firebase or Google Cloud project and allow time for Google to release the package/SHA registration.
+
 ---
 
-## 7. Bumping the Version Code
+## 8. Bumping the Version Code
 
 Google Play rejects uploads with a `versionCode` already in use. You must increment it in **two places** before every new build submitted to the Play Store:
 
