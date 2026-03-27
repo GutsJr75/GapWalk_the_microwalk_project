@@ -216,7 +216,7 @@ android {
     applicationVariants.all { variant ->
         variant.outputs.all { output ->
             if (output.outputFileName != null && output.outputFileName.toString().endsWith(".apk")) {
-                output.outputFileName = "GapWalk_v1.0.2.apk"
+                output.outputFileName = "GapWalk_v${variant.versionName}.apk"
             }
         }
     }

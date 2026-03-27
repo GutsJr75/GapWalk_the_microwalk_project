@@ -3,7 +3,6 @@ package com.gapwalk.app.walk
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import android.os.Build
 import com.gapwalk.app.MainActivity
 
 class WalkTrackingNotificationReceiver : BroadcastReceiver() {
@@ -56,10 +55,6 @@ class WalkTrackingNotificationReceiver : BroadcastReceiver() {
       putExtra("walk_open", true)
     }
 
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-      context.startActivity(launchIntent)
-    } else {
-      context.startActivity(launchIntent)
-    }
+    context.startActivity(launchIntent)
   }
 }

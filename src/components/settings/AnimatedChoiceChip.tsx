@@ -81,7 +81,7 @@ export const AnimatedChoiceChip: React.FC<{
           {
             backgroundColor,
             borderColor,
-            overflow: 'hidden' as const,
+            overflow: 'visible' as const,
           },
         ]}
       >

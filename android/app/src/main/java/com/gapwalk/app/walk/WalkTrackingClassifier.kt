@@ -59,7 +59,6 @@ object WalkTrackingClassifier {
       noLocationAndNoStepPath && !snapshot.hadWalkingSignal -> "location_off"
       inCalibration -> "calibrating"
       snapshot.hadWalkingSignal -> "not_moving"
-      hasUsableStepPath -> "sensor_issue"
       else -> "sensor_issue"
     }
 
