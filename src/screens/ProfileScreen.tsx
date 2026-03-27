@@ -1,5 +1,5 @@
 import React, { useCallback, useMemo, useState } from 'react';
-import { View, StyleSheet, Platform, Pressable, TextInput } from 'react-native';
+import { View, StyleSheet, Platform, Pressable, TextInput, useWindowDimensions } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { Ionicons } from '@expo/vector-icons';
@@ -75,6 +75,9 @@ export const ProfileScreen: React.FC<Props> = ({ navigation }) => {
     distanceUnit,
   } = useAppStore();
   const palette = useThemePalette();
+  const { width: windowWidth } = useWindowDimensions();
+  const compactProfile = windowWidth < 400;
+  const narrowAllTime = windowWidth < 360;
   const [progress, setProgress] = useState<ProgressSnapshot>(EMPTY_PROGRESS);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -225,10 +228,10 @@ export const ProfileScreen: React.FC<Props> = ({ navigation }) => {
         />
 
         <Card elevated style={styles.card}>
-          <View style={styles.heroRow}>
-            <View style={[styles.heroAvatar, { backgroundColor: palette.accentMuted }]}>
+          <View style={[styles.heroRow, compactProfile && styles.heroRowCompact]}>
+            <View style={[styles.heroAvatar, compactProfile && styles.heroAvatarCompact, { backgroundColor: palette.accentMuted }]}>
               {resolvedDisplayName && resolvedDisplayName !== 'GapWalker' ? (
-                <Text variant="title" style={[styles.avatarInitials, { color: palette.accentPrimary }]}>
+                <Text variant="title" style={[styles.avatarInitials, compactProfile && styles.avatarInitialsCompact, { color: palette.accentPrimary }]}>
                   {resolvedDisplayName
                     .split(' ')
                     .filter(Boolean)
@@ -237,14 +240,14 @@ export const ProfileScreen: React.FC<Props> = ({ navigation }) => {
                     .join('')}
                 </Text>
               ) : (
-                <Ionicons name="person" size={34} color={palette.accentPrimary} />
+                <Ionicons name="person" size={compactProfile ? 28 : 34} color={palette.accentPrimary} />
               )}
             </View>
             <View style={styles.heroInfo}>
               {!isEditingName ? (
                 <>
-                  <View style={styles.nameRow}>
-                    <Text variant="title" style={styles.heroName}>{resolvedDisplayName}</Text>
+                  <View style={[styles.nameRow, compactProfile && styles.nameRowCompact]}>
+                    <Text variant="title" style={[styles.heroName, compactProfile && styles.heroNameCompact]}>{resolvedDisplayName}</Text>
                     <Pressable
                       onPress={handleStartEditName}
                       hitSlop={10}
@@ -255,8 +258,8 @@ export const ProfileScreen: React.FC<Props> = ({ navigation }) => {
                     </Pressable>
                   </View>
                   {authUser?.email ? (
-                    <Text variant="bodySmall" color={palette.textMuted}>
-                      {authUser.email.split('@')[0]}
+                    <Text variant="bodySmall" color={palette.textMuted} style={styles.emailLine}>
+                      {authUser.email}
                     </Text>
                   ) : null}
                   {walkingSince ? (
@@ -267,7 +270,7 @@ export const ProfileScreen: React.FC<Props> = ({ navigation }) => {
                 </>
               ) : (
                 <>
-                  <View style={styles.nameEditInlineRow}>
+                  <View style={[styles.nameEditInlineRow, compactProfile && styles.nameEditInlineRowCompact]}>
                     <TextInput
                       value={draftName}
                       onChangeText={(value) => {
@@ -312,8 +315,8 @@ export const ProfileScreen: React.FC<Props> = ({ navigation }) => {
                     </Pressable>
                   </View>
                   {authUser?.email ? (
-                    <Text variant="bodySmall" color={palette.textMuted}>
-                      {authUser.email.split('@')[0]}
+                    <Text variant="bodySmall" color={palette.textMuted} style={styles.emailLine}>
+                      {authUser.email}
                     </Text>
                   ) : null}
                 </>
@@ -341,27 +344,27 @@ export const ProfileScreen: React.FC<Props> = ({ navigation }) => {
           <>
             <Card elevated style={styles.card}>
               <Text variant="body" style={styles.sectionTitle}>Progress Snapshot</Text>
-              <View style={styles.statsRow}>
-                <View style={styles.statColumn}>
+              <View style={[styles.statsRow, compactProfile && styles.statsRowCompact]}>
+                <View style={[styles.statColumn, compactProfile && styles.statColumnCompact]}>
                   <Ionicons name="flame-outline" size={16} color={palette.trendDown} style={styles.statIcon} />
-                  <Text variant="title" style={[styles.statValue, { color: palette.trendDown }]}>{progress.currentStreak}</Text>
+                  <Text variant="title" style={[styles.statValue, compactProfile && styles.statValueCompact, { color: palette.trendDown }]}>{progress.currentStreak}</Text>
                   <Text variant="bodySmall" color={palette.textMuted} style={styles.statLabel}>Streak</Text>
                 </View>
-                <View style={styles.statColumn}>
+                <View style={[styles.statColumn, compactProfile && styles.statColumnCompact]}>
                   <Ionicons name="walk-outline" size={16} color={palette.accentPrimary} style={styles.statIcon} />
-                  <Text variant="title" style={[styles.statValue, { color: palette.accentPrimary }]}>{progress.totalWalks}</Text>
+                  <Text variant="title" style={[styles.statValue, compactProfile && styles.statValueCompact, { color: palette.accentPrimary }]}>{progress.totalWalks}</Text>
                   <Text variant="bodySmall" color={palette.textMuted} style={styles.statLabel}>Walks</Text>
                 </View>
-                <View style={styles.statColumn}>
+                <View style={[styles.statColumn, compactProfile && styles.statColumnCompact]}>
                   <Ionicons name="time-outline" size={16} color={palette.info} style={styles.statIcon} />
-                  <Text variant="title" style={[styles.statValue, { color: palette.info }]}>{progress.totalMinutes}</Text>
+                  <Text variant="title" style={[styles.statValue, compactProfile && styles.statValueCompact, { color: palette.info }]}>{progress.totalMinutes}</Text>
                   <Text variant="bodySmall" color={palette.textMuted} style={styles.statLabel}>Minutes</Text>
                 </View>
-                <View style={styles.statColumn}>
+                <View style={[styles.statColumn, compactProfile && styles.statColumnCompact]}>
                   <Ionicons name="calendar-outline" size={16} color={palette.success} style={styles.statIcon} />
-                  <Text variant="title" style={[styles.statValue, { color: palette.success }]}>
+                  <Text variant="title" style={[styles.statValue, compactProfile && styles.statValueCompact, { color: palette.success }]}>
                     {progress.activeDaysThisWeek}
-                    <Text style={[styles.statDenominator, { color: palette.success }]}>/7</Text>
+                    <Text style={[styles.statDenominator, compactProfile && styles.statDenominatorCompact, { color: palette.success }]}>/7</Text>
                   </Text>
                   <Text variant="bodySmall" color={palette.textMuted} style={styles.statLabel}>Active</Text>
                 </View>
@@ -374,25 +377,25 @@ export const ProfileScreen: React.FC<Props> = ({ navigation }) => {
                 <Text variant="body" style={styles.allTimeTitle}>All Time</Text>
               </View>
               <View style={styles.allTimeGrid}>
-                <View style={styles.allTimeItem}>
+                <View style={[styles.allTimeItem, narrowAllTime && styles.allTimeItemFull]}>
                   <Text variant="bodySmall" color={palette.textMuted}>Distance</Text>
                   <Text variant="body" style={[styles.allTimeValue, { color: palette.info }]}>
                     {formatDistance(progress.totalDistance, distanceUnit)}
                   </Text>
                 </View>
-                <View style={styles.allTimeItem}>
+                <View style={[styles.allTimeItem, narrowAllTime && styles.allTimeItemFull]}>
                   <Text variant="bodySmall" color={palette.textMuted}>Longest Walk</Text>
                   <Text variant="body" style={[styles.allTimeValue, { color: palette.accentPrimary }]}>
                     {progress.longestWalkMinutes} min
                   </Text>
                 </View>
-                <View style={styles.allTimeItem}>
+                <View style={[styles.allTimeItem, narrowAllTime && styles.allTimeItemFull]}>
                   <Text variant="bodySmall" color={palette.textMuted}>Avg Walk</Text>
                   <Text variant="body" style={[styles.allTimeValue, { color: palette.trendDown }]}>
                     {progress.avgWalkMinutes} min
                   </Text>
                 </View>
-                <View style={styles.allTimeItem}>
+                <View style={[styles.allTimeItem, narrowAllTime && styles.allTimeItemFull]}>
                   <Text variant="bodySmall" color={palette.textMuted}>Best Streak</Text>
                   <Text variant="body" style={[styles.allTimeValue, { color: palette.success }]}>
                     {progress.longestStreak} {progress.longestStreak === 1 ? 'day' : 'days'}
@@ -451,6 +454,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 14,
   },
+  heroRowCompact: {
+    alignItems: 'flex-start',
+  },
   heroAvatar: {
     width: 80,
     height: 80,
@@ -458,21 +464,39 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  heroAvatarCompact: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+  },
   avatarInitials: {
     fontWeight: theme.fontWeight.semibold,
     fontSize: theme.fontSize.xl,
   },
+  avatarInitialsCompact: {
+    fontSize: theme.fontSize.lg,
+  },
   heroInfo: {
     flex: 1,
+    minWidth: 0,
   },
   heroName: {
     fontWeight: theme.fontWeight.semibold,
+    flexShrink: 1,
+  },
+  heroNameCompact: {
+    fontSize: theme.fontSize.md + 2,
+    lineHeight: theme.fontSize.md + 8,
   },
   nameRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
     marginBottom: 2,
+    flexWrap: 'wrap',
+  },
+  nameRowCompact: {
+    alignItems: 'flex-start',
   },
   editIconPressed: {
     opacity: 0.5,
@@ -480,11 +504,20 @@ const styles = StyleSheet.create({
   walkingSince: {
     marginTop: 4,
   },
+  emailLine: {
+    marginTop: 2,
+    flexShrink: 1,
+  },
   nameEditInlineRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
     marginBottom: 4,
+    flexWrap: 'wrap',
+  },
+  nameEditInlineRowCompact: {
+    flexWrap: 'wrap',
+    rowGap: 8,
   },
   nameInput: {
     flex: 1,
@@ -520,10 +553,24 @@ const styles = StyleSheet.create({
   },
   statsRow: {
     flexDirection: 'row',
-    justifyContent: 'space-around',
+    flexWrap: 'nowrap',
+    justifyContent: 'space-between',
+  },
+  statsRowCompact: {
+    flexWrap: 'wrap',
+    rowGap: 14,
+    justifyContent: 'space-between',
   },
   statColumn: {
     alignItems: 'center',
+    flex: 1,
+    minWidth: 0,
+  },
+  statColumnCompact: {
+    flex: 0,
+    width: '47%',
+    maxWidth: '48%',
+    minWidth: '44%',
   },
   statIcon: {
     marginBottom: 2,
@@ -535,10 +582,17 @@ const styles = StyleSheet.create({
     fontWeight: theme.fontWeight.bold,
     marginBottom: 2,
   },
+  statValueCompact: {
+    fontSize: theme.fontSize.lg,
+  },
   statDenominator: {
     fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.semibold,
     lineHeight: 18,
+  },
+  statDenominatorCompact: {
+    fontSize: theme.fontSize.xs,
+    lineHeight: 16,
   },
   allTimeHeader: {
     flexDirection: 'row',
@@ -556,10 +610,16 @@ const styles = StyleSheet.create({
   },
   allTimeItem: {
     width: '50%',
+    paddingRight: 8,
+  },
+  allTimeItemFull: {
+    width: '100%',
+    paddingRight: 0,
   },
   allTimeValue: {
     fontWeight: theme.fontWeight.semibold,
     marginTop: 2,
+    flexShrink: 1,
   },
   footer: {
     paddingHorizontal: theme.layout.contentHorizontal,
