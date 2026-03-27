@@ -110,6 +110,7 @@ interface TourOverlayProps {
   onFinish: () => void;
   onBeforeStep?: (stepIndex: number) => Promise<void>;
   preferAboveStepIndices?: number[];
+  spotlightScaleByStep?: Partial<Record<number, number>>;
   /**
    * Optional reference used to "cut off" the dark backdrop + tap-anywhere layer
    * (so underlying CTA buttons stay visible/clickable during Step 0).
@@ -169,6 +170,7 @@ export const TourOverlay: React.FC<TourOverlayProps> = ({
   onFinish,
   onBeforeStep,
   preferAboveStepIndices,
+  spotlightScaleByStep,
   backdropCutoffRef,
   spotlightClampRef,
 }) => {
@@ -506,6 +508,7 @@ export const TourOverlay: React.FC<TourOverlayProps> = ({
 
       const padX = isViewportClampedStep ? 4 : SPOTLIGHT_PADDING;
       const padY = SPOTLIGHT_PADDING;
+      let spotlightClampRect: LayoutRectangle | null = null;
 
       let sX = rect.x - padX;
       let sY = rect.y - padY;
@@ -530,11 +533,11 @@ export const TourOverlay: React.FC<TourOverlayProps> = ({
       // This prevents the spotlight from extending to the full ScrollView
       // content height.
       if (isViewportClampedStep && spotlightClampRef?.current) {
-        const clampRect = await measureRefRect(spotlightClampRef);
-        if (clampRect) {
-          const visibleTop = clampRect.y;
-          const visibleBottom = clampRect.y + clampRect.height;
-          const bottomReduce = clampRect.height * 0.22;
+        spotlightClampRect = await measureRefRect(spotlightClampRef);
+        if (spotlightClampRect) {
+          const visibleTop = spotlightClampRect.y;
+          const visibleBottom = spotlightClampRect.y + spotlightClampRect.height;
+          const bottomReduce = spotlightClampRect.height * 0.22;
           const clampedBottom = Math.max(visibleTop, visibleBottom - bottomReduce);
 
           // If the scroll position moves the target view so its top is above
@@ -547,6 +550,37 @@ export const TourOverlay: React.FC<TourOverlayProps> = ({
           sH = Math.max(0, spotBottom - spotTop);
         }
         sH -= sH * 0.08;
+      }
+
+      const spotlightScale = spotlightScaleByStep?.[stepIdx] ?? 1;
+      if (spotlightScale !== 1) {
+        const scaledW = sW * spotlightScale;
+        const scaledH = sH * spotlightScale;
+        sX -= (scaledW - sW) / 2;
+        sY -= (scaledH - sH) / 2;
+        sW = scaledW;
+        sH = scaledH;
+
+        if (stepIdx === 0 && cutoffY != null) {
+          const maxSpotlightHeight = Math.max(0, cutoffY - sY);
+          sH = Math.min(sH, maxSpotlightHeight);
+        }
+
+        if (isViewportClampedStep && spotlightClampRect) {
+          const visibleTop = spotlightClampRect.y;
+          const visibleBottom = spotlightClampRect.y + spotlightClampRect.height;
+          const bottomReduce = spotlightClampRect.height * 0.22;
+          const clampedBottom = Math.max(visibleTop, visibleBottom - bottomReduce);
+          const spotTop = Math.max(visibleTop, sY);
+          const spotBottom = Math.min(clampedBottom, sY + sH);
+
+          sY = spotTop;
+          sH = Math.max(0, spotBottom - spotTop);
+        }
+
+        const boundedRight = Math.min(screenWidth, sX + sW);
+        sX = Math.max(0, sX);
+        sW = Math.max(0, boundedRight - sX);
       }
 
       spotXRef.current = sX;
@@ -677,9 +711,11 @@ export const TourOverlay: React.FC<TourOverlayProps> = ({
       animSpotH,
       activeDotScale,
       screenHeight,
+      screenWidth,
       onFinish,
       onBeforeStep,
       preferAboveStepIndices,
+      spotlightScaleByStep,
       backdropCutoffY,
       steps,
       spotlightClampRef,

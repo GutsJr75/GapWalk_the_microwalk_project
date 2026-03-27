@@ -39,10 +39,6 @@ class AccelerometerMotionDetector(
   var lastSensorEventAtMs: Long? = null
     private set
 
-  /** Whether the detector currently considers the device to be in walking motion. */
-  var isWalkingMotion: Boolean = false
-    private set
-
   // Sliding window of acceleration magnitudes.
   private val magnitudeWindow = FloatArray(WINDOW_SIZE)
   private var windowIndex = 0
@@ -86,7 +82,6 @@ class AccelerometerMotionDetector(
     isRegistered = false
     sampleCount = 0
     windowIndex = 0
-    isWalkingMotion = false
     lastMotionDetectedAtMs = null
     lastSensorEventAtMs = null
   }
@@ -123,7 +118,6 @@ class AccelerometerMotionDetector(
     if (sampleCount >= MIN_SAMPLES) {
       val variance = computeVariance()
       val walking = variance >= WALKING_VARIANCE_THRESHOLD
-      isWalkingMotion = walking
       if (walking) {
         lastMotionDetectedAtMs = System.currentTimeMillis()
       }

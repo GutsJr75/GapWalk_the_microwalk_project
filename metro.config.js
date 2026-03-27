@@ -2,9 +2,6 @@ const { getDefaultConfig } = require('expo/metro-config');
 const path = require('path');
 
 const config = getDefaultConfig(__dirname);
-if (!config.resolver.assetExts.includes('wasm')) {
-  config.resolver.assetExts.push('wasm');
-}
 
 const zustandCjsAliases = {
   zustand: path.resolve(__dirname, 'node_modules/zustand/index.js'),

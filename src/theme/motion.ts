@@ -62,12 +62,6 @@ export const getMotionDuration = (
   reducedDuration: number = Math.min(duration, motion.duration.fast),
 ): number => (reduceMotion ? reducedDuration : duration);
 
-export const getMotionDistance = (
-  reduceMotion: boolean,
-  distance: number,
-  reducedDistance: number = 0,
-): number => (reduceMotion ? reducedDistance : distance);
-
 export const createLayoutMotionConfig = (reduceMotion: boolean): LayoutAnimationConfig => ({
   duration: getMotionDuration(
     reduceMotion,

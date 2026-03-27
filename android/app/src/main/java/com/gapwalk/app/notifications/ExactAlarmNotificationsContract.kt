@@ -44,13 +44,7 @@ private const val PLATFORM_NOTIFICATION_ID = 4107
 
 fun getWalkNudgeNotificationId(planId: String): String = "walk-nudge:$planId"
 
-fun getWalkMissedNotificationId(planId: String): String = "walk-missed:$planId"
-
 fun getWalkAlertNotificationId(planId: String): String = "walk-alert:$planId"
-
-fun getWalkReadyNotificationId(planId: String): String = "walk-ready:$planId"
-
-fun getWalkSummaryNotificationId(sessionId: String): String = "walk-summary:$sessionId"
 
 const val WALK_NUDGE_NOTIFICATION_TYPE = "walk_nudge"
 const val WALK_MISSED_NOTIFICATION_TYPE = "walk_missed"
@@ -198,9 +192,6 @@ fun markNotificationsRecoveryNeeded(context: Context, reason: String?) {
 fun isNotificationsRecoveryNeeded(context: Context): Boolean =
   prefs(context).getBoolean(PREF_RECOVERY_NEEDED, false)
 
-fun getNotificationsRecoveryReason(context: Context): String? =
-  prefs(context).getString(PREF_RECOVERY_REASON, null)
-
 fun clearNotificationsRecoveryNeeded(context: Context) {
   prefs(context).edit()
     .putBoolean(PREF_RECOVERY_NEEDED, false)
@@ -235,12 +226,6 @@ fun ensureNotificationChannel(context: Context) {
 fun cancelPresentedNotification(context: Context, notificationId: String) {
   val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
   manager.cancel(notificationTag(notificationId), PLATFORM_NOTIFICATION_ID)
-}
-
-fun cancelAllPresentedNotifications(context: Context, notificationIds: Iterable<String>) {
-  notificationIds.forEach { notificationId ->
-    cancelPresentedNotification(context, notificationId)
-  }
 }
 
 fun platformNotificationId(): Int = PLATFORM_NOTIFICATION_ID

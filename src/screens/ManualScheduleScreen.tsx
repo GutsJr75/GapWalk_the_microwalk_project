@@ -209,6 +209,26 @@ const hhmmToMinutes = (hhmm: string): number => {
 const timeRangesOverlap = (s1: number, e1: number, s2: number, e2: number): boolean =>
   s1 < e2 && e1 > s2;
 
+const TOUR_GRID_IDEAL_SLOT = 20;
+
+const buildPreferredSlotOrder = (idealSlot: number): number[] => {
+  const ordered: number[] = [];
+  for (let offset = 0; offset < NUM_SLOTS; offset += 1) {
+    const later = idealSlot + offset;
+    if (later >= 0 && later < NUM_SLOTS) {
+      ordered.push(later);
+    }
+    if (offset === 0) continue;
+    const earlier = idealSlot - offset;
+    if (earlier >= 0 && earlier < NUM_SLOTS) {
+      ordered.push(earlier);
+    }
+  }
+  return ordered;
+};
+
+const TOUR_GRID_PREFERRED_SLOTS = buildPreferredSlotOrder(TOUR_GRID_IDEAL_SLOT);
+
 const normalizeToRowMinutes = (minutes: number): number =>
   minutes < GRID_START_MIN ? minutes + 24 * 60 : minutes;
 
@@ -625,10 +645,16 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
   const tourHintBarRef = useRef<View>(null);
   const tourWeekHeaderRef = useRef<View>(null);
   const tourGridRef = useRef<View>(null);
-  const tourGridCellsRef = useRef<View>(null);
+  const tourGridSpotlightRef = useRef<View>(null);
   const tourClearBtnRef = useRef<View>(null);
   const tourFooterRef = useRef<View>(null);
+  const tourSelectionSnapshotRef = useRef<{
+    selectedDay: number | null;
+    selectedGridTarget: GridSelectionTarget | null;
+  } | null>(null);
+  const tourSelectionDidChangeRef = useRef(false);
   const [showScheduleTour, setShowScheduleTour] = useState(false);
+  const [tourGridSpotlightCell, setTourGridSpotlightCell] = useState<{ dayIndex: number; slotIndex: number } | null>(null);
 
   const tourSteps = useMemo(
     () => (prefillTemplate ? SCHEDULE_TOUR_STEPS_IMPORT : SCHEDULE_TOUR_STEPS),
@@ -641,9 +667,8 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
     { ref: tourGridRef, stepIndex: 0 },
     // Step 1 is about week navigation / selecting a day.
     { ref: tourWeekHeaderRef, stepIndex: 1 },
-    // Step 2 is about tapping slots/events in the grid.
-    // Measure only the grid cells area (no left row/time header).
-    { ref: tourGridCellsRef, stepIndex: 2 },
+    // Step 2 is about tapping a specific slot, so anchor to a real cell.
+    { ref: tourGridSpotlightRef, stepIndex: 2 },
     { ref: tourClearBtnRef, stepIndex: 3 },
     { ref: tourFooterRef, stepIndex: 4 },
   ], []);
@@ -669,12 +694,6 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
     });
     return () => task.cancel();
   }, [navigation, route.params?.replayScheduleTour]);
-
-  const handleTourFinish = useCallback(() => {
-    setShowScheduleTour(false);
-    setGuidanceSeen('schedule_editor_tour', true);
-    guidanceStorage.markSeen('schedule_editor_tour');
-  }, [setGuidanceSeen]);
 
   const scrollGridToNow = useCallback((animated = true) => {
     const now = new Date();
@@ -977,6 +996,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
 
   const currentSignature = useMemo(() => buildScheduleSignature(entriesByDay), [entriesByDay]);
   const hasUnsavedChanges = currentSignature !== initialSignature;
+  const hasAnyEvents = Object.values(entriesByDay).some(arr => arr.length > 0);
   const hasPendingImportedSchedule = sourceType === 'import' && Array.isArray(prefillTemplate) && !hasSavedSchedule;
   const hasSourceChanges =
     sourceType !== savedSourceType ||
@@ -2189,6 +2209,10 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
     () => getVisibleEntriesByDayForWeek(entriesByDaySorted, activeWeekStart),
     [activeWeekStart, entriesByDaySorted]
   );
+  const hasVisibleEventsInActiveWeek = useMemo(
+    () => Object.values(visibleEntriesByDay).some((events) => events.length > 0),
+    [visibleEntriesByDay]
+  );
   const activeWeekStartKey = toDateKey(activeWeekStart);
   const activeWeekEndKey = toDateKey(addDays(activeWeekStart, 6));
 
@@ -2486,6 +2510,130 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
       : '';
   const selectedDayVisibleCount = selectedDay !== null ? (visibleEntriesByDay[selectedDay] ?? []).length : 0;
   const clearDayLabel = 'Clear';
+
+  const restoreScheduleTourSelection = useCallback(() => {
+    setTourGridSpotlightCell(null);
+
+    if (!tourSelectionDidChangeRef.current) {
+      tourSelectionSnapshotRef.current = null;
+      return;
+    }
+
+    const snapshot = tourSelectionSnapshotRef.current;
+    tourSelectionDidChangeRef.current = false;
+    tourSelectionSnapshotRef.current = null;
+
+    if (!snapshot) return;
+    setSelectedDay(snapshot.selectedDay);
+    setSelectedGridTarget(snapshot.selectedGridTarget);
+  }, []);
+
+  const handleBeforeScheduleTourStep = useCallback(async (stepIndex: number): Promise<void> => {
+    if (stepIndex !== 2) return;
+
+    const preferredEventDays = Array.from({ length: DAY_COLUMNS }, (_, dayIndex) => dayIndex)
+      .filter((dayIndex) => (visibleEntriesByDay[dayIndex] ?? []).length > 0);
+    const preferredDayOrder = Array.from(
+      new Set([
+        ...(selectedDay !== null && (visibleEntriesByDay[selectedDay] ?? []).length > 0 ? [selectedDay] : []),
+        ...preferredEventDays,
+        ...(selectedDay !== null ? [selectedDay] : []),
+        todayIndex,
+        ...Array.from({ length: DAY_COLUMNS }, (_, dayIndex) => dayIndex),
+      ]),
+    );
+
+    let nextCell: { dayIndex: number; slotIndex: number } | null = null;
+
+    for (const dayIndex of preferredDayOrder) {
+      const occupiedSlots = new Set<number>();
+      for (const slice of displaySlicesByDay[dayIndex] ?? []) {
+        const startSlot = Math.max(
+          0,
+          Math.min(
+            NUM_SLOTS - 1,
+            Math.floor((slice.startMinuteInRow - GRID_START_MIN) / SLOT_MINUTES),
+          ),
+        );
+        const endSlotExclusive = Math.max(
+          startSlot + 1,
+          Math.min(
+            NUM_SLOTS,
+            Math.ceil((slice.endMinuteInRow - GRID_START_MIN) / SLOT_MINUTES),
+          ),
+        );
+        for (let slotIndex = startSlot; slotIndex < endSlotExclusive; slotIndex += 1) {
+          occupiedSlots.add(slotIndex);
+        }
+      }
+
+      const emptySlot = TOUR_GRID_PREFERRED_SLOTS.find((slotIndex) => !occupiedSlots.has(slotIndex));
+      if (emptySlot !== undefined) {
+        nextCell = { dayIndex, slotIndex: emptySlot };
+        break;
+      }
+    }
+
+    const fallbackDayIndex = selectedDay ?? todayIndex;
+    const targetCell = nextCell ?? {
+      dayIndex: fallbackDayIndex,
+      slotIndex: Math.min(NUM_SLOTS - 1, TOUR_GRID_IDEAL_SLOT),
+    };
+
+    if (!tourSelectionDidChangeRef.current) {
+      tourSelectionSnapshotRef.current = {
+        selectedDay,
+        selectedGridTarget,
+      };
+      tourSelectionDidChangeRef.current = true;
+    }
+
+    const maxScrollY = Math.max(0, gridBodyHeight - gridViewportHeight);
+    const leadOffset = Math.max(24, Math.min(gridViewportHeight * 0.35, 180));
+    const targetScrollY = Math.max(
+      0,
+      Math.min(
+        maxScrollY,
+        targetCell.slotIndex * SLOT_HEIGHT - leadOffset,
+      ),
+    );
+
+    gridScrollRef.current?.scrollTo({
+      y: targetScrollY,
+      animated: false,
+    });
+
+    setClearArmedDay(null);
+    setSelectedDay(targetCell.dayIndex);
+    setSelectedGridTarget({
+      dayIndex: targetCell.dayIndex,
+      slotIndex: targetCell.slotIndex,
+      kind: 'empty',
+    });
+    setTourGridSpotlightCell(targetCell);
+
+    await new Promise<void>((resolve) => {
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => resolve());
+      });
+    });
+  }, [
+    displaySlicesByDay,
+    gridBodyHeight,
+    gridViewportHeight,
+    selectedDay,
+    selectedGridTarget,
+    setClearArmedDay,
+    todayIndex,
+    visibleEntriesByDay,
+  ]);
+
+  const handleScheduleTourFinish = useCallback(() => {
+    restoreScheduleTourSelection();
+    setShowScheduleTour(false);
+    setGuidanceSeen('schedule_editor_tour', true);
+    guidanceStorage.markSeen('schedule_editor_tour');
+  }, [restoreScheduleTourSelection, setGuidanceSeen]);
   const headerWeekPages = useMemo(() => {
     const offsets = [-7, 0, 7] as const;
     return offsets.map((offsetDays) => {
@@ -2983,10 +3131,25 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
                   </View>
 
                   <View
-                    ref={tourGridCellsRef}
                     collapsable={false}
                     style={[styles.gridWeekBody, { width: weekGridWidth, height: gridBodyHeight }]}
                   >
+                    {tourGridSpotlightCell && (
+                      <View
+                        ref={tourGridSpotlightRef}
+                        collapsable={false}
+                        pointerEvents="none"
+                        style={[
+                          styles.tourGridSpotlightAnchor,
+                          {
+                            left: tourGridSpotlightCell.dayIndex * dayColumnWidth + 1,
+                            top: tourGridSpotlightCell.slotIndex * SLOT_HEIGHT + 1,
+                            width: dayColumnWidth - 2,
+                            height: SLOT_HEIGHT - 2,
+                          },
+                        ]}
+                      />
+                    )}
                     {isTodayInActiveWeek && nowRowFloat >= 0 && nowRowFloat < NUM_SLOTS && (
                       <View
                         pointerEvents="none"
@@ -3251,7 +3414,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
                 title: 'Save',
                 onPress: handleDone,
                 loading: savingDone,
-                disabled: savingDone || !hasManageChanges,
+                disabled: savingDone || !hasManageChanges || !hasAnyEvents,
                 testID: 'manual-save',
               }}
             />
@@ -3261,10 +3424,10 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
                 <Button
                   title="Save"
                   onPress={handleDone}
-                  variant={isReadyToContinue ? 'secondary' : 'primary'}
+                  variant={(isReadyToContinue || !hasVisibleEventsInActiveWeek) ? 'secondary' : 'primary'}
                   style={styles.footerBtn}
                   loading={savingDone}
-                  disabled={savingDone}
+                  disabled={savingDone || !hasAnyEvents || isReadyToContinue}
                   testID="manual-save"
                 />
                 <Button
@@ -4315,10 +4478,12 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
         visible={showScheduleTour}
         targets={tourTargets}
         steps={tourSteps}
+        onBeforeStep={handleBeforeScheduleTourStep}
         preferAboveStepIndices={[2]}
+        spotlightScaleByStep={{ 2: 1.2 }}
         backdropCutoffRef={tourFooterRef}
         spotlightClampRef={tourGridRef}
-        onFinish={handleTourFinish}
+        onFinish={handleScheduleTourFinish}
       />
     </SafeAreaView>
   );
@@ -4983,6 +5148,10 @@ const styles = StyleSheet.create({
     height: 8,
     borderRadius: 4,
     top: 0,
+  },
+  tourGridSpotlightAnchor: {
+    position: 'absolute',
+    zIndex: 24,
   },
   selectedCellAffordance: {
     position: 'absolute',

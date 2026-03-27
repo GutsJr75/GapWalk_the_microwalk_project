@@ -91,7 +91,6 @@ const styles = StyleSheet.create({
   button: {
     alignItems: 'center',
     justifyContent: 'center',
-    overflow: 'hidden' as const,
   },
   disabled: {
     opacity: 0.55,

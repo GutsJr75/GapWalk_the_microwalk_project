@@ -1,5 +1,6 @@
 {
   "expo": {
+    "newArchEnabled": true,
     "name": "GapWalk",
     "slug": "gapwalk",
     "version": "1.0.3",

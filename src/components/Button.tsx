@@ -131,7 +131,6 @@ const styles = StyleSheet.create({
   button: {
     alignItems: 'center',
     justifyContent: 'center',
-    overflow: 'hidden' as const,
   },
   fullWidth: {
     width: '100%',
@@ -140,7 +139,6 @@ const styles = StyleSheet.create({
     opacity: 0.55,
   },
   mutedTextPill: {
-    overflow: 'hidden' as const,
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: theme.borderRadius.sm,
