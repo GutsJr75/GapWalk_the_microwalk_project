@@ -33,6 +33,12 @@ export function toUserFriendlyError(error: unknown): string {
   if (lower.includes('timeout') || lower.includes('timed out')) {
     return 'The request took too long. Check your connection and try again.';
   }
+  if (
+    lower.includes('google calendar api error (401)') ||
+    (lower.includes('invalid credentials') && lower.includes('google'))
+  ) {
+    return 'Google Calendar authorization is invalid for this build. Try linking Google Calendar again. If you recently changed google-services.json or SHA-1 settings, rebuild and reinstall the Android app.';
+  }
   if (lower.includes('401') || lower.includes('unauthorized') || lower.includes('session expired')) {
     return 'Your session has expired. Please sign in again.';
   }

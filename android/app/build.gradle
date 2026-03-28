@@ -51,7 +51,13 @@ tasks.named("preBuild").configure {
 def localProps = new Properties()
 def localPropsFile = rootProject.file('local.properties')
 if (localPropsFile.exists()) localProps.load(new FileInputStream(localPropsFile))
-def googleMapsApiKey = localProps.getProperty('GOOGLE_MAPS_API_KEY', System.getenv('GOOGLE_MAPS_API_KEY') ?: '')
+def dotenvProps = new Properties()
+def dotenvFile = file("$rootDir/../.env")
+if (dotenvFile.exists()) dotenvProps.load(new FileInputStream(dotenvFile))
+def googleMapsApiKey = localProps.getProperty(
+    'GOOGLE_MAPS_API_KEY',
+    System.getenv('GOOGLE_MAPS_API_KEY') ?: dotenvProps.getProperty('GOOGLE_MAPS_API_KEY', '')
+)
 def defaultDebugStoreFile = file("$projectDir/gapwalk-local-debug.jks")
 def debugStoreFilePath = System.getenv('GAPWALK_DEBUG_STORE_FILE') ?: localProps.getProperty(
     'GAPWALK_DEBUG_STORE_FILE',
