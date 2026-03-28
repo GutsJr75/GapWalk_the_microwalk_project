@@ -4,7 +4,7 @@
 
 - Build Android production artifacts with `eas build --platform android --profile production`.
 - Confirm `google-services.json` and `GOOGLE_MAPS_API_KEY` are available to the production build.
-- If running a local release build, set all `GAPWALK_RELEASE_*` signing variables before `./gradlew assembleRelease`.
+- If running a local release build, copy `android/local.properties.example` to `android/local.properties`, fill `GOOGLE_MAPS_API_KEY` plus all `GAPWALK_RELEASE_*` values, then run `./gradlew bundleRelease`.
 - Increment both `app.json` and `android/app/build.gradle` `versionCode` values before every Play upload.
 
 ## Play Console Declarations

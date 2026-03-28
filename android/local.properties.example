@@ -1,0 +1,23 @@
+# Copy this file to android/local.properties and fill in the real values.
+# android/local.properties is ignored by git and should stay local to your machine.
+
+# Android SDK path used by Gradle.
+sdk.dir=/absolute/path/to/Android/Sdk
+
+# Native Android build-time config.
+GOOGLE_MAPS_API_KEY=your_google_maps_api_key
+
+# Optional: override the debug signing used by `npm run android` / `expo run:android`.
+# If omitted, Gradle prefers android/app/gapwalk-local-debug.jks and then falls back to
+# android/app/debug.keystore.
+# GAPWALK_DEBUG_STORE_FILE=/absolute/path/to/your-debug.keystore
+# GAPWALK_DEBUG_STORE_PASSWORD=android
+# GAPWALK_DEBUG_KEY_ALIAS=androiddebugkey
+# GAPWALK_DEBUG_KEY_PASSWORD=android
+
+# Local release signing for ./gradlew bundleRelease or ./gradlew assembleRelease.
+# Use the upload keystore you intend to use with Play / EAS.
+GAPWALK_RELEASE_STORE_FILE=/absolute/path/to/your-upload-keystore.jks
+GAPWALK_RELEASE_STORE_PASSWORD=your_store_password
+GAPWALK_RELEASE_KEY_ALIAS=your_key_alias
+GAPWALK_RELEASE_KEY_PASSWORD=your_key_password

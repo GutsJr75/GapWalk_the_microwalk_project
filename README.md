@@ -505,22 +505,25 @@ eas build --platform=ios --profile=production
 
 Requires an Apple Developer account and valid provisioning profiles managed through EAS.
 
-### Android (Google Play / APK)
+### Android (Google Play / Local Release)
 
 ```bash
 eas build --platform=android --profile=production
 ```
 
-Official Android release builds use EAS-managed credentials from [eas.json](/Users/mdamdadhossain/GapWalk/eas.json).
-Use the production release checklist in [docs/PLAY_STORE_RELEASE_CHECKLIST.md](/Users/mdamdadhossain/GapWalk/docs/PLAY_STORE_RELEASE_CHECKLIST.md) before each Play submission.
+Official Android release builds use EAS-managed credentials from `eas.json`.
+Use the production release checklist in `docs/PLAY_STORE_RELEASE_CHECKLIST.md` before each Play submission.
 
-For a manual local release build, export `GAPWALK_RELEASE_STORE_FILE`, `GAPWALK_RELEASE_STORE_PASSWORD`, `GAPWALK_RELEASE_KEY_ALIAS`, and `GAPWALK_RELEASE_KEY_PASSWORD` before running:
+For a manual local release build, copy `android/local.properties.example` to `android/local.properties`, then fill `sdk.dir`, `GOOGLE_MAPS_API_KEY`, and all `GAPWALK_RELEASE_*` values before running:
 
 ```bash
-cd android && ./gradlew assembleRelease
+cp android/local.properties.example android/local.properties
+cd android && ./gradlew bundleRelease --no-build-cache
 ```
 
-APK output: `android/app/build/outputs/apk/release/`
+AAB output: `android/app/build/outputs/bundle/release/`
+
+If you hit a stale native-build error from a prior debug build, delete `android/app/.cxx`, `android/app/build`, and `android/build`, then rerun the release task directly. If you need a local release APK instead, run `cd android && ./gradlew assembleRelease --no-build-cache`.
 
 ### Backend (Docker)
 

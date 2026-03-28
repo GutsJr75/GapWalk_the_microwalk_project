@@ -175,8 +175,8 @@ android {
         applicationId 'com.gapwalk.app'
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 10107
-        versionName "7"
+        versionCode 10109
+        versionName "1.0.3"
 
         manifestPlaceholders = [GOOGLE_MAPS_API_KEY: googleMapsApiKey]
         buildConfigField "String", "REACT_NATIVE_RELEASE_LEVEL", "\"${findProperty('reactNativeReleaseLevel') ?: 'stable'}\""

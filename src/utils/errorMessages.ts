@@ -1,7 +1,21 @@
+import { Platform } from 'react-native';
+
 /**
  * Converts technical error messages into human-readable text
  * so users can understand what went wrong without technical knowledge.
  */
+const getGoogleSignInMisconfiguredMessage = (): string => {
+  if (Platform.OS !== 'android') {
+    return 'Google sign-in is misconfigured for this build. Confirm the client IDs are registered in the same Google project as your app configuration, then rebuild the app.';
+  }
+
+  if (__DEV__) {
+    return 'Google sign-in is misconfigured for this local debug build. Register com.gapwalk.app with the SHA-1 from android/app/gapwalk-local-debug.jks (or your GAPWALK_DEBUG_* override keystore) in the same Google project as google-services.json, then rebuild and reinstall the app.';
+  }
+
+  return 'Google sign-in is misconfigured for this Android build. If this APK was sideloaded, register the upload or EAS signing SHA-1. If it was installed from Google Play, register the Play App Signing SHA-1. In both cases use the same Google project as google-services.json, then rebuild and reinstall the app.';
+};
+
 export function toUserFriendlyError(error: unknown): string {
   const raw = error instanceof Error ? error.message : String(error);
   const lower = raw.toLowerCase();
@@ -77,7 +91,7 @@ export function toUserFriendlyError(error: unknown): string {
     lower.includes('google sign-in completed but no access token') ||
     lower.includes('follow troubleshooting instructions at https://react-native-google-signin.github.io/docs/troubleshooting')
   ) {
-    return 'Google sign-in is misconfigured for this build. Confirm the app package and signing SHA-1 are registered in the same Google project as google-services.json, then rebuild the app.';
+    return getGoogleSignInMisconfiguredMessage();
   }
   if (lower.includes('play_services_not_available')) {
     return 'Google Play Services is unavailable or out of date on this device.';

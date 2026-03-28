@@ -79,36 +79,55 @@ Official production builds should use EAS:
 eas build --platform android --profile production
 ```
 
-If you need to build a manual local Release APK without using EAS, follow these steps from the project root:
+If you need to build a manual local Android release artifact without using EAS, follow these steps from the project root:
 
 1. **Inject Environment Variables** (Needed for certain shell setups):
    ```bash
    export $(grep -v '^#' .env | xargs)
    ```
 
-2. **Provide release signing credentials**:
+2. **Create or update `android/local.properties`**:
    ```bash
-   export GAPWALK_RELEASE_STORE_FILE=/absolute/path/to/your-upload-keystore.jks
-   export GAPWALK_RELEASE_STORE_PASSWORD=your_store_password
-   export GAPWALK_RELEASE_KEY_ALIAS=your_key_alias
-   export GAPWALK_RELEASE_KEY_PASSWORD=your_key_password
+   cp android/local.properties.example android/local.properties
    ```
 
-3. **Clear C++/Native Cache** (Optional, but recommended if builds are failing):
+   Then fill in your local SDK path, Maps key, and release signing values:
+   ```properties
+   sdk.dir=/absolute/path/to/Android/Sdk
+   GOOGLE_MAPS_API_KEY=your_google_maps_api_key
+   GAPWALK_RELEASE_STORE_FILE=/absolute/path/to/your-upload-keystore.jks
+   GAPWALK_RELEASE_STORE_PASSWORD=your_store_password
+   GAPWALK_RELEASE_KEY_ALIAS=your_key_alias
+   GAPWALK_RELEASE_KEY_PASSWORD=your_key_password
+   ```
+
+   Shell env vars with the same names also work and override `local.properties` when both are present.
+
+3. **Clear generated native caches only if needed**:
    ```bash
    rm -rf android/app/.cxx
+   rm -rf android/app/build
+   rm -rf android/build
    ```
 
-4. **Build the APK**:
+4. **Build the artifact you need**:
    ```bash
    cd android
-   ./gradlew clean assembleRelease --no-build-cache
+   ./gradlew bundleRelease --no-build-cache
    ```
 
-> `assembleRelease` now fails fast if neither EAS-managed credentials nor `GAPWALK_RELEASE_*` variables are present. GapWalk no longer falls back to the debug keystore for release builds.
+   Use `bundleRelease` for the Play Store `.aab`. If you also need a local release APK, run:
+   ```bash
+   ./gradlew assembleRelease --no-build-cache
+   ```
 
-**Output Location:**
-Your APK will be generated under: `android/app/build/outputs/apk/release/`
+> Local release tasks now fail fast if neither EAS-managed credentials nor `GAPWALK_RELEASE_*` values are present. GapWalk no longer falls back to the debug keystore for release builds.
+>
+> If a previous debug build leaves stale CMake/codegen state behind, `clean` can fail before the release build starts. In that case, delete `android/app/.cxx`, `android/app/build`, and `android/build`, then rerun `bundleRelease` directly.
+
+**Output Locations:**
+- AAB: `android/app/build/outputs/bundle/release/`
+- APK: `android/app/build/outputs/apk/release/`
 
 ## 6. API Keys: Where to Set Them
 
@@ -121,6 +140,12 @@ There are two separate places for API keys depending on the build type:
 | `.env` | Expo/Metro (JS side only) | All builds, for `EXPO_PUBLIC_*` JS variables |
 
 **Google Maps API key** is injected into `AndroidManifest.xml` at build time via Gradle `manifestPlaceholders`. It must be set in `local.properties` for local builds and supplied through EAS secrets or environment variables referenced by `eas.json` for cloud builds. It cannot be changed at runtime - a new build is required.
+
+Start from the checked-in template:
+
+```bash
+cp android/local.properties.example android/local.properties
+```
 
 ```
 # android/local.properties
@@ -136,11 +161,11 @@ GOOGLE_MAPS_API_KEY=your_key_here
 
 | Build type | Correct SHA-1 source |
 |-----------|----------------------|
-| `npm run android` (debug) | `android/app/debug.keystore` |
-| EAS build (sideloaded APK) | EAS Credentials (`eas credentials --platform android`) |
+| `npm run android` / `expo run:android` (debug) | `android/app/gapwalk-local-debug.jks`, or the keystore configured through `GAPWALK_DEBUG_*` |
+| Local `assembleRelease` / sideloaded EAS APK or AAB | The upload or EAS signing key that signed the artifact you installed |
 | Google Play Store distribution | **Google Play Console → Setup → App integrity → App signing key certificate** |
 
-> If distributing via the Play Store, Google re-signs the app - you must use the Play Console SHA-1, not the EAS keystore SHA-1.
+> If you installed the build yourself, do not use the Play App Signing SHA-1 unless the build actually came from Google Play. Local debug, local release, and sideloaded EAS builds use the certificate that signed that artifact on disk.
 
 To update: Google Cloud Console → APIs & Services → Credentials → your Android OAuth client → update the SHA-1 fingerprint.
 
