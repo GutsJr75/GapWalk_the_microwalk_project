@@ -120,6 +120,30 @@ const ScheduleSetupScreenInner: React.FC<Props> = ({ navigation, route }) => {
     navigation.navigate('Preferences', {});
   };
 
+  const handleSetUpLater = async () => {
+    if (loading || manageMode) return;
+
+    analyticsService.track('schedule_setup_deferred', {
+      existingSourceType: scheduleSource?.type ?? 'none',
+    });
+
+    try {
+      if (!scheduleSource) {
+        const deferredSource = {
+          type: 'manual' as const,
+          lastImportedAt: new Date().toISOString(),
+        };
+        await scheduleSourceRepo.save(deferredSource);
+        setScheduleSource(deferredSource);
+      }
+
+      completeFlow();
+    } catch (error) {
+      if (__DEV__) console.error('Failed to defer schedule setup:', error);
+      showMessage('Could not continue', toUserFriendlyError(error));
+    }
+  };
+
   const showMessage = (title: string, message: string, onAcknowledge?: () => void) => {
     if (Platform.OS === 'web' && typeof (globalThis as any).alert === 'function') {
       (globalThis as any).alert(`${title}\n\n${message}`);
@@ -571,14 +595,29 @@ const ScheduleSetupScreenInner: React.FC<Props> = ({ navigation, route }) => {
             />
           </View>
         ) : (
-          <Button
-            title="Next"
-            onPress={handleContinue}
-            disabled={!selectedOption || loading}
-            loading={loading && !syncStatus}
-            full
-            testID="schedule-setup-continue"
-          />
+          <>
+            <View style={styles.footerActions}>
+              <Button
+                title="Set it up later"
+                variant="secondary"
+                onPress={() => { void handleSetUpLater(); }}
+                style={styles.footerBtn}
+                disabled={loading}
+                testID="schedule-setup-later"
+              />
+              <Button
+                title="Next"
+                onPress={handleContinue}
+                disabled={!selectedOption || loading}
+                loading={loading && !syncStatus}
+                style={styles.footerBtn}
+                testID="schedule-setup-continue"
+              />
+            </View>
+            <Text variant="muted" style={styles.deferHint}>
+              You can finish this later from Dashboard &gt; Manage schedule.
+            </Text>
+          </>
         )}
         <Text variant="muted" style={styles.privacy}>
           Your schedule stays private. Privacy is our top priority.
@@ -702,6 +741,10 @@ const styles = StyleSheet.create({
   },
   footerBtn: {
     flex: 1,
+  },
+  deferHint: {
+    textAlign: 'center',
+    marginTop: 10,
   },
   privacy: { textAlign: 'center', marginTop: screenChrome.FOOTER_NOTE_MARGIN_TOP },
   dialogMessage: {

@@ -175,7 +175,7 @@ android {
         applicationId 'com.gapwalk.app'
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 10106
+        versionCode 10107
         versionName "7"
 
         manifestPlaceholders = [GOOGLE_MAPS_API_KEY: googleMapsApiKey]

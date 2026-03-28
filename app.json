@@ -26,7 +26,7 @@
     "android": {
       "googleServicesFile": "./google-services.json",
       "package": "com.gapwalk.app",
-      "versionCode": 10106,
+      "versionCode": 10107,
       "softwareKeyboardLayoutMode": "pan",
       "adaptiveIcon": {
         "foregroundImage": "./assets/icons/adaptive-foreground.png",
