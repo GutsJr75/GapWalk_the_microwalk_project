@@ -18,6 +18,15 @@ const createGoogleSignInCancelledError = (statusCode?: string): Error & { code?:
   return error;
 };
 
+const logGoogleCalendarDebug = (message: string, payload?: Record<string, unknown>) => {
+  if (!__DEV__) return;
+  if (payload) {
+    console.log(`[googleCalendar] ${message}`, payload);
+    return;
+  }
+  console.log(`[googleCalendar] ${message}`);
+};
+
 type GoogleServicesJson = {
   client?: Array<{
     client_info?: {
@@ -61,25 +70,153 @@ export const isSignInCancelled = (error: unknown): boolean => {
   return (error as any).code === statusCodes.SIGN_IN_CANCELLED;
 };
 
-/**
- * Start the native Google Sign-In flow and return a Google Calendar
- * access token on success.  Uses @react-native-google-signin/google-signin
- * (native SDK) to avoid the custom-URI-scheme restriction on Android.
- */
-export async function signInWithGoogle(): Promise<string> {
-  const { GoogleSignin, statusCodes } = getGoogleSignin();
-
+const configureGoogleSignin = () => {
+  const { GoogleSignin } = getGoogleSignin();
   GoogleSignin.configure({
     scopes: SCOPES,
     webClientId: GOOGLE_WEB_CLIENT_ID || undefined,
     iosClientId: GOOGLE_IOS_CLIENT_ID || undefined,
     offlineAccess: false,
   });
+  return GoogleSignin;
+};
+
+const extractAccessToken = (tokens: { accessToken?: string | null } | null | undefined): string | null => {
+  const accessToken = tokens?.accessToken?.trim();
+  return accessToken ? accessToken : null;
+};
+
+const getGrantedScopes = (currentUser: { scopes?: unknown } | null | undefined): string[] =>
+  Array.isArray(currentUser?.scopes)
+    ? currentUser.scopes.filter((scope): scope is string => typeof scope === 'string')
+    : [];
+
+const ensureCalendarScopesGranted = async (): Promise<void> => {
+  if (Platform.OS === 'web') return;
+
+  const { statusCodes } = getGoogleSignin();
+  const GoogleSignin = configureGoogleSignin();
+  const currentUser = GoogleSignin.getCurrentUser?.();
+  if (!currentUser) return;
+
+  const grantedScopes = getGrantedScopes(currentUser);
+  const needsCalendarScope = !grantedScopes.includes(SCOPES[0]);
+  const shouldPromptScopes = Platform.OS === 'android' || needsCalendarScope;
+
+  logGoogleCalendarDebug('ensuring scopes', {
+    platform: Platform.OS,
+    grantedScopes,
+    shouldPromptScopes,
+  });
+
+  if (!shouldPromptScopes) return;
+
+  const scopeResponse = await GoogleSignin.addScopes({ scopes: SCOPES });
+  if (scopeResponse?.type === 'cancelled') {
+    throw createGoogleSignInCancelledError(statusCodes.SIGN_IN_CANCELLED);
+  }
+};
+
+const getCurrentAccessToken = async (): Promise<string | null> => {
+  const GoogleSignin = configureGoogleSignin();
+  const currentUser = GoogleSignin.getCurrentUser?.();
+  if (!currentUser) return null;
+
+  await ensureCalendarScopesGranted();
+
+  const grantedScopes = getGrantedScopes(GoogleSignin.getCurrentUser?.());
+  const tokens = await GoogleSignin.getTokens().catch(() => null);
+  const accessToken = extractAccessToken(tokens);
+
+  logGoogleCalendarDebug('fetched tokens', {
+    grantedScopes,
+    hasAccessToken: !!accessToken,
+    hasIdToken: !!tokens?.idToken,
+  });
+
+  return accessToken;
+};
+
+const refreshAccessToken = async (invalidAccessToken?: string): Promise<string | null> => {
+  if (Platform.OS === 'web') return null;
+
+  const GoogleSignin = configureGoogleSignin();
+  if (Platform.OS === 'android' && invalidAccessToken) {
+    try {
+      await GoogleSignin.clearCachedAccessToken(invalidAccessToken);
+    } catch {
+      // Ignore token cache clearing failures and still try to fetch a fresh token.
+    }
+  }
+
+  return getCurrentAccessToken();
+};
+
+const isInvalidCredentialsError = (status: number, body: string): boolean => {
+  if (status !== 401) return false;
+  const lower = body.toLowerCase();
+  return (
+    lower.includes('invalid credentials') ||
+    lower.includes('autherror') ||
+    lower.includes('unauthenticated')
+  );
+};
+
+const fetchGoogleCalendarResponse = async (accessToken: string, days: number): Promise<Response> => {
+  const now = new Date();
+  const endDate = new Date();
+  endDate.setDate(endDate.getDate() + days);
+
+  const params = new URLSearchParams({
+    timeMin: now.toISOString(),
+    timeMax: endDate.toISOString(),
+    singleEvents: 'true',
+    orderBy: 'startTime',
+    maxResults: '250',
+  });
+
+  return fetch(
+    `https://www.googleapis.com/calendar/v3/calendars/primary/events?${params}`,
+    { headers: { Authorization: `Bearer ${accessToken}` } }
+  );
+};
+
+const mapGoogleCalendarEvents = (
+  data: GoogleCalendarEventsResponse,
+  createdAt: string,
+  fallbackIso: string
+): BusyEvent[] => {
+  const items = data.items ?? [];
+
+  return items
+    .filter((item) => item.status !== 'cancelled')
+    .map((item) => ({
+      id: `google-${item.id ?? `${item.start?.dateTime || item.start?.date || 'unknown'}-${item.summary || 'busy'}`}`,
+      title: item.summary || 'Busy',
+      start: item.start?.dateTime || item.start?.date || fallbackIso,
+      end: item.end?.dateTime || item.end?.date || fallbackIso,
+      source: 'google' as const,
+      isAllDay: !item.start?.dateTime,
+      createdAt,
+    }));
+};
+
+/**
+ * Start the native Google Sign-In flow and return a Google Calendar
+ * access token on success.  Uses @react-native-google-signin/google-signin
+ * (native SDK) to avoid the custom-URI-scheme restriction on Android.
+ */
+export async function signInWithGoogle(): Promise<string> {
+  const { statusCodes } = getGoogleSignin();
+  const GoogleSignin = configureGoogleSignin();
 
   await GoogleSignin.hasPlayServices({ showPlayServicesUpdateDialog: true });
 
-  // Sign out any previously cached account so the account picker always appears,
-  // allowing the user to choose a different Google account each time.
+  // Revoke the prior grant before sign-in so Android does not get stuck in a
+  // stale remote-consent loop after Google project or SHA changes.
+  try { await GoogleSignin.revokeAccess(); } catch { /* ignore if no grant exists */ }
+
+  // Sign out any previously cached account so the account picker always appears.
   try { await GoogleSignin.signOut(); } catch { /* ignore if not signed in */ }
 
   const response = await GoogleSignin.signIn();
@@ -87,13 +224,20 @@ export async function signInWithGoogle(): Promise<string> {
     throw createGoogleSignInCancelledError(statusCodes.SIGN_IN_CANCELLED);
   }
 
-  const tokens = await GoogleSignin.getTokens();
-  if (!tokens.accessToken) {
+  logGoogleCalendarDebug('sign-in success', {
+    email: response.data?.user?.email ?? null,
+    grantedScopes: getGrantedScopes(response.data),
+    hasServerAuthCode: !!response.data?.serverAuthCode,
+    hasIdToken: !!response.data?.idToken,
+  });
+
+  const accessToken = await getCurrentAccessToken();
+  if (!accessToken) {
     throw new Error(
       'Google sign-in completed but no access token was returned. Check the Google web client ID configuration for this build.'
     );
   }
-  return tokens.accessToken;
+  return accessToken;
 }
 
 const FALLBACK_NATIVE_APP_ID = 'com.gapwalk.app';
@@ -217,42 +361,31 @@ export const googleCalendarService = {
    * @param days How many days ahead to fetch (default 7).
    */
   async fetchEvents(accessToken: string, days = 7): Promise<BusyEvent[]> {
-    const now = new Date();
-    const endDate = new Date();
-    endDate.setDate(endDate.getDate() + days);
+    const createdAt = new Date().toISOString();
+    const fallbackIso = new Date().toISOString();
 
-    const params = new URLSearchParams({
-      timeMin: now.toISOString(),
-      timeMax: endDate.toISOString(),
-      singleEvents: 'true',
-      orderBy: 'startTime',
-      maxResults: '250',
-    });
-
-    const response = await fetch(
-      `https://www.googleapis.com/calendar/v3/calendars/primary/events?${params}`,
-      { headers: { Authorization: `Bearer ${accessToken}` } }
-    );
-
-    if (!response.ok) {
-      const body = await response.text();
-      throw new Error(`Google Calendar API error (${response.status}): ${body}`);
+    const response = await fetchGoogleCalendarResponse(accessToken, days);
+    if (response.ok) {
+      const data = (await response.json()) as GoogleCalendarEventsResponse;
+      return mapGoogleCalendarEvents(data, createdAt, fallbackIso);
     }
 
-    const data = (await response.json()) as GoogleCalendarEventsResponse;
-    const items = data.items ?? [];
+    const body = await response.text();
+    if (isInvalidCredentialsError(response.status, body)) {
+      const refreshedAccessToken = await refreshAccessToken(accessToken);
+      if (refreshedAccessToken) {
+        const retryResponse = await fetchGoogleCalendarResponse(refreshedAccessToken, days);
+        if (retryResponse.ok) {
+          const retryData = (await retryResponse.json()) as GoogleCalendarEventsResponse;
+          return mapGoogleCalendarEvents(retryData, createdAt, fallbackIso);
+        }
 
-    return items
-      .filter((item) => item.status !== 'cancelled')
-      .map((item) => ({
-        id: `google-${item.id ?? `${item.start?.dateTime || item.start?.date || 'unknown'}-${item.summary || 'busy'}`}`,
-        title: item.summary || 'Busy',
-        start: item.start?.dateTime || item.start?.date || now.toISOString(),
-        end: item.end?.dateTime || item.end?.date || now.toISOString(),
-        source: 'google' as const,
-        isAllDay: !item.start?.dateTime,
-        createdAt: new Date().toISOString(),
-      }));
+        const retryBody = await retryResponse.text();
+        throw new Error(`Google Calendar API error (${retryResponse.status}): ${retryBody}`);
+      }
+    }
+
+    throw new Error(`Google Calendar API error (${response.status}): ${body}`);
   },
 
   /**

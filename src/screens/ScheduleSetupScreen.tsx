@@ -23,6 +23,7 @@ import { useThemePalette } from '../theme/palette';
 import { buildWeeklyTemplateFromIcsEvents, parseICSFile } from '../utils/ics';
 import { ManualScheduleEntry } from '../types';
 import { eventsRepo } from '../data/repositories/eventsRepo';
+import { manualScheduleRepo } from '../data/repositories/manualScheduleRepo';
 import { plansRepo } from '../data/repositories/plansRepo';
 import { scheduleSourceRepo } from '../data/repositories/scheduleSourceRepo';
 import { syncNudgePlansForCurrentSchedule } from '../services/scheduleSync';
@@ -179,17 +180,21 @@ const ScheduleSetupScreenInner: React.FC<Props> = ({ navigation, route }) => {
         return;
       }
 
+      const weeklyTemplate: ManualScheduleEntry[] = buildWeeklyTemplateFromIcsEvents(events, 'gcal');
       setSyncStatus(`Saving ${events.length} events...`);
+
+      // Persist the derived weekly template so Manage Schedule can render the
+      // imported Google schedule immediately after onboarding.
+      await manualScheduleRepo.replaceAll(weeklyTemplate);
 
       // Atomically replace all existing busy events (rolls back on failure).
       await eventsRepo.replaceAll(events);
 
-      // Save schedule source with token
+      // Save schedule source metadata.
       const source = {
         type: 'google' as const,
         lastImportedAt: new Date().toISOString(),
         googleConnected: true,
-        googleAccessToken: accessToken,
       };
       await scheduleSourceRepo.save(source);
       setScheduleSource(source);

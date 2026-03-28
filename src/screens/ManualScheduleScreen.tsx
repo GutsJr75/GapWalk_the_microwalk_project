@@ -771,6 +771,26 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
         return { type: 'manual' };
       };
 
+      const hydrateGoogleTemplateFromBusyEvents = async (
+        savedEntries: ManualScheduleEntry[]
+      ): Promise<ManualScheduleEntry[]> => {
+        if (savedEntries.length > 0) return savedEntries;
+
+        const src = scheduleSourceRef.current ?? (await scheduleSourceRepo.get());
+        if (src?.type !== 'google') return savedEntries;
+
+        const savedGoogleEvents = (await eventsRepo.getAll()).filter((event) => event.source === 'google');
+        if (savedGoogleEvents.length === 0) return savedEntries;
+
+        const hydratedEntries = buildWeeklyTemplateFromIcsEvents(savedGoogleEvents, 'gcal');
+        if (hydratedEntries.length === 0) return savedEntries;
+
+        // Backfill older Google imports that were saved before the weekly template
+        // was persisted alongside busy events.
+        await manualScheduleRepo.replaceAll(hydratedEntries);
+        return hydratedEntries;
+      };
+
       if (Array.isArray(prefillTemplate) && !didApplyPrefillTemplateRef.current) {
         didApplyPrefillTemplateRef.current = true;
         const grouped = groupTemplateEntries(prefillTemplate);
@@ -820,12 +840,13 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
         if (cleaned.length !== saved.length) {
           await manualScheduleRepo.replaceAll(cleaned);
         }
-        const grouped = groupTemplateEntries(cleaned);
+        const hydratedEntries = await hydrateGoogleTemplateFromBusyEvents(cleaned);
+        const grouped = groupTemplateEntries(hydratedEntries);
         if (!active) return;
         setEntriesByDay(grouped);
         setSavedEntriesByDay(cloneEntriesByDay(grouped));
         setInitialSignature(buildScheduleSignature(grouped));
-        setHasSavedSchedule(cleaned.length > 0);
+        setHasSavedSchedule(hydratedEntries.length > 0);
         const resolvedSource = await resolveSourceState();
         if (!active) return;
         setSourceType(resolvedSource.type);
