@@ -820,14 +820,14 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
         setSavedEntriesByDay(cloneEntriesByDay(empty));
         setInitialSignature(buildScheduleSignature(empty));
         setHasSavedSchedule(false);
-        // Manual onboarding should always reset the editor to a true manual source,
-        // even if the user previously imported from Google/ICS.
-        setSourceType('manual');
-        setSavedSourceType('manual');
-        setImportedFilename(undefined);
-        setSavedImportedFilename(undefined);
-        setSheetSourceType('manual');
-        setSheetImportedFilename(undefined);
+        const resolvedSource = await resolveSourceState();
+        if (!active) return;
+        setSourceType(resolvedSource.type);
+        setSavedSourceType(resolvedSource.type);
+        setImportedFilename(resolvedSource.type === 'import' ? resolvedSource.filename : undefined);
+        setSavedImportedFilename(resolvedSource.type === 'import' ? resolvedSource.filename : undefined);
+        setSheetSourceType(resolvedSource.type);
+        setSheetImportedFilename(resolvedSource.type === 'import' ? resolvedSource.filename : undefined);
         setSheetImportedTemplate(null);
         return;
       }

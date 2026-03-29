@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Animated, AppState, AppStateStatus, Easing, Linking, Platform, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { Animated, AppState, AppStateStatus, Easing, Linking, Platform, Pressable, StyleSheet, View } from 'react-native';
 import MapView, { Marker, Polyline } from 'react-native-maps';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { Ionicons } from '@expo/vector-icons';
@@ -708,8 +708,8 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
   const canShowMap = foregroundLocationAccess.granted;
   const mapPermissionActionLabel = 'Go to settings';
   const mapPermissionToggleLabel = showMapPermissionHelp ? 'Hide steps' : 'Show steps';
-  const mapPermissionTitle = 'Permission To View The Map';
-  const mapPermissionMessage = 'Enable location to see your live map.';
+  const mapPermissionTitle = 'Provide location permission to view the map';
+  const mapPermissionMessage = 'GapWalk shows your live position and route only after location access is enabled for this app.';
   const remainingSeconds = useMemo(() => {
     const elapsedSeconds = hasLiveSession ? activeSeconds : 0;
     if (!plan) return elapsedSeconds;
@@ -2434,7 +2434,7 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
               </View>
             </>
           ) : (
-            <ScrollView style={styles.mapPermissionGate} contentContainerStyle={styles.mapPermissionGateContent} showsVerticalScrollIndicator={false}>
+            <View style={styles.mapPermissionGate}>
               <View
                 style={[
                   styles.mapPermissionCard,
@@ -2460,7 +2460,7 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
                   {mapPermissionMessage}
                 </Text>
                 <Text variant="bodySmall" color={palette.textMuted} style={styles.mapPermissionHint}>
-                  Walk tracking continues normally in the background.
+                  Your walk can still continue without the map. It comes back as soon as location access is enabled.
                 </Text>
                 <Button
                   title={mapPermissionActionLabel}
@@ -2531,7 +2531,7 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
                   </View>
                 )}
               </View>
-            </ScrollView>
+            </View>
           )}
         </View>
 
@@ -2789,12 +2789,9 @@ const styles = StyleSheet.create({
   },
   mapPermissionGate: {
     flex: 1,
-    padding: 20,
-  },
-  mapPermissionGateContent: {
-    flexGrow: 1,
     alignItems: 'center',
     justifyContent: 'center',
+    padding: 20,
   },
   mapPermissionCard: {
     width: '100%',
