@@ -16,6 +16,20 @@ const getGoogleSignInMisconfiguredMessage = (): string => {
   return 'Google sign-in is misconfigured for this Android build. If this APK was sideloaded, register the upload or EAS signing SHA-1. If it was installed from Google Play, register the Play App Signing SHA-1. In both cases use the same Google project as google-services.json, then rebuild and reinstall the app.';
 };
 
+const isGoogleSignInMisconfiguredError = (lower: string): boolean =>
+  lower.includes('developer_error') ||
+  lower.includes('non recoverable sign in failure') ||
+  lower.includes('non-recoverable sign in failure') ||
+  lower.includes('google sign-in completed but no id token') ||
+  lower.includes('google sign-in completed but no access token') ||
+  lower.includes(
+    'follow troubleshooting instructions at https://react-native-google-signin.github.io/docs/troubleshooting'
+  ) ||
+  (lower.includes('12500') &&
+    (lower.includes('google') ||
+      lower.includes('sign in') ||
+      lower.includes('signin')));
+
 export function toUserFriendlyError(error: unknown): string {
   const raw = error instanceof Error ? error.message : String(error);
   const lower = raw.toLowerCase();
@@ -85,12 +99,7 @@ export function toUserFriendlyError(error: unknown): string {
   if (lower.includes('auth/popup-closed-by-user') || lower.includes('auth/cancelled-popup-request')) {
     return 'The sign-in window was closed before the process finished.';
   }
-  if (
-    lower.includes('developer_error') ||
-    lower.includes('google sign-in completed but no id token') ||
-    lower.includes('google sign-in completed but no access token') ||
-    lower.includes('follow troubleshooting instructions at https://react-native-google-signin.github.io/docs/troubleshooting')
-  ) {
+  if (isGoogleSignInMisconfiguredError(lower)) {
     return getGoogleSignInMisconfiguredMessage();
   }
   if (lower.includes('play_services_not_available')) {
