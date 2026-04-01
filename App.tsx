@@ -2,7 +2,6 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Animated, AppState, BackHandler, Image, Platform, StyleSheet, Text, ToastAndroid, TouchableOpacity, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import * as Font from 'expo-font';
-import * as SplashScreen from 'expo-splash-screen';
 import { NavigationContainer, createNavigationContainerRef } from '@react-navigation/native';
 import * as Notifications from 'expo-notifications';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
@@ -244,13 +243,6 @@ function App() {
   const clearBootGreetingTimers = useCallback(() => {
     bootGreetingTimerIdsRef.current.forEach((timerId) => clearTimeout(timerId));
     bootGreetingTimerIdsRef.current = [];
-  }, []);
-
-  // Hide native splash immediately so the app starts from our UI (no splash screen).
-  useEffect(() => {
-    if (Platform.OS !== 'web') {
-      SplashScreen.hideAsync().catch(() => { });
-    }
   }, []);
 
   // Small pulse on the loading dot while bootstrap runs
