@@ -22,7 +22,7 @@ import { plansRepo } from '../data/repositories/plansRepo';
 import { sessionsRepo } from '../data/repositories/sessionsRepo';
 import { eventsRepo } from '../data/repositories/eventsRepo';
 import { achievementsRepo, type UnlockedAchievement, type AchievementId } from '../data/repositories/achievementsRepo';
-import { gapEngine } from '../services/gapEngine';
+import { gapEngine, NO_SCHEDULE_FALLBACK_REASON } from '../services/gapEngine';
 import {
   getPlanNotifyTime,
   isNotificationsSupported,
@@ -199,6 +199,7 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
   const [yesterdayMinutes, setYesterdayMinutes] = useState<number | null>(null);
   const [completedPlans, setCompletedPlans] = useState<NudgePlan[]>([]);
   const [missedPlans, setMissedPlans] = useState<NudgePlan[]>([]);
+  const [isNoScheduleFallbackActive, setIsNoScheduleFallbackActive] = useState(false);
   // Staggered card entrance animations
   const cardAnims = useRef(
     Array.from({ length: 6 }, () => new Animated.Value(0))
@@ -488,6 +489,13 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
     setTodayStats(mins, cnt);
     const refreshedUpcoming = await plansRepo.getUpcomingPlans(20);
     setUpcomingPlans(refreshedUpcoming);
+    const busyEventCount = await eventsRepo.count();
+    const hasFallbackPlans = refreshedUpcoming.some(
+      (plan) => plan.reason === NO_SCHEDULE_FALLBACK_REASON,
+    );
+    setIsNoScheduleFallbackActive(
+      busyEventCount === 0 && (!!prefsFromDb || hasFallbackPlans),
+    );
     const allTodayPlans = await plansRepo.getTodayPlans();
     setCompletedPlans(allTodayPlans.filter((p) => p.status === 'completed'));
     setMissedPlans(allTodayPlans.filter((p) => p.status === 'cancelled' && p.reason === 'missed'));
@@ -1468,6 +1476,31 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
                   </View>
                 </Card>
               )}
+              {isNoScheduleFallbackActive && (
+                <Card elevated style={styles.fallbackHintCard}>
+                  <View style={styles.fallbackHintHeader}>
+                    <View
+                      style={[
+                        styles.fallbackHintIconWrap,
+                        { backgroundColor: withAlpha(palette.accentPrimary, themeMode === 'dark' ? 0.2 : 0.12) },
+                      ]}
+                    >
+                      <AppIcon name="calendar" size={16} color={palette.accentPrimary} />
+                    </View>
+                    <Text variant="bodySmall" color={palette.textMuted} style={styles.fallbackHintBody}>
+                      Finish your schedule setup for smarter reminder timing.
+                    </Text>
+                  </View>
+                  <View style={styles.fallbackHintButtonRow}>
+                    <Button
+                      title="Manage Schedule Now"
+                      variant="secondary"
+                      onPress={navigateToManageSchedule}
+                      style={styles.fallbackHintButton}
+                    />
+                  </View>
+                </Card>
+              )}
             </View>
           </Animated.View>
 
@@ -1830,6 +1863,19 @@ const styles = StyleSheet.create({
   permissionBody: { lineHeight: 20 },
   permissionButtonRow: { alignItems: 'flex-end', marginTop: 10 },
   permissionButton: {},
+  fallbackHintCard: { gap: 12, paddingVertical: 16, paddingHorizontal: 16 },
+  fallbackHintHeader: { flexDirection: 'row', alignItems: 'flex-start', gap: 10 },
+  fallbackHintIconWrap: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 2,
+  },
+  fallbackHintBody: { flex: 1, lineHeight: 20 },
+  fallbackHintButtonRow: { alignItems: 'flex-end' },
+  fallbackHintButton: {},
   dashboardFooter: { textAlign: 'center', lineHeight: 20 },
   readyText: { textAlign: 'center', fontSize: theme.fontSize.lg, fontWeight: theme.fontWeight.semibold },
   headingSub: { textAlign: 'left', marginTop: 4 },

@@ -47,10 +47,10 @@ import {
   openAppSettings,
   requestActivityRecognitionPermission,
   requestNotificationPermission,
-  type NotificationPermissionState,
 } from '../services/permissions';
 import { registerCurrentDeviceForNotifications } from '../services/deviceRegistration';
 import { toUserFriendlyError } from '../utils/errorMessages';
+import { isNotificationsSupported } from '../services/notifications';
 
 const isFabric = !!(globalThis as any).nativeFabricUIManager;
 
@@ -80,8 +80,24 @@ interface OnboardingPermissionDialogState {
   primaryLabel: string;
   secondaryLabel: string;
   primaryVariant?: 'primary' | 'secondary' | 'danger';
+  dismissible?: boolean;
+  contentMinHeight?: number;
   resolve: (action: 'primary' | 'secondary') => void;
 }
+
+type OnboardingPermissionDialogView = Omit<OnboardingPermissionDialogState, 'resolve'>;
+
+const toOnboardingPermissionDialogView = (
+  dialog: OnboardingPermissionDialogState,
+): OnboardingPermissionDialogView => ({
+  title: dialog.title,
+  message: dialog.message,
+  primaryLabel: dialog.primaryLabel,
+  secondaryLabel: dialog.secondaryLabel,
+  primaryVariant: dialog.primaryVariant,
+  dismissible: dialog.dismissible,
+  contentMinHeight: dialog.contentMinHeight,
+});
 
 /* â”€â”€â”€â”€â”€ time-input helpers â”€â”€â”€â”€â”€ */
 const isValidHour = (v: string): boolean => { if (v === '') return false; const n = Number(v); return Number.isInteger(n) && n >= 1 && n <= 12; };
@@ -364,6 +380,10 @@ const PeriodToggle: React.FC<{
 export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
   const { preferences: storedPreferences, setPreferences, setHasSetPreferences, setHasCompletedOnboarding, setHasRequestedPermissions, themeMode } = useAppStore();
   const manageMode = !!route.params?.manageMode;
+  const enforceNotificationPermission = !!route.params?.enforceNotificationPermission;
+  const permissionGateSource = route.params?.permissionGateSource ?? 'onboarding';
+  const isAndroidNotificationGateRuntime = Platform.OS === 'android' && isNotificationsSupported;
+  const isPermissionGateMode = enforceNotificationPermission && isAndroidNotificationGateRuntime;
   const [prefs, setPrefs] = useState<Preferences>(DEFAULT_PREFERENCES);
   const [hasChanges, setHasChanges] = useState(false);
   const [savedPrefsSnapshot, setSavedPrefsSnapshot] = useState<Preferences>(DEFAULT_PREFERENCES);
@@ -382,6 +402,7 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
   const [messageDialog, setMessageDialog] = useState<{ title: string; message: string } | null>(null);
   const [confirmDialog, setConfirmDialog] = useState<{ title: string; message: string; confirmText: string; onConfirm: () => void; destructive?: boolean } | null>(null);
   const [onboardingPermissionDialog, setOnboardingPermissionDialog] = useState<OnboardingPermissionDialogState | null>(null);
+  const onboardingPermissionDialogLastViewRef = useRef<OnboardingPermissionDialogView | null>(null);
   const showMessage = (title: string, message: string) => setMessageDialog({ title, message });
   const showBinaryConfirm = (title: string, message: string, confirmText: string, onConfirm: () => void, style: 'default' | 'destructive' = 'default') => setConfirmDialog({ title, message, confirmText, onConfirm, destructive: style === 'destructive' });
   const [activeInfo, setActiveInfo] = useState<ActiveInfoState | null>(null);
@@ -417,6 +438,11 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
     });
   }, []);
 
+  useEffect(() => {
+    if (!onboardingPermissionDialog) return;
+    onboardingPermissionDialogLastViewRef.current = toOnboardingPermissionDialogView(onboardingPermissionDialog);
+  }, [onboardingPermissionDialog]);
+
   const waitForSettingsRoundTrip = useCallback(async () => {
     await new Promise<void>((resolve) => {
       let sawBackground = false;
@@ -442,75 +468,83 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
     });
   }, []);
 
-  const runOnboardingNotificationPermissionFlow = useCallback(async (): Promise<NotificationPermissionState> => {
-    let permissionState = await getNotificationPermissionState();
-    if (permissionState.granted) {
-      return permissionState;
-    }
-
-    const introAction = await promptOnboardingPermissionDialog({
-      title: 'Turn On Walk Reminders?',
-      message:
-        'Enable turns on walk reminders. Continue keeps going without reminder alerts.',
-      primaryLabel: 'Enable',
-      secondaryLabel: 'Continue',
+  const promptPermissionDialog = useCallback(async (options: {
+    title: string;
+    message: string;
+    primaryLabel?: string;
+    secondaryLabel?: string;
+    requireDecision?: boolean;
+    contentMinHeight?: number;
+  }): Promise<'primary' | 'secondary'> => {
+    return promptOnboardingPermissionDialog({
+      title: options.title,
+      message: options.message,
+      primaryLabel: options.primaryLabel ?? 'Got it!',
+      secondaryLabel: options.secondaryLabel ?? 'Cancel',
+      primaryVariant: 'primary',
+      dismissible: !options.requireDecision,
+      contentMinHeight: options.contentMinHeight,
     });
+  }, [promptOnboardingPermissionDialog]);
 
-    if (introAction === 'secondary') {
-      return permissionState;
-    }
+  const runMandatoryNotificationPermissionFlow = useCallback(async (): Promise<boolean> => {
+    if (!isAndroidNotificationGateRuntime) return true;
+
+    let permissionState = await getNotificationPermissionState();
+    if (permissionState.granted) return true;
 
     while (!permissionState.granted) {
+      const primerAction = await promptPermissionDialog({
+        title: permissionState.canAskAgain
+          ? 'Notification Permission Required'
+          : 'Enable Notifications In Settings',
+        message: permissionState.canAskAgain
+          ? 'GapWalk uses notifications to send time-sensitive walk reminders before planned walk windows and when your schedule opens a suitable gap. Without notification access, these reminders cannot be delivered.\n\nAndroid will now show the notification permission prompt. After that, you will see a separate activity-tracking permission request. For the best GapWalk experience, please enable both permissions for reliable reminders and accurate progress tracking.'
+          : 'GapWalk still requires notification access to deliver time-sensitive reminders before planned walk windows and useful free-time gaps. Without this permission, reminder alerts remain unavailable.\n\nTap Got it! to open Settings, enable notifications, and return to GapWalk. After notifications are enabled, you will see a separate activity-tracking permission request. For the best GapWalk experience, please enable both permissions for reliable reminders and accurate progress tracking.',
+        requireDecision: true,
+        contentMinHeight: 300,
+      });
+
+      if (primerAction === 'secondary') {
+        return false;
+      }
+
       if (!permissionState.canAskAgain) {
-        const blockedAction = await promptOnboardingPermissionDialog({
-          title: 'Turn On Reminders In Settings',
-          message:
-            'Enable opens Settings to turn reminders on. Continue keeps going without reminder alerts.',
-          primaryLabel: 'Enable',
-          secondaryLabel: 'Continue',
-          primaryVariant: 'primary',
-        });
-
-        if (blockedAction === 'secondary') {
-          return permissionState;
-        }
-
         await openAppSettings();
         await waitForSettingsRoundTrip();
         permissionState = await getNotificationPermissionState();
-        return permissionState;
+        continue;
       }
 
       permissionState = await requestNotificationPermission();
-      if (permissionState.granted) {
-        return permissionState;
-      }
-
-      const retryAction = await promptOnboardingPermissionDialog({
-        title: 'Reminders Are Still Off',
-        message:
-          permissionState.canAskAgain
-            ? 'Enable lets GapWalk send walk reminders. Continue keeps going without reminder alerts.'
-            : 'Enable opens Settings to turn reminders on. Continue keeps going without reminder alerts.',
-        primaryLabel: 'Enable',
-        secondaryLabel: 'Continue',
-        primaryVariant: 'primary',
-      });
-
-      if (retryAction === 'secondary') {
-        return permissionState;
-      }
-
-      if (!permissionState.canAskAgain) {
-        await openAppSettings();
-        await waitForSettingsRoundTrip();
-        permissionState = await getNotificationPermissionState();
-        return permissionState;
-      }
     }
 
-    return permissionState;
-  }, [promptOnboardingPermissionDialog, waitForSettingsRoundTrip]);
+    return true;
+  }, [
+    isAndroidNotificationGateRuntime,
+    promptPermissionDialog,
+    waitForSettingsRoundTrip,
+  ]);
+
+  const runActivityPermissionExplainerFlow = useCallback(async (): Promise<void> => {
+    if (!isAndroidNotificationGateRuntime) return;
+
+    const activityAction = await promptPermissionDialog({
+      title: 'Activity Permission Up Next',
+      message:
+        'GapWalk uses activity data to measure steps and keep live walk progress and daily goal completion accurate during your walks. Without activity access, progress tracking may be less accurate.\n\nAndroid will now show the activity-tracking permission prompt. For the best GapWalk experience, keep both notifications and activity tracking enabled.',
+      requireDecision: true,
+    });
+
+    if (activityAction === 'secondary') return;
+
+    try {
+      await requestActivityRecognitionPermission();
+      setHasRequestedPermissions(true);
+    } catch (e) {
+      if (__DEV__) console.warn('Activity permission request failed during onboarding:', e);
+    }
+  }, [isAndroidNotificationGateRuntime, promptPermissionDialog, setHasRequestedPermissions]);
   const themedInput = {
     backgroundColor: isDark ? theme.colors.bgApp : palette.bgSurfaceElevated,
     borderColor: isDark ? 'rgba(255,255,255,0.06)' : palette.borderStrong,
@@ -823,7 +857,7 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
     !stepGoalError &&
     !preferredPeriodsError &&
     !savingPrefs &&
-    (manageMode || hasSeenAllSections);
+    (manageMode || hasSeenAllSections || isPermissionGateMode);
 
   /* â”€â”€ save â”€â”€ */
   const savePreferences = async (p: Preferences) => {
@@ -852,28 +886,39 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
         setSavedPrefsSnapshot(normalizedPrefs);
         setInitialPrefsSignature(buildPreferencesSignature(normalizedPrefs));
         setHasSetPreferences(true);
-        setHasCompletedOnboarding(true);
+        const notificationPermissionRequired =
+          !manageMode &&
+          isAndroidNotificationGateRuntime;
+        let notificationsGranted = !notificationPermissionRequired;
 
-        let notificationsGranted = false;
-        if (!manageMode) {
+        if (notificationPermissionRequired) {
           try {
-            const notificationPermission = await runOnboardingNotificationPermissionFlow();
-            notificationsGranted = notificationPermission.granted;
+            notificationsGranted = await runMandatoryNotificationPermissionFlow();
           } catch (e) {
-            if (__DEV__) console.warn('Notification permission flow failed during onboarding:', e);
+            notificationsGranted = false;
+            if (__DEV__) console.warn('Mandatory notification permission flow failed:', e);
           }
+        }
 
-          try {
-            await requestActivityRecognitionPermission();
-            setHasRequestedPermissions(true);
-          } catch (e) {
-            if (__DEV__) console.warn('Activity permission request failed during onboarding:', e);
+        if (!manageMode && (notificationsGranted || !notificationPermissionRequired)) {
+          await runActivityPermissionExplainerFlow();
+        }
+
+        if (!manageMode) {
+          if (isPermissionGateMode) {
+            if (notificationsGranted) {
+              setHasCompletedOnboarding(true);
+            }
+          } else {
+            setHasCompletedOnboarding(
+              !notificationPermissionRequired || notificationsGranted,
+            );
           }
         }
 
         try {
           await syncNudgePlansForCurrentSchedule(normalizedPrefs);
-          if (!manageMode && notificationsGranted) {
+          if (!manageMode && notificationsGranted && isNotificationsSupported) {
             await registerCurrentDeviceForNotifications();
           }
         } catch (e) { console.error(e); }
@@ -888,11 +933,15 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
           preferredWalkingPeriodsEnabled: normalizedPrefs.preferredWalkingPeriodsEnabled,
           preferredWalkingPeriodsCount: normalizedPrefs.preferredWalkingPeriods.length,
           notificationsGranted,
+          permissionGateSource: !manageMode ? permissionGateSource : null,
         });
         setSavingPrefs(false);
         if (manageMode) {
           setManageScreenMode('view');
           setShowSaveToast(true);
+          return;
+        }
+        if (notificationPermissionRequired && !notificationsGranted) {
           return;
         }
         runAllowedNavigation(() => {
@@ -979,11 +1028,15 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
 
   const handleOnboardingContinue = () => {
     if (savingPrefs || !canContinue) return;
+    if (isPermissionGateMode) {
+      void savePreferences(prefs);
+      return;
+    }
     if (!hasChanges) {
-      confirmAndSavePreferences(DEFAULT_PREFERENCES, {
-        title: 'Use recommended preferences',
-        message: 'Continue with GapWalk recommended settings?',
-        actionLabel: 'Yes, continue',
+      confirmAndSavePreferences(prefs, {
+        title: 'Use Current Settings?',
+        message: 'Continue with your current preferences?',
+        actionLabel: 'Continue',
       });
       return;
     }
@@ -1018,6 +1071,16 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
   const preferredPeriodsDisplay = preferredPeriodsList.length > 0
     ? preferredPeriodsList.join('\n')
     : 'No preferred period selected.';
+  const preferencesSubtitle = isPermissionGateMode
+    ? 'Before moving forward, GapWalk needs notification permission for walk reminders.'
+    : manageMode
+      ? (isManageViewOnly
+        ? 'View your preferences. Tap any option to start editing.'
+        : 'Change preferences and tap Save when ready.')
+      : 'Choose what GapWalk should optimize for you.';
+  const onboardingPermissionDialogView = onboardingPermissionDialog
+    ? toOnboardingPermissionDialogView(onboardingPermissionDialog)
+    : onboardingPermissionDialogLastViewRef.current;
 
   /* â•â•â•â•â•â•â•â•â•â•â• render â•â•â•â•â•â•â•â•â•â•â• */
   return (
@@ -1034,11 +1097,7 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
           <View style={styles.content}>
             <ScreenHeader
               title="Preferences"
-              subtitle={manageMode
-                ? (isManageViewOnly
-                  ? 'View your preferences. Tap any option to start editing.'
-                  : 'Change preferences and tap Save when ready.')
-                : 'Choose what GapWalk should optimize for you.'}
+              subtitle={preferencesSubtitle}
               onBack={manageMode ? handleManageBackToOptions : undefined}
             />
 
@@ -1050,7 +1109,16 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
               </View>
             )}
 
-            {!manageMode && !hasSeenAllSections && (
+            {isPermissionGateMode && (
+              <View style={styles.permissionGateCard}>
+                <Text variant="body" style={styles.permissionGateTitle}>Permission Required</Text>
+                <Text variant="bodySmall" style={styles.permissionGateBody}>
+                  Tap Continue to review required permissions. First is notifications for timely walk reminders, then activity tracking for accurate progress.
+                </Text>
+              </View>
+            )}
+
+            {!manageMode && !isPermissionGateMode && !hasSeenAllSections && (
               <View style={styles.reviewGateWarning}>
                 <Text variant="body" style={styles.reviewGateWarningTitle}>Review all sections to continue</Text>
                 <Text variant="bodySmall" style={styles.reviewGateWarningBody}>
@@ -1755,31 +1823,31 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
       <Modal
         visible={onboardingPermissionDialog !== null}
         onClose={() => closeOnboardingPermissionDialog('secondary')}
-        title={onboardingPermissionDialog?.title ?? ''}
-        rightAccessory={(
-          <IconButton
-            onPress={() => closeOnboardingPermissionDialog('secondary')}
-            accessibilityLabel="Close permission dialog"
-            iconName="close"
-            variant="secondary"
-            size="icon"
-          />
-        )}
+        title={onboardingPermissionDialogView?.title ?? ''}
+        dismissOnBackdropPress={onboardingPermissionDialogView?.dismissible ?? true}
+        dismissOnRequestClose={onboardingPermissionDialogView?.dismissible ?? true}
       >
-        <View style={{ paddingBottom: 8 }}>
+        <View
+          style={[
+            styles.permissionOverlayContent,
+            onboardingPermissionDialogView?.contentMinHeight
+              ? { minHeight: onboardingPermissionDialogView.contentMinHeight }
+              : null,
+          ]}
+        >
           <Text variant="body" style={{ color: palette.textMuted, textAlign: 'center', marginBottom: 24 }}>
-            {onboardingPermissionDialog?.message}
+            {onboardingPermissionDialogView?.message}
           </Text>
           <View style={{ flexDirection: 'row', gap: 12 }}>
             <Button
-              title={onboardingPermissionDialog?.secondaryLabel ?? 'Continue'}
+              title={onboardingPermissionDialogView?.secondaryLabel ?? 'Cancel'}
               variant="secondary"
               onPress={() => closeOnboardingPermissionDialog('secondary')}
               style={{ flex: 1 }}
             />
             <Button
-              title={onboardingPermissionDialog?.primaryLabel ?? 'Continue'}
-              variant={onboardingPermissionDialog?.primaryVariant ?? 'primary'}
+              title={onboardingPermissionDialogView?.primaryLabel ?? 'Got it!'}
+              variant={onboardingPermissionDialogView?.primaryVariant ?? 'primary'}
               onPress={() => closeOnboardingPermissionDialog('primary')}
               style={{ flex: 1 }}
             />
@@ -1829,6 +1897,27 @@ const styles = StyleSheet.create({
     textShadowColor: 'rgba(245,158,11,0.22)',
     textShadowOffset: { width: 0, height: 0 },
     textShadowRadius: 4,
+  },
+  permissionGateCard: {
+    marginBottom: 14,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(245,158,11,0.28)',
+    backgroundColor: 'rgba(245,158,11,0.08)',
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    gap: 6,
+  },
+  permissionGateTitle: {
+    color: theme.colors.warning,
+    fontWeight: theme.fontWeight.semibold,
+  },
+  permissionGateBody: {
+    color: theme.colors.warning,
+    lineHeight: 19,
+  },
+  permissionOverlayContent: {
+    paddingBottom: 8,
   },
 
   /* section */

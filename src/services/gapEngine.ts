@@ -6,8 +6,11 @@ import {
   isBefore,
   isWithinInterval,
   parseISO,
+  startOfMinute,
   startOfDay,
+  subDays,
 } from 'date-fns';
+import { plansRepo } from '../data/repositories/plansRepo';
 import { BusyEvent, NudgePlan, Preferences } from '../types';
 import { timeUtils } from '../utils/time';
 
@@ -35,11 +38,35 @@ interface GapSlot {
   score: number;
 }
 
+interface NoScheduleFallbackCandidate {
+  walkStart: Date;
+  gap: TimeInterval;
+  score: number;
+}
+
 const clamp = (value: number, min: number, max: number): number =>
   Math.min(max, Math.max(min, value));
 
 const sameDateKey = (a: Date, b: Date): boolean =>
   format(a, 'yyyy-MM-dd') === format(b, 'yyyy-MM-dd');
+
+export const NO_SCHEDULE_FALLBACK_REASON = 'no_schedule_fallback';
+
+const NO_SCHEDULE_CANDIDATE_STEP_MINUTES = 15;
+const NO_SCHEDULE_HORIZON_DAYS = 14;
+const NO_SCHEDULE_PEAK_SIGMA_MINUTES = 95;
+const NO_SCHEDULE_BUSY_SIGMA_MINUTES = 85;
+
+const NO_SCHEDULE_PEAKS: ReadonlyArray<{ hour: number; minute: number; weight: number }> = [
+  { hour: 8, minute: 15, weight: 1.0 },
+  { hour: 12, minute: 30, weight: 1.3 },
+  { hour: 18, minute: 0, weight: 1.15 },
+];
+
+const NO_SCHEDULE_BUSY_PERIODS: ReadonlyArray<{ hour: number; minute: number; weight: number }> = [
+  { hour: 9, minute: 30, weight: 0.6 },
+  { hour: 15, minute: 0, weight: 0.5 },
+];
 
 export const gapEngine = {
   /**
@@ -53,6 +80,10 @@ export const gapEngine = {
   ): Promise<NudgePlan[]> {
     if (prefs.dailyTargetMinutes <= 0 || prefs.notificationCountPerDay <= 0) {
       return [];
+    }
+
+    if (events.length === 0) {
+      return this.generateNoScheduleFallbackPlans(date, prefs);
     }
 
     const dayStart = startOfDay(date);
@@ -141,6 +172,224 @@ export const gapEngine = {
     }
 
     return plans.filter((plan) => isAfter(parseISO(plan.walkStart), now));
+  },
+
+  /**
+   * Fallback planner for users without any saved schedule data.
+   * Prioritizes common walking windows and adapts based on recent outcomes.
+   */
+  async generateNoScheduleFallbackPlans(
+    date: Date,
+    prefs: Preferences,
+  ): Promise<NudgePlan[]> {
+    const now = new Date();
+    const isToday = sameDateKey(date, now);
+    const dayStart = startOfDay(date);
+    const dayEnd = endOfDay(date);
+    const gracePeriod = prefs.gracePeriodMinutes ?? 2;
+    const preWalkLeadMinutes = prefs.bufferMinutes + gracePeriod;
+    const minReminderGapMinutes = clamp(
+      prefs.notificationMinGapMinutes ?? 60,
+      30,
+      360,
+    );
+
+    const freeWindows = this.findGaps(dayStart, dayEnd, [], prefs);
+    if (freeWindows.length === 0) return [];
+
+    const historySince = startOfDay(
+      subDays(now, NO_SCHEDULE_HORIZON_DAYS - 1),
+    ).toISOString();
+    const recentFallbackPlans = await plansRepo.getByReasonSince(
+      NO_SCHEDULE_FALLBACK_REASON,
+      historySince,
+      300,
+    );
+    const historyWeights = this.buildNoScheduleHistoryWeights(recentFallbackPlans);
+
+    const candidates: NoScheduleFallbackCandidate[] = [];
+    for (const gap of freeWindows) {
+      const earliestWalkStart = addMinutes(gap.start, preWalkLeadMinutes);
+      const latestWalkStart = addMinutes(gap.end, -prefs.minWalkMinutes);
+      if (isAfter(earliestWalkStart, latestWalkStart)) continue;
+
+      let cursor = startOfMinute(earliestWalkStart);
+      while (cursor.getTime() <= latestWalkStart.getTime()) {
+        if (!isToday || isAfter(cursor, now)) {
+          candidates.push({
+            walkStart: cursor,
+            gap,
+            score: this.scoreNoScheduleCandidate({
+              walkStart: cursor,
+              prefs,
+              historyWeights,
+              now,
+              isToday,
+            }),
+          });
+        }
+        cursor = addMinutes(cursor, NO_SCHEDULE_CANDIDATE_STEP_MINUTES);
+      }
+    }
+
+    if (candidates.length === 0) return [];
+
+    const sortedCandidates = candidates.sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      return a.walkStart.getTime() - b.walkStart.getTime();
+    });
+
+    const selected: NoScheduleFallbackCandidate[] = [];
+    for (const candidate of sortedCandidates) {
+      if (selected.length >= prefs.notificationCountPerDay) break;
+      const hasConflict = selected.some((picked) => {
+        const diffMinutes = Math.abs(
+          picked.walkStart.getTime() - candidate.walkStart.getTime(),
+        ) / 60000;
+        return diffMinutes < minReminderGapMinutes;
+      });
+      if (hasConflict) continue;
+      selected.push(candidate);
+    }
+
+    if (selected.length === 0) return [];
+
+    const orderedSelection = selected.sort(
+      (a, b) => a.walkStart.getTime() - b.walkStart.getTime(),
+    );
+
+    const capacities = orderedSelection.map((candidate) => {
+      const minutesUntilGapEnd = Math.floor(
+        (candidate.gap.end.getTime() - candidate.walkStart.getTime()) / 60000,
+      );
+      return Math.max(
+        prefs.minWalkMinutes,
+        Math.min(45, minutesUntilGapEnd),
+      );
+    });
+
+    const minimumTotal = prefs.minWalkMinutes * orderedSelection.length;
+    const targetMinutes = Math.max(minimumTotal, prefs.dailyTargetMinutes);
+    const distributedDurations = this.distributeDurations(
+      targetMinutes,
+      capacities,
+      prefs.minWalkMinutes,
+    ).map((value) => Math.max(prefs.minWalkMinutes, value));
+
+    const plans = orderedSelection.map((candidate, idx) => {
+      const duration = Math.max(
+        prefs.minWalkMinutes,
+        distributedDurations[idx] ?? prefs.minWalkMinutes,
+      );
+      const baseGapStart = addMinutes(candidate.walkStart, -preWalkLeadMinutes);
+      const gapStart = isBefore(baseGapStart, candidate.gap.start)
+        ? candidate.gap.start
+        : baseGapStart;
+
+      const walkEnd = addMinutes(candidate.walkStart, duration);
+      const trailingPadding = Math.max(8, prefs.bufferMinutes);
+      const paddedGapEnd = addMinutes(walkEnd, trailingPadding);
+      const gapEnd = isAfter(paddedGapEnd, candidate.gap.end)
+        ? candidate.gap.end
+        : paddedGapEnd;
+
+      return {
+        id: `plan-fallback-${date.getTime()}-${Math.random().toString(36).slice(2, 11)}`,
+        date: format(date, 'yyyy-MM-dd'),
+        gapStart: gapStart.toISOString(),
+        gapEnd: gapEnd.toISOString(),
+        walkStart: candidate.walkStart.toISOString(),
+        suggestedDurationMinutes: duration,
+        status: 'planned' as const,
+        reason: NO_SCHEDULE_FALLBACK_REASON,
+        createdAt: new Date().toISOString(),
+      };
+    });
+
+    if (!isToday) return plans;
+    return plans.filter((plan) => isAfter(parseISO(plan.walkStart), now));
+  },
+
+  scoreNoScheduleCandidate(params: {
+    walkStart: Date;
+    prefs: Preferences;
+    historyWeights: Map<number, number>;
+    now: Date;
+    isToday: boolean;
+  }): number {
+    const { walkStart, prefs, historyWeights, now, isToday } = params;
+    const minuteOfDay = walkStart.getHours() * 60 + walkStart.getMinutes();
+
+    const peakScore = NO_SCHEDULE_PEAKS.reduce((sum, peak) => {
+      const anchorMinutes = peak.hour * 60 + peak.minute;
+      const delta = Math.abs(minuteOfDay - anchorMinutes);
+      const contribution = Math.exp(
+        -(delta * delta) / (2 * NO_SCHEDULE_PEAK_SIGMA_MINUTES * NO_SCHEDULE_PEAK_SIGMA_MINUTES),
+      );
+      return sum + contribution * peak.weight;
+    }, 0);
+
+    const busyPenalty = NO_SCHEDULE_BUSY_PERIODS.reduce((sum, period) => {
+      const anchorMinutes = period.hour * 60 + period.minute;
+      const delta = Math.abs(minuteOfDay - anchorMinutes);
+      const contribution = Math.exp(
+        -(delta * delta) / (2 * NO_SCHEDULE_BUSY_SIGMA_MINUTES * NO_SCHEDULE_BUSY_SIGMA_MINUTES),
+      );
+      return sum + contribution * period.weight;
+    }, 0);
+
+    let score = peakScore * 100 - busyPenalty * 55;
+
+    if (prefs.preferredWalkingPeriodsEnabled && prefs.preferredWalkingPeriods.length > 0) {
+      if (timeUtils.isInPreferredPeriods(walkStart, prefs.preferredWalkingPeriods)) {
+        score += 35;
+      }
+    }
+
+    const bucket = this.toQuarterHourBucket(walkStart);
+    const adaptiveScore =
+      (historyWeights.get(bucket) ?? 0) * 10 +
+      (historyWeights.get(bucket - 1) ?? 0) * 5 +
+      (historyWeights.get(bucket + 1) ?? 0) * 5;
+    score += clamp(adaptiveScore, -40, 40);
+
+    if (isToday) {
+      const minutesAhead = (walkStart.getTime() - now.getTime()) / 60000;
+      if (minutesAhead >= 0 && minutesAhead <= 180) {
+        score += (180 - minutesAhead) * 0.08;
+      }
+    }
+
+    return score;
+  },
+
+  toQuarterHourBucket(date: Date): number {
+    return date.getHours() * 4 + Math.floor(date.getMinutes() / 15);
+  },
+
+  buildNoScheduleHistoryWeights(plans: NudgePlan[]): Map<number, number> {
+    const weights = new Map<number, number>();
+
+    for (const plan of plans) {
+      const walkStart = parseISO(plan.walkStart);
+      if (Number.isNaN(walkStart.getTime())) continue;
+
+      let delta = 0;
+      if (plan.status === 'completed' || plan.status === 'started') {
+        delta = 2;
+      } else if (
+        plan.status === 'skipped' ||
+        (plan.status === 'cancelled' && plan.reason === 'missed')
+      ) {
+        delta = -2;
+      }
+      if (delta === 0) continue;
+
+      const bucket = this.toQuarterHourBucket(walkStart);
+      weights.set(bucket, (weights.get(bucket) ?? 0) + delta);
+    }
+
+    return weights;
   },
 
   /**

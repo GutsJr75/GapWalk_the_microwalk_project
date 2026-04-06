@@ -1593,6 +1593,14 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
     );
   };
 
+  const handleBackToScheduleSetup = () => {
+    if (navigation.canGoBack()) {
+      navigation.goBack();
+      return;
+    }
+    navigation.navigate('ScheduleSetup');
+  };
+
   const toggleRepeatDay = (dayIndex: number) => {
     setForm((prev) => {
       const next = prev.repeatDays.includes(dayIndex)
@@ -2803,30 +2811,12 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
         ]}
       >
         <View style={[styles.header, manageMode && styles.manageHeaderViewport]}>
-          {manageMode ? (
-            <View style={styles.manageBackRow}>
-              <Pressable
-                onPress={handleManageBackToOptions}
-                testID="manual-back"
-                accessibilityRole="button"
-                accessibilityLabel="Back to options"
-                hitSlop={6}
-                style={({ pressed }) => [
-                  styles.manageBackBtn,
-                  {
-                    backgroundColor: palette.bgSurface,
-                    borderColor: palette.borderStrong,
-                  },
-                  pressed && styles.manageBackBtnPressed,
-                ]}
-              >
-                <AppIcon name="back" size={17} color={palette.textPrimary} />
-              </Pressable>
-            </View>
-          ) : null}
           <ScreenHeader
             title={manageMode ? 'Manage schedule' : 'Set up your schedule'}
             style={[styles.compactScreenHeader, manageMode && styles.manageHeaderTitle]}
+            onBack={manageMode ? handleManageBackToOptions : requireSaveBeforeContinue ? handleBackToScheduleSetup : undefined}
+            backTestID={manageMode ? 'manual-back' : requireSaveBeforeContinue ? 'manual-back-setup' : undefined}
+            backLabel={manageMode ? 'Back to options' : 'Back to schedule setup'}
           />
           {!manageMode && sourceType === 'import' && importedFilename ? (
             <View style={[styles.icsBadge, { backgroundColor: palette.accentMuted, borderColor: palette.accentBorder }]}>
@@ -3425,11 +3415,14 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
           {manageMode ? (
             <TwoActionBar
               secondaryAction={{
-                title: 'Change',
+                title: 'Change Option',
                 onPress: handleManageChangeSource,
                 variant: 'secondary',
                 disabled: savingDone,
                 testID: 'manual-change-source',
+                labelNumberOfLines: 1,
+                labelAdjustsFontSizeToFit: true,
+                labelMinimumFontScale: 0.86,
               }}
               primaryAction={{
                 title: 'Save',
@@ -4533,22 +4526,6 @@ const styles = StyleSheet.create({
   },
   manageHeaderTitle: {
     marginBottom: 10,
-  },
-  manageBackRow: {
-    alignSelf: 'flex-start',
-    marginLeft: 0,
-    marginBottom: theme.spacing.sm,
-  },
-  manageBackBtn: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    borderWidth: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  manageBackBtnPressed: {
-    opacity: 0.86,
   },
   viewOnlyBadge: {
     alignSelf: 'flex-start',

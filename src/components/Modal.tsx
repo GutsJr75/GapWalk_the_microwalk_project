@@ -22,6 +22,8 @@ interface ModalProps {
   title?: string | React.ReactNode;
   leftAccessory?: React.ReactNode;
   rightAccessory?: React.ReactNode;
+  dismissOnBackdropPress?: boolean;
+  dismissOnRequestClose?: boolean;
   children?: React.ReactNode;
 }
 
@@ -31,6 +33,8 @@ export const Modal: React.FC<ModalProps> = ({
   title,
   leftAccessory,
   rightAccessory,
+  dismissOnBackdropPress = true,
+  dismissOnRequestClose = true,
   children,
 }) => {
   const palette = useThemePalette();
@@ -140,11 +144,18 @@ export const Modal: React.FC<ModalProps> = ({
       visible={renderVisible}
       transparent
       animationType="none"
-      onRequestClose={onClose}
+      onRequestClose={() => {
+        if (dismissOnRequestClose) onClose();
+      }}
       statusBarTranslucent
     >
       <View style={styles.kavRoot}>
-        <TouchableWithoutFeedback onPress={() => { Keyboard.dismiss(); onClose(); }}>
+        <TouchableWithoutFeedback
+          onPress={() => {
+            Keyboard.dismiss();
+            if (dismissOnBackdropPress) onClose();
+          }}
+        >
           <Animated.View
             style={[
               styles.backdrop,

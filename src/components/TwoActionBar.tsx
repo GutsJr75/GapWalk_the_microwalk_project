@@ -15,6 +15,10 @@ interface ActionConfig {
   loading?: boolean;
   testID?: string;
   variant?: ActionVariant;
+  labelNumberOfLines?: number;
+  labelAdjustsFontSizeToFit?: boolean;
+  labelMinimumFontScale?: number;
+  labelMaxFontSizeMultiplier?: number;
 }
 
 interface TwoActionBarProps {
@@ -49,6 +53,10 @@ export const TwoActionBar: React.FC<TwoActionBarProps> = ({
             variant={secondaryAction.variant ?? 'secondary'}
             style={styles.halfBtn}
             testID={secondaryAction.testID}
+            labelNumberOfLines={secondaryAction.labelNumberOfLines}
+            labelAdjustsFontSizeToFit={secondaryAction.labelAdjustsFontSizeToFit}
+            labelMinimumFontScale={secondaryAction.labelMinimumFontScale}
+            labelMaxFontSizeMultiplier={secondaryAction.labelMaxFontSizeMultiplier}
           />
           <Button
             title={primaryAction.title}
@@ -58,6 +66,10 @@ export const TwoActionBar: React.FC<TwoActionBarProps> = ({
             variant={primaryAction.variant ?? 'primary'}
             style={styles.halfBtn}
             testID={primaryAction.testID}
+            labelNumberOfLines={primaryAction.labelNumberOfLines}
+            labelAdjustsFontSizeToFit={primaryAction.labelAdjustsFontSizeToFit}
+            labelMinimumFontScale={primaryAction.labelMinimumFontScale}
+            labelMaxFontSizeMultiplier={primaryAction.labelMaxFontSizeMultiplier}
           />
         </View>
       ) : (
@@ -69,6 +81,10 @@ export const TwoActionBar: React.FC<TwoActionBarProps> = ({
           variant={primaryAction.variant ?? 'primary'}
           full
           testID={primaryAction.testID}
+          labelNumberOfLines={primaryAction.labelNumberOfLines}
+          labelAdjustsFontSizeToFit={primaryAction.labelAdjustsFontSizeToFit}
+          labelMinimumFontScale={primaryAction.labelMinimumFontScale}
+          labelMaxFontSizeMultiplier={primaryAction.labelMaxFontSizeMultiplier}
         />
       )}
     </View>

@@ -154,6 +154,32 @@ export const plansRepo = {
 
     return rows.map(mapRowToPlan);
   },
+
+  async getByReasonSince(reason: string, sinceIso: string, limit = 200): Promise<NudgePlan[]> {
+    const db = await getDatabase();
+
+    const rows = await db.getAllAsync<{
+      id: string;
+      date: string;
+      gap_start: string;
+      gap_end: string;
+      walk_start: string;
+      suggested_duration_minutes: number;
+      manual_notify_lead_minutes: number;
+      notifications_enabled: number;
+      status: string;
+      reason: string | null;
+      created_at: string;
+    }>(
+      `SELECT * FROM nudge_plans
+       WHERE reason = ? AND walk_start >= ?
+       ORDER BY walk_start DESC
+       LIMIT ?`,
+      [reason, sinceIso, limit],
+    );
+
+    return rows.map(mapRowToPlan);
+  },
   
   async getUpcomingPlans(limit = 3): Promise<NudgePlan[]> {
     const db = await getDatabase();

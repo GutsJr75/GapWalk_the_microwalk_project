@@ -14,6 +14,9 @@ interface TextProps {
   numberOfLines?: number;
   ellipsizeMode?: React.ComponentProps<typeof RNText>['ellipsizeMode'];
   allowFontScaling?: boolean;
+  adjustsFontSizeToFit?: boolean;
+  minimumFontScale?: number;
+  maxFontSizeMultiplier?: number;
 }
 
 const mapThemeTokenColor = (candidate: string | undefined, mode: 'dark' | 'light'): string | undefined => {
@@ -33,6 +36,9 @@ export const Text: React.FC<TextProps> = ({
   numberOfLines,
   ellipsizeMode,
   allowFontScaling = true,
+  adjustsFontSizeToFit,
+  minimumFontScale,
+  maxFontSizeMultiplier,
 }) => {
   const { themeMode, language } = useAppStore();
   const palette = getThemePalette(themeMode);
@@ -108,6 +114,9 @@ export const Text: React.FC<TextProps> = ({
       numberOfLines={numberOfLines}
       ellipsizeMode={ellipsizeMode}
       allowFontScaling={allowFontScaling}
+      adjustsFontSizeToFit={adjustsFontSizeToFit}
+      minimumFontScale={minimumFontScale}
+      maxFontSizeMultiplier={maxFontSizeMultiplier}
     >
       {displayChildren}
     </RNText>

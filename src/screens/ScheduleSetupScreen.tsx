@@ -615,7 +615,7 @@ const ScheduleSetupScreenInner: React.FC<Props> = ({ navigation, route }) => {
               />
             </View>
             <Text variant="muted" style={styles.deferHint}>
-              You can finish this later from Dashboard &gt; Manage schedule.
+              If you want, you can finish this part later from Dashboard -&gt; Manage Schedule -&gt; Change Option
             </Text>
           </>
         )}

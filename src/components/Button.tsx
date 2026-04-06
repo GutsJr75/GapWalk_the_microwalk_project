@@ -26,6 +26,10 @@ interface ButtonProps {
   textStyle?: StyleProp<TextStyle>;
   full?: boolean;
   testID?: string;
+  labelNumberOfLines?: number;
+  labelAdjustsFontSizeToFit?: boolean;
+  labelMinimumFontScale?: number;
+  labelMaxFontSizeMultiplier?: number;
 }
 
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
@@ -41,6 +45,10 @@ export const Button: React.FC<ButtonProps> = ({
   textStyle,
   full = false,
   testID,
+  labelNumberOfLines,
+  labelAdjustsFontSizeToFit,
+  labelMinimumFontScale,
+  labelMaxFontSizeMultiplier,
 }) => {
   const palette = useThemePalette();
   const visualState = React.useMemo(() => getButtonVisualState(variant, palette), [palette, variant]);
@@ -106,6 +114,10 @@ export const Button: React.FC<ButtonProps> = ({
               { color: visualState.labelColor },
               textStyle,
             ]}
+            numberOfLines={labelNumberOfLines}
+            adjustsFontSizeToFit={labelAdjustsFontSizeToFit}
+            minimumFontScale={labelMinimumFontScale}
+            maxFontSizeMultiplier={labelMaxFontSizeMultiplier}
           >
             {displayTitle}
           </Text>
@@ -119,6 +131,10 @@ export const Button: React.FC<ButtonProps> = ({
             { color: visualState.labelColor },
             textStyle,
           ]}
+          numberOfLines={labelNumberOfLines}
+          adjustsFontSizeToFit={labelAdjustsFontSizeToFit}
+          minimumFontScale={labelMinimumFontScale}
+          maxFontSizeMultiplier={labelMaxFontSizeMultiplier}
         >
           {displayTitle}
         </Text>

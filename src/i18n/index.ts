@@ -5,6 +5,7 @@ const esExact: Record<string, string> = {
   'Back': 'Atras',
   'Cancel': 'Cancelar',
   'Change': 'Cambiar',
+  'Change Option': 'Cambiar opcion',
   'Update': 'Actualizar',
   'Save': 'Guardar',
   'Yes, Save': 'Si, guardar',
@@ -100,6 +101,8 @@ const esExact: Record<string, string> = {
   'Set up your schedule': 'Configura tu horario',
   'Change your schedule source or update existing schedule data.':
     'Cambia la fuente de tu horario o actualiza los datos existentes.',
+  'If you want, you can finish this part later from Dashboard -> Manage Schedule -> Change Option':
+    'Si quieres, puedes terminar esta parte despues desde Panel -> Administrar horario -> Cambiar opcion.',
   'Cancel schedule update?': 'Cancelar actualizacion del horario?',
   'Update schedule source?': 'Actualizar fuente del horario?',
   'No changes to update': 'No hay cambios para actualizar',
@@ -256,6 +259,10 @@ const esExact: Record<string, string> = {
     'Tu privacidad importa. Tu salud tambien.',
   'Visit / Update your schedule': 'Visitar / Actualizar tu horario',
   'Manage schedule': 'Administrar horario',
+  'Manage schedule now': 'Administrar horario ahora',
+  'Manage Schedule Now': 'Administrar horario ahora',
+  'Finish your schedule setup for smarter reminder timing.':
+    'Termina tu configuracion de horario para mejorar el momento de los recordatorios.',
   'Edit/View preferences': 'Editar/Ver preferencias',
   'Edit your choices': 'Editar tus opciones',
   'Edit your Choices': 'Editar tus opciones',

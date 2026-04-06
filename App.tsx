@@ -89,6 +89,8 @@ export type RootStackParamList = {
   | {
     skipScheduleSource?: boolean;
     manageMode?: boolean;
+    enforceNotificationPermission?: boolean;
+    permissionGateSource?: 'onboarding' | 'dashboard';
   }
   | undefined;
   Dashboard:
@@ -206,6 +208,7 @@ function App() {
   const {
     hasCompletedOnboarding,
     setHasCompletedOnboarding,
+    hasSetPreferences,
     setHasSetPreferences,
     setPreferences,
     setScheduleSource,
@@ -227,12 +230,18 @@ function App() {
     setEndWalkMode,
     setAllGuidanceSeen,
   } = useAppStore();
+  const isAndroidNotificationGateRuntime =
+    Platform.OS === 'android' &&
+    isNotificationsSupported;
   const pendingRootRouteRef = useRef<PendingRootRoute | null>(null);
   const handledResponseKeysRef = useRef<Set<string>>(new Set());
   const handledResponseNotificationIdsRef = useRef<Set<string>>(new Set());
   const handledDeliveryIdsRef = useRef<Set<string>>(new Set());
   const [isBootstrapDone, setIsBootstrapDone] = useState(false);
   const [isBootGreetingDone, setIsBootGreetingDone] = useState(false);
+  const [notificationGateSatisfied, setNotificationGateSatisfied] = useState<boolean>(
+    () => !isAndroidNotificationGateRuntime,
+  );
   const [bootGreetingText, setBootGreetingText] = useState('');
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const pulseAnim = useRef(new Animated.Value(1)).current;
@@ -390,6 +399,25 @@ function App() {
     setUpcomingPlans,
   ]);
 
+  const refreshNotificationGateState = useCallback(async (): Promise<boolean> => {
+    if (!isAndroidNotificationGateRuntime) {
+      setNotificationGateSatisfied(true);
+      return true;
+    }
+
+    try {
+      const permissionState = await getNotificationPermissionState();
+      setNotificationGateSatisfied(permissionState.granted);
+      return permissionState.granted;
+    } catch (error) {
+      if (__DEV__) {
+        console.warn('Failed to refresh notification gate state:', error);
+      }
+      setNotificationGateSatisfied(false);
+      return false;
+    }
+  }, [isAndroidNotificationGateRuntime]);
+
   const runScheduledNotificationRecovery = useCallback(async (options?: {
     force?: boolean;
     refreshDashboard?: boolean;
@@ -459,6 +487,22 @@ function App() {
   }, []);
 
   const navigateToDashboard = useCallback((params: RootStackParamList['Dashboard']) => {
+    if (isAndroidNotificationGateRuntime && !notificationGateSatisfied) {
+      const permissionGateParams: RootStackParamList['Preferences'] = {
+        enforceNotificationPermission: true,
+        permissionGateSource: 'dashboard',
+      };
+      if (navigationRef.isReady()) {
+        navigationRef.navigate('Preferences', permissionGateParams);
+      } else {
+        pendingRootRouteRef.current = {
+          name: 'Dashboard',
+          params,
+        };
+      }
+      return;
+    }
+
     if (navigationRef.isReady()) {
       navigationRef.navigate('Dashboard', params);
       return;
@@ -467,7 +511,7 @@ function App() {
       name: 'Dashboard',
       params,
     };
-  }, []);
+  }, [isAndroidNotificationGateRuntime, notificationGateSatisfied]);
 
   const resolveWalkPromptDetails = useCallback(async (planId?: string) => {
     if (!planId) return null;
@@ -794,17 +838,18 @@ function App() {
     if (navigationRef.isReady()) {
       const currentRoute = navigationRef.getCurrentRoute();
       if (currentRoute?.name === 'Walking') {
-        navigationRef.navigate('Dashboard', {
+        navigateToDashboard({
           showPostWalkSummary: true,
           postWalkSessionId: resolvedSession.id,
         });
       }
     }
-  }, [refreshDashboardSnapshot, setActiveWalkSnapshot, setPendingWalkPrompt]);
+  }, [navigateToDashboard, refreshDashboardSnapshot, setActiveWalkSnapshot, setPendingWalkPrompt]);
 
   const initializeApp = async () => {
     try {
       let hasRestoredAuthenticatedSession = false;
+      let notificationGateGranted = !isAndroidNotificationGateRuntime;
 
       try {
         await Font.loadAsync(appFontAssets);
@@ -936,6 +981,8 @@ function App() {
         if (__DEV__) console.warn('Failed to load guidance flags:', e);
       }
 
+      notificationGateGranted = await refreshNotificationGateState();
+
       // Check if user has completed onboarding (preferences saved).
       // If preferences exist but no schedule source (e.g. old install or edge case),
       // create a default manual source so we open to Dashboard.
@@ -960,7 +1007,7 @@ function App() {
       }
 
       if (prefsExist && sourceExists) {
-        setHasCompletedOnboarding(true);
+        setHasCompletedOnboarding(notificationGateGranted);
         setHasSetPreferences(true);
 
         // Load preferences and source into store
@@ -974,11 +1021,8 @@ function App() {
           refreshDashboard: true,
           reason: 'app_init',
         });
-        if (hasRestoredAuthenticatedSession) {
-          const notificationPermission = await getNotificationPermissionState();
-          if (notificationPermission.granted) {
-            void registerCurrentDeviceForNotifications();
-          }
+        if (hasRestoredAuthenticatedSession && notificationGateGranted) {
+          void registerCurrentDeviceForNotifications();
         }
       }
     } catch (error) {
@@ -991,7 +1035,15 @@ function App() {
 
   const palette = getThemePalette(themeMode);
   const isDark = themeMode === 'dark';
-  const canOpenDashboard = isAuthenticated && hasCompletedOnboarding;
+  const shouldOpenPermissionGate =
+    isAuthenticated &&
+    isAndroidNotificationGateRuntime &&
+    hasSetPreferences &&
+    !notificationGateSatisfied;
+  const canOpenDashboard =
+    isAuthenticated &&
+    hasCompletedOnboarding &&
+    notificationGateSatisfied;
   const showBootScreen = !isBootstrapDone || !isBootGreetingDone;
 
   // Fade in main app when bootstrap finishes
@@ -1028,6 +1080,14 @@ function App() {
 
     return () => subscription.remove();
   }, []);
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (nextState) => {
+      if (nextState !== 'active') return;
+      void refreshNotificationGateState();
+    });
+    return () => subscription.remove();
+  }, [refreshNotificationGateState]);
 
   useEffect(() => {
     if (!androidWalkTracking.isSupported()) return;
@@ -1159,7 +1219,14 @@ function App() {
                 if (pendingRoute.name === 'Walking') {
                   navigationRef.navigate('Walking', pendingRoute.params);
                 } else {
-                  navigationRef.navigate('Dashboard', pendingRoute.params);
+                  if (isAndroidNotificationGateRuntime && !notificationGateSatisfied) {
+                    navigationRef.navigate('Preferences', {
+                      enforceNotificationPermission: true,
+                      permissionGateSource: 'dashboard',
+                    });
+                  } else {
+                    navigationRef.navigate('Dashboard', pendingRoute.params);
+                  }
                 }
                 pendingRootRouteRef.current = null;
               }
@@ -1174,7 +1241,11 @@ function App() {
                     : 'guest'
               }
               initialRouteName={
-                canOpenDashboard ? 'Dashboard' : 'Intro'
+                canOpenDashboard
+                  ? 'Dashboard'
+                  : shouldOpenPermissionGate
+                    ? 'Preferences'
+                    : 'Intro'
               }
               screenOptions={{
                 headerShown: false,
@@ -1190,6 +1261,7 @@ function App() {
                   <IntroScreen
                     {...props}
                     isAuthenticated={isAuthenticated}
+                    isNotificationGateSatisfied={!isAndroidNotificationGateRuntime || notificationGateSatisfied}
                     onAuthenticated={() => {
                       setIsAuthenticated(true);
                       // Register device + timezone with backend on fresh login
@@ -1200,7 +1272,18 @@ function App() {
               />
               <Stack.Screen name="ScheduleSetup" component={ScheduleSetupScreen} />
               <Stack.Screen name="ManualSchedule" component={ManualScheduleScreen} />
-              <Stack.Screen name="Preferences" component={PreferencesScreen} />
+              <Stack.Screen
+                name="Preferences"
+                component={PreferencesScreen}
+                initialParams={
+                  shouldOpenPermissionGate
+                    ? {
+                      enforceNotificationPermission: true,
+                      permissionGateSource: 'dashboard',
+                    }
+                    : undefined
+                }
+              />
               <Stack.Screen name="Dashboard" component={DashboardScreen} options={{ animation: 'fade_from_bottom' }} />
               <Stack.Screen name="Walking" component={WalkingScreen} options={{ animation: 'slide_from_bottom' }} />
               <Stack.Screen name="Settings" component={SettingsScreen} />
