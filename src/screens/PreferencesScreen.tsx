@@ -43,9 +43,12 @@ import {
 import { analyticsService } from '../services/analytics';
 import { useAppStore } from '../store';
 import {
+  ActivityRecognitionPermissionState,
+  NotificationPermissionState,
+  getActivityRecognitionPermissionState,
   getNotificationPermissionState,
   openAppSettings,
-  requestActivityRecognitionPermission,
+  requestActivityRecognitionPermissionState,
   requestNotificationPermission,
 } from '../services/permissions';
 import { registerCurrentDeviceForNotifications } from '../services/deviceRegistration';
@@ -86,6 +89,22 @@ interface OnboardingPermissionDialogState {
 }
 
 type OnboardingPermissionDialogView = Omit<OnboardingPermissionDialogState, 'resolve'>;
+type RequiredPermissionKey = 'notifications' | 'activity';
+
+interface RequiredPermissionGateSnapshot {
+  notification: NotificationPermissionState;
+  activity: ActivityRecognitionPermissionState;
+  deniedKeys: RequiredPermissionKey[];
+  allGranted: boolean;
+}
+
+interface RequiredPermissionFlowResult {
+  granted: boolean;
+  notificationsGranted: boolean;
+  activityGranted: boolean;
+}
+
+const ONBOARDING_PERMISSION_DIALOG_CLOSE_RESOLVE_DELAY_MS = 150;
 
 const toOnboardingPermissionDialogView = (
   dialog: OnboardingPermissionDialogState,
@@ -403,6 +422,8 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
   const [confirmDialog, setConfirmDialog] = useState<{ title: string; message: string; confirmText: string; onConfirm: () => void; destructive?: boolean } | null>(null);
   const [onboardingPermissionDialog, setOnboardingPermissionDialog] = useState<OnboardingPermissionDialogState | null>(null);
   const onboardingPermissionDialogLastViewRef = useRef<OnboardingPermissionDialogView | null>(null);
+  const onboardingPermissionDialogResolverRef = useRef<((action: 'primary' | 'secondary') => void) | null>(null);
+  const onboardingPermissionDialogResolveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const showMessage = (title: string, message: string) => setMessageDialog({ title, message });
   const showBinaryConfirm = (title: string, message: string, confirmText: string, onConfirm: () => void, style: 'default' | 'destructive' = 'default') => setConfirmDialog({ title, message, confirmText, onConfirm, destructive: style === 'destructive' });
   const [activeInfo, setActiveInfo] = useState<ActiveInfoState | null>(null);
@@ -415,6 +436,8 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
   const [preferredForm, setPreferredForm] = useState<PreferredPeriodForm[]>([
     toPreferredForm(DEFAULT_PREFERRED_PERIOD),
   ]);
+  const permissionGateAutoPromptStartedRef = useRef(false);
+  const permissionFlowInFlightRef = useRef<Promise<RequiredPermissionFlowResult> | null>(null);
   const allowNextBeforeRemoveRef = useRef(false);
   const quietStartMinuteRef = useRef<TextInput>(null);
   const quietEndMinuteRef = useRef<TextInput>(null);
@@ -426,22 +449,39 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
 
   const promptOnboardingPermissionDialog = useCallback((options: Omit<OnboardingPermissionDialogState, 'resolve'>) => (
     new Promise<'primary' | 'secondary'>((resolve) => {
+      onboardingPermissionDialogResolverRef.current = resolve;
       setOnboardingPermissionDialog({ ...options, resolve });
     })
   ), []);
 
   const closeOnboardingPermissionDialog = useCallback((action: 'primary' | 'secondary') => {
-    setOnboardingPermissionDialog((current) => {
-      if (!current) return null;
-      current.resolve(action);
-      return null;
-    });
+    const resolver = onboardingPermissionDialogResolverRef.current;
+    onboardingPermissionDialogResolverRef.current = null;
+    setOnboardingPermissionDialog(null);
+
+    if (!resolver) return;
+    if (onboardingPermissionDialogResolveTimeoutRef.current) {
+      clearTimeout(onboardingPermissionDialogResolveTimeoutRef.current);
+    }
+    // Let the modal close animation finish before triggering Android permission prompts.
+    onboardingPermissionDialogResolveTimeoutRef.current = setTimeout(() => {
+      resolver(action);
+      onboardingPermissionDialogResolveTimeoutRef.current = null;
+    }, ONBOARDING_PERMISSION_DIALOG_CLOSE_RESOLVE_DELAY_MS);
   }, []);
 
   useEffect(() => {
     if (!onboardingPermissionDialog) return;
     onboardingPermissionDialogLastViewRef.current = toOnboardingPermissionDialogView(onboardingPermissionDialog);
   }, [onboardingPermissionDialog]);
+
+  useEffect(() => () => {
+    if (onboardingPermissionDialogResolveTimeoutRef.current) {
+      clearTimeout(onboardingPermissionDialogResolveTimeoutRef.current);
+      onboardingPermissionDialogResolveTimeoutRef.current = null;
+    }
+    onboardingPermissionDialogResolverRef.current = null;
+  }, []);
 
   const waitForSettingsRoundTrip = useCallback(async () => {
     await new Promise<void>((resolve) => {
@@ -487,64 +527,150 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
     });
   }, [promptOnboardingPermissionDialog]);
 
-  const runMandatoryNotificationPermissionFlow = useCallback(async (): Promise<boolean> => {
-    if (!isAndroidNotificationGateRuntime) return true;
+  const readRequiredPermissionGateSnapshot = useCallback(async (): Promise<RequiredPermissionGateSnapshot> => {
+    const [notification, activity] = await Promise.all([
+      getNotificationPermissionState(),
+      getActivityRecognitionPermissionState(),
+    ]);
+    const deniedKeys: RequiredPermissionKey[] = [];
+    if (!notification.granted) deniedKeys.push('notifications');
+    if (!activity.granted) deniedKeys.push('activity');
+    return {
+      notification,
+      activity,
+      deniedKeys,
+      allGranted: deniedKeys.length === 0,
+    };
+  }, []);
 
-    let permissionState = await getNotificationPermissionState();
-    if (permissionState.granted) return true;
-
-    while (!permissionState.granted) {
-      const primerAction = await promptPermissionDialog({
-        title: permissionState.canAskAgain
-          ? 'Notification Permission Required'
-          : 'Enable Notifications In Settings',
-        message: permissionState.canAskAgain
-          ? 'GapWalk uses notifications to send time-sensitive walk reminders before planned walk windows and when your schedule opens a suitable gap. Without notification access, these reminders cannot be delivered.\n\nAndroid will now show the notification permission prompt. After that, you will see a separate activity-tracking permission request. For the best GapWalk experience, please enable both permissions for reliable reminders and accurate progress tracking.'
-          : 'GapWalk still requires notification access to deliver time-sensitive reminders before planned walk windows and useful free-time gaps. Without this permission, reminder alerts remain unavailable.\n\nTap Got it! to open Settings, enable notifications, and return to GapWalk. After notifications are enabled, you will see a separate activity-tracking permission request. For the best GapWalk experience, please enable both permissions for reliable reminders and accurate progress tracking.',
-        requireDecision: true,
-        contentMinHeight: 300,
-      });
-
-      if (primerAction === 'secondary') {
-        return false;
-      }
-
-      if (!permissionState.canAskAgain) {
-        await openAppSettings();
-        await waitForSettingsRoundTrip();
-        permissionState = await getNotificationPermissionState();
-        continue;
-      }
-
-      permissionState = await requestNotificationPermission();
+  const runMandatoryRequiredPermissionsFlow = useCallback(async (): Promise<RequiredPermissionFlowResult> => {
+    if (permissionFlowInFlightRef.current) {
+      return permissionFlowInFlightRef.current;
     }
 
-    return true;
+    const flowPromise = (async (): Promise<RequiredPermissionFlowResult> => {
+      if (!isAndroidNotificationGateRuntime) {
+        return {
+          granted: true,
+          notificationsGranted: true,
+          activityGranted: true,
+        };
+      }
+
+      let gateState = await readRequiredPermissionGateSnapshot();
+      if (gateState.allGranted) {
+        setHasRequestedPermissions(true);
+        return {
+          granted: true,
+          notificationsGranted: true,
+          activityGranted: true,
+        };
+      }
+
+      let hasShownPrimerOverlay = false;
+      let hasOpenedSettingsForBlockedPermissions = false;
+
+      while (!gateState.allGranted) {
+        const needsNotification = !gateState.notification.granted;
+        const needsActivity = !gateState.activity.granted;
+        const blockedNotification = needsNotification && !gateState.notification.canAskAgain;
+        const blockedActivity = needsActivity && !gateState.activity.canAskAgain;
+        const hasBlockedPermission = blockedNotification || blockedActivity;
+        const isBlockedOverlay = hasShownPrimerOverlay && hasBlockedPermission;
+        const missingPermissionText = needsNotification && needsActivity
+          ? 'notification and activity-tracking permissions'
+          : needsNotification
+            ? 'notification permission'
+            : 'activity-tracking permission';
+        const missingPermissionVerb = needsNotification && needsActivity ? 'are' : 'is';
+        const settingsPermissionText = needsNotification && needsActivity
+          ? 'Notification and Physical activity'
+          : needsNotification
+            ? 'Notification'
+            : 'Physical activity';
+
+        let title = 'Permissions Required';
+        if (hasShownPrimerOverlay) {
+          if (hasBlockedPermission) {
+            title = hasOpenedSettingsForBlockedPermissions
+              ? 'Permission Still Missing'
+              : 'Permission Blocked By Android';
+          } else {
+            title = 'Permission Still Required';
+          }
+        }
+        const message = hasShownPrimerOverlay
+          ? (
+            hasBlockedPermission
+              ? (
+                hasOpenedSettingsForBlockedPermissions
+                  ? `GapWalk still cannot continue because ${missingPermissionText} ${missingPermissionVerb} missing.\n\nAndroid is still blocking GapWalk from requesting ${settingsPermissionText} access in-app.\n\nIn Settings, open Apps > GapWalk > Permissions and allow ${settingsPermissionText} access, then return to GapWalk.\n\nTap Got it! to open Settings again.`
+                  : `GapWalk still cannot continue because ${missingPermissionText} ${missingPermissionVerb} missing.\n\nAndroid is currently blocking one or more permission prompts (for example after "Don't ask again").\n\nIn Settings, open Apps > GapWalk > Permissions and allow ${settingsPermissionText} access.\n\nTap Got it! to open Settings.`
+              )
+              : `GapWalk still cannot continue because ${missingPermissionText} ${missingPermissionVerb} missing.\n\nThis usually means the previous permission prompt was denied or interrupted.\n\nTap Got it! and Android will ask only for the missing permissions again.`
+          )
+          : 'GapWalk requires both notification and activity-tracking permissions to work.\n\nNotifications are required for future walk reminders. Activity tracking is required for accurate walk progress.\n\nTap Got it! to continue and Android will request any missing permissions.';
+
+        const action = await promptPermissionDialog({
+          title,
+          message,
+          primaryLabel: 'Got it!',
+          secondaryLabel: 'Cancel',
+          requireDecision: true,
+        });
+
+        if (action === 'secondary') {
+          return {
+            granted: false,
+            notificationsGranted: gateState.notification.granted,
+            activityGranted: gateState.activity.granted,
+          };
+        }
+        hasShownPrimerOverlay = true;
+
+        if (isBlockedOverlay) {
+          await openAppSettings();
+          hasOpenedSettingsForBlockedPermissions = true;
+          await waitForSettingsRoundTrip();
+          gateState = await readRequiredPermissionGateSnapshot();
+          continue;
+        }
+
+        if (needsNotification) {
+          await requestNotificationPermission();
+        }
+
+        if (needsActivity) {
+          await requestActivityRecognitionPermissionState();
+        }
+
+        gateState = await readRequiredPermissionGateSnapshot();
+      }
+
+      setHasRequestedPermissions(true);
+      return {
+        granted: true,
+        notificationsGranted: true,
+        activityGranted: true,
+      };
+    })();
+
+    permissionFlowInFlightRef.current = flowPromise;
+    try {
+      return await flowPromise;
+    } finally {
+      if (permissionFlowInFlightRef.current === flowPromise) {
+        permissionFlowInFlightRef.current = null;
+      }
+    }
   }, [
     isAndroidNotificationGateRuntime,
     promptPermissionDialog,
+    readRequiredPermissionGateSnapshot,
+    setHasRequestedPermissions,
     waitForSettingsRoundTrip,
   ]);
 
-  const runActivityPermissionExplainerFlow = useCallback(async (): Promise<void> => {
-    if (!isAndroidNotificationGateRuntime) return;
-
-    const activityAction = await promptPermissionDialog({
-      title: 'Activity Permission Up Next',
-      message:
-        'GapWalk uses activity data to measure steps and keep live walk progress and daily goal completion accurate during your walks. Without activity access, progress tracking may be less accurate.\n\nAndroid will now show the activity-tracking permission prompt. For the best GapWalk experience, keep both notifications and activity tracking enabled.',
-      requireDecision: true,
-    });
-
-    if (activityAction === 'secondary') return;
-
-    try {
-      await requestActivityRecognitionPermission();
-      setHasRequestedPermissions(true);
-    } catch (e) {
-      if (__DEV__) console.warn('Activity permission request failed during onboarding:', e);
-    }
-  }, [isAndroidNotificationGateRuntime, promptPermissionDialog, setHasRequestedPermissions]);
   const themedInput = {
     backgroundColor: isDark ? theme.colors.bgApp : palette.bgSurfaceElevated,
     borderColor: isDark ? 'rgba(255,255,255,0.06)' : palette.borderStrong,
@@ -642,6 +768,38 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
     action();
   }, []);
 
+  const handlePermissionGateResolution = useCallback(async () => {
+    if (savingPrefs) return;
+    setSavingPrefs(true);
+    try {
+      const result = await runMandatoryRequiredPermissionsFlow();
+      if (!result.granted) return;
+      const finalGateState = await readRequiredPermissionGateSnapshot();
+      if (!finalGateState.allGranted) return;
+
+      setHasCompletedOnboarding(true);
+      if (finalGateState.notification.granted && isNotificationsSupported) {
+        try {
+          await registerCurrentDeviceForNotifications();
+        } catch (e) {
+          if (__DEV__) console.warn('Failed to register device after permission gate success:', e);
+        }
+      }
+      runAllowedNavigation(() => {
+        navigation.navigate('Dashboard');
+      });
+    } finally {
+      setSavingPrefs(false);
+    }
+  }, [
+    navigation,
+    readRequiredPermissionGateSnapshot,
+    runAllowedNavigation,
+    runMandatoryRequiredPermissionsFlow,
+    savingPrefs,
+    setHasCompletedOnboarding,
+  ]);
+
   const confirmDiscardPreferenceChanges = useCallback((
     onDiscard: () => void,
     options?: {
@@ -681,6 +839,17 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
     });
     return unsubscribe;
   }, [confirmDiscardPreferenceChanges, hasChanges, navigation, savingPrefs]);
+
+  useEffect(() => {
+    if (!isPermissionGateMode || manageMode) {
+      permissionGateAutoPromptStartedRef.current = false;
+      return;
+    }
+    if (permissionGateAutoPromptStartedRef.current) return;
+
+    permissionGateAutoPromptStartedRef.current = true;
+    void handlePermissionGateResolution();
+  }, [handlePermissionGateResolution, isPermissionGateMode, manageMode]);
 
   /* â”€â”€ quiet hours â”€â”€ */
   const openQuietModal = () => {
@@ -886,39 +1055,46 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
         setSavedPrefsSnapshot(normalizedPrefs);
         setInitialPrefsSignature(buildPreferencesSignature(normalizedPrefs));
         setHasSetPreferences(true);
-        const notificationPermissionRequired =
+        const requiredPermissionGateEnabled =
           !manageMode &&
           isAndroidNotificationGateRuntime;
-        let notificationsGranted = !notificationPermissionRequired;
+        let notificationsGranted = true;
+        let activityGranted = true;
+        let requiredPermissionsGranted = true;
 
-        if (notificationPermissionRequired) {
+        if (requiredPermissionGateEnabled) {
           try {
-            notificationsGranted = await runMandatoryNotificationPermissionFlow();
+            const result = await runMandatoryRequiredPermissionsFlow();
+            notificationsGranted = result.notificationsGranted;
+            activityGranted = result.activityGranted;
+            requiredPermissionsGranted = result.granted;
+            const finalGateState = await readRequiredPermissionGateSnapshot();
+            notificationsGranted = finalGateState.notification.granted;
+            activityGranted = finalGateState.activity.granted;
+            requiredPermissionsGranted = result.granted && finalGateState.allGranted;
           } catch (e) {
             notificationsGranted = false;
-            if (__DEV__) console.warn('Mandatory notification permission flow failed:', e);
+            activityGranted = false;
+            requiredPermissionsGranted = false;
+            if (__DEV__) console.warn('Mandatory required-permissions flow failed:', e);
           }
-        }
-
-        if (!manageMode && (notificationsGranted || !notificationPermissionRequired)) {
-          await runActivityPermissionExplainerFlow();
         }
 
         if (!manageMode) {
           if (isPermissionGateMode) {
-            if (notificationsGranted) {
+            if (requiredPermissionsGranted) {
               setHasCompletedOnboarding(true);
             }
           } else {
             setHasCompletedOnboarding(
-              !notificationPermissionRequired || notificationsGranted,
+              !requiredPermissionGateEnabled || requiredPermissionsGranted,
             );
           }
         }
 
         try {
           await syncNudgePlansForCurrentSchedule(normalizedPrefs);
-          if (!manageMode && notificationsGranted && isNotificationsSupported) {
+          if (!manageMode && requiredPermissionsGranted && notificationsGranted && isNotificationsSupported) {
             await registerCurrentDeviceForNotifications();
           }
         } catch (e) { console.error(e); }
@@ -933,6 +1109,8 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
           preferredWalkingPeriodsEnabled: normalizedPrefs.preferredWalkingPeriodsEnabled,
           preferredWalkingPeriodsCount: normalizedPrefs.preferredWalkingPeriods.length,
           notificationsGranted,
+          activityPermissionGranted: activityGranted,
+          requiredPermissionsGranted,
           permissionGateSource: !manageMode ? permissionGateSource : null,
         });
         setSavingPrefs(false);
@@ -941,7 +1119,7 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
           setShowSaveToast(true);
           return;
         }
-        if (notificationPermissionRequired && !notificationsGranted) {
+        if (requiredPermissionGateEnabled && !requiredPermissionsGranted) {
           return;
         }
         runAllowedNavigation(() => {
@@ -1029,6 +1207,10 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
   const handleOnboardingContinue = () => {
     if (savingPrefs || !canContinue) return;
     if (isPermissionGateMode) {
+      if (!hasChanges) {
+        void handlePermissionGateResolution();
+        return;
+      }
       void savePreferences(prefs);
       return;
     }
@@ -1072,7 +1254,7 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
     ? preferredPeriodsList.join('\n')
     : 'No preferred period selected.';
   const preferencesSubtitle = isPermissionGateMode
-    ? 'Before moving forward, GapWalk needs notification permission for walk reminders.'
+    ? 'Before moving forward, GapWalk needs notification and activity permissions.'
     : manageMode
       ? (isManageViewOnly
         ? 'View your preferences. Tap any option to start editing.'
@@ -1113,7 +1295,7 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
               <View style={styles.permissionGateCard}>
                 <Text variant="body" style={styles.permissionGateTitle}>Permission Required</Text>
                 <Text variant="bodySmall" style={styles.permissionGateBody}>
-                  Tap Continue to review required permissions. First is notifications for timely walk reminders, then activity tracking for accurate progress.
+                  Tap Continue to review required permissions. If any are denied, GapWalk will keep asking only for the denied permissions.
                 </Text>
               </View>
             )}
@@ -1835,7 +2017,7 @@ export const PreferencesScreen: React.FC<Props> = ({ navigation, route }) => {
               : null,
           ]}
         >
-          <Text variant="body" style={{ color: palette.textMuted, textAlign: 'center', marginBottom: 24 }}>
+          <Text variant="body" style={{ color: palette.textMuted, textAlign: 'center', marginBottom: 16 }}>
             {onboardingPermissionDialogView?.message}
           </Text>
           <View style={{ flexDirection: 'row', gap: 12 }}>
@@ -1917,7 +2099,7 @@ const styles = StyleSheet.create({
     lineHeight: 19,
   },
   permissionOverlayContent: {
-    paddingBottom: 8,
+    paddingBottom: 0,
   },
 
   /* section */

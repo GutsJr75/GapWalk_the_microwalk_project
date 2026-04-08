@@ -50,6 +50,7 @@ import { Modal as AppModal } from '../components/Modal';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { androidExactNotifications } from '../services/androidExactNotifications';
 import { registerCurrentDeviceForNotifications } from '../services/deviceRegistration';
+import { wipeLocalPersonalData } from '../services/localDataWipe';
 
 // Extracted dashboard components
 import { StreakCard } from './dashboard/StreakCard';
@@ -89,6 +90,8 @@ type ManualReminderChoice = 'atTime' | '5min' | '10min';
 
 const MENU_WIDTH_RATIO = 0.78;
 const MENU_MAX_WIDTH = 360;
+const DASHBOARD_TOUR_READINESS_MAX_ATTEMPTS = 10;
+const DASHBOARD_TOUR_READINESS_POLL_INTERVAL_MS = 90;
 
 const MANUAL_REMINDER_OPTIONS: Array<{ value: ManualReminderChoice; label: string }> = [
   { value: 'atTime', label: 'At walk time' },
@@ -164,8 +167,10 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
     profileDisplayName,
     isAuthenticated,
     hasCompletedOnboarding,
+    setHasCompletedOnboarding,
     setIsAuthenticated,
     setAuthUser,
+    setScheduleSource,
     guidanceSeen,
     setGuidanceSeen,
     pendingInAppWalkPrompt,
@@ -357,14 +362,14 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
   }, []);
 
   const launchTourWhenReady = useCallback(async (): Promise<boolean> => {
-    for (let attempt = 0; attempt < 8; attempt += 1) {
+    for (let attempt = 0; attempt < DASHBOARD_TOUR_READINESS_MAX_ATTEMPTS; attempt += 1) {
       const ready = await areTourTargetsMeasurable();
       if (ready) {
         setShowDashboardTour(true);
         return true;
       }
       await new Promise<void>((resolve) => {
-        setTimeout(resolve, 180);
+        setTimeout(resolve, DASHBOARD_TOUR_READINESS_POLL_INTERVAL_MS);
       });
     }
     return false;
@@ -376,22 +381,17 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
     if (dashboardTourLaunchAttemptedRef.current) return;
 
     let cancelled = false;
-    let timer: ReturnType<typeof setTimeout> | null = null;
-
     const task = InteractionManager.runAfterInteractions(() => {
-      timer = setTimeout(() => {
-        void (async () => {
-          if (cancelled) return;
-          const launched = await launchTourWhenReady();
-          if (launched) dashboardTourLaunchAttemptedRef.current = true;
-        })();
-      }, 600);
+      void (async () => {
+        if (cancelled) return;
+        const launched = await launchTourWhenReady();
+        if (launched) dashboardTourLaunchAttemptedRef.current = true;
+      })();
     });
 
     return () => {
       cancelled = true;
       task.cancel();
-      if (timer) clearTimeout(timer);
     };
   }, [
     hasCompletedOnboarding,
@@ -538,6 +538,7 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
         await notificationService.recoverScheduledNotifications({
           prefs: resolvedPrefs,
           requestPermissions: false,
+          force: true,
         });
         if (androidExactNotifications.isSupported()) {
           await androidExactNotifications.clearRecoveryNeeded();
@@ -1249,7 +1250,15 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
   const handleLogoutFromMenu = () => {
     const doLogout = async () => {
       await firebaseAuthService.signOut();
+      await wipeLocalPersonalData();
       await authStorage.clearAll();
+      setHasCompletedOnboarding(false);
+      setHasSetPreferences(false);
+      setPreferences(null);
+      setScheduleSource(null);
+      setTodayStats(0, 0, 0);
+      setTodaySteps(0);
+      setUpcomingPlans([]);
       setIsAuthenticated(false); setAuthUser(null);
       closeMenu();
       navigation.reset({ index: 0, routes: [{ name: 'Intro' }] });
@@ -1804,6 +1813,7 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
         steps={DASHBOARD_TOUR_STEPS}
         onFinish={handleDashboardTourFinish}
         onBeforeStep={handleBeforeTourStep}
+        startDelayMs={120}
       />
     </SafeAreaView>
   );

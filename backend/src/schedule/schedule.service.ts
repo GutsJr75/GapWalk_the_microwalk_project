@@ -23,16 +23,16 @@ export class ScheduleService {
       update: {
         type: dto.type,
         filename: dto.filename,
-        googleAccessToken: dto.googleAccessToken,
-        googleRefreshToken: dto.googleRefreshToken,
+        googleAccessToken: null,
+        googleRefreshToken: null,
         lastImportedAt: new Date(),
       },
       create: {
         userId,
         type: dto.type,
         filename: dto.filename,
-        googleAccessToken: dto.googleAccessToken,
-        googleRefreshToken: dto.googleRefreshToken,
+        googleAccessToken: null,
+        googleRefreshToken: null,
         lastImportedAt: new Date(),
       },
     });

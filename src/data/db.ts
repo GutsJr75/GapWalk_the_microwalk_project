@@ -183,6 +183,15 @@ const initializeTables = async () => {
 
   // Ensure older local databases are upgraded with newer columns.
   await runMigrations();
+
+  // Security hardening: keep Google OAuth tokens out of local SQLite.
+  await db.runAsync(
+    `UPDATE schedule_source
+     SET google_access_token = NULL,
+         google_refresh_token = NULL
+     WHERE google_access_token IS NOT NULL
+        OR google_refresh_token IS NOT NULL`
+  );
 };
 
 // Migration column definitions grouped by table.

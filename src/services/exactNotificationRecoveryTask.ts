@@ -15,6 +15,7 @@ export default async function exactNotificationRecoveryTask(
   try {
     await notificationService.recoverScheduledNotifications({
       requestPermissions: false,
+      force: true,
     });
     await androidExactNotifications.clearRecoveryNeeded();
   } catch (error) {

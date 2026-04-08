@@ -46,6 +46,8 @@ fun getWalkNudgeNotificationId(planId: String): String = "walk-nudge:$planId"
 
 fun getWalkAlertNotificationId(planId: String): String = "walk-alert:$planId"
 
+fun getWalkReadyNotificationId(planId: String): String = "walk-ready:$planId"
+
 const val WALK_NUDGE_NOTIFICATION_TYPE = "walk_nudge"
 const val WALK_MISSED_NOTIFICATION_TYPE = "walk_missed"
 const val WALK_ALERT_NOTIFICATION_TYPE = "walk_alert"

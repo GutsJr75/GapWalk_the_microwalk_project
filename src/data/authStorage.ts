@@ -188,6 +188,11 @@ export const authStorage = {
     try { return await SecureStore.getItemAsync(LAST_SYNCED_AT_KEY); } catch { return null; }
   },
 
+  async clearLastSyncedAt(): Promise<void> {
+    if (Platform.OS === 'web') return;
+    try { await SecureStore.deleteItemAsync(LAST_SYNCED_AT_KEY); } catch { /* ignore */ }
+  },
+
   async saveLastLoginAt(isoString: string): Promise<void> {
     if (Platform.OS === 'web') return;
     try { await SecureStore.setItemAsync(LAST_LOGIN_AT_KEY, isoString); } catch { /* ignore */ }
@@ -204,5 +209,6 @@ export const authStorage = {
     await SecureStore.deleteItemAsync(AUTH_USER_KEY);
     await SecureStore.deleteItemAsync(REMEMBER_ME_KEY);
     await SecureStore.deleteItemAsync(LAST_LOGIN_AT_KEY);
+    await SecureStore.deleteItemAsync(LAST_SYNCED_AT_KEY);
   },
 };

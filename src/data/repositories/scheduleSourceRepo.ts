@@ -11,16 +11,13 @@ export const scheduleSourceRepo = {
     // Then insert the new one
     await db.runAsync(
       `INSERT INTO schedule_source 
-       (type, filename, last_imported_at, google_connected, 
-        google_access_token, google_refresh_token, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+       (type, filename, last_imported_at, google_connected, updated_at)
+       VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)`,
       [
         source.type,
         source.filename || null,
         source.lastImportedAt || null,
         source.googleConnected ? 1 : 0,
-        source.googleAccessToken || null,
-        source.googleRefreshToken || null,
       ]
     );
   },
@@ -43,8 +40,6 @@ export const scheduleSourceRepo = {
       filename: row.filename || undefined,
       lastImportedAt: row.last_imported_at || undefined,
       googleConnected: row.google_connected === 1,
-      googleAccessToken: row.google_access_token || undefined,
-      googleRefreshToken: row.google_refresh_token || undefined,
     };
   },
   

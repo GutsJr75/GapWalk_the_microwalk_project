@@ -1,10 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Animated, AppState, AppStateStatus, Easing, Linking, Platform, Pressable, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, Animated, AppState, AppStateStatus, Easing, Linking, Platform, Pressable, ScrollView, StyleSheet, View, useWindowDimensions } from 'react-native';
 import MapView, { Marker, Polyline } from 'react-native-maps';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { Ionicons } from '@expo/vector-icons';
 import * as Location from 'expo-location';
 import * as Haptics from 'expo-haptics';
+import * as SecureStore from 'expo-secure-store';
 import { Pedometer } from 'expo-sensors';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { RootStackParamList } from '../../App';
@@ -24,6 +25,7 @@ import { isNotificationsSupported, notificationService } from '../services/notif
 import {
   ForegroundLocationPermissionState,
   getForegroundLocationPermissionState,
+  requestBackgroundWalkTrackingPermission,
   getWalkTrackingPermissionStatus,
   requestWalkTrackingPermissions,
   WalkTrackingPermissionResults,
@@ -93,6 +95,21 @@ const METRIC_UPDATE_DURATION_MS = 180;
 const STEP_METRIC_SCALE = 1.035;
 const DISTANCE_METRIC_SCALE = 1.025;
 const SPEED_METRIC_SCALE = 1.02;
+const WALK_START_LOCATION_OVERLAY_SEEN_KEY = 'gapwalk_walk_start_location_overlay_seen_v1';
+const WALK_START_LOCATION_OPTION_POINTS = [
+  'Choose "Allow only while using the app" to enable live route and distance tracking.',
+  'Choose "Allow all the time" to keep distance updating when the app is not visible.',
+  'You can still start and continue walks if you decline.',
+  'You can enable this later in Settings > Permissions > Location.',
+];
+const BACKGROUND_DISCLOSURE_BENEFIT_POINTS = [
+  'Location is used only during an active walk session.',
+  'Walk route and distance may sync securely to your GapWalk account.',
+  'Distance keeps updating if you lock your screen or switch apps.',
+  'GapWalk does not sell your personal data.',
+];
+
+const clamp = (value: number, min: number, max: number): number => Math.min(max, Math.max(min, value));
 
 const formatClock = (seconds: number): string => {
   const clamped = Math.max(0, Math.floor(seconds));
@@ -162,43 +179,83 @@ const WalkNoticeCard: React.FC<WalkNoticeCardProps> = ({
   onAction,
   actionBusy = false,
 }) => {
-  const accentColor = tone === 'danger' ? '#ef4444' : '#f59e0b';
+  const isDanger = tone === 'danger';
+  const accentColor = isDanger ? '#dc2626' : '#b45309';
+  const titleColor = isDanger
+    ? (themeMode === 'dark' ? '#fecaca' : '#7f1d1d')
+    : (themeMode === 'dark' ? '#ffedd5' : '#7c2d12');
+  const messageColor = isDanger
+    ? (themeMode === 'dark' ? '#fca5a5' : '#991b1b')
+    : (themeMode === 'dark' ? '#fdba74' : '#9a3412');
   const backgroundColor = themeMode === 'dark'
-    ? (tone === 'danger' ? 'rgba(239,68,68,0.10)' : 'rgba(245,158,11,0.10)')
-    : (tone === 'danger' ? 'rgba(239,68,68,0.08)' : 'rgba(245,158,11,0.10)');
+    ? (isDanger ? 'rgba(220,38,38,0.22)' : 'rgba(180,83,9,0.20)')
+    : (isDanger ? 'rgba(254,226,226,0.92)' : 'rgba(255,237,213,0.96)');
   const borderColor = themeMode === 'dark'
-    ? (tone === 'danger' ? 'rgba(239,68,68,0.26)' : 'rgba(245,158,11,0.26)')
-    : (tone === 'danger' ? 'rgba(239,68,68,0.22)' : 'rgba(245,158,11,0.22)');
+    ? (isDanger ? 'rgba(248,113,113,0.52)' : 'rgba(251,191,36,0.50)')
+    : (isDanger ? 'rgba(239,68,68,0.42)' : 'rgba(217,119,6,0.40)');
   const actionBackgroundColor = themeMode === 'dark'
-    ? (tone === 'danger' ? 'rgba(239,68,68,0.16)' : 'rgba(245,158,11,0.16)')
-    : (tone === 'danger' ? 'rgba(239,68,68,0.12)' : 'rgba(245,158,11,0.12)');
+    ? (isDanger ? 'rgba(220,38,38,0.30)' : 'rgba(180,83,9,0.30)')
+    : (isDanger ? 'rgba(254,226,226,0.95)' : 'rgba(255,247,237,0.98)');
   const actionBorderColor = themeMode === 'dark'
-    ? (tone === 'danger' ? 'rgba(239,68,68,0.34)' : 'rgba(245,158,11,0.34)')
-    : (tone === 'danger' ? 'rgba(239,68,68,0.26)' : 'rgba(245,158,11,0.26)');
+    ? (isDanger ? 'rgba(248,113,113,0.66)' : 'rgba(251,191,36,0.62)')
+    : (isDanger ? 'rgba(239,68,68,0.46)' : 'rgba(217,119,6,0.44)');
+  const actionScale = useRef(new Animated.Value(1)).current;
+
+  const animateActionScale = useCallback((toValue: number, duration: number) => {
+    Animated.timing(actionScale, {
+      toValue,
+      duration,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }).start();
+  }, [actionScale]);
+
+  const handleActionPress = useCallback(() => {
+    if (!onAction || actionBusy) return;
+    onAction();
+  }, [actionBusy, onAction]);
+
+  const handleActionPressIn = useCallback(() => {
+    if (!onAction || actionBusy) return;
+    animateActionScale(0.96, 90);
+  }, [actionBusy, animateActionScale, onAction]);
+
+  const handleActionPressOut = useCallback(() => {
+    animateActionScale(1, 130);
+  }, [animateActionScale]);
 
   return (
     <View style={[styles.noticeCard, { backgroundColor, borderColor }]}>
       <Ionicons name={iconName} size={18} color={accentColor} />
       <View style={styles.noticeCopy}>
-        <Text variant="body" style={styles.noticeTitle}>{title}</Text>
-        <Text variant="bodySmall" color={palette.textMuted}>{message}</Text>
-        {actionLabel && onAction ? (
-          <Pressable
-            onPress={onAction}
-            disabled={actionBusy}
+        <Text variant="body" style={[styles.noticeTitle, { color: titleColor }]}>{title}</Text>
+        <Text variant="bodySmall" style={[styles.noticeMessage, { color: messageColor }]}>{message}</Text>
+        {actionLabel ? (
+          <AnimatedPressable
+            onPress={handleActionPress}
+            onPressIn={handleActionPressIn}
+            onPressOut={handleActionPressOut}
+            disabled={actionBusy || !onAction}
+            hitSlop={6}
             style={({ pressed }) => [
               styles.noticeAction,
               {
                 backgroundColor: actionBackgroundColor,
                 borderColor: actionBorderColor,
+                transform: [{ scale: actionScale }],
               },
-              pressed && !actionBusy && { opacity: 0.72 },
+              pressed && !actionBusy && { opacity: 0.9 },
             ]}
           >
-            <Text variant="bodySmall" style={[styles.noticeActionText, { color: accentColor }]}>
-              {actionBusy ? 'Working...' : actionLabel}
-            </Text>
-          </Pressable>
+            <View style={styles.noticeActionContent}>
+              {actionBusy ? (
+                <ActivityIndicator size="small" color={accentColor} />
+              ) : null}
+              <Text variant="bodySmall" style={[styles.noticeActionText, { color: accentColor }]}>
+                {actionBusy ? 'Opening...' : actionLabel}
+              </Text>
+            </View>
+          </AnimatedPressable>
         ) : null}
       </View>
     </View>
@@ -405,6 +462,7 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
   const startedFromNotification = route.params?.startedFromNotification === true;
   const skipStartCountdown = route.params?.skipStartCountdown === true;
   const insets = useSafeAreaInsets();
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const palette = useThemePalette();
   const {
     preferences,
@@ -448,6 +506,9 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
     createForegroundLocationAccessState,
   );
   const [showMapPermissionHelp, setShowMapPermissionHelp] = useState(false);
+  const [showWalkStartLocationOverlay, setShowWalkStartLocationOverlay] = useState(false);
+  const [showBackgroundDisclosureModal, setShowBackgroundDisclosureModal] = useState(false);
+  const [isRequestingBackgroundUpgrade, setIsRequestingBackgroundUpgrade] = useState(false);
 
   const mapRef = useRef<MapView>(null);
   const isMountedRef = useRef(true);
@@ -492,6 +553,8 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
   const prevDistanceRef = useRef(0);
   const prevSpeedRef = useRef('0.0');
   const lastMilestoneRef = useRef(0);
+  const walkStartLocationOverlayResolverRef = useRef<(() => void) | null>(null);
+  const backgroundDisclosureResolverRef = useRef<((value: boolean) => void) | null>(null);
 
   const animateMetricScale = useCallback((
     value: Animated.Value,
@@ -529,8 +592,94 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
     return status;
   }, []);
 
+  const hasSeenWalkStartLocationOverlay = useCallback(async (): Promise<boolean> => {
+    if (Platform.OS !== 'android') return true;
+    try {
+      return (await SecureStore.getItemAsync(WALK_START_LOCATION_OVERLAY_SEEN_KEY)) === '1';
+    } catch {
+      return false;
+    }
+  }, []);
+
+  const markWalkStartLocationOverlaySeen = useCallback(async (): Promise<void> => {
+    if (Platform.OS !== 'android') return;
+    try {
+      await SecureStore.setItemAsync(WALK_START_LOCATION_OVERLAY_SEEN_KEY, '1');
+    } catch {
+      // Non-critical. The flow still works without persistence.
+    }
+  }, []);
+
+  const resolveWalkStartLocationOverlay = useCallback(() => {
+    const resolver = walkStartLocationOverlayResolverRef.current;
+    walkStartLocationOverlayResolverRef.current = null;
+    setShowWalkStartLocationOverlay(false);
+    resolver?.();
+  }, []);
+
+  const waitForWalkStartLocationOverlay = useCallback((): Promise<void> => {
+    if (Platform.OS !== 'android') {
+      return Promise.resolve();
+    }
+
+    return new Promise((resolve) => {
+      if (walkStartLocationOverlayResolverRef.current) {
+        walkStartLocationOverlayResolverRef.current();
+      }
+      walkStartLocationOverlayResolverRef.current = resolve;
+      setShowWalkStartLocationOverlay(true);
+    });
+  }, []);
+
+  const resolveBackgroundDisclosure = useCallback((accepted: boolean) => {
+    const resolver = backgroundDisclosureResolverRef.current;
+    backgroundDisclosureResolverRef.current = null;
+    setShowBackgroundDisclosureModal(false);
+    resolver?.(accepted);
+  }, []);
+
+  const requestBackgroundDisclosureConfirmation = useCallback((): Promise<boolean> => {
+    if (Platform.OS !== 'android') {
+      return Promise.resolve(true);
+    }
+
+    return new Promise((resolve) => {
+      const existingResolver = backgroundDisclosureResolverRef.current;
+      if (existingResolver) {
+        existingResolver(false);
+      }
+      backgroundDisclosureResolverRef.current = resolve;
+      setShowBackgroundDisclosureModal(true);
+    });
+  }, []);
+
+  const requestWalkPermissionsForStart = useCallback(async () => {
+    if (Platform.OS !== 'android') {
+      return requestWalkTrackingPermissions();
+    }
+
+    const hasSeenOverlay = await hasSeenWalkStartLocationOverlay();
+    if (!hasSeenOverlay) {
+      await waitForWalkStartLocationOverlay();
+      await markWalkStartLocationOverlaySeen();
+      return requestWalkTrackingPermissions({
+        requestMode: 'walk_start_first_time',
+      });
+    }
+
+    return requestWalkTrackingPermissions({
+      requestMode: 'walk_start_recurring',
+    });
+  }, [hasSeenWalkStartLocationOverlay, markWalkStartLocationOverlaySeen, waitForWalkStartLocationOverlay]);
+
   useEffect(() => () => {
     isMountedRef.current = false;
+    const overlayResolver = walkStartLocationOverlayResolverRef.current;
+    walkStartLocationOverlayResolverRef.current = null;
+    overlayResolver?.();
+    const resolver = backgroundDisclosureResolverRef.current;
+    backgroundDisclosureResolverRef.current = null;
+    resolver?.(false);
   }, []);
 
   useEffect(() => {
@@ -705,17 +854,136 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
     && fallbackState.usedLocation
     && fallbackState.locationHealth === 'stale'
     && !fallbackState.paused;
+  const backgroundTrackingLimited = isAndroidService
+    ? (
+      hasLiveSession &&
+      Boolean(displayedSnapshot?.locationPermissionGranted) &&
+      !Boolean(displayedSnapshot?.backgroundLocationGranted)
+    )
+    : (
+      sessionStarted &&
+      fallbackState.locationPermissionGranted &&
+      !fallbackState.backgroundLocationGranted
+    );
   const canShowMap = foregroundLocationAccess.granted;
   const mapPermissionActionLabel = 'Go to settings';
-  const mapPermissionToggleLabel = showMapPermissionHelp ? 'Hide steps' : 'Show steps';
+  const mapPermissionToggleLabel = showMapPermissionHelp ? 'Hide Settings Steps' : 'Show Settings Steps';
   const mapPermissionTitle = 'Provide location permission to view the map';
   const mapPermissionMessage = 'GapWalk shows your live position and route only after location access is enabled for this app.';
+  const mapPermissionScale = useMemo(() => {
+    const widthScale = clamp(windowWidth / 390, 0.82, 1);
+    const heightScale = clamp(windowHeight / 844, 0.74, 1);
+    return Math.min(widthScale, heightScale);
+  }, [windowHeight, windowWidth]);
+  const mapPermissionCompactStyles = useMemo(() => {
+    const permissionFontShrinkFactor = 0.8;
+    const cardHorizontalPadding = clamp(Math.round(20 * mapPermissionScale), 14, 20);
+    const cardVerticalPadding = clamp(Math.round(24 * mapPermissionScale), 14, 24);
+    const iconSize = clamp(Math.round(56 * mapPermissionScale), 42, 56);
+    const titleSize = clamp(Math.round(25 * mapPermissionScale * permissionFontShrinkFactor), 14, 20);
+    const titleLineHeight = Math.ceil(titleSize * 1.22);
+    const bodySize = clamp(Math.round(16 * mapPermissionScale), 13, 16);
+    const hintSize = clamp(Math.round(14 * mapPermissionScale * permissionFontShrinkFactor), 10, 12);
+    const hintLineHeight = Math.ceil(hintSize * 1.3);
+    const supportTextSize = clamp(Math.round((bodySize + hintSize) / 2), 12, 14);
+    const supportTextLineHeight = supportTextSize + 5;
+    const toggleSize = clamp(Math.round(14 * mapPermissionScale * permissionFontShrinkFactor), 10, 12);
+    const toggleLineHeight = Math.ceil(toggleSize * 1.3);
+    const buttonSize = clamp(Math.round(16 * mapPermissionScale), 13, 16);
+    const buttonLineHeight = buttonSize + 5;
+
+    return {
+      gate: {
+        padding: clamp(Math.round(20 * mapPermissionScale), 10, 20),
+      },
+      card: {
+        paddingHorizontal: cardHorizontalPadding,
+        paddingVertical: cardVerticalPadding,
+      },
+      iconWrap: {
+        width: iconSize,
+        height: iconSize,
+        borderRadius: iconSize / 2,
+        marginBottom: clamp(Math.round(16 * mapPermissionScale), 10, 16),
+      },
+      title: {
+        fontSize: titleSize,
+        lineHeight: titleLineHeight,
+        marginBottom: clamp(Math.round(10 * mapPermissionScale), 6, 10),
+      },
+      message: {
+        fontSize: supportTextSize,
+        lineHeight: supportTextLineHeight,
+      },
+      hint: {
+        fontSize: supportTextSize,
+        lineHeight: supportTextLineHeight,
+        marginTop: clamp(Math.round(10 * mapPermissionScale), 6, 10),
+      },
+      button: {
+        marginTop: clamp(Math.round(18 * mapPermissionScale), 10, 18),
+      },
+      buttonText: {
+        fontSize: buttonSize,
+        lineHeight: buttonLineHeight,
+      },
+      helpToggle: {
+        marginTop: clamp(Math.round(12 * mapPermissionScale), 8, 12),
+        paddingHorizontal: clamp(Math.round(14 * mapPermissionScale), 10, 14),
+        paddingVertical: clamp(Math.round(12 * mapPermissionScale), 8, 12),
+      },
+      helpToggleText: {
+        fontSize: toggleSize,
+        lineHeight: toggleLineHeight,
+      },
+      helpCard: {
+        marginTop: clamp(Math.round(10 * mapPermissionScale), 8, 10),
+        paddingHorizontal: clamp(Math.round(14 * mapPermissionScale), 10, 14),
+        paddingVertical: clamp(Math.round(14 * mapPermissionScale), 10, 14),
+        gap: clamp(Math.round(8 * mapPermissionScale), 6, 8),
+      },
+      helpStep: {
+        fontSize: hintSize,
+        lineHeight: hintLineHeight,
+      },
+      helpEmphasis: {
+        fontSize: hintSize,
+        lineHeight: hintLineHeight,
+      },
+      helpNote: {
+        fontSize: hintSize,
+        lineHeight: hintLineHeight,
+      },
+      notice: {
+        marginTop: clamp(Math.round(14 * mapPermissionScale), 10, 14),
+      },
+    };
+  }, [mapPermissionScale]);
   const remainingSeconds = useMemo(() => {
     const elapsedSeconds = hasLiveSession ? activeSeconds : 0;
     if (!plan) return elapsedSeconds;
     return Math.max(0, plan.suggestedDurationMinutes * 60 - elapsedSeconds);
   }, [activeSeconds, hasLiveSession, plan]);
   const canLeaveWalkScreenWithoutEnding = isAndroidService && sessionStarted;
+
+  useEffect(() => {
+    if (canShowMap) return undefined;
+
+    let cancelled = false;
+    const pollPermissionState = () => {
+      if (cancelled) return;
+      if (appStateRef.current !== 'active') return;
+      void syncForegroundLocationAccess();
+    };
+
+    pollPermissionState();
+    const intervalId = setInterval(pollPermissionState, 1200);
+
+    return () => {
+      cancelled = true;
+      clearInterval(intervalId);
+    };
+  }, [canShowMap, syncForegroundLocationAccess]);
 
   useEffect(() => {
     if (steps === prevStepsRef.current || steps === 0) return;
@@ -942,7 +1210,7 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
       setIsStartingWalk(true);
 
       try {
-        await requestWalkTrackingPermissions();
+        await requestWalkPermissionsForStart();
         if (cancelled) return;
         await syncForegroundLocationAccess();
         if (cancelled) return;
@@ -1007,7 +1275,7 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
       subscription.remove();
       appStateSubscription.remove();
     };
-  }, [applyAndroidSnapshot, clearStartCountdown, isAndroidService, markPlanStarted, prompt, refreshAndroidSnapshot, runOrSkipStartCountdown, startAndroidSession, syncForegroundLocationAccess]);
+  }, [applyAndroidSnapshot, clearStartCountdown, isAndroidService, markPlanStarted, prompt, refreshAndroidSnapshot, requestWalkPermissionsForStart, runOrSkipStartCountdown, startAndroidSession, syncForegroundLocationAccess]);
 
   useEffect(() => {
     if (!isAndroidService || !foregroundLocationAccess.granted) {
@@ -1415,7 +1683,7 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
     pedometerBaseRef.current = null;
     lastCheckpointBucketRef.current = 0;
 
-    const resolvedPermissions = permissionResults ?? await requestWalkTrackingPermissions();
+    const resolvedPermissions = permissionResults ?? await requestWalkPermissionsForStart();
     applyFallbackPermissionResults(resolvedPermissions);
 
     if (resolvedPermissions.locationForeground) {
@@ -1453,6 +1721,7 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
     hydrateFallbackState,
     notificationTimerMode,
     plan?.suggestedDurationMinutes,
+    requestWalkPermissionsForStart,
     startedFromNotification,
     subscribeFallbackPedometer,
     subscribeFallbackLocationUpdates,
@@ -1468,7 +1737,7 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
     setIsStartingWalk(true);
 
     try {
-      await requestWalkTrackingPermissions();
+      await requestWalkPermissionsForStart();
       if (!isMountedRef.current) return;
 
       const shouldSkipCountdown = options?.skipCountdown === true;
@@ -1498,7 +1767,7 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
     } catch (error) {
       handleStartupFailure(error);
     }
-  }, [applyAndroidSnapshot, handleStartupFailure, isAndroidService, markPlanStarted, runOrSkipStartCountdown, startAndroidSession]);
+  }, [applyAndroidSnapshot, handleStartupFailure, isAndroidService, markPlanStarted, requestWalkPermissionsForStart, runOrSkipStartCountdown, startAndroidSession]);
 
   const beginFallbackWalk = useCallback(async (options?: { skipCountdown?: boolean }) => {
     if (isAndroidService || startFlowLockedRef.current) return;
@@ -1508,7 +1777,7 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
     setIsStartingWalk(true);
 
     try {
-      const permissionResults = await requestWalkTrackingPermissions();
+      const permissionResults = await requestWalkPermissionsForStart();
       if (!isMountedRef.current) return;
       await syncForegroundLocationAccess();
       if (!isMountedRef.current) return;
@@ -1539,7 +1808,7 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
     } catch (error) {
       handleStartupFailure(error);
     }
-  }, [applyFallbackPermissionResults, handleStartupFailure, isAndroidService, markPlanStarted, runOrSkipStartCountdown, startFallbackTracking]);
+  }, [applyFallbackPermissionResults, handleStartupFailure, isAndroidService, markPlanStarted, requestWalkPermissionsForStart, runOrSkipStartCountdown, startFallbackTracking]);
 
   const handleRetryStart = useCallback(async () => {
     if (hasLiveSession || isStartingWalk || startCountdown != null) return;
@@ -2092,8 +2361,43 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
   }, []);
 
   const handleRequestMapAccess = useCallback(() => {
-    void openAppSettings();
-  }, [openAppSettings]);
+    void (async () => {
+      const permissionState = await syncForegroundLocationAccess();
+      if (permissionState.granted) return;
+      await openAppSettings();
+    })();
+  }, [openAppSettings, syncForegroundLocationAccess]);
+
+  const handleEnableBackgroundTracking = useCallback(() => {
+    if (Platform.OS !== 'android' || isRequestingBackgroundUpgrade) return;
+
+    void (async () => {
+      setIsRequestingBackgroundUpgrade(true);
+      try {
+        const granted = await requestBackgroundWalkTrackingPermission({
+          confirmDisclosure: requestBackgroundDisclosureConfirmation,
+        });
+        if (!granted) return;
+
+        if (isAndroidService) {
+          await refreshAndroidSnapshot();
+          return;
+        }
+
+        await refreshFallbackPermissionState();
+      } finally {
+        if (isMountedRef.current) {
+          setIsRequestingBackgroundUpgrade(false);
+        }
+      }
+    })();
+  }, [
+    isAndroidService,
+    isRequestingBackgroundUpgrade,
+    refreshAndroidSnapshot,
+    refreshFallbackPermissionState,
+    requestBackgroundDisclosureConfirmation,
+  ]);
 
   const statusColor = useMemo(() => {
     if (displayState === 'paused') return '#f59e0b';
@@ -2430,14 +2734,36 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
                       message="Distance and route tracking are paused. Time and steps still count."
                     />
                   )}
+                  {backgroundTrackingLimited && (
+                    <WalkNoticeCard
+                      palette={palette}
+                      themeMode={themeMode}
+                      iconName="locate-outline"
+                      title="Background tracking limited"
+                      message="Distance updates may pause when GapWalk is not visible. Enable background tracking for continuous active-walk distance updates."
+                      actionLabel="Enable"
+                      onAction={handleEnableBackgroundTracking}
+                      actionBusy={isRequestingBackgroundUpgrade}
+                    />
+                  )}
                 </View>
               </View>
             </>
           ) : (
             <View style={styles.mapPermissionGate}>
+              <ScrollView
+                style={styles.mapPermissionScroll}
+                contentContainerStyle={[styles.mapPermissionScrollContent, mapPermissionCompactStyles.gate]}
+                showsVerticalScrollIndicator={false}
+                overScrollMode="never"
+                bounces={false}
+                alwaysBounceVertical={false}
+                keyboardShouldPersistTaps="handled"
+              >
               <View
                 style={[
                   styles.mapPermissionCard,
+                  mapPermissionCompactStyles.card,
                   {
                     backgroundColor: palette.bgSurfaceElevated,
                     borderColor: palette.borderSoft,
@@ -2447,32 +2773,43 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
                 <View
                   style={[
                     styles.mapPermissionIconWrap,
+                    mapPermissionCompactStyles.iconWrap,
                     {
                       backgroundColor: themeMode === 'dark' ? 'rgba(59,130,246,0.16)' : 'rgba(59,130,246,0.10)',
                       borderColor: themeMode === 'dark' ? 'rgba(59,130,246,0.28)' : 'rgba(59,130,246,0.18)',
                     },
                   ]}
                 >
-                  <Ionicons name="location-outline" size={24} color={palette.accentPrimary} />
+                  <Ionicons name="location-outline" size={clamp(Math.round(24 * mapPermissionScale), 18, 24)} color={palette.accentPrimary} />
                 </View>
-                <Text variant="title" style={styles.mapPermissionTitle}>{mapPermissionTitle}</Text>
-                <Text variant="body" color={palette.textMuted} style={styles.mapPermissionMessage}>
+                <Text
+                  variant="title"
+                  style={[styles.mapPermissionTitle, mapPermissionCompactStyles.title]}
+                  maxFontSizeMultiplier={1}
+                >
+                  {mapPermissionTitle}
+                </Text>
+                <Text
+                  variant="body"
+                  color={palette.textMuted}
+                  style={[styles.mapPermissionMessage, mapPermissionCompactStyles.message]}
+                  maxFontSizeMultiplier={1}
+                >
                   {mapPermissionMessage}
                 </Text>
-                <Text variant="bodySmall" color={palette.textMuted} style={styles.mapPermissionHint}>
+                <Text
+                  variant="body"
+                  color={palette.textMuted}
+                  style={[styles.mapPermissionHint, mapPermissionCompactStyles.hint]}
+                  maxFontSizeMultiplier={1}
+                >
                   Your walk can still continue without the map. It comes back as soon as location access is enabled.
                 </Text>
-                <Button
-                  title={mapPermissionActionLabel}
-                  onPress={handleRequestMapAccess}
-                  full
-                  style={styles.mapPermissionButton}
-                  testID="walking-map-permission-action"
-                />
                 <Pressable
                   onPress={() => setShowMapPermissionHelp((current) => !current)}
                   style={({ pressed }) => [
                     styles.mapPermissionHelpToggle,
+                    mapPermissionCompactStyles.helpToggle,
                     {
                       backgroundColor: palette.bgSurface,
                       borderColor: palette.borderSoft,
@@ -2480,12 +2817,16 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
                     pressed && { opacity: 0.82 },
                   ]}
                 >
-                  <Text variant="bodySmall" style={styles.mapPermissionHelpToggleText}>
+                  <Text
+                    variant="bodySmall"
+                    style={[styles.mapPermissionHelpToggleText, mapPermissionCompactStyles.helpToggleText]}
+                    maxFontSizeMultiplier={1}
+                  >
                     {mapPermissionToggleLabel}
                   </Text>
                   <Ionicons
                     name={showMapPermissionHelp ? 'chevron-up-outline' : 'chevron-down-outline'}
-                    size={16}
+                    size={clamp(Math.round(16 * mapPermissionScale), 14, 16)}
                     color={palette.textMuted}
                   />
                 </Pressable>
@@ -2493,31 +2834,50 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
                   <View
                     style={[
                       styles.mapPermissionHelpCard,
+                      mapPermissionCompactStyles.helpCard,
                       {
                         backgroundColor: palette.bgSurface,
                         borderColor: palette.borderSoft,
                       },
                     ]}
                   >
-                    <Text variant="bodySmall" style={styles.mapPermissionHelpStep}>
-                      1. Tap <Text variant="bodySmall" style={styles.mapPermissionHelpEmphasis}>Go to settings</Text>.
+                    <Text variant="bodySmall" style={[styles.mapPermissionHelpStep, mapPermissionCompactStyles.helpStep]} maxFontSizeMultiplier={1}>
+                      1. Tap <Text variant="bodySmall" style={[styles.mapPermissionHelpEmphasis, mapPermissionCompactStyles.helpEmphasis]} maxFontSizeMultiplier={1}>Go to settings</Text>.
                     </Text>
-                    <Text variant="bodySmall" style={styles.mapPermissionHelpStep}>
-                      2. Open <Text variant="bodySmall" style={styles.mapPermissionHelpEmphasis}>Permissions</Text>.
+                    <Text variant="bodySmall" style={[styles.mapPermissionHelpStep, mapPermissionCompactStyles.helpStep]} maxFontSizeMultiplier={1}>
+                      2. Open <Text variant="bodySmall" style={[styles.mapPermissionHelpEmphasis, mapPermissionCompactStyles.helpEmphasis]} maxFontSizeMultiplier={1}>Permissions</Text>.
                     </Text>
-                    <Text variant="bodySmall" style={styles.mapPermissionHelpStep}>
-                      3. Choose <Text variant="bodySmall" style={styles.mapPermissionHelpEmphasis}>Location</Text>.
+                    <Text variant="bodySmall" style={[styles.mapPermissionHelpStep, mapPermissionCompactStyles.helpStep]} maxFontSizeMultiplier={1}>
+                      3. Choose <Text variant="bodySmall" style={[styles.mapPermissionHelpEmphasis, mapPermissionCompactStyles.helpEmphasis]} maxFontSizeMultiplier={1}>Location</Text>.
                     </Text>
-                    <Text variant="bodySmall" style={styles.mapPermissionHelpStep}>
-                      4. Select <Text variant="bodySmall" style={styles.mapPermissionHelpEmphasis}>Allow only while using the app</Text>.
+                    <Text variant="bodySmall" style={[styles.mapPermissionHelpStep, mapPermissionCompactStyles.helpStep]} maxFontSizeMultiplier={1}>
+                      4. Select <Text variant="bodySmall" style={[styles.mapPermissionHelpEmphasis, mapPermissionCompactStyles.helpEmphasis]} maxFontSizeMultiplier={1}>Allow only while using the app</Text>.
                     </Text>
-                    <Text variant="bodySmall" color={palette.textMuted} style={styles.mapPermissionHelpNote}>
-                      Optional: choose <Text variant="bodySmall" style={styles.mapPermissionHelpEmphasis}>Allow all the time</Text> only if you want tracking to keep updating after locking your screen or switching apps.
+                    <Text
+                      variant="bodySmall"
+                      color={palette.textMuted}
+                      style={[styles.mapPermissionHelpNote, mapPermissionCompactStyles.helpNote]}
+                      maxFontSizeMultiplier={1}
+                    >
+                      Optional: choose <Text variant="bodySmall" style={[styles.mapPermissionHelpEmphasis, mapPermissionCompactStyles.helpEmphasis]} maxFontSizeMultiplier={1}>Allow all the time</Text> only if you want tracking to keep updating after locking your screen or switching apps.
                     </Text>
                   </View>
                 ) : null}
+                <Button
+                  title={mapPermissionActionLabel}
+                  onPress={handleRequestMapAccess}
+                  full
+                  size={mapPermissionScale < 0.9 ? 'compact' : 'default'}
+                  style={[styles.mapPermissionButton, mapPermissionCompactStyles.button]}
+                  textStyle={mapPermissionCompactStyles.buttonText}
+                  labelNumberOfLines={1}
+                  labelAdjustsFontSizeToFit
+                  labelMinimumFontScale={0.82}
+                  labelMaxFontSizeMultiplier={1}
+                  testID="walking-map-permission-action"
+                />
                 {startupError && (
-                  <View style={styles.mapPermissionNotice}>
+                  <View style={[styles.mapPermissionNotice, mapPermissionCompactStyles.notice]}>
                     <WalkNoticeCard
                       palette={palette}
                       themeMode={themeMode}
@@ -2531,6 +2891,7 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
                   </View>
                 )}
               </View>
+              </ScrollView>
             </View>
           )}
         </View>
@@ -2590,6 +2951,109 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
           ) : null}
         </Animated.View>
       </View>
+
+      <Modal
+        visible={showWalkStartLocationOverlay}
+        onClose={resolveWalkStartLocationOverlay}
+        title="Location permission"
+        dismissOnBackdropPress={false}
+        dismissOnRequestClose={false}
+      >
+        <View
+          style={[
+            styles.walkStartLocationOverlayBadge,
+            {
+              backgroundColor: themeMode === 'dark' ? 'rgba(59,130,246,0.16)' : 'rgba(59,130,246,0.11)',
+              borderColor: themeMode === 'dark' ? 'rgba(59,130,246,0.30)' : 'rgba(59,130,246,0.22)',
+            },
+          ]}
+        >
+          <Ionicons name="navigate-outline" size={20} color={palette.accentPrimary} />
+          <Text variant="bodySmall" style={[styles.walkStartLocationOverlayBadgeText, { color: palette.accentPrimary }]}>
+            Setup shown once before your first walk
+          </Text>
+        </View>
+
+        <Text variant="body" style={styles.walkStartLocationOverlayIntro}>
+          GapWalk uses location to track your live route and distance during walks. Android permission screens are up next.
+        </Text>
+
+        <View style={styles.walkStartLocationOverlayBulletList}>
+          {WALK_START_LOCATION_OPTION_POINTS.map((item) => (
+            <View key={item} style={styles.walkStartLocationOverlayBulletRow}>
+              <View style={[styles.walkStartLocationOverlayBulletDot, { backgroundColor: palette.accentPrimary }]} />
+              <Text variant="bodySmall" color={palette.textMuted} style={styles.walkStartLocationOverlayBulletText}>
+                {item}
+              </Text>
+            </View>
+          ))}
+        </View>
+
+        <Button
+          title="Got it!"
+          onPress={resolveWalkStartLocationOverlay}
+          full
+          testID="walking-first-location-overlay-got-it"
+        />
+      </Modal>
+
+      <Modal
+        visible={showBackgroundDisclosureModal}
+        onClose={() => resolveBackgroundDisclosure(false)}
+        title="Allow background location for active walks?"
+        dismissOnBackdropPress={false}
+        dismissOnRequestClose={false}
+      >
+        <View
+          style={[
+            styles.backgroundDisclosureBadge,
+            {
+              backgroundColor: themeMode === 'dark' ? 'rgba(46,233,166,0.14)' : 'rgba(5,150,105,0.11)',
+              borderColor: themeMode === 'dark' ? 'rgba(46,233,166,0.30)' : 'rgba(5,150,105,0.22)',
+            },
+          ]}
+        >
+          <Ionicons name="shield-checkmark-outline" size={20} color={palette.accentPrimary} />
+          <Text variant="bodySmall" style={[styles.backgroundDisclosureBadgeText, { color: palette.accentPrimary }]}>
+            Needed for continuous active walk tracking
+          </Text>
+        </View>
+
+        <Text variant="body" style={styles.backgroundDisclosureIntro}>
+          GapWalk collects location data to track distance during an active walk, including when the app is closed or not in use.
+        </Text>
+
+        <View style={styles.backgroundDisclosureBulletList}>
+          {BACKGROUND_DISCLOSURE_BENEFIT_POINTS.map((item) => (
+            <View key={item} style={styles.backgroundDisclosureBulletRow}>
+              <View style={[styles.backgroundDisclosureBulletDot, { backgroundColor: palette.accentPrimary }]} />
+              <Text variant="bodySmall" color={palette.textMuted} style={styles.backgroundDisclosureBulletText}>
+                {item}
+              </Text>
+            </View>
+          ))}
+        </View>
+
+        <Text variant="bodySmall" color={palette.textMuted} style={styles.backgroundDisclosureFooter}>
+          Continue to open Android&apos;s permission screen.
+        </Text>
+
+        <View style={styles.modalRow}>
+          <Button
+            title="Not now"
+            onPress={() => resolveBackgroundDisclosure(false)}
+            variant="outline"
+            style={styles.modalButton}
+            testID="walking-background-location-disclosure-decline"
+          />
+          <Button
+            title="Continue"
+            onPress={() => resolveBackgroundDisclosure(true)}
+            style={styles.modalButton}
+            testID="walking-background-location-disclosure-continue"
+          />
+        </View>
+      </Modal>
 
       <Modal visible={showEndModal} onClose={() => { void closeEndModal(); }} title="End this walk?">
         <Text variant="body" style={styles.modalText}>
@@ -2716,27 +3180,6 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
                 onAction={dismissCompletion}
               />
             </Animated.View>
-            <View style={styles.completionGlowAmbient} pointerEvents="none">
-              <Animated.View
-                style={[
-                  styles.completionGlow,
-                  {
-                    backgroundColor: completionKind === 'saved_later'
-                      ? (themeMode === 'dark' ? 'rgba(56,189,248,0.24)' : 'rgba(56,189,248,0.18)')
-                      : (themeMode === 'dark' ? 'rgba(46,233,166,0.22)' : 'rgba(5,150,105,0.18)'),
-                    opacity: completionGlowAnim,
-                    transform: [
-                      {
-                        scale: completionGlowAnim.interpolate({
-                          inputRange: [0, 1],
-                          outputRange: [0.65, 1.18],
-                        }),
-                      },
-                    ],
-                  },
-                ]}
-              />
-            </View>
           </Animated.View>
         </Animated.View>
       )}
@@ -2789,9 +3232,16 @@ const styles = StyleSheet.create({
   },
   mapPermissionGate: {
     flex: 1,
+  },
+  mapPermissionScroll: {
+    width: '100%',
+    flex: 1,
+  },
+  mapPermissionScrollContent: {
+    flexGrow: 1,
+    width: '100%',
     alignItems: 'center',
     justifyContent: 'center',
-    padding: 20,
   },
   mapPermissionCard: {
     width: '100%',
@@ -3003,13 +3453,13 @@ const styles = StyleSheet.create({
   },
   noticeCard: {
     flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
+    alignItems: 'flex-start',
+    gap: 10,
     marginTop: 10,
     borderRadius: 14,
     borderWidth: 1,
     paddingHorizontal: 12,
-    paddingVertical: 8,
+    paddingVertical: 10,
   },
   noticeCopy: {
     flex: 1,
@@ -3018,13 +3468,24 @@ const styles = StyleSheet.create({
   noticeTitle: {
     fontWeight: theme.fontWeight.semibold,
   },
+  noticeMessage: {
+    lineHeight: 22,
+  },
   noticeAction: {
     alignSelf: 'flex-start',
-    marginTop: 2,
+    marginTop: 4,
+    minHeight: 36,
     borderWidth: 1,
     borderRadius: 999,
     paddingHorizontal: 12,
-    paddingVertical: 8,
+    paddingVertical: 7,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  noticeActionContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
   },
   noticeActionText: {
     fontWeight: theme.fontWeight.semibold,
@@ -3273,6 +3734,84 @@ const styles = StyleSheet.create({
     letterSpacing: -0.5,
     fontVariant: ['tabular-nums' as const],
   },
+  walkStartLocationOverlayBadge: {
+    borderRadius: 14,
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginBottom: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  walkStartLocationOverlayBadgeText: {
+    fontWeight: theme.fontWeight.semibold,
+    lineHeight: 18,
+  },
+  walkStartLocationOverlayIntro: {
+    marginBottom: 12,
+    lineHeight: 22,
+  },
+  walkStartLocationOverlayBulletList: {
+    gap: 10,
+    marginBottom: 16,
+  },
+  walkStartLocationOverlayBulletRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+  },
+  walkStartLocationOverlayBulletDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    marginTop: 6,
+  },
+  walkStartLocationOverlayBulletText: {
+    flex: 1,
+    lineHeight: 20,
+  },
+  backgroundDisclosureBadge: {
+    borderRadius: 14,
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginBottom: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  backgroundDisclosureBadgeText: {
+    fontWeight: theme.fontWeight.semibold,
+    lineHeight: 18,
+  },
+  backgroundDisclosureIntro: {
+    marginBottom: 12,
+    lineHeight: 22,
+  },
+  backgroundDisclosureBulletList: {
+    gap: 10,
+    marginBottom: 12,
+  },
+  backgroundDisclosureBulletRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+  },
+  backgroundDisclosureBulletDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    marginTop: 6,
+  },
+  backgroundDisclosureBulletText: {
+    flex: 1,
+    lineHeight: 20,
+  },
+  backgroundDisclosureFooter: {
+    marginBottom: 18,
+    lineHeight: 18,
+  },
   modalText: {
     marginBottom: 18,
     lineHeight: 22,
@@ -3339,24 +3878,12 @@ const styles = StyleSheet.create({
     width: '100%',
     zIndex: 1,
   },
-  completionGlowAmbient: {
-    ...StyleSheet.absoluteFillObject,
-    alignItems: 'center',
-    justifyContent: 'flex-start',
-    paddingTop: 24,
-  },
   completionHeroWrap: {
     width: 120,
     height: 120,
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 4,
-  },
-  completionGlow: {
-    position: 'absolute',
-    width: 112,
-    height: 112,
-    borderRadius: 999,
   },
   completionHeroBadge: {
     width: 84,

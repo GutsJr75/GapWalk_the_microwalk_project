@@ -20,6 +20,7 @@ import { useAppStore } from '../store';
 import { authStorage } from '../data/authStorage';
 import { firebaseAuthService } from '../services/firebaseAuth';
 import { sessionsRepo } from '../data/repositories/sessionsRepo';
+import { wipeLocalPersonalData } from '../services/localDataWipe';
 
 import { calculateStreak, calculateWeeklyStats } from '../utils/statsUtils';
 import { toUserFriendlyError } from '../utils/errorMessages';
@@ -70,6 +71,13 @@ export const ProfileScreen: React.FC<Props> = ({ navigation }) => {
     profileDisplayName,
     setProfileDisplayName,
     isAuthenticated,
+    setHasCompletedOnboarding,
+    setHasSetPreferences,
+    setPreferences,
+    setScheduleSource,
+    setTodayStats,
+    setTodaySteps,
+    setUpcomingPlans,
     setIsAuthenticated,
     setAuthUser,
     distanceUnit,
@@ -202,7 +210,15 @@ export const ProfileScreen: React.FC<Props> = ({ navigation }) => {
   const handleLogout = () => {
     const doLogout = async () => {
       await firebaseAuthService.signOut();
+      await wipeLocalPersonalData();
       await authStorage.clearAll();
+      setHasCompletedOnboarding(false);
+      setHasSetPreferences(false);
+      setPreferences(null);
+      setScheduleSource(null);
+      setTodayStats(0, 0, 0);
+      setTodaySteps(0);
+      setUpcomingPlans([]);
       setIsAuthenticated(false);
       setAuthUser(null);
       navigation.navigate('Intro');
@@ -347,25 +363,45 @@ export const ProfileScreen: React.FC<Props> = ({ navigation }) => {
               <View style={[styles.statsRow, compactProfile && styles.statsRowCompact]}>
                 <View style={[styles.statColumn, compactProfile && styles.statColumnCompact]}>
                   <Ionicons name="flame-outline" size={16} color={palette.trendDown} style={styles.statIcon} />
-                  <Text variant="title" style={[styles.statValue, compactProfile && styles.statValueCompact, { color: palette.trendDown }]}>{progress.currentStreak}</Text>
+                  <View style={[styles.statValueGroup, compactProfile && styles.statValueGroupCompact]}>
+                    <Text variant="title" style={[styles.statValue, compactProfile && styles.statValueCompact, { color: palette.trendDown }]}>
+                      {progress.currentStreak}
+                    </Text>
+                  </View>
                   <Text variant="bodySmall" color={palette.textMuted} style={styles.statLabel}>Streak</Text>
                 </View>
                 <View style={[styles.statColumn, compactProfile && styles.statColumnCompact]}>
                   <Ionicons name="walk-outline" size={16} color={palette.accentPrimary} style={styles.statIcon} />
-                  <Text variant="title" style={[styles.statValue, compactProfile && styles.statValueCompact, { color: palette.accentPrimary }]}>{progress.totalWalks}</Text>
+                  <View style={[styles.statValueGroup, compactProfile && styles.statValueGroupCompact]}>
+                    <Text variant="title" style={[styles.statValue, compactProfile && styles.statValueCompact, { color: palette.accentPrimary }]}>
+                      {progress.totalWalks}
+                    </Text>
+                  </View>
                   <Text variant="bodySmall" color={palette.textMuted} style={styles.statLabel}>Walks</Text>
                 </View>
                 <View style={[styles.statColumn, compactProfile && styles.statColumnCompact]}>
                   <Ionicons name="time-outline" size={16} color={palette.info} style={styles.statIcon} />
-                  <Text variant="title" style={[styles.statValue, compactProfile && styles.statValueCompact, { color: palette.info }]}>{progress.totalMinutes}</Text>
+                  <View style={[styles.statValueGroup, compactProfile && styles.statValueGroupCompact]}>
+                    <Text variant="title" style={[styles.statValue, compactProfile && styles.statValueCompact, { color: palette.info }]}>
+                      {progress.totalMinutes}
+                    </Text>
+                  </View>
                   <Text variant="bodySmall" color={palette.textMuted} style={styles.statLabel}>Minutes</Text>
                 </View>
                 <View style={[styles.statColumn, compactProfile && styles.statColumnCompact]}>
                   <Ionicons name="calendar-outline" size={16} color={palette.success} style={styles.statIcon} />
-                  <Text variant="title" style={[styles.statValue, compactProfile && styles.statValueCompact, { color: palette.success }]}>
-                    {progress.activeDaysThisWeek}
+                  <View
+                    style={[
+                      styles.statValueGroup,
+                      styles.statValueGroupFraction,
+                      compactProfile && styles.statValueGroupCompact,
+                    ]}
+                  >
+                    <Text variant="title" style={[styles.statValue, compactProfile && styles.statValueCompact, { color: palette.success }]}>
+                      {progress.activeDaysThisWeek}
+                    </Text>
                     <Text style={[styles.statDenominator, compactProfile && styles.statDenominatorCompact, { color: palette.success }]}>/7</Text>
-                  </Text>
+                  </View>
                   <Text variant="bodySmall" color={palette.textMuted} style={styles.statLabel}>Active</Text>
                 </View>
               </View>
@@ -575,24 +611,43 @@ const styles = StyleSheet.create({
   statIcon: {
     marginBottom: 2,
   },
+  statValueGroup: {
+    minHeight: 34,
+    justifyContent: 'flex-end',
+    alignItems: 'center',
+    marginBottom: 2,
+  },
+  statValueGroupCompact: {
+    minHeight: 30,
+  },
+  statValueGroupFraction: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+  },
   statLabel: {
     fontSize: theme.fontSize.xs,
   },
   statValue: {
     fontWeight: theme.fontWeight.bold,
-    marginBottom: 2,
+    lineHeight: 30,
+    includeFontPadding: false,
+    textAlign: 'center',
   },
   statValueCompact: {
     fontSize: theme.fontSize.lg,
+    lineHeight: 26,
   },
   statDenominator: {
     fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.semibold,
-    lineHeight: 18,
+    lineHeight: 22,
+    includeFontPadding: false,
+    marginLeft: 1,
+    paddingBottom: Platform.OS === 'android' ? 1 : 0,
   },
   statDenominatorCompact: {
     fontSize: theme.fontSize.xs,
-    lineHeight: 16,
+    lineHeight: 18,
   },
   allTimeHeader: {
     flexDirection: 'row',

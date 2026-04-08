@@ -54,8 +54,12 @@ export const WalkCompletionSummary: React.FC<WalkCompletionSummaryProps> = ({
     ? 'rgba(56,189,248,0.28)'
     : (themeMode === 'dark' ? 'rgba(46,233,166,0.28)' : 'rgba(5,150,105,0.24)');
   const heroBackgroundColor = themeMode === 'dark'
-    ? 'rgba(255,255,255,0.03)'
-    : 'rgba(255,255,255,0.75)';
+    ? (savedForLater ? 'rgba(56,189,248,0.12)' : 'rgba(46,233,166,0.12)')
+    : (savedForLater ? 'rgba(56,189,248,0.12)' : 'rgba(16,185,129,0.14)');
+  const heroInnerBackgroundColor = themeMode === 'dark'
+    ? 'rgba(3,12,24,0.72)'
+    : 'rgba(255,255,255,0.92)';
+  const heroIconName = savedForLater ? 'bookmark' : 'checkmark-circle';
 
   const statItems = [
     {
@@ -80,29 +84,17 @@ export const WalkCompletionSummary: React.FC<WalkCompletionSummaryProps> = ({
       <View style={styles.heroWrap}>
         <View
           style={[
-            styles.heroBadge,
+            styles.heroBadgeOuter,
             {
               backgroundColor: heroBackgroundColor,
               borderColor: heroBorderColor,
             },
           ]}
         >
-          <Ionicons
-            name={savedForLater ? 'bookmark' : 'footsteps'}
-            size={38}
-            color={accentColor}
-          />
-          <View style={[styles.heroSatellite, styles.heroSatelliteLeft]}>
+          <View style={[styles.heroBadgeInner, { backgroundColor: heroInnerBackgroundColor, borderColor: heroBorderColor }]}>
             <Ionicons
-              name={savedForLater ? 'walk' : 'sparkles'}
-              size={18}
-              color={accentColor}
-            />
-          </View>
-          <View style={[styles.heroSatellite, styles.heroSatelliteRight]}>
-            <Ionicons
-              name={savedForLater ? 'time-outline' : 'checkmark-circle'}
-              size={18}
+              name={heroIconName}
+              size={46}
               color={accentColor}
             />
           </View>
@@ -152,34 +144,25 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   heroWrap: {
-    marginBottom: 22,
+    marginBottom: 20,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  heroBadge: {
-    width: 112,
-    height: 112,
-    borderRadius: 56,
+  heroBadgeOuter: {
+    width: 108,
+    height: 108,
+    borderRadius: 54,
     borderWidth: 1,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  heroSatellite: {
-    position: 'absolute',
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    backgroundColor: 'rgba(15,23,42,0.06)',
+  heroBadgeInner: {
+    width: 74,
+    height: 74,
+    borderRadius: 37,
+    borderWidth: 1,
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  heroSatelliteLeft: {
-    left: -4,
-    top: 12,
-  },
-  heroSatelliteRight: {
-    right: -4,
-    bottom: 12,
   },
   title: {
     textAlign: 'center',

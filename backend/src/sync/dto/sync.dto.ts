@@ -2,6 +2,7 @@ import {
   IsOptional,
   IsDateString,
   IsArray,
+  ArrayMaxSize,
   ValidateNested,
   IsString,
   IsInt,
@@ -176,6 +177,7 @@ export class SyncRequestDto {
   @ApiPropertyOptional({ type: [SyncBusyEventDto] })
   @IsOptional()
   @IsArray()
+  @ArrayMaxSize(5000)
   @ValidateNested({ each: true })
   @Type(() => SyncBusyEventDto)
   busyEvents?: SyncBusyEventDto[];
@@ -183,6 +185,7 @@ export class SyncRequestDto {
   @ApiPropertyOptional({ type: [SyncManualEntryDto] })
   @IsOptional()
   @IsArray()
+  @ArrayMaxSize(2000)
   @ValidateNested({ each: true })
   @Type(() => SyncManualEntryDto)
   manualScheduleEntries?: SyncManualEntryDto[];
@@ -190,6 +193,7 @@ export class SyncRequestDto {
   @ApiPropertyOptional({ type: [SyncNudgePlanDto] })
   @IsOptional()
   @IsArray()
+  @ArrayMaxSize(2000)
   @ValidateNested({ each: true })
   @Type(() => SyncNudgePlanDto)
   nudgePlans?: SyncNudgePlanDto[];
@@ -197,6 +201,7 @@ export class SyncRequestDto {
   @ApiPropertyOptional({ type: [SyncWalkSessionDto] })
   @IsOptional()
   @IsArray()
+  @ArrayMaxSize(5000)
   @ValidateNested({ each: true })
   @Type(() => SyncWalkSessionDto)
   walkSessions?: SyncWalkSessionDto[];
@@ -204,6 +209,7 @@ export class SyncRequestDto {
   @ApiPropertyOptional({ type: [SyncAnalyticsEventDto] })
   @IsOptional()
   @IsArray()
+  @ArrayMaxSize(5000)
   @ValidateNested({ each: true })
   @Type(() => SyncAnalyticsEventDto)
   analyticsEvents?: SyncAnalyticsEventDto[];
@@ -211,6 +217,7 @@ export class SyncRequestDto {
   @ApiPropertyOptional({ type: [SyncCrashReportDto] })
   @IsOptional()
   @IsArray()
+  @ArrayMaxSize(1000)
   @ValidateNested({ each: true })
   @Type(() => SyncCrashReportDto)
   crashReports?: SyncCrashReportDto[];
@@ -218,6 +225,7 @@ export class SyncRequestDto {
   @ApiPropertyOptional({ type: [SyncAchievementDto] })
   @IsOptional()
   @IsArray()
+  @ArrayMaxSize(500)
   @ValidateNested({ each: true })
   @Type(() => SyncAchievementDto)
   achievements?: SyncAchievementDto[];
@@ -225,6 +233,7 @@ export class SyncRequestDto {
   @ApiPropertyOptional({ type: [SyncAppSessionDto] })
   @IsOptional()
   @IsArray()
+  @ArrayMaxSize(1000)
   @ValidateNested({ each: true })
   @Type(() => SyncAppSessionDto)
   appSessions?: SyncAppSessionDto[];

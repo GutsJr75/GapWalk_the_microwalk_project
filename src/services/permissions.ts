@@ -16,6 +16,19 @@ export interface NotificationPermissionState {
   status: Notifications.PermissionStatus;
 }
 
+export type ActivityRecognitionPermissionStatus =
+  | 'granted'
+  | 'denied'
+  | 'never_ask_again'
+  | 'undetermined'
+  | 'unavailable';
+
+export interface ActivityRecognitionPermissionState {
+  granted: boolean;
+  canAskAgain: boolean;
+  status: ActivityRecognitionPermissionStatus;
+}
+
 export interface WalkTrackingPermissionResults extends PermissionResults {
   locationForeground: boolean;
   locationBackground: boolean;
@@ -30,9 +43,12 @@ export interface ForegroundLocationPermissionState {
 export interface WalkTrackingPermissionRequestOptions {
   requestBackgroundLocation?: boolean;
   showBackgroundDeniedSettingsAlert?: boolean;
+  confirmBackgroundLocationDisclosure?: () => Promise<boolean>;
+  requestMode?: 'default' | 'walk_start_first_time' | 'walk_start_recurring';
 }
 
 const WALK_FOREGROUND_LOCATION_REQUESTED_KEY = 'gapwalk_walk_foreground_location_requested_v1';
+const ACTIVITY_RECOGNITION_REQUESTED_KEY = 'gapwalk_activity_recognition_requested_v1';
 
 /**
  * Request permissions needed for step counting and notifications.
@@ -41,10 +57,10 @@ const WALK_FOREGROUND_LOCATION_REQUESTED_KEY = 'gapwalk_walk_foreground_location
  */
 export async function requestAllPermissions(): Promise<PermissionResults> {
   const notificationState = await requestNotificationPermission();
-  const activityRecognition = await requestActivityRecognitionPermission();
+  const activityRecognitionState = await requestActivityRecognitionPermissionState();
   return {
     notifications: notificationState.granted,
-    activityRecognition,
+    activityRecognition: activityRecognitionState.granted,
   };
 }
 
@@ -98,33 +114,83 @@ export async function requestNotificationPermission(): Promise<NotificationPermi
   return getNotificationPermissionState();
 }
 
-export async function requestActivityRecognitionPermission(): Promise<boolean> {
+export async function getActivityRecognitionPermissionState(): Promise<ActivityRecognitionPermissionState> {
   try {
     if (Platform.OS === 'android') {
-      return requestAndroidActivityRecognitionPermission();
+      return getAndroidActivityRecognitionPermissionState();
     }
 
     const available = await Pedometer.isAvailableAsync();
-    if (!available) return false;
-
-    const { status: existingStatus } = await Pedometer.getPermissionsAsync();
-    if (existingStatus === 'granted') {
-      return true;
+    if (!available) {
+      return {
+        granted: false,
+        canAskAgain: false,
+        status: 'unavailable',
+      };
     }
 
-    const { status } = await Pedometer.requestPermissionsAsync();
-    return status === 'granted';
+    const existing = await Pedometer.getPermissionsAsync();
+    return {
+      granted: existing.status === 'granted',
+      canAskAgain: existing.canAskAgain ?? existing.status !== 'denied',
+      status: existing.status === 'granted'
+        ? 'granted'
+        : existing.status === 'denied'
+          ? 'denied'
+          : 'undetermined',
+    };
+  } catch (e) {
+    if (__DEV__) console.warn('Activity recognition permission state read failed:', e);
+    return {
+      granted: false,
+      canAskAgain: false,
+      status: 'denied',
+    };
+  }
+}
+
+export async function requestActivityRecognitionPermissionState(): Promise<ActivityRecognitionPermissionState> {
+  try {
+    if (Platform.OS === 'android') {
+      return requestAndroidActivityRecognitionPermissionState();
+    }
+
+    const available = await Pedometer.isAvailableAsync();
+    if (!available) {
+      return {
+        granted: false,
+        canAskAgain: false,
+        status: 'unavailable',
+      };
+    }
+
+    const current = await getActivityRecognitionPermissionState();
+    if (current.granted || !current.canAskAgain) {
+      return current;
+    }
+
+    await Pedometer.requestPermissionsAsync();
+    return getActivityRecognitionPermissionState();
   } catch (e) {
     if (__DEV__) console.warn('Activity recognition permission request failed:', e);
-    return false;
+    return {
+      granted: false,
+      canAskAgain: false,
+      status: 'denied',
+    };
   }
+}
+
+export async function requestActivityRecognitionPermission(): Promise<boolean> {
+  const state = await requestActivityRecognitionPermissionState();
+  return state.granted;
 }
 
 async function confirmBackgroundLocationDisclosure(): Promise<boolean> {
   return new Promise((resolve) => {
     Alert.alert(
-      'Allow background location during walks?',
-      'GapWalk uses location in the background, when the app is not in use, only during an active walk so distance can keep updating if you lock your screen or switch apps.',
+      'Allow background location for active walks?',
+      'GapWalk collects location data to track distance during an active walk, including when the app is closed or not in use. Walk route and distance may sync securely to your GapWalk account. GapWalk does not sell your personal data.',
       [
         { text: 'Not Now', style: 'cancel', onPress: () => resolve(false) },
         { text: 'Continue', onPress: () => resolve(true) },
@@ -165,11 +231,30 @@ export async function getForegroundLocationPermissionState(): Promise<Foreground
 }
 
 export async function requestForegroundWalkTrackingPermission(
-  options: { showDeniedSettingsAlert?: boolean } = {},
+  options: {
+    showDeniedSettingsAlert?: boolean;
+    forcePromptIfCanAskAgain?: boolean;
+  } = {},
 ): Promise<ForegroundLocationPermissionState> {
   try {
     const current = await getForegroundLocationPermissionState();
     if (current.granted) return current;
+
+    if (options.forcePromptIfCanAskAgain) {
+      if (!current.canAskAgain) {
+        if (options.showDeniedSettingsAlert) {
+          showPermissionSettingsAlert('Location');
+        }
+        return current;
+      }
+
+      const response = await Location.requestForegroundPermissionsAsync();
+      const nextState = toForegroundLocationPermissionState(response);
+      if (!nextState.granted && !nextState.canAskAgain && options.showDeniedSettingsAlert) {
+        showPermissionSettingsAlert('Location');
+      }
+      return nextState;
+    }
 
     const hasRequestedBefore = await hasRequestedWalkForegroundLocationBefore();
     const systemPromptWasAlreadyShown = current.status !== Location.PermissionStatus.UNDETERMINED;
@@ -226,7 +311,10 @@ export async function getWalkTrackingPermissionStatus(): Promise<WalkTrackingPer
 }
 
 export async function requestBackgroundWalkTrackingPermission(
-  options: { showDeniedSettingsAlert?: boolean } = {},
+  options: {
+    showDeniedSettingsAlert?: boolean;
+    confirmDisclosure?: () => Promise<boolean>;
+  } = {},
 ): Promise<boolean> {
   try {
     const foreground = await Location.getForegroundPermissionsAsync();
@@ -246,7 +334,11 @@ export async function requestBackgroundWalkTrackingPermission(
       return true;
     }
 
-    const shouldRequest = await confirmBackgroundLocationDisclosure();
+    const shouldRequest = await (
+      options.confirmDisclosure
+        ? options.confirmDisclosure()
+        : confirmBackgroundLocationDisclosure()
+    );
     if (!shouldRequest) {
       return false;
     }
@@ -275,22 +367,33 @@ export async function requestWalkTrackingPermissions(
   options: WalkTrackingPermissionRequestOptions = {},
 ): Promise<WalkTrackingPermissionResults> {
   const notificationState = await getNotificationPermissionState();
-  const activityRecognition = await requestActivityRecognitionPermission();
+  const activityRecognitionState = await requestActivityRecognitionPermissionState();
   const results: WalkTrackingPermissionResults = {
     notifications: notificationState.granted,
-    activityRecognition,
+    activityRecognition: activityRecognitionState.granted,
     locationForeground: false,
     locationBackground: false,
   };
 
   try {
-    const foreground = await requestForegroundWalkTrackingPermission();
-    results.locationForeground = foreground.granted;
-    if (!foreground.granted) return results;
+    const requestMode = options.requestMode ?? 'default';
+    const shouldForceForegroundPrompt = requestMode === 'walk_start_first_time' || requestMode === 'walk_start_recurring';
+    const shouldRequestBackground = options.requestBackgroundLocation === true;
 
-    if (options.requestBackgroundLocation) {
+    const foreground = await requestForegroundWalkTrackingPermission({
+      forcePromptIfCanAskAgain: shouldForceForegroundPrompt,
+    });
+    results.locationForeground = foreground.granted;
+    if (!foreground.granted) {
+      const status = await getWalkTrackingPermissionStatus();
+      results.locationBackground = status.locationBackground;
+      return results;
+    }
+
+    if (shouldRequestBackground) {
       results.locationBackground = await requestBackgroundWalkTrackingPermission({
         showDeniedSettingsAlert: options.showBackgroundDeniedSettingsAlert,
+        confirmDisclosure: options.confirmBackgroundLocationDisclosure,
       });
       return results;
     }
@@ -309,7 +412,7 @@ export async function requestWalkTrackingPermissions(
  */
 export async function checkPermissions(): Promise<PermissionResults> {
   const notificationState = await getNotificationPermissionState();
-  const activityRecognition = await checkActivityRecognitionPermission();
+  const activityRecognition = (await getActivityRecognitionPermissionState()).granted;
   return {
     notifications: notificationState.granted,
     activityRecognition,
@@ -345,38 +448,107 @@ export async function openAppSettings(): Promise<void> {
   await Linking.openURL('app-settings:');
 }
 
-async function requestAndroidActivityRecognitionPermission(): Promise<boolean> {
+const hasRequestedActivityRecognitionBefore = async (): Promise<boolean> => {
   if (Platform.OS !== 'android') return false;
-  if (typeof Platform.Version === 'number' && Platform.Version < 29) return true;
+  try {
+    return (await SecureStore.getItemAsync(ACTIVITY_RECOGNITION_REQUESTED_KEY)) === '1';
+  } catch {
+    return false;
+  }
+};
 
-  const permission = PermissionsAndroid.PERMISSIONS.ACTIVITY_RECOGNITION;
-  const alreadyGranted = await PermissionsAndroid.check(permission);
-  if (alreadyGranted) return true;
+const markActivityRecognitionRequested = async (): Promise<void> => {
+  if (Platform.OS !== 'android') return;
+  try {
+    await SecureStore.setItemAsync(ACTIVITY_RECOGNITION_REQUESTED_KEY, '1');
+  } catch {
+    // Non-critical. The OS permission state is still authoritative.
+  }
+};
 
-  const status = await PermissionsAndroid.request(permission, {
-    title: 'Allow step sensor access?',
-    message: 'GapWalk uses your device step sensor during an active walk so step tracking can stay accurate.',
-    buttonPositive: 'Allow',
-    buttonNegative: 'Not now',
-  });
-
-  return status === PermissionsAndroid.RESULTS.GRANTED;
-}
-
-async function checkActivityRecognitionPermission(): Promise<boolean> {
-  if (Platform.OS === 'android') {
-    return checkAndroidActivityRecognitionPermission();
+async function getAndroidActivityRecognitionPermissionState(): Promise<ActivityRecognitionPermissionState> {
+  if (Platform.OS !== 'android') {
+    return {
+      granted: false,
+      canAskAgain: false,
+      status: 'unavailable',
+    };
   }
 
-  const available = await Pedometer.isAvailableAsync();
-  if (!available) return false;
+  if (typeof Platform.Version === 'number' && Platform.Version < 29) {
+    return {
+      granted: true,
+      canAskAgain: true,
+      status: 'granted',
+    };
+  }
 
-  const { status } = await Pedometer.getPermissionsAsync();
-  return status === 'granted';
+  const permission = PermissionsAndroid.PERMISSIONS.ACTIVITY_RECOGNITION;
+  const granted = await PermissionsAndroid.check(permission);
+  if (granted) {
+    return {
+      granted: true,
+      canAskAgain: true,
+      status: 'granted',
+    };
+  }
+
+  const hasRequestedBefore = await hasRequestedActivityRecognitionBefore();
+  if (!hasRequestedBefore) {
+    return {
+      granted: false,
+      canAskAgain: true,
+      status: 'undetermined',
+    };
+  }
+
+  const shouldShowRationale =
+    typeof (PermissionsAndroid as any).shouldShowRequestPermissionRationale === 'function'
+      ? await (PermissionsAndroid as any).shouldShowRequestPermissionRationale(permission)
+      : true;
+  return {
+    granted: false,
+    canAskAgain: shouldShowRationale,
+    status: shouldShowRationale ? 'denied' : 'never_ask_again',
+  };
 }
 
-async function checkAndroidActivityRecognitionPermission(): Promise<boolean> {
-  if (Platform.OS !== 'android') return false;
-  if (typeof Platform.Version === 'number' && Platform.Version < 29) return true;
-  return PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.ACTIVITY_RECOGNITION);
+async function requestAndroidActivityRecognitionPermissionState(): Promise<ActivityRecognitionPermissionState> {
+  const current = await getAndroidActivityRecognitionPermissionState();
+  if (current.granted || !current.canAskAgain) {
+    return current;
+  }
+
+  await markActivityRecognitionRequested();
+  const status = await PermissionsAndroid.request(
+    PermissionsAndroid.PERMISSIONS.ACTIVITY_RECOGNITION,
+    {
+      title: 'Allow step sensor access?',
+      message: 'GapWalk uses your device step sensor during an active walk so step tracking can stay accurate.',
+      buttonPositive: 'Allow',
+      buttonNegative: 'Not now',
+    },
+  );
+
+  if (status === PermissionsAndroid.RESULTS.GRANTED) {
+    return {
+      granted: true,
+      canAskAgain: true,
+      status: 'granted',
+    };
+  }
+
+  if (status === PermissionsAndroid.RESULTS.NEVER_ASK_AGAIN) {
+    return {
+      granted: false,
+      canAskAgain: false,
+      status: 'never_ask_again',
+    };
+  }
+
+  return {
+    granted: false,
+    canAskAgain: true,
+    status: 'denied',
+  };
 }

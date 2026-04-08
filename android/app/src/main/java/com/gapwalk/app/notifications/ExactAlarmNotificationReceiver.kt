@@ -26,6 +26,9 @@ class ExactAlarmNotificationReceiver : BroadcastReceiver() {
     ExactAlarmNotificationsModule.handleNotificationDelivered(context, notificationId, planId, type)
 
     if (type == WALK_MISSED_NOTIFICATION_TYPE) {
+      cancelPresentedNotification(context, getWalkReadyNotificationId(planId))
+      cancelPresentedNotification(context, getWalkAlertNotificationId(planId))
+      // Backward compatibility: older builds used a single walk-nudge notification id.
       cancelPresentedNotification(context, getWalkNudgeNotificationId(planId))
     }
     if (type == WALK_READY_NOTIFICATION_TYPE) {

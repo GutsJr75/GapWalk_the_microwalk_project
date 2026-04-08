@@ -165,6 +165,16 @@ const normalizeNotificationDate = (value: Date): Date => {
   return normalized;
 };
 
+let recoverScheduledNotificationsInFlight: Promise<number> | null = null;
+const NOTIFICATION_RECOVERY_DEBOUNCE_MS = 30_000;
+
+type NotificationRecoverySnapshot = {
+  digest: string;
+  recoveredAtMs: number;
+};
+
+let lastNotificationRecoverySnapshot: NotificationRecoverySnapshot | null = null;
+
 export const getWalkNudgeNotificationId = (planId: string): string =>
   `walk-nudge:${planId}`;
 
@@ -179,6 +189,58 @@ export const getWalkReadyNotificationId = (planId: string): string =>
 
 export const getWalkSummaryNotificationId = (id: string): string =>
   `walk-summary:${id}`;
+
+type WalkPlanNotificationType =
+  | typeof WALK_NUDGE_NOTIFICATION_TYPE
+  | typeof WALK_MISSED_NOTIFICATION_TYPE
+  | typeof WALK_ALERT_NOTIFICATION_TYPE
+  | typeof WALK_READY_NOTIFICATION_TYPE;
+
+type ParsedWalkPlanNotificationId = {
+  type: WalkPlanNotificationType;
+  planId: string;
+};
+
+const WALK_PLAN_NOTIFICATION_PREFIXES: Array<{
+  prefix: string;
+  type: WalkPlanNotificationType;
+}> = [
+  { prefix: 'walk-nudge:', type: WALK_NUDGE_NOTIFICATION_TYPE },
+  { prefix: 'walk-missed:', type: WALK_MISSED_NOTIFICATION_TYPE },
+  { prefix: 'walk-alert:', type: WALK_ALERT_NOTIFICATION_TYPE },
+  { prefix: 'walk-ready:', type: WALK_READY_NOTIFICATION_TYPE },
+];
+
+const parseWalkPlanNotificationId = (
+  notificationId: string,
+): ParsedWalkPlanNotificationId | null => {
+  for (const candidate of WALK_PLAN_NOTIFICATION_PREFIXES) {
+    if (!notificationId.startsWith(candidate.prefix)) continue;
+    const planId = notificationId.slice(candidate.prefix.length);
+    if (!planId) return null;
+    return { type: candidate.type, planId };
+  }
+  return null;
+};
+
+const isWalkPlanNotificationType = (value: unknown): value is WalkPlanNotificationType =>
+  value === WALK_NUDGE_NOTIFICATION_TYPE ||
+  value === WALK_MISSED_NOTIFICATION_TYPE ||
+  value === WALK_ALERT_NOTIFICATION_TYPE ||
+  value === WALK_READY_NOTIFICATION_TYPE;
+
+const logPlanNotificationLifecycle = (
+  stage: 'scheduled' | 'delivered' | 'dismissed',
+  payload: {
+    notificationId: string;
+    type?: string;
+    planId?: string;
+    source?: string;
+  },
+): void => {
+  if (!__DEV__) return;
+  console.log('[notifications]', stage, payload);
+};
 
 const getPlanThreadIdentifier = (planId: string): string =>
   `${IOS_PLAN_THREAD_PREFIX}:${planId}`;
@@ -480,6 +542,12 @@ const schedulePlanNotification = async (input: {
         scheduledAtMs: input.triggerAt.getTime(),
       });
       if (scheduled) {
+        logPlanNotificationLifecycle('scheduled', {
+          notificationId: input.notificationId,
+          type: input.type,
+          planId: input.planId,
+          source: 'android_exact',
+        });
         return input.notificationId;
       }
     } catch (error) {
@@ -490,7 +558,14 @@ const schedulePlanNotification = async (input: {
   }
 
   try {
-    return await scheduleExpoPlanNotification(input);
+    const notificationId = await scheduleExpoPlanNotification(input);
+    logPlanNotificationLifecycle('scheduled', {
+      notificationId,
+      type: input.type,
+      planId: input.planId,
+      source: 'expo_local',
+    });
+    return notificationId;
   } catch (error) {
     if (__DEV__) console.error('Failed to schedule Expo plan notification:', error);
     return null;
@@ -511,6 +586,60 @@ const getExistingScheduledNotificationIds = async (): Promise<Set<string>> => {
   }
 
   return scheduledIds;
+};
+
+const buildNotificationRecoveryDigest = (
+  plans: NudgePlan[],
+  prefs?: Preferences | null,
+): string => {
+  const prefsDigest = prefs
+    ? [
+        prefs.whenToNotify,
+        prefs.notifyDelayMinutes,
+        prefs.quietHoursStart,
+        prefs.quietHoursEnd,
+        prefs.dailyTargetMinutes,
+        prefs.stepGoalEnabled ? 1 : 0,
+        prefs.stepGoal,
+      ].join('|')
+    : 'no-prefs';
+
+  const plansDigest = plans
+    .map((plan) =>
+      [
+        plan.id,
+        plan.walkStart,
+        plan.gapStart,
+        plan.gapEnd,
+        plan.suggestedDurationMinutes,
+        plan.manualNotifyLeadMinutes ?? 0,
+        plan.notificationsEnabled === false ? 0 : 1,
+      ].join('|'),
+    )
+    .join('||');
+
+  return `${prefsDigest}##${plansDigest}`;
+};
+
+const shouldSkipRecoveryByDebounce = (
+  digest: string,
+  now: Date,
+  force: boolean,
+): boolean => {
+  if (force) return false;
+  if (!lastNotificationRecoverySnapshot) return false;
+  if (lastNotificationRecoverySnapshot.digest !== digest) return false;
+  return now.getTime() - lastNotificationRecoverySnapshot.recoveredAtMs < NOTIFICATION_RECOVERY_DEBOUNCE_MS;
+};
+
+const canAttemptNotificationRecovery = async (requestPermissions: boolean): Promise<boolean> => {
+  try {
+    const { status } = await Notifications.getPermissionsAsync();
+    return status === 'granted' || requestPermissions;
+  } catch {
+    // Preserve existing behavior when permission probing fails unexpectedly.
+    return true;
+  }
 };
 
 export const notificationService = {
@@ -805,33 +934,65 @@ export const notificationService = {
     prefs?: Preferences | null;
     requestPermissions?: boolean;
     now?: Date;
+    force?: boolean;
   }): Promise<number> {
     if (!isNotificationsSupported) return 0;
-
-    const resolvedPrefs = options?.prefs ?? (await preferencesRepo.get());
-    const recoveryNow = options?.now ?? new Date();
-
-    await this.cancelWalkNudges();
-
-    if (!resolvedPrefs) {
-      return 0;
+    if (recoverScheduledNotificationsInFlight) {
+      return recoverScheduledNotificationsInFlight;
     }
 
-    const recoveryCutoff = addHours(recoveryNow, NOTIFICATION_RECOVERY_HORIZON_HOURS);
-    const futurePlans = await plansRepo.getUpcomingPlansThrough(
-      recoveryCutoff.toISOString(),
-      300,
-    );
+    recoverScheduledNotificationsInFlight = (async () => {
+      const resolvedPrefs = options?.prefs ?? (await preferencesRepo.get());
+      const recoveryNow = options?.now ?? new Date();
+      if (!resolvedPrefs) {
+        await this.cancelWalkNudges();
+        return 0;
+      }
 
-    if (futurePlans.length === 0) {
-      return 0;
+      const recoveryCutoff = addHours(recoveryNow, NOTIFICATION_RECOVERY_HORIZON_HOURS);
+      const futurePlans = await plansRepo.getUpcomingPlansThrough(
+        recoveryCutoff.toISOString(),
+        300,
+      );
+
+      const shouldRequestPermissions = options?.requestPermissions === true;
+      const recoveryDigest = buildNotificationRecoveryDigest(futurePlans, resolvedPrefs);
+      if (shouldSkipRecoveryByDebounce(recoveryDigest, recoveryNow, options?.force === true)) {
+        return futurePlans.length;
+      }
+
+      const canRecoverNow = await canAttemptNotificationRecovery(shouldRequestPermissions);
+      if (!canRecoverNow) {
+        return futurePlans.length;
+      }
+
+      await this.cancelWalkNudges();
+
+      if (futurePlans.length === 0) {
+        lastNotificationRecoverySnapshot = {
+          digest: recoveryDigest,
+          recoveredAtMs: recoveryNow.getTime(),
+        };
+        return 0;
+      }
+
+      await this.scheduleMultipleNudges(futurePlans, resolvedPrefs, {
+        requestPermissions: shouldRequestPermissions,
+      });
+
+      lastNotificationRecoverySnapshot = {
+        digest: recoveryDigest,
+        recoveredAtMs: recoveryNow.getTime(),
+      };
+
+      return futurePlans.length;
+    })();
+
+    try {
+      return await recoverScheduledNotificationsInFlight;
+    } finally {
+      recoverScheduledNotificationsInFlight = null;
     }
-
-    await this.scheduleMultipleNudges(futurePlans, resolvedPrefs, {
-      requestPermissions: options?.requestPermissions === true,
-    });
-
-    return futurePlans.length;
   },
   
   /**
@@ -892,6 +1053,15 @@ export const notificationService = {
     } catch {
       // ignore - notification may already be gone or be managed natively
     }
+    const parsed = parseWalkPlanNotificationId(notificationId);
+    if (parsed) {
+      logPlanNotificationLifecycle('dismissed', {
+        notificationId,
+        type: parsed.type,
+        planId: parsed.planId,
+        source: 'notification_service',
+      });
+    }
   },
 
   async dismissWalkReminderNotification(planId: string): Promise<void> {
@@ -922,42 +1092,87 @@ export const notificationService = {
     }
   },
 
-  async cleanupPresentedPlanNotifications(plans: NudgePlan[]): Promise<void> {
+  async cleanupPresentedPlanNotifications(plans: NudgePlan[] = []): Promise<void> {
     if (!isNotificationsSupported) return;
 
-    let presentedNotificationIds: Set<string> | null = null;
-    if (Platform.OS === 'ios') {
-      try {
-        const presented = await Notifications.getPresentedNotificationsAsync();
-        presentedNotificationIds = new Set(
-          presented.map((notification) => notification.request.identifier),
-        );
-      } catch {
-        presentedNotificationIds = null;
-      }
-    }
+    const now = new Date();
+    const todayKey = format(now, 'yyyy-MM-dd');
+    const plansById = new Map<string, NudgePlan>(plans.map((plan) => [plan.id, plan]));
+    const planCache = new Map<string, NudgePlan | null>();
 
-    const dismissIfPresented = async (notificationId: string): Promise<void> => {
-      if (Platform.OS === 'ios' && presentedNotificationIds && !presentedNotificationIds.has(notificationId)) {
-        return;
-      }
-      await this.dismissNotification(notificationId);
+    const resolvePlanById = async (planId: string): Promise<NudgePlan | null> => {
+      if (plansById.has(planId)) return plansById.get(planId) ?? null;
+      if (planCache.has(planId)) return planCache.get(planId) ?? null;
+      const plan = await plansRepo.getById(planId);
+      planCache.set(planId, plan);
+      return plan;
     };
 
-    const now = new Date();
+    const shouldDismissNotification = (
+      notificationType: WalkPlanNotificationType,
+      plan: NudgePlan | null,
+    ): boolean => {
+      if (!plan) return true; // Orphaned notification.
+
+      const isMissedPlan = plan.status === 'cancelled' && plan.reason === 'missed';
+      const isTerminal =
+        plan.status === 'cancelled' ||
+        plan.status === 'completed' ||
+        plan.status === 'skipped';
+      const isExpired = parseISO(plan.gapEnd) <= now;
+      const isCurrentDayMissed = isMissedPlan && plan.date === todayKey;
+
+      if (notificationType === WALK_MISSED_NOTIFICATION_TYPE) {
+        // Keep missed cards only for active "missed" state in the current day.
+        if (plan.notificationsEnabled === false) return true;
+        return !isCurrentDayMissed;
+      }
+
+      if (plan.notificationsEnabled === false) return true;
+      if (isMissedPlan || isTerminal || isExpired) return true;
+      return false;
+    };
+
+    try {
+      const presented = await Notifications.getPresentedNotificationsAsync();
+      for (const notification of presented) {
+        const notificationId = notification.request.identifier;
+        const data = notification.request.content.data as Record<string, unknown> | undefined;
+        const dataType = typeof data?.type === 'string' ? data.type : undefined;
+        const dataPlanId = typeof data?.planId === 'string' ? data.planId : undefined;
+        const parsedId = parseWalkPlanNotificationId(notificationId);
+
+        const notificationType: WalkPlanNotificationType | null =
+          (dataType && isWalkPlanNotificationType(dataType))
+            ? dataType
+            : (parsedId?.type ?? null);
+        if (!notificationType) continue;
+
+        const planId = dataPlanId || parsedId?.planId || null;
+        const plan = planId ? await resolvePlanById(planId) : null;
+        if (shouldDismissNotification(notificationType, plan)) {
+          await this.dismissNotification(notificationId);
+        }
+      }
+      return;
+    } catch {
+      // Fall back to plan-based cleanup if presented notification APIs fail.
+    }
+
     for (const plan of plans) {
       const isMissedPlan = plan.status === 'cancelled' && plan.reason === 'missed';
       const isTerminal = plan.status === 'cancelled' || plan.status === 'completed' || plan.status === 'skipped';
       const isExpired = parseISO(plan.gapEnd) <= now;
+      const shouldKeepMissed = isMissedPlan && plan.date === todayKey && plan.notificationsEnabled !== false;
 
       if (isMissedPlan || isTerminal || isExpired || plan.notificationsEnabled === false) {
-        await dismissIfPresented(getWalkNudgeNotificationId(plan.id));
-        await dismissIfPresented(getWalkAlertNotificationId(plan.id));
-        await dismissIfPresented(getWalkReadyNotificationId(plan.id));
+        await this.dismissNotification(getWalkNudgeNotificationId(plan.id));
+        await this.dismissNotification(getWalkAlertNotificationId(plan.id));
+        await this.dismissNotification(getWalkReadyNotificationId(plan.id));
       }
 
-      if (!isMissedPlan && (isTerminal || plan.notificationsEnabled === false)) {
-        await dismissIfPresented(getWalkMissedNotificationId(plan.id));
+      if (!shouldKeepMissed) {
+        await this.dismissNotification(getWalkMissedNotificationId(plan.id));
       }
     }
   },

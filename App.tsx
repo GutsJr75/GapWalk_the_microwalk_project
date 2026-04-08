@@ -26,6 +26,7 @@ import {
   WALK_NUDGE_ACTION_START,
   ALT_GAP_ACTION_ACCEPT,
   WALK_ALERT_NOTIFICATION_TYPE,
+  WALK_MISSED_NOTIFICATION_TYPE,
   WALK_READY_NOTIFICATION_TYPE,
   WALK_READY_ACTION_YES,
   WALK_READY_ACTION_NOT_NOW,
@@ -38,7 +39,7 @@ import { crashReporting } from './src/services/crashReporting';
 import { analyticsService } from './src/services/analytics';
 import { AndroidQuickEndPayload, androidWalkTracking } from './src/services/androidWalkTracking';
 import { androidExactNotifications } from './src/services/androidExactNotifications';
-import { getNotificationPermissionState } from './src/services/permissions';
+import { getActivityRecognitionPermissionState, getNotificationPermissionState } from './src/services/permissions';
 import { authStorage } from './src/data/authStorage';
 import { GUIDANCE_KEYS, guidanceStorage, type GuidanceKey } from './src/data/guidanceStorage';
 import { runBackendSync } from './src/services/backendSync';
@@ -400,18 +401,22 @@ function App() {
   ]);
 
   const refreshNotificationGateState = useCallback(async (): Promise<boolean> => {
-    if (!isAndroidNotificationGateRuntime) {
-      setNotificationGateSatisfied(true);
-      return true;
-    }
-
     try {
-      const permissionState = await getNotificationPermissionState();
-      setNotificationGateSatisfied(permissionState.granted);
-      return permissionState.granted;
+      if (!isAndroidNotificationGateRuntime) {
+        setNotificationGateSatisfied(true);
+        return true;
+      }
+
+      const [notificationPermission, activityPermission] = await Promise.all([
+        getNotificationPermissionState(),
+        getActivityRecognitionPermissionState(),
+      ]);
+      const gateSatisfied = notificationPermission.granted && activityPermission.granted;
+      setNotificationGateSatisfied(gateSatisfied);
+      return gateSatisfied;
     } catch (error) {
       if (__DEV__) {
-        console.warn('Failed to refresh notification gate state:', error);
+        console.warn('Failed to refresh required-permission gate state:', error);
       }
       setNotificationGateSatisfied(false);
       return false;
@@ -476,6 +481,22 @@ function App() {
     startedFromNotification?: boolean;
     skipStartCountdown?: boolean;
   }) => {
+    if (isAndroidNotificationGateRuntime && !notificationGateSatisfied) {
+      const permissionGateParams: RootStackParamList['Preferences'] = {
+        enforceNotificationPermission: true,
+        permissionGateSource: 'dashboard',
+      };
+      if (navigationRef.isReady()) {
+        navigationRef.navigate('Preferences', permissionGateParams);
+      } else {
+        pendingRootRouteRef.current = {
+          name: 'Walking',
+          params,
+        };
+      }
+      return;
+    }
+
     if (navigationRef.isReady()) {
       navigationRef.navigate('Walking', params);
       return;
@@ -484,7 +505,7 @@ function App() {
       name: 'Walking',
       params,
     };
-  }, []);
+  }, [isAndroidNotificationGateRuntime, notificationGateSatisfied]);
 
   const navigateToDashboard = useCallback((params: RootStackParamList['Dashboard']) => {
     if (isAndroidNotificationGateRuntime && !notificationGateSatisfied) {
@@ -632,6 +653,15 @@ function App() {
     if (handledResponseNotificationIdsRef.current.has(payload.notificationId)) return;
     handledDeliveryIdsRef.current.add(payload.notificationId);
 
+    if (__DEV__) {
+      console.log('[notifications]', 'delivered', {
+        notificationId: payload.notificationId,
+        type: payload.type ?? null,
+        planId: payload.planId ?? null,
+        source: 'app_delivery_listener',
+      });
+    }
+
     if (
       payload.planId &&
       (
@@ -645,6 +675,16 @@ function App() {
       } catch (error) {
         if (__DEV__) console.error('Failed to mark delivered plan as notified:', error);
       }
+    }
+
+    if (payload.type === WALK_MISSED_NOTIFICATION_TYPE && payload.planId) {
+      try {
+        await notificationService.dismissWalkReminderNotification(payload.planId);
+      } catch (error) {
+        if (__DEV__) console.error('Failed to dismiss stale reminders after missed delivery:', error);
+      }
+      await refreshDashboardSnapshot();
+      return;
     }
 
     if (payload.type === WALK_READY_NOTIFICATION_TYPE && payload.planId) {
@@ -1084,10 +1124,40 @@ function App() {
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (nextState) => {
       if (nextState !== 'active') return;
-      void refreshNotificationGateState();
+
+      void (async () => {
+        const gateSatisfied = await refreshNotificationGateState();
+        if (gateSatisfied) return;
+
+        if (androidWalkTracking.isSupported()) {
+          try {
+            const snapshot = await androidWalkTracking.getSnapshot();
+            if (snapshot && !snapshot.paused) {
+              const pausedSnapshot = await androidWalkTracking.pauseSession('auto_pause');
+              const resolvedSnapshot = pausedSnapshot ?? snapshot;
+              setActiveWalkSnapshot(resolvedSnapshot);
+              setPendingWalkPrompt(resolvedSnapshot.prompt ?? null);
+            }
+          } catch (error) {
+            if (__DEV__) {
+              console.warn('Failed to pause active walk after permission revoke:', error);
+            }
+          }
+        }
+
+        if (navigationRef.isReady()) {
+          const currentRoute = navigationRef.getCurrentRoute();
+          if (currentRoute?.name !== 'Preferences') {
+            navigationRef.navigate('Preferences', {
+              enforceNotificationPermission: true,
+              permissionGateSource: 'dashboard',
+            });
+          }
+        }
+      })();
     });
     return () => subscription.remove();
-  }, [refreshNotificationGateState]);
+  }, [refreshNotificationGateState, setActiveWalkSnapshot, setPendingWalkPrompt]);
 
   useEffect(() => {
     if (!androidWalkTracking.isSupported()) return;
@@ -1099,7 +1169,8 @@ function App() {
         const snapshot = await androidWalkTracking.getSnapshot();
         setActiveWalkSnapshot(snapshot);
         setPendingWalkPrompt(snapshot?.prompt ?? null);
-        if (snapshot) {
+        const gateSatisfied = await refreshNotificationGateState();
+        if (snapshot && gateSatisfied) {
           navigateToActiveWalk({
             planId: snapshot.planId,
             prompt: snapshot.prompt,
@@ -1110,7 +1181,7 @@ function App() {
     });
 
     return () => subscription.remove();
-  }, [navigateToActiveWalk, setActiveWalkSnapshot, setPendingWalkPrompt]);
+  }, [navigateToActiveWalk, refreshNotificationGateState, setActiveWalkSnapshot, setPendingWalkPrompt]);
 
   // Listen for Android quick-end walk events (End Walk from notification in quick mode)
   useEffect(() => {
@@ -1216,14 +1287,14 @@ function App() {
             onReady={() => {
               const pendingRoute = pendingRootRouteRef.current;
               if (pendingRoute && navigationRef.isReady()) {
-                if (pendingRoute.name === 'Walking') {
-                  navigationRef.navigate('Walking', pendingRoute.params);
+                if (isAndroidNotificationGateRuntime && !notificationGateSatisfied) {
+                  navigationRef.navigate('Preferences', {
+                    enforceNotificationPermission: true,
+                    permissionGateSource: 'dashboard',
+                  });
                 } else {
-                  if (isAndroidNotificationGateRuntime && !notificationGateSatisfied) {
-                    navigationRef.navigate('Preferences', {
-                      enforceNotificationPermission: true,
-                      permissionGateSource: 'dashboard',
-                    });
+                  if (pendingRoute.name === 'Walking') {
+                    navigationRef.navigate('Walking', pendingRoute.params);
                   } else {
                     navigationRef.navigate('Dashboard', pendingRoute.params);
                   }

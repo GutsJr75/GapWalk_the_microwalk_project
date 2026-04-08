@@ -67,14 +67,4 @@ export class SetScheduleSourceDto {
   @IsOptional()
   @IsString()
   filename?: string;
-
-  @ApiPropertyOptional()
-  @IsOptional()
-  @IsString()
-  googleAccessToken?: string;
-
-  @ApiPropertyOptional()
-  @IsOptional()
-  @IsString()
-  googleRefreshToken?: string;
 }

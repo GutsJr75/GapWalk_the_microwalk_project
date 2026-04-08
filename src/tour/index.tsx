@@ -108,6 +108,7 @@ interface TourOverlayProps {
   targets: TourTargetRef[];
   steps: TourStepDef[];
   onFinish: () => void;
+  startDelayMs?: number;
   onBeforeStep?: (stepIndex: number) => Promise<void>;
   preferAboveStepIndices?: number[];
   spotlightScaleByStep?: Partial<Record<number, number>>;
@@ -168,6 +169,7 @@ export const TourOverlay: React.FC<TourOverlayProps> = ({
   targets,
   steps,
   onFinish,
+  startDelayMs = 350,
   onBeforeStep,
   preferAboveStepIndices,
   spotlightScaleByStep,
@@ -735,11 +737,11 @@ export const TourOverlay: React.FC<TourOverlayProps> = ({
     overlayOpacity.setValue(0);
     tooltipOpacity.setValue(0);
     tooltipTranslateY.setValue(12);
-    const timer = setTimeout(() => animateToStep(0, true), 350);
+    const timer = setTimeout(() => animateToStep(0, true), startDelayMs);
     return () => clearTimeout(timer);
     // Only re-run when visibility toggles; animateToStep is stable enough.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visible]);
+  }, [startDelayMs, visible]);
 
   /* ── Navigation handlers ── */
 
