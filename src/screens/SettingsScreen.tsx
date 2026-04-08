@@ -87,6 +87,8 @@ export const SettingsScreen: React.FC<Props> = ({ navigation }) => {
     setLanguage,
     distanceUnit,
     setDistanceUnit,
+    rememberMe,
+    setRememberMe,
     vibrationEnabled,
     setVibrationEnabled,
     notificationTimerMode,
@@ -119,6 +121,7 @@ export const SettingsScreen: React.FC<Props> = ({ navigation }) => {
       await authStorage.saveThemeMode(s.themeMode);
       await authStorage.saveLanguage(s.language);
       await authStorage.saveDistanceUnit(s.distanceUnit);
+      await authStorage.setRememberMe(s.rememberMe);
       await authStorage.saveVibrationEnabled(s.vibrationEnabled);
       await authStorage.saveNotificationTimerMode(s.notificationTimerMode);
       await authStorage.saveNotificationStatsMode(s.notificationStatsMode);
@@ -462,6 +465,27 @@ export const SettingsScreen: React.FC<Props> = ({ navigation }) => {
     ],
   );
 
+  const setRememberMeWithAnimation = useCallback(
+    (nextValue: boolean) => {
+      if (nextValue === rememberMe) return;
+      animateSettingChange();
+      setRememberMe(nextValue);
+      void persistSettingsFromStore();
+      setSaveToastMessage(
+        nextValue
+          ? "You will stay signed in on this device."
+          : "You will be asked to sign in when reopening the app.",
+      );
+      setShowSaveToast(true);
+    },
+    [
+      animateSettingChange,
+      persistSettingsFromStore,
+      rememberMe,
+      setRememberMe,
+    ],
+  );
+
   const setVibrationWithAnimation = useCallback(
     (nextValue: boolean) => {
       if (nextValue === vibrationEnabled) return;
@@ -792,6 +816,41 @@ export const SettingsScreen: React.FC<Props> = ({ navigation }) => {
                   </React.Fragment>
                 );
               })}
+            </View>
+          </SettingShell>
+        </SettingsSection>
+
+        <SettingsSection title="Security & Sign-in" palette={palette}>
+          <SettingShell
+            icon="shield-checkmark-outline"
+            title="Session"
+            description="Choose whether GapWalk keeps your account signed in on this device."
+            infoText="When this is off, GapWalk signs you out automatically when you reopen the app."
+            infoId="stay-signed-in"
+            activeInfoId={activeInfo?.id ?? null}
+            onInfoToggle={handleInfoToggle}
+          >
+            <View
+              style={[
+                settingsStyles.innerToggleCard,
+                {
+                  backgroundColor: withAlpha(
+                    palette.textPrimary,
+                    themeMode === "dark" ? 0.02 : 0.04,
+                  ),
+                  borderColor: palette.borderSoft,
+                },
+              ]}
+            >
+              <ToggleRow
+                icon="person-circle-outline"
+                title="Stay signed in"
+                value={rememberMe}
+                onToggle={() => setRememberMeWithAnimation(!rememberMe)}
+                testID="settings-stay-signed-in"
+                themeMode={themeMode}
+                palette={palette}
+              />
             </View>
           </SettingShell>
         </SettingsSection>

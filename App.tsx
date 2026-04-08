@@ -209,7 +209,6 @@ function App() {
   const {
     hasCompletedOnboarding,
     setHasCompletedOnboarding,
-    hasSetPreferences,
     setHasSetPreferences,
     setPreferences,
     setScheduleSource,
@@ -222,6 +221,7 @@ function App() {
     isAuthenticated,
     setIsAuthenticated,
     setAuthUser,
+    setRememberMe,
     setProfileDisplayName,
     setActiveWalkSnapshot,
     setPendingWalkPrompt,
@@ -481,22 +481,6 @@ function App() {
     startedFromNotification?: boolean;
     skipStartCountdown?: boolean;
   }) => {
-    if (isAndroidNotificationGateRuntime && !notificationGateSatisfied) {
-      const permissionGateParams: RootStackParamList['Preferences'] = {
-        enforceNotificationPermission: true,
-        permissionGateSource: 'dashboard',
-      };
-      if (navigationRef.isReady()) {
-        navigationRef.navigate('Preferences', permissionGateParams);
-      } else {
-        pendingRootRouteRef.current = {
-          name: 'Walking',
-          params,
-        };
-      }
-      return;
-    }
-
     if (navigationRef.isReady()) {
       navigationRef.navigate('Walking', params);
       return;
@@ -505,25 +489,9 @@ function App() {
       name: 'Walking',
       params,
     };
-  }, [isAndroidNotificationGateRuntime, notificationGateSatisfied]);
+  }, []);
 
   const navigateToDashboard = useCallback((params: RootStackParamList['Dashboard']) => {
-    if (isAndroidNotificationGateRuntime && !notificationGateSatisfied) {
-      const permissionGateParams: RootStackParamList['Preferences'] = {
-        enforceNotificationPermission: true,
-        permissionGateSource: 'dashboard',
-      };
-      if (navigationRef.isReady()) {
-        navigationRef.navigate('Preferences', permissionGateParams);
-      } else {
-        pendingRootRouteRef.current = {
-          name: 'Dashboard',
-          params,
-        };
-      }
-      return;
-    }
-
     if (navigationRef.isReady()) {
       navigationRef.navigate('Dashboard', params);
       return;
@@ -532,7 +500,7 @@ function App() {
       name: 'Dashboard',
       params,
     };
-  }, [isAndroidNotificationGateRuntime, notificationGateSatisfied]);
+  }, []);
 
   const resolveWalkPromptDetails = useCallback(async (planId?: string) => {
     if (!planId) return null;
@@ -942,8 +910,14 @@ function App() {
 
       // Restore auth session.
       // Firebase persists the session natively. We still enforce a 30 day
-      // re-authentication limit via local metadata.
+      // re-authentication limit via local metadata when "Stay signed in" is on.
       try {
+        const shouldRememberSession =
+          Platform.OS === 'web'
+            ? true
+            : await authStorage.getRememberMe();
+        setRememberMe(shouldRememberSession);
+
         const storedUser = await authStorage.getUser();
         if (storedUser) setAuthUser(storedUser);
 
@@ -954,21 +928,30 @@ function App() {
           await authStorage.saveUser(currentUser);
         }
 
-        const lastLoginAt = await authStorage.getLastLoginAt();
-        const thirtyDaysMs = 30 * 24 * 60 * 60 * 1000;
-        const sessionExpired =
-          !lastLoginAt ||
-          Date.now() - new Date(lastLoginAt).getTime() > thirtyDaysMs;
-
-        if (sessionExpired) {
-          await firebaseAuthService.signOut();
+        if (!shouldRememberSession) {
+          if (currentUser) {
+            await firebaseAuthService.signOut();
+          }
           await authStorage.clearAll();
           setAuthUser(null);
-        } else if (currentUser && !requiresEmailVerification(currentUser)) {
-          setIsAuthenticated(true);
-          hasRestoredAuthenticatedSession = true;
-        } else {
           setIsAuthenticated(false);
+        } else {
+          const lastLoginAt = await authStorage.getLastLoginAt();
+          const thirtyDaysMs = 30 * 24 * 60 * 60 * 1000;
+          const sessionExpired =
+            !lastLoginAt ||
+            Date.now() - new Date(lastLoginAt).getTime() > thirtyDaysMs;
+
+          if (sessionExpired) {
+            await firebaseAuthService.signOut();
+            await authStorage.clearAll();
+            setAuthUser(null);
+          } else if (currentUser && !requiresEmailVerification(currentUser)) {
+            setIsAuthenticated(true);
+            hasRestoredAuthenticatedSession = true;
+          } else {
+            setIsAuthenticated(false);
+          }
         }
       } catch (e) {
         if (__DEV__) console.warn('Failed to restore auth session:', e);
@@ -1047,7 +1030,7 @@ function App() {
       }
 
       if (prefsExist && sourceExists) {
-        setHasCompletedOnboarding(notificationGateGranted);
+        setHasCompletedOnboarding(true);
         setHasSetPreferences(true);
 
         // Load preferences and source into store
@@ -1075,15 +1058,9 @@ function App() {
 
   const palette = getThemePalette(themeMode);
   const isDark = themeMode === 'dark';
-  const shouldOpenPermissionGate =
-    isAuthenticated &&
-    isAndroidNotificationGateRuntime &&
-    hasSetPreferences &&
-    !notificationGateSatisfied;
   const canOpenDashboard =
     isAuthenticated &&
-    hasCompletedOnboarding &&
-    notificationGateSatisfied;
+    hasCompletedOnboarding;
   const showBootScreen = !isBootstrapDone || !isBootGreetingDone;
 
   // Fade in main app when bootstrap finishes
@@ -1147,11 +1124,8 @@ function App() {
 
         if (navigationRef.isReady()) {
           const currentRoute = navigationRef.getCurrentRoute();
-          if (currentRoute?.name !== 'Preferences') {
-            navigationRef.navigate('Preferences', {
-              enforceNotificationPermission: true,
-              permissionGateSource: 'dashboard',
-            });
+          if (currentRoute?.name === 'Walking') {
+            navigationRef.navigate('Dashboard', {});
           }
         }
       })();
@@ -1287,17 +1261,10 @@ function App() {
             onReady={() => {
               const pendingRoute = pendingRootRouteRef.current;
               if (pendingRoute && navigationRef.isReady()) {
-                if (isAndroidNotificationGateRuntime && !notificationGateSatisfied) {
-                  navigationRef.navigate('Preferences', {
-                    enforceNotificationPermission: true,
-                    permissionGateSource: 'dashboard',
-                  });
+                if (pendingRoute.name === 'Walking') {
+                  navigationRef.navigate('Walking', pendingRoute.params);
                 } else {
-                  if (pendingRoute.name === 'Walking') {
-                    navigationRef.navigate('Walking', pendingRoute.params);
-                  } else {
-                    navigationRef.navigate('Dashboard', pendingRoute.params);
-                  }
+                  navigationRef.navigate('Dashboard', pendingRoute.params);
                 }
                 pendingRootRouteRef.current = null;
               }
@@ -1314,9 +1281,7 @@ function App() {
               initialRouteName={
                 canOpenDashboard
                   ? 'Dashboard'
-                  : shouldOpenPermissionGate
-                    ? 'Preferences'
-                    : 'Intro'
+                  : 'Intro'
               }
               screenOptions={{
                 headerShown: false,
@@ -1332,7 +1297,6 @@ function App() {
                   <IntroScreen
                     {...props}
                     isAuthenticated={isAuthenticated}
-                    isNotificationGateSatisfied={!isAndroidNotificationGateRuntime || notificationGateSatisfied}
                     onAuthenticated={() => {
                       setIsAuthenticated(true);
                       // Register device + timezone with backend on fresh login
@@ -1346,14 +1310,6 @@ function App() {
               <Stack.Screen
                 name="Preferences"
                 component={PreferencesScreen}
-                initialParams={
-                  shouldOpenPermissionGate
-                    ? {
-                      enforceNotificationPermission: true,
-                      permissionGateSource: 'dashboard',
-                    }
-                    : undefined
-                }
               />
               <Stack.Screen name="Dashboard" component={DashboardScreen} options={{ animation: 'fade_from_bottom' }} />
               <Stack.Screen name="Walking" component={WalkingScreen} options={{ animation: 'slide_from_bottom' }} />

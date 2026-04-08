@@ -18,8 +18,17 @@ import { screenChrome } from '../theme/screenChrome';
 import { useThemePalette } from '../theme/palette';
 import { useAppStore } from '../store';
 import { authStorage } from '../data/authStorage';
-import { firebaseAuthService } from '../services/firebaseAuth';
+import {
+  firebaseAuthService,
+  getFirebaseConfigurationError,
+  getGoogleAuthConfigurationError,
+  isFirebaseConfigured,
+  isGoogleAuthConfigured,
+  isGoogleSignInCancelled,
+  requiresEmailVerification,
+} from '../services/firebaseAuth';
 import { sessionsRepo } from '../data/repositories/sessionsRepo';
+import { registerCurrentDeviceForNotifications } from '../services/deviceRegistration';
 import { wipeLocalPersonalData } from '../services/localDataWipe';
 
 import { calculateStreak, calculateWeeklyStats } from '../utils/statsUtils';
@@ -64,6 +73,8 @@ const validateDisplayName = (value: string): string | null => {
   return null;
 };
 
+type EmailAuthMode = 'login' | 'signup';
+
 export const ProfileScreen: React.FC<Props> = ({ navigation }) => {
   const {
     themeMode,
@@ -94,7 +105,31 @@ export const ProfileScreen: React.FC<Props> = ({ navigation }) => {
   const [nameError, setNameError] = useState<string | null>(null);
   const [savingName, setSavingName] = useState(false);
   const [showSaveToast, setShowSaveToast] = useState(false);
+  const [messageDialog, setMessageDialog] = useState<{ title: string; message: string } | null>(null);
+  const [authLoadingMode, setAuthLoadingMode] = useState<
+    'login' | 'signup' | 'google' | 'reset' | 'resendVerification' | 'checkVerification' | null
+  >(null);
+  const [emailAuthMode, setEmailAuthMode] = useState<EmailAuthMode | null>(null);
+  const [authEmail, setAuthEmail] = useState('');
+  const [authPassword, setAuthPassword] = useState('');
+  const [authPasswordConfirm, setAuthPasswordConfirm] = useState('');
+  const [authFormError, setAuthFormError] = useState<string | null>(null);
+  const [verificationPrompt, setVerificationPrompt] = useState<{
+    email: string;
+    source: EmailAuthMode;
+  } | null>(null);
+  const [verificationPromptError, setVerificationPromptError] = useState<string | null>(null);
+  const [changePasswordModalVisible, setChangePasswordModalVisible] = useState(false);
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [nextPassword, setNextPassword] = useState('');
+  const [confirmNextPassword, setConfirmNextPassword] = useState('');
+  const [changePasswordError, setChangePasswordError] = useState<string | null>(null);
+  const [changingPassword, setChangingPassword] = useState(false);
   const [confirmDialog, setConfirmDialog] = useState<{ title: string; message: string; confirmText: string; onConfirm: () => void } | null>(null);
+  const authConfigured = isFirebaseConfigured();
+  const googleAuthConfigured = isGoogleAuthConfigured();
+  const isPasswordAccount = authUser?.providerId === 'password';
+  const showMessage = (title: string, message: string) => setMessageDialog({ title, message });
   const showBinaryConfirm = (title: string, message: string, confirmText: string, onConfirm: () => void) => setConfirmDialog({ title, message, confirmText, onConfirm });
 
   const resolvedDisplayName = useMemo(() => {
@@ -116,6 +151,49 @@ export const ProfileScreen: React.FC<Props> = ({ navigation }) => {
   const draftNameValidationError = validateDisplayName(normalizedDraftName);
   const hasNameChanged = normalizedDraftName !== resolvedDisplayName;
   const canSaveName = isEditingName && !savingName && !draftNameValidationError && hasNameChanged;
+
+  const resetEmailAuthForm = () => {
+    setAuthEmail('');
+    setAuthPassword('');
+    setAuthPasswordConfirm('');
+    setAuthFormError(null);
+  };
+
+  const completeAuthentication = () => {
+    setIsAuthenticated(true);
+    void registerCurrentDeviceForNotifications();
+  };
+
+  const openEmailAuthModal = (mode: EmailAuthMode) => {
+    if (!authConfigured) {
+      showMessage(
+        'Firebase Authentication',
+        getFirebaseConfigurationError() ??
+          'Firebase Authentication is not configured.'
+      );
+      return;
+    }
+    setEmailAuthMode(mode);
+    setAuthFormError(null);
+    setAuthPassword('');
+    setAuthPasswordConfirm('');
+  };
+
+  const closeEmailAuthModal = () => {
+    setEmailAuthMode(null);
+    setAuthFormError(null);
+    setAuthPassword('');
+    setAuthPasswordConfirm('');
+  };
+
+  const validateEmail = (email: string): string | null => {
+    const normalized = email.trim();
+    if (!normalized) return 'Email is required.';
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized)) {
+      return 'Enter a valid email address.';
+    }
+    return null;
+  };
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -231,6 +309,214 @@ export const ProfileScreen: React.FC<Props> = ({ navigation }) => {
     }
 
     showBinaryConfirm('Log out', 'Are you sure you want to log out?', 'Log out', () => void doLogout());
+  };
+
+  const runEmailAuth = async () => {
+    if (!emailAuthMode) return;
+
+    const emailError = validateEmail(authEmail);
+    if (emailError) {
+      setAuthFormError(emailError);
+      return;
+    }
+    if (!authPassword) {
+      setAuthFormError('Password is required.');
+      return;
+    }
+    if (emailAuthMode === 'signup') {
+      if (authPassword.length < 6) {
+        setAuthFormError('Password must be at least 6 characters.');
+        return;
+      }
+      if (authPassword !== authPasswordConfirm) {
+        setAuthFormError('Passwords do not match.');
+        return;
+      }
+    }
+
+    setAuthFormError(null);
+    setAuthLoadingMode(emailAuthMode);
+    try {
+      const user =
+        emailAuthMode === 'signup'
+          ? await firebaseAuthService.signUpWithEmail(authEmail, authPassword)
+          : await firebaseAuthService.signInWithEmail(authEmail, authPassword);
+      setAuthUser(user);
+      if (requiresEmailVerification(user)) {
+        closeEmailAuthModal();
+        resetEmailAuthForm();
+        setVerificationPrompt({ email: user.email ?? authEmail.trim(), source: emailAuthMode });
+        return;
+      }
+      closeEmailAuthModal();
+      resetEmailAuthForm();
+      completeAuthentication();
+    } catch (error) {
+      setAuthFormError(toUserFriendlyError(error));
+    } finally {
+      setAuthLoadingMode(null);
+    }
+  };
+
+  const handlePasswordReset = async () => {
+    const emailError = validateEmail(authEmail);
+    if (emailError) {
+      setAuthFormError(emailError);
+      return;
+    }
+
+    setAuthFormError(null);
+    setAuthLoadingMode('reset');
+    try {
+      await firebaseAuthService.sendPasswordReset(authEmail);
+      showMessage(
+        'Reset email sent',
+        'If that account exists, Firebase has sent a password reset email.'
+      );
+    } catch (error) {
+      setAuthFormError(toUserFriendlyError(error));
+    } finally {
+      setAuthLoadingMode(null);
+    }
+  };
+
+  const runGoogleAuth = async () => {
+    if (!googleAuthConfigured) {
+      showMessage(
+        'Google Sign-In',
+        getGoogleAuthConfigurationError() ??
+          'Google sign-in is not configured.'
+      );
+      return;
+    }
+
+    setAuthLoadingMode('google');
+    try {
+      const user = await firebaseAuthService.signInWithGoogle();
+      setAuthUser(user);
+      completeAuthentication();
+    } catch (error) {
+      if (isGoogleSignInCancelled(error)) {
+        setAuthLoadingMode(null);
+        return;
+      }
+      showMessage('Sign-in Failed', toUserFriendlyError(error));
+    } finally {
+      setAuthLoadingMode(null);
+    }
+  };
+
+  const handleResendVerificationEmail = async () => {
+    if (!verificationPrompt?.email) return;
+
+    setVerificationPromptError(null);
+    setAuthLoadingMode('resendVerification');
+    try {
+      await firebaseAuthService.sendCurrentUserVerificationEmail();
+      showMessage(
+        'Verification email sent',
+        `We sent another verification email to ${verificationPrompt.email}.`
+      );
+    } catch (error) {
+      setVerificationPromptError(toUserFriendlyError(error));
+    } finally {
+      setAuthLoadingMode(null);
+    }
+  };
+
+  const handleCheckVerification = async () => {
+    setVerificationPromptError(null);
+    setAuthLoadingMode('checkVerification');
+    try {
+      const refreshedUser = await firebaseAuthService.refreshCurrentUser();
+      setAuthUser(refreshedUser);
+      if (!refreshedUser) {
+        setVerificationPromptError('Your session expired. Please log in again.');
+        return;
+      }
+      if (requiresEmailVerification(refreshedUser)) {
+        setVerificationPromptError('Your email is not verified yet. Open the link in your inbox, then try again.');
+        return;
+      }
+      setVerificationPrompt(null);
+      resetEmailAuthForm();
+      completeAuthentication();
+    } catch (error) {
+      setVerificationPromptError(toUserFriendlyError(error));
+    } finally {
+      setAuthLoadingMode(null);
+    }
+  };
+
+  const dismissVerificationPrompt = async () => {
+    setVerificationPrompt(null);
+    setVerificationPromptError(null);
+    try {
+      await firebaseAuthService.signOut();
+    } catch (error) {
+      showMessage('Sign-out Failed', toUserFriendlyError(error));
+    } finally {
+      setAuthUser(null);
+      setIsAuthenticated(false);
+    }
+  };
+
+  const openChangePasswordModal = () => {
+    if (!isPasswordAccount) {
+      showMessage(
+        'Password managed by provider',
+        'You signed in with Google. Change your password in your Google account settings.'
+      );
+      return;
+    }
+    setCurrentPassword('');
+    setNextPassword('');
+    setConfirmNextPassword('');
+    setChangePasswordError(null);
+    setChangePasswordModalVisible(true);
+  };
+
+  const closeChangePasswordModal = () => {
+    setChangePasswordModalVisible(false);
+    setChangePasswordError(null);
+    setCurrentPassword('');
+    setNextPassword('');
+    setConfirmNextPassword('');
+  };
+
+  const handleChangePassword = async () => {
+    if (!currentPassword) {
+      setChangePasswordError('Current password is required.');
+      return;
+    }
+    if (!nextPassword) {
+      setChangePasswordError('New password is required.');
+      return;
+    }
+    if (nextPassword.length < 6) {
+      setChangePasswordError('Password must be at least 6 characters.');
+      return;
+    }
+    if (nextPassword !== confirmNextPassword) {
+      setChangePasswordError('New passwords do not match.');
+      return;
+    }
+    if (currentPassword === nextPassword) {
+      setChangePasswordError('Use a different password than your current one.');
+      return;
+    }
+
+    setChangePasswordError(null);
+    setChangingPassword(true);
+    try {
+      await firebaseAuthService.changePassword(currentPassword, nextPassword);
+      closeChangePasswordModal();
+      showMessage('Password updated', 'Your password has been changed successfully.');
+    } catch (error) {
+      setChangePasswordError(toUserFriendlyError(error));
+    } finally {
+      setChangingPassword(false);
+    }
   };
 
   return (
@@ -446,6 +732,12 @@ export const ProfileScreen: React.FC<Props> = ({ navigation }) => {
       {isAuthenticated ? (
         <View style={styles.footer}>
           <TwoActionBar
+            secondaryAction={{
+              title: 'Change password',
+              onPress: openChangePasswordModal,
+              variant: 'secondary',
+              testID: 'profile-change-password',
+            }}
             primaryAction={{
               title: 'Log out',
               onPress: handleLogout,
@@ -454,12 +746,55 @@ export const ProfileScreen: React.FC<Props> = ({ navigation }) => {
             }}
           />
         </View>
-      ) : null}
+      ) : (
+        <View style={styles.footer}>
+          <Card elevated>
+            <Text variant="body" style={styles.sectionTitle}>Save your progress</Text>
+            <Text variant="bodySmall" color={palette.textMuted} style={styles.guestAuthCopy}>
+              Create an account to sync your walks and keep your progress safe.
+            </Text>
+            <Button
+              title="Continue with Google"
+              onPress={() => { void runGoogleAuth(); }}
+              variant="primary"
+              loading={authLoadingMode === 'google'}
+              disabled={!googleAuthConfigured || authLoadingMode === 'login' || authLoadingMode === 'signup' || authLoadingMode === 'reset'}
+              testID="profile-auth-google"
+              full
+            />
+            <View style={styles.authButtonRow}>
+              <Button
+                title="Sign up"
+                onPress={() => openEmailAuthModal('signup')}
+                variant="secondary"
+                loading={authLoadingMode === 'signup'}
+                disabled={!authConfigured || authLoadingMode === 'login' || authLoadingMode === 'google' || authLoadingMode === 'reset'}
+                testID="profile-auth-signup"
+                style={styles.authButtonHalf}
+              />
+              <Button
+                title="Log in"
+                onPress={() => openEmailAuthModal('login')}
+                loading={authLoadingMode === 'login'}
+                disabled={!authConfigured || authLoadingMode === 'signup' || authLoadingMode === 'google' || authLoadingMode === 'reset'}
+                testID="profile-auth-login"
+                style={styles.authButtonHalf}
+              />
+            </View>
+          </Card>
+        </View>
+      )}
       <SuccessToast
         visible={showSaveToast}
         message="Profile updated"
         onDismiss={() => setShowSaveToast(false)}
       />
+      <AppModal visible={messageDialog !== null} onClose={() => setMessageDialog(null)} title={messageDialog?.title ?? ''}>
+        <View style={{ paddingBottom: 8 }}>
+          <Text variant="body" style={{ color: palette.textMuted, textAlign: 'center', marginBottom: 24 }}>{messageDialog?.message}</Text>
+          <Button title="OK" onPress={() => setMessageDialog(null)} />
+        </View>
+      </AppModal>
       <AppModal visible={confirmDialog !== null} onClose={() => setConfirmDialog(null)} title={confirmDialog?.title ?? ''}>
         <View style={{ paddingBottom: 8 }}>
           <Text variant="body" style={{ color: palette.textMuted, textAlign: 'center', marginBottom: 24 }}>{confirmDialog?.message}</Text>
@@ -467,6 +802,233 @@ export const ProfileScreen: React.FC<Props> = ({ navigation }) => {
             <Button title="Cancel" variant="secondary" onPress={() => setConfirmDialog(null)} style={{ flex: 1 }} />
             <Button title={confirmDialog?.confirmText ?? 'Yes'} variant="danger" onPress={() => { confirmDialog?.onConfirm(); setConfirmDialog(null); }} style={{ flex: 1 }} />
           </View>
+        </View>
+      </AppModal>
+      <AppModal
+        visible={emailAuthMode !== null}
+        onClose={closeEmailAuthModal}
+        title={emailAuthMode === 'signup' ? 'Create account' : 'Log in'}
+      >
+        <View style={styles.authModalBody}>
+          <Text variant="bodySmall" color={palette.textMuted} style={styles.authModalCopy}>
+            {emailAuthMode === 'signup'
+              ? 'Create your GapWalk account with your email and password.'
+              : 'Log in with the email and password linked to your GapWalk account.'}
+          </Text>
+          <View style={styles.authModalFieldStack}>
+            <TextInput
+              value={authEmail}
+              onChangeText={(value) => {
+                setAuthEmail(value);
+                if (authFormError) setAuthFormError(null);
+              }}
+              placeholder="Email"
+              placeholderTextColor={palette.textMuted}
+              autoCapitalize="none"
+              keyboardType="email-address"
+              autoCorrect={false}
+              style={[
+                styles.authInput,
+                {
+                  color: palette.textPrimary,
+                  backgroundColor: palette.inputBg,
+                  borderColor: palette.borderStrong,
+                },
+              ]}
+            />
+            <TextInput
+              value={authPassword}
+              onChangeText={(value) => {
+                setAuthPassword(value);
+                if (authFormError) setAuthFormError(null);
+              }}
+              placeholder="Password"
+              placeholderTextColor={palette.textMuted}
+              secureTextEntry
+              autoCapitalize="none"
+              autoCorrect={false}
+              style={[
+                styles.authInput,
+                {
+                  color: palette.textPrimary,
+                  backgroundColor: palette.inputBg,
+                  borderColor: palette.borderStrong,
+                },
+              ]}
+            />
+            {emailAuthMode === 'signup' ? (
+              <TextInput
+                value={authPasswordConfirm}
+                onChangeText={(value) => {
+                  setAuthPasswordConfirm(value);
+                  if (authFormError) setAuthFormError(null);
+                }}
+                placeholder="Confirm password"
+                placeholderTextColor={palette.textMuted}
+                secureTextEntry
+                autoCapitalize="none"
+                autoCorrect={false}
+                style={[
+                  styles.authInput,
+                  {
+                    color: palette.textPrimary,
+                    backgroundColor: palette.inputBg,
+                    borderColor: palette.borderStrong,
+                  },
+                ]}
+              />
+            ) : null}
+          </View>
+          {authFormError ? (
+            <Text variant="bodySmall" style={styles.authErrorText}>
+              {authFormError}
+            </Text>
+          ) : null}
+          {emailAuthMode === 'login' ? (
+            <Pressable
+              onPress={() => { void handlePasswordReset(); }}
+              disabled={authLoadingMode === 'reset' || authLoadingMode === 'login'}
+              style={({ pressed }) => [styles.authLinkButton, pressed && styles.editIconPressed]}
+            >
+              <Text variant="bodySmall" style={[styles.authLinkText, { color: palette.accentPrimary }]}>
+                Forgot password?
+              </Text>
+            </Pressable>
+          ) : null}
+          <Button
+            title={emailAuthMode === 'signup' ? 'Create account' : 'Log in'}
+            onPress={() => { void runEmailAuth(); }}
+            loading={authLoadingMode === emailAuthMode}
+            disabled={authLoadingMode === 'google' || authLoadingMode === 'reset'}
+            full
+            style={styles.authModalActionButton}
+          />
+        </View>
+      </AppModal>
+      <AppModal
+        visible={verificationPrompt !== null}
+        onClose={() => { void dismissVerificationPrompt(); }}
+        title="Verify your email"
+      >
+        <View style={styles.authModalBody}>
+          <Text variant="bodySmall" color={palette.textMuted} style={styles.authModalCopy}>
+            {`We sent a verification email to ${verificationPrompt?.email ?? 'your inbox'}. Open the link, then return here.`}
+          </Text>
+          {verificationPromptError ? (
+            <Text variant="bodySmall" style={styles.authErrorText}>
+              {verificationPromptError}
+            </Text>
+          ) : null}
+          <View style={styles.verificationActions}>
+            <Button
+              title="Resend email"
+              variant="secondary"
+              onPress={() => { void handleResendVerificationEmail(); }}
+              loading={authLoadingMode === 'resendVerification'}
+              disabled={authLoadingMode === 'checkVerification'}
+              style={styles.verificationActionButton}
+            />
+            <Button
+              title="I verified"
+              onPress={() => { void handleCheckVerification(); }}
+              loading={authLoadingMode === 'checkVerification'}
+              disabled={authLoadingMode === 'resendVerification'}
+              style={styles.verificationActionButton}
+            />
+          </View>
+          <Button
+            title={verificationPrompt?.source === 'signup' ? 'Use another email' : 'Back'}
+            variant="muted"
+            onPress={() => { void dismissVerificationPrompt(); }}
+            full
+            style={styles.verificationDismissButton}
+          />
+        </View>
+      </AppModal>
+      <AppModal
+        visible={changePasswordModalVisible}
+        onClose={closeChangePasswordModal}
+        title="Change password"
+      >
+        <View style={styles.authModalBody}>
+          <Text variant="bodySmall" color={palette.textMuted} style={styles.authModalCopy}>
+            Enter your current password, then choose a new one.
+          </Text>
+          <View style={styles.authModalFieldStack}>
+            <TextInput
+              value={currentPassword}
+              onChangeText={(value) => {
+                setCurrentPassword(value);
+                if (changePasswordError) setChangePasswordError(null);
+              }}
+              placeholder="Current password"
+              placeholderTextColor={palette.textMuted}
+              secureTextEntry
+              autoCapitalize="none"
+              autoCorrect={false}
+              style={[
+                styles.authInput,
+                {
+                  color: palette.textPrimary,
+                  backgroundColor: palette.inputBg,
+                  borderColor: palette.borderStrong,
+                },
+              ]}
+            />
+            <TextInput
+              value={nextPassword}
+              onChangeText={(value) => {
+                setNextPassword(value);
+                if (changePasswordError) setChangePasswordError(null);
+              }}
+              placeholder="New password"
+              placeholderTextColor={palette.textMuted}
+              secureTextEntry
+              autoCapitalize="none"
+              autoCorrect={false}
+              style={[
+                styles.authInput,
+                {
+                  color: palette.textPrimary,
+                  backgroundColor: palette.inputBg,
+                  borderColor: palette.borderStrong,
+                },
+              ]}
+            />
+            <TextInput
+              value={confirmNextPassword}
+              onChangeText={(value) => {
+                setConfirmNextPassword(value);
+                if (changePasswordError) setChangePasswordError(null);
+              }}
+              placeholder="Confirm new password"
+              placeholderTextColor={palette.textMuted}
+              secureTextEntry
+              autoCapitalize="none"
+              autoCorrect={false}
+              style={[
+                styles.authInput,
+                {
+                  color: palette.textPrimary,
+                  backgroundColor: palette.inputBg,
+                  borderColor: palette.borderStrong,
+                },
+              ]}
+            />
+          </View>
+          {changePasswordError ? (
+            <Text variant="bodySmall" style={styles.authErrorText}>
+              {changePasswordError}
+            </Text>
+          ) : null}
+          <Button
+            title="Update password"
+            onPress={() => { void handleChangePassword(); }}
+            loading={changingPassword}
+            disabled={changingPassword}
+            full
+            style={styles.authModalActionButton}
+          />
         </View>
       </AppModal>
     </Container>
@@ -586,6 +1148,60 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontWeight: theme.fontWeight.semibold,
     marginBottom: 12,
+  },
+  guestAuthCopy: {
+    marginBottom: 12,
+  },
+  authButtonRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 10,
+  },
+  authButtonHalf: {
+    flex: 1,
+  },
+  authModalBody: {
+    paddingBottom: 8,
+  },
+  authModalCopy: {
+    textAlign: 'center',
+    marginBottom: 14,
+  },
+  authModalFieldStack: {
+    gap: 10,
+  },
+  authInput: {
+    borderWidth: 1,
+    borderRadius: theme.borderRadius.md,
+    minHeight: 42,
+    paddingHorizontal: 12,
+    paddingVertical: Platform.OS === 'android' ? 7 : 9,
+    fontSize: theme.fontSize.md,
+  },
+  authErrorText: {
+    color: theme.colors.error,
+    marginTop: 10,
+  },
+  authLinkButton: {
+    alignSelf: 'flex-start',
+    marginTop: 8,
+  },
+  authLinkText: {
+    fontWeight: theme.fontWeight.semibold,
+  },
+  authModalActionButton: {
+    marginTop: 14,
+  },
+  verificationActions: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 12,
+  },
+  verificationActionButton: {
+    flex: 1,
+  },
+  verificationDismissButton: {
+    marginTop: 12,
   },
   statsRow: {
     flexDirection: 'row',

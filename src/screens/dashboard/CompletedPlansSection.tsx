@@ -73,7 +73,7 @@ const styles = StyleSheet.create({
   section: {},
   label: {
     fontWeight: theme.fontWeight.semibold,
-    marginBottom: theme.spacing.sm,
+    marginBottom: theme.spacing.md,
     letterSpacing: 0.5,
   },
   card: {

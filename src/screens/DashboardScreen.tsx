@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
-import { View, StyleSheet, ScrollView, RefreshControl, Pressable, Animated, Easing, LayoutAnimation, useWindowDimensions, Platform, InteractionManager, Dimensions, AppState } from 'react-native';
+import { View, StyleSheet, ScrollView, RefreshControl, Pressable, Animated, Easing, LayoutAnimation, useWindowDimensions, Platform, InteractionManager, Dimensions, AppState, BackHandler } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
@@ -36,9 +36,12 @@ import { calculateStreak, calculateWeeklyStats, getMotivationalMessage, StreakDa
 import { addMinutes, format, isAfter, isBefore, parseISO, subMinutes, subDays } from 'date-fns';
 import { timeUtils } from '../utils/time';
 import {
+  getActivityRecognitionPermissionState,
   getNotificationPermissionState,
   openAppSettings,
+  requestActivityRecognitionPermissionState,
   requestNotificationPermission,
+  type ActivityRecognitionPermissionState,
   type NotificationPermissionState,
 } from '../services/permissions';
 import { toUserFriendlyError } from '../utils/errorMessages';
@@ -259,12 +262,18 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
   // ── Themed dialog state ──
   const [messageDialog, setMessageDialog] = useState<{ title: string; message: string } | null>(null);
   const [confirmDialog, setConfirmDialog] = useState<{ title: string; message: string; confirmText: string; confirmStyle: 'default' | 'destructive'; onConfirm: () => void } | null>(null);
+  const [showExitAppDialog, setShowExitAppDialog] = useState(false);
   const showMessage = (title: string, message: string) => setMessageDialog({ title, message });
   const showBinaryConfirm = (title: string, message: string, confirmText: string, onConfirm: () => void, style: 'default' | 'destructive' = 'default') =>
     setConfirmDialog({ title, message, confirmText, confirmStyle: style, onConfirm });
+  const shouldEnforceRequiredPermissionGate =
+    Platform.OS === 'android' &&
+    isNotificationsSupported;
   const [notificationPermissionState, setNotificationPermissionState] = useState<NotificationPermissionState | null>(null);
-  const [isRepairingNotifications, setIsRepairingNotifications] = useState(false);
+  const [activityPermissionState, setActivityPermissionState] = useState<ActivityRecognitionPermissionState | null>(null);
+  const [isResolvingRequiredPermissions, setIsResolvingRequiredPermissions] = useState(false);
   const lastNotificationPermissionGrantedRef = useRef<boolean | null>(null);
+  const lastActivityPermissionGrantedRef = useRef<boolean | null>(null);
   const preferencesRef = useRef(preferences);
   preferencesRef.current = preferences;
   const hasActiveWalkSession = !!activeWalkSnapshot?.sessionId;
@@ -555,54 +564,105 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
     await load();
   }, [load]);
 
-  const refreshNotificationPermissionState = useCallback(async (
+  const refreshRequiredPermissionState = useCallback(async (
     options: { syncOnGrantTransition?: boolean } = {},
-  ): Promise<NotificationPermissionState | null> => {
-    if (!isNotificationsSupported) {
+  ): Promise<{
+    notification: NotificationPermissionState | null;
+    activity: ActivityRecognitionPermissionState | null;
+    satisfied: boolean;
+  }> => {
+    if (!shouldEnforceRequiredPermissionGate) {
       setNotificationPermissionState(null);
-      return null;
+      setActivityPermissionState(null);
+      lastNotificationPermissionGrantedRef.current = true;
+      lastActivityPermissionGrantedRef.current = true;
+      return {
+        notification: null,
+        activity: null,
+        satisfied: true,
+      };
     }
 
-    const nextState = await getNotificationPermissionState();
-    const wasGranted = lastNotificationPermissionGrantedRef.current;
-    setNotificationPermissionState(nextState);
-    lastNotificationPermissionGrantedRef.current = nextState.granted;
+    const [nextNotification, nextActivity] = await Promise.all([
+      getNotificationPermissionState(),
+      getActivityRecognitionPermissionState(),
+    ]);
+    const wasNotificationGranted = lastNotificationPermissionGrantedRef.current;
+    const wasActivityGranted = lastActivityPermissionGrantedRef.current;
 
-    if (options.syncOnGrantTransition && nextState.granted && wasGranted === false) {
+    setNotificationPermissionState(nextNotification);
+    setActivityPermissionState(nextActivity);
+    lastNotificationPermissionGrantedRef.current = nextNotification.granted;
+    lastActivityPermissionGrantedRef.current = nextActivity.granted;
+
+    const satisfied = nextNotification.granted && nextActivity.granted;
+    const crossedGrantBoundary =
+      satisfied &&
+      (wasNotificationGranted === false || wasActivityGranted === false);
+
+    if (options.syncOnGrantTransition && crossedGrantBoundary) {
       await applyNotificationPermissionGrant();
     }
 
-    return nextState;
-  }, [applyNotificationPermissionGrant]);
+    return {
+      notification: nextNotification,
+      activity: nextActivity,
+      satisfied,
+    };
+  }, [applyNotificationPermissionGrant, shouldEnforceRequiredPermissionGate]);
 
-  const handleRepairNotifications = useCallback(async () => {
-    if (isRepairingNotifications || !notificationPermissionState) return;
+  const showDeniedPermissionsExitPrompt = useCallback(() => {
+    setShowExitAppDialog(true);
+  }, []);
 
-    setIsRepairingNotifications(true);
+  const handleResolveRequiredPermissions = useCallback(async () => {
+    if (isResolvingRequiredPermissions) return;
+
+    setIsResolvingRequiredPermissions(true);
     try {
-      if (!notificationPermissionState.canAskAgain) {
-        await openAppSettings();
-        return;
+      const currentState = await refreshRequiredPermissionState();
+      if (currentState.satisfied) return;
+
+      if (
+        currentState.notification &&
+        !currentState.notification.granted &&
+        currentState.notification.canAskAgain
+      ) {
+        const nextNotification = await requestNotificationPermission();
+        setNotificationPermissionState(nextNotification);
+        lastNotificationPermissionGrantedRef.current = nextNotification.granted;
       }
 
-      const nextState = await requestNotificationPermission();
-      setNotificationPermissionState(nextState);
-      lastNotificationPermissionGrantedRef.current = nextState.granted;
-
-      if (nextState.granted) {
-        await applyNotificationPermissionGrant();
+      if (
+        currentState.activity &&
+        !currentState.activity.granted &&
+        currentState.activity.canAskAgain
+      ) {
+        const nextActivity = await requestActivityRecognitionPermissionState();
+        setActivityPermissionState(nextActivity);
+        lastActivityPermissionGrantedRef.current = nextActivity.granted;
       }
+
+      const nextState = await refreshRequiredPermissionState({ syncOnGrantTransition: true });
+      if (nextState.satisfied) return;
+
+      showDeniedPermissionsExitPrompt();
     } catch (error) {
-      if (__DEV__) console.warn('Notification repair failed:', error);
+      if (__DEV__) console.warn('Required permission flow failed:', error);
+      showDeniedPermissionsExitPrompt();
     } finally {
-      setIsRepairingNotifications(false);
+      setIsResolvingRequiredPermissions(false);
     }
-  }, [applyNotificationPermissionGrant, isRepairingNotifications, notificationPermissionState]);
+  }, [
+    isResolvingRequiredPermissions,
+    refreshRequiredPermissionState,
+    showDeniedPermissionsExitPrompt,
+  ]);
 
   useFocusEffect(
     useCallback(() => {
       load().catch((e) => console.error('Dashboard load failed:', e));
-      void refreshNotificationPermissionState({ syncOnGrantTransition: true });
+      void refreshRequiredPermissionState({ syncOnGrantTransition: true });
       // Stagger card entrance animations
       cardAnims.forEach((a) => a.setValue(0));
       Animated.stagger(
@@ -616,17 +676,17 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
           })
         )
       ).start();
-    }, [load, refreshNotificationPermissionState])
+    }, [load, refreshRequiredPermissionState])
   );
 
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (nextState) => {
       if (nextState === 'active') {
-        void refreshNotificationPermissionState({ syncOnGrantTransition: true });
+        void refreshRequiredPermissionState({ syncOnGrantTransition: true });
       }
     });
     return () => subscription.remove();
-  }, [refreshNotificationPermissionState]);
+  }, [refreshRequiredPermissionState]);
 
   // ── Celebration trigger ──
   useEffect(() => {
@@ -680,12 +740,12 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
     setRefreshing(true);
     try {
       await load();
-      await refreshNotificationPermissionState({ syncOnGrantTransition: true });
+      await refreshRequiredPermissionState({ syncOnGrantTransition: true });
     } catch (e) {
       if (__DEV__) console.error('Dashboard refresh failed:', e);
     }
     finally { setRefreshing(false); }
-  }, [load, refreshNotificationPermissionState]);
+  }, [load, refreshRequiredPermissionState]);
 
   const handleWalkActionPress = useCallback(() => {
     if (hasActiveWalkSession && activeWalkSnapshot) {
@@ -1397,14 +1457,25 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
   );
   const resolvedDashboardHeading = `Welcome, ${resolvedDisplayName}`;
   const dashboardHeadingStyle = resolvedDashboardHeading.length > 14 ? styles.headingCompact : styles.heading;
-  const showNotificationPermissionCard =
-    isNotificationsSupported &&
-    notificationPermissionState !== null &&
-    !notificationPermissionState.granted;
-  const notificationRepairLabel =
-    notificationPermissionState?.canAskAgain
-      ? 'Allow notifications'
-      : 'Open settings';
+  const isRequiredPermissionStateKnown =
+    !shouldEnforceRequiredPermissionGate ||
+    (notificationPermissionState !== null && activityPermissionState !== null);
+  const shouldShowRequiredPermissionOverlay =
+    shouldEnforceRequiredPermissionGate &&
+    isRequiredPermissionStateKnown &&
+    (!notificationPermissionState?.granted || !activityPermissionState?.granted);
+  const missingRequiredPermissions = [
+    !notificationPermissionState?.granted ? 'notifications' : null,
+    !activityPermissionState?.granted ? 'activity tracking' : null,
+  ].filter((value): value is string => value !== null);
+  const canRequestMissingPermissions =
+    (!notificationPermissionState?.granted ? notificationPermissionState?.canAskAgain === true : true) &&
+    (!activityPermissionState?.granted ? activityPermissionState?.canAskAgain === true : true);
+  const requiredPermissionMessage =
+    missingRequiredPermissions.length > 1
+      ? 'GapWalk needs notifications and activity tracking permissions to continue on dashboard.'
+      : `GapWalk needs ${missingRequiredPermissions[0] ?? 'required'} permission to continue on dashboard.`;
+  const shouldShowPermissionSettingsButton = !canRequestMissingPermissions;
 
   // ── Variant A: no preferences ──
   if (!hasSetPreferences || !preferences) {
@@ -1461,30 +1532,6 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
             <View style={styles.statusIntroStack}>
               <Text variant="body" style={styles.readyText}>{readyPrompt}</Text>
               {yesterdayMessage && <YesterdayCard message={yesterdayMessage} />}
-              {showNotificationPermissionCard && (
-                <Card elevated style={styles.permissionCard}>
-                  <View style={styles.permissionCardHeader}>
-                    <View style={[styles.permissionIconWrap, { backgroundColor: withAlpha(theme.colors.warning, themeMode === 'dark' ? 0.18 : 0.12) }]}>
-                      <AppIcon name="bell" size={16} color={theme.colors.warning} />
-                    </View>
-                    <View style={styles.permissionCopy}>
-                      <Text variant="body" style={styles.permissionTitle}>Reminders are turned off</Text>
-                      <Text variant="bodySmall" color={palette.textMuted} style={styles.permissionBody}>
-                        GapWalk can still show your schedule and let you start manual walks, but it will not proactively remind you when a walk window opens until notifications are enabled.
-                      </Text>
-                    </View>
-                  </View>
-                  <View style={styles.permissionButtonRow}>
-                    <Button
-                      title={notificationRepairLabel}
-                      onPress={() => { void handleRepairNotifications(); }}
-                      loading={isRepairingNotifications}
-                      variant={notificationPermissionState?.canAskAgain ? 'primary' : 'secondary'}
-                      style={styles.permissionButton}
-                    />
-                  </View>
-                </Card>
-              )}
               {isNoScheduleFallbackActive && (
                 <Card elevated style={styles.fallbackHintCard}>
                   <View style={styles.fallbackHintHeader}>
@@ -1574,7 +1621,7 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
 
           <Animated.View style={{ opacity: cardAnims[5], transform: [{ translateY: cardAnims[5].interpolate({ inputRange: [0, 1], outputRange: [12, 0] }) }] }}>
             <View style={styles.opportunitySection} collapsable={false}>
-              <View ref={tourOpportunitiesRef} collapsable={false}>
+              <View ref={tourOpportunitiesRef} style={styles.opportunityInner} collapsable={false}>
               <View style={styles.gapHeaderRow}>
                 <View style={{ flex: 1 }}>
                   <Text variant="body" style={styles.gapTitle}>Walking Opportunities</Text>
@@ -1744,6 +1791,31 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
         </View>
       </AppModal>
 
+      <AppModal
+        visible={showExitAppDialog}
+        onClose={() => {}}
+        title="Permissions required"
+        dismissOnBackdropPress={false}
+        dismissOnRequestClose={false}
+      >
+        <View style={{ paddingBottom: 8 }}>
+          <Text variant="body" style={{ color: palette.textMuted, textAlign: 'center', marginBottom: 24 }}>
+            By denying required permissions, you are getting out of the app. Reopen GapWalk and allow notifications and activity tracking to continue.
+          </Text>
+          <Button
+            title="Exit app"
+            variant="danger"
+            onPress={() => {
+              if (Platform.OS === 'android') {
+                BackHandler.exitApp();
+              } else {
+                setShowExitAppDialog(false);
+              }
+            }}
+          />
+        </View>
+      </AppModal>
+
       {/* In-app walk ready prompt */}
       <AppModal
         visible={pendingInAppWalkPrompt !== null && walkCountdown === null}
@@ -1807,8 +1879,54 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
         </View>
       )}
 
+      {shouldShowRequiredPermissionOverlay && (
+        <View style={[styles.requiredPermissionOverlay, { backgroundColor: palette.overlay }]}>
+          <Card elevated style={[styles.requiredPermissionCard, { borderColor: palette.borderSoft }]}>
+            <View style={styles.requiredPermissionHeader}>
+              <View
+                style={[
+                  styles.requiredPermissionIconWrap,
+                  { backgroundColor: withAlpha(theme.colors.warning, themeMode === 'dark' ? 0.2 : 0.12) },
+                ]}
+              >
+                <Ionicons name="alert-circle" size={18} color={theme.colors.warning} />
+              </View>
+              <Text variant="body" style={styles.requiredPermissionTitle}>Permission Required</Text>
+            </View>
+            <Text variant="bodySmall" color={palette.textMuted} style={styles.requiredPermissionBody}>
+              {requiredPermissionMessage}
+            </Text>
+            <Text variant="bodySmall" color={palette.textMuted} style={styles.requiredPermissionBody}>
+              {canRequestMissingPermissions
+                ? 'Tap Continue to request the missing permissions. If denied, GapWalk will close.'
+                : 'One or more permission prompts are blocked by Android. Open Settings and allow the missing permissions to continue.'}
+            </Text>
+            <View style={styles.requiredPermissionActions}>
+              {canRequestMissingPermissions && (
+                <Button
+                  title="Continue"
+                  onPress={() => { void handleResolveRequiredPermissions(); }}
+                  loading={isResolvingRequiredPermissions}
+                />
+              )}
+              {shouldShowPermissionSettingsButton && (
+                <Button
+                  title="Open Settings"
+                  onPress={() => {
+                    void openAppSettings().catch((error) => {
+                      if (__DEV__) console.warn('Failed to open app settings:', error);
+                    });
+                  }}
+                  variant="secondary"
+                />
+              )}
+            </View>
+          </Card>
+        </View>
+      )}
+
       <TourOverlay
-        visible={showDashboardTour}
+        visible={showDashboardTour && !shouldShowRequiredPermissionOverlay}
         targets={tourTargets}
         steps={DASHBOARD_TOUR_STEPS}
         onFinish={handleDashboardTourFinish}
@@ -1843,6 +1961,7 @@ const styles = StyleSheet.create({
   quickStatusContent: { gap: theme.spacing.md, paddingHorizontal: 4 },
   quickStatusCards: { gap: theme.spacing.md },
   opportunitySection: { gap: theme.spacing.md },
+  opportunityInner: { gap: theme.spacing.md },
   opportunityList: { gap: theme.spacing.sm },
   historyStack: { gap: theme.spacing.md },
   footerStack: { gap: theme.spacing.md },
@@ -1858,21 +1977,31 @@ const styles = StyleSheet.create({
   promptCard: { gap: 10 },
   promptTitle: { fontWeight: theme.fontWeight.semibold },
   promptText: { lineHeight: 18 },
-  permissionCard: { gap: 14, paddingVertical: 18, paddingHorizontal: 18 },
-  permissionCardHeader: { flexDirection: 'row', alignItems: 'flex-start', gap: 12 },
-  permissionIconWrap: {
+  requiredPermissionOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    zIndex: 1300,
+  },
+  requiredPermissionCard: {
+    width: '100%',
+    maxWidth: 420,
+    gap: 12,
+    paddingVertical: 18,
+    paddingHorizontal: 18,
+  },
+  requiredPermissionHeader: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  requiredPermissionIconWrap: {
     width: 34,
     height: 34,
     borderRadius: 17,
     alignItems: 'center',
     justifyContent: 'center',
-    marginTop: 2,
   },
-  permissionCopy: { flex: 1, gap: 4 },
-  permissionTitle: { fontWeight: theme.fontWeight.semibold },
-  permissionBody: { lineHeight: 20 },
-  permissionButtonRow: { alignItems: 'flex-end', marginTop: 10 },
-  permissionButton: {},
+  requiredPermissionTitle: { fontWeight: theme.fontWeight.semibold },
+  requiredPermissionBody: { lineHeight: 20 },
+  requiredPermissionActions: { gap: 10 },
   fallbackHintCard: { gap: 12, paddingVertical: 16, paddingHorizontal: 16 },
   fallbackHintHeader: { flexDirection: 'row', alignItems: 'flex-start', gap: 10 },
   fallbackHintIconWrap: {

@@ -675,7 +675,9 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
 
   useEffect(() => {
     // Auto-show until the user completes/skips the schedule tour at least once.
-    if (manageMode || guidanceSeen.schedule_editor_tour) return;
+    // Fires regardless of manageMode so users who skipped setup still get the
+    // tour when they reach the grid via the dashboard fallback or side menu.
+    if (guidanceSeen.schedule_editor_tour) return;
     let timer: ReturnType<typeof setTimeout> | null = null;
     const task = InteractionManager.runAfterInteractions(() => {
       timer = setTimeout(() => setShowScheduleTour(true), 600);
@@ -684,7 +686,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
       task.cancel();
       if (timer) clearTimeout(timer);
     };
-  }, [manageMode, guidanceSeen.schedule_editor_tour]);
+  }, [guidanceSeen.schedule_editor_tour]);
 
   useEffect(() => {
     if (!route.params?.replayScheduleTour) return;

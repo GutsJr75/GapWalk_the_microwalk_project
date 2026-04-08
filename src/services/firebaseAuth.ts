@@ -177,7 +177,6 @@ const persistAuthMetadata = async (
     providerData: user.providerData,
   }) ?? { uid: user.uid };
   await authStorage.saveUser(storedUser);
-  await authStorage.setRememberMe(true);
   await authStorage.saveLastLoginAt(new Date().toISOString());
   return storedUser;
 };
@@ -343,6 +342,31 @@ export const firebaseAuthService = {
     const authModule = getFirebaseAuthModule();
     const auth = getConfiguredAuth();
     await authModule.sendPasswordResetEmail(auth, email.trim());
+  },
+
+  async changePassword(currentPassword: string, nextPassword: string): Promise<void> {
+    await this.waitForAuthReady();
+    const authModule = getFirebaseAuthModule();
+    const auth = getConfiguredAuth();
+    const currentUser = auth.currentUser;
+    if (!currentUser || !currentUser.email) {
+      throw new Error('No active email/password session. Please log in again.');
+    }
+
+    const providerIds = (currentUser.providerData ?? [])
+      .map((provider) => provider?.providerId)
+      .filter((id): id is string => !!id);
+    if (!providerIds.includes('password')) {
+      throw new Error('Password changes are available only for email/password accounts.');
+    }
+
+    const credential = authModule.EmailAuthProvider.credential(
+      currentUser.email,
+      currentPassword
+    );
+    await authModule.reauthenticateWithCredential(currentUser, credential);
+    await authModule.updatePassword(currentUser, nextPassword);
+    await authStorage.saveLastLoginAt(new Date().toISOString());
   },
 
   async signInWithGoogle(): Promise<StoredAuthUser> {

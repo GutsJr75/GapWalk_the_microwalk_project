@@ -76,7 +76,6 @@ const LogoTile: React.FC<{ size: number; isDark: boolean }> = ({ size, isDark })
 
 interface Props extends NativeStackScreenProps<RootStackParamList, 'Intro'> {
   isAuthenticated?: boolean;
-  isNotificationGateSatisfied?: boolean;
   onAuthenticated?: () => void;
 }
 
@@ -90,7 +89,6 @@ type VerificationPromptSource = EmailAuthMode | 'restore';
 export const IntroScreen: React.FC<Props> = ({
   navigation,
   isAuthenticated = false,
-  isNotificationGateSatisfied = true,
   onAuthenticated,
 }) => {
   const {
@@ -396,13 +394,6 @@ export const IntroScreen: React.FC<Props> = ({
       hasSetPreferences,
     });
     if (hasSetPreferences) {
-      if (!isNotificationGateSatisfied) {
-        navigation.navigate('Preferences', {
-          enforceNotificationPermission: true,
-          permissionGateSource: 'dashboard',
-        });
-        return;
-      }
       navigation.navigate('Dashboard');
     } else {
       navigation.navigate('ScheduleSetup');
@@ -412,13 +403,6 @@ export const IntroScreen: React.FC<Props> = ({
   const handleContinueAsGuest = () => {
     analyticsService.track('continue_as_guest');
     if (hasCompletedOnboarding) {
-      if (!isNotificationGateSatisfied) {
-        navigation.navigate('Preferences', {
-          enforceNotificationPermission: true,
-          permissionGateSource: 'dashboard',
-        });
-        return;
-      }
       navigation.navigate('Dashboard');
     } else {
       navigation.navigate('ScheduleSetup');

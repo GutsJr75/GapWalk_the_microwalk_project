@@ -48,9 +48,10 @@ export const authStorage = {
   },
 
   async getRememberMe(): Promise<boolean> {
-    if (Platform.OS === 'web') return false;
+    if (Platform.OS === 'web') return true;
     const val = await SecureStore.getItemAsync(REMEMBER_ME_KEY);
-    return val === '1';
+    if (val === '0') return false;
+    return true;
   },
 
   async saveProfileDisplayName(name: string): Promise<void> {
@@ -207,7 +208,6 @@ export const authStorage = {
     if (Platform.OS === 'web') return;
     await SecureStore.deleteItemAsync(LEGACY_AUTH_TOKEN_KEY);
     await SecureStore.deleteItemAsync(AUTH_USER_KEY);
-    await SecureStore.deleteItemAsync(REMEMBER_ME_KEY);
     await SecureStore.deleteItemAsync(LAST_LOGIN_AT_KEY);
     await SecureStore.deleteItemAsync(LAST_SYNCED_AT_KEY);
   },
