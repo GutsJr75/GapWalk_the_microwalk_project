@@ -104,8 +104,6 @@ export const SideMenu: React.FC<SideMenuProps> = ({
             styles.content,
             {
               width: menuPanelWidth,
-              marginTop: insets.top,
-              marginBottom: insets.bottom,
               backgroundColor: palette.bgSurface,
               borderLeftColor: palette.borderSoft,
               transform: [
@@ -124,8 +122,8 @@ export const SideMenu: React.FC<SideMenuProps> = ({
             contentContainerStyle={[
               styles.scrollContent,
               {
-                paddingTop: 28,
-                paddingBottom: 34,
+                paddingTop: insets.top + 28,
+                paddingBottom: insets.bottom + 34,
               },
             ]}
             showsVerticalScrollIndicator={false}

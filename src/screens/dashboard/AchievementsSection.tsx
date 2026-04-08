@@ -1,6 +1,7 @@
 import React from 'react';
 import { View, ScrollView, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { BrandWalkIcon } from '../../components/BrandWalkIcon';
 import { Card } from '../../components/Card';
 import { Text } from '../../components/Text';
 import { theme } from '../../theme';
@@ -13,6 +14,9 @@ import {
 interface AchievementsSectionProps {
   unlockedAchievements: UnlockedAchievement[];
 }
+
+const isWalkPersonIcon = (iconName: string): boolean =>
+  iconName === 'walk' || iconName === 'walk-outline';
 
 export const AchievementsSection: React.FC<AchievementsSectionProps> = ({
       unlockedAchievements,
@@ -35,11 +39,18 @@ export const AchievementsSection: React.FC<AchievementsSectionProps> = ({
           return (
             <View key={def.id} style={[styles.badgeItem, !isUnlocked && styles.badgeLocked]}>
               <View style={[styles.badgeCircle, { borderColor: isUnlocked ? def.color : palette.textMuted }]}>
-                <Ionicons
-                  name={def.icon as any}
-                  size={20}
-                  color={isUnlocked ? def.color : palette.textMuted}
-                />
+                {isWalkPersonIcon(def.icon) ? (
+                  <BrandWalkIcon
+                    size={20}
+                    color={isUnlocked ? def.color : palette.textMuted}
+                  />
+                ) : (
+                  <Ionicons
+                    name={def.icon as any}
+                    size={20}
+                    color={isUnlocked ? def.color : palette.textMuted}
+                  />
+                )}
               </View>
               <Text
                 variant="bodySmall"

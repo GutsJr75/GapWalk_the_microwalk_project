@@ -1,4 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import Constants, { ExecutionEnvironment } from 'expo-constants';
 import { getApp, getApps, initializeApp } from 'firebase/app';
 import { Platform } from 'react-native';
 import { authStorage, type StoredAuthUser } from '../data/authStorage';
@@ -15,7 +16,17 @@ const getFirebaseAuthModule = (): FirebaseAuthModule =>
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   require('firebase/auth') as FirebaseAuthModule;
 
+const isExpoGo =
+  Platform.OS !== 'web' &&
+  (Constants.executionEnvironment === ExecutionEnvironment.StoreClient ||
+    Constants.appOwnership === 'expo');
+
 const getGoogleSignin = (): { GoogleSignin: any; statusCodes: any } => {
+  if (isExpoGo) {
+    throw new Error(
+      'Google sign-in is not supported in Expo Go. Use a development build or an installed app build.'
+    );
+  }
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   return require('@react-native-google-signin/google-signin');
 };
@@ -244,6 +255,9 @@ export const getGoogleAuthConfigurationError = (): string | null => {
   if (!isFirebaseConfigured()) {
     return getFirebaseConfigurationError();
   }
+  if (isExpoGo) {
+    return 'Google sign-in is not supported in Expo Go. Use a development build or an installed app build.';
+  }
   if (!GOOGLE_WEB_CLIENT_ID) {
     return 'Google sign-in is not configured. Add EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID to your .env file.';
   }
@@ -256,8 +270,12 @@ export const isGoogleAuthConfigured = (): boolean =>
 export const isGoogleSignInCancelled = (error: unknown): boolean => {
   if (Platform.OS === 'web') return false;
   if (!error || typeof error !== 'object') return false;
-  const { statusCodes } = getGoogleSignin();
-  return (error as { code?: string }).code === statusCodes.SIGN_IN_CANCELLED;
+  try {
+    const { statusCodes } = getGoogleSignin();
+    return (error as { code?: string }).code === statusCodes.SIGN_IN_CANCELLED;
+  } catch {
+    return false;
+  }
 };
 
 export const requiresEmailVerification = (user: StoredAuthUser | null): boolean =>
@@ -370,6 +388,11 @@ export const firebaseAuthService = {
   },
 
   async signInWithGoogle(): Promise<StoredAuthUser> {
+    const googleAuthConfigurationError = getGoogleAuthConfigurationError();
+    if (googleAuthConfigurationError) {
+      throw new Error(googleAuthConfigurationError);
+    }
+
     const authModule = getFirebaseAuthModule();
     const auth = getConfiguredAuth();
 

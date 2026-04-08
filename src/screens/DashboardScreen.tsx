@@ -12,6 +12,7 @@ import { StatCard } from '../components/StatCard';
 import { GapItem } from '../components/GapItem';
 import { Card } from '../components/Card';
 import { AppIcon } from '../components/AppIcon';
+import { BrandWalkIcon } from '../components/BrandWalkIcon';
 import { WalkCompletionSummary } from '../components/WalkCompletionSummary';
 import { theme } from '../theme';
 import { withAlpha } from '../theme/colorUtils';
@@ -1648,7 +1649,7 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
                 </Card>
               ) : opportunities.length === 0 ? (
                 <Card elevated style={styles.emptyCard}>
-                  <Ionicons name="walk-outline" size={28} color={palette.textMuted} style={{ marginBottom: 8 }} />
+                  <BrandWalkIcon size={28} color={palette.textMuted} style={{ marginBottom: 8 }} />
                   <Text variant="body" style={styles.emptyText}>No opportunities yet</Text>
                   <Text variant="bodySmall" color={palette.textMuted} style={styles.emptyHint}>No suitable gaps were found right now. Pull to refresh, or start a manual walk below.</Text>
                 </Card>

@@ -6,6 +6,7 @@ const esExact: Record<string, string> = {
   'Cancel': 'Cancelar',
   'Change': 'Cambiar',
   'Change Option': 'Cambiar opcion',
+  'Manage Source': 'Administrar fuente',
   'Update': 'Actualizar',
   'Save': 'Guardar',
   'Yes, Save': 'Si, guardar',
@@ -103,6 +104,8 @@ const esExact: Record<string, string> = {
     'Cambia la fuente de tu horario o actualiza los datos existentes.',
   'If you want, you can finish this part later from Dashboard -> Manage Schedule -> Change Option':
     'Si quieres, puedes terminar esta parte despues desde Panel -> Administrar horario -> Cambiar opcion.',
+  'If you want, you can finish this part later from Dashboard -> Manage Schedule -> Manage Source':
+    'Si quieres, puedes terminar esta parte despues desde Panel -> Administrar horario -> Administrar fuente.',
   'Cancel schedule update?': 'Cancelar actualizacion del horario?',
   'Update schedule source?': 'Actualizar fuente del horario?',
   'No changes to update': 'No hay cambios para actualizar',

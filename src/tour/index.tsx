@@ -133,8 +133,10 @@ const PHONE_TOOLTIP_MARGIN = 20;
 const TABLET_TOOLTIP_MARGIN = 28;
 const TABLET_BREAKPOINT = 600;
 const ANIMATION_DURATION = 320;
-const STEP_TRANSITION_DURATION = 260;
-const TOOLTIP_REVEAL_DURATION = 220;
+const STEP_TRANSITION_DURATION = 340;
+const SPOTLIGHT_RESIZE_DURATION = 380;
+const TOOLTIP_HIDE_DURATION = 180;
+const TOOLTIP_REVEAL_DURATION = 260;
 const MEASURE_TIMEOUT_MS = 500;
 // Make the non-spotlight area dark enough that underlying CTA buttons
 // (e.g. Save/Continue) don't look like tour controls.
@@ -470,13 +472,14 @@ export const TourOverlay: React.FC<TourOverlayProps> = ({
           Animated.parallel([
             Animated.timing(tooltipOpacity, {
               toValue: 0,
-              duration: 140,
+              duration: TOOLTIP_HIDE_DURATION,
               easing: Easing.in(Easing.cubic),
               useNativeDriver: false,
             }),
             Animated.timing(tooltipTranslateY, {
               toValue: 10,
-              duration: 140,
+              duration: TOOLTIP_HIDE_DURATION,
+              easing: Easing.in(Easing.cubic),
               useNativeDriver: false,
             }),
           ]).start(() => r());
@@ -637,25 +640,25 @@ export const TourOverlay: React.FC<TourOverlayProps> = ({
             Animated.timing(animSpotX, {
               toValue: sX,
               duration: STEP_TRANSITION_DURATION,
-              easing: Easing.inOut(Easing.cubic),
+              easing: Easing.bezier(0.22, 0.61, 0.36, 1),
               useNativeDriver: false,
             }),
             Animated.timing(animSpotY, {
               toValue: sY,
               duration: STEP_TRANSITION_DURATION,
-              easing: Easing.inOut(Easing.cubic),
+              easing: Easing.bezier(0.22, 0.61, 0.36, 1),
               useNativeDriver: false,
             }),
             Animated.timing(animSpotW, {
               toValue: sW,
-              duration: STEP_TRANSITION_DURATION,
-              easing: Easing.inOut(Easing.cubic),
+              duration: SPOTLIGHT_RESIZE_DURATION,
+              easing: Easing.bezier(0.2, 0.75, 0.28, 1),
               useNativeDriver: false,
             }),
             Animated.timing(animSpotH, {
               toValue: sH,
-              duration: STEP_TRANSITION_DURATION,
-              easing: Easing.inOut(Easing.cubic),
+              duration: SPOTLIGHT_RESIZE_DURATION,
+              easing: Easing.bezier(0.2, 0.75, 0.28, 1),
               useNativeDriver: false,
             }),
           ]).start(() => r());

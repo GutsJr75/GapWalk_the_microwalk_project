@@ -10,6 +10,7 @@ import {
   LayoutChangeEvent,
   ScrollView,
   TextInput,
+  Platform,
 } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../../App';
@@ -81,7 +82,7 @@ interface Props extends NativeStackScreenProps<RootStackParamList, 'Intro'> {
 
 const HOW_DETAILS_GAP = 18;
 const HOW_DETAILS_EXPAND_MARGIN_TOP = 12;
-const HOW_DETAILS_FALLBACK_HEIGHT = 240;
+const HOW_DETAILS_FALLBACK_HEIGHT = 188;
 
 type EmailAuthMode = 'login' | 'signup';
 type VerificationPromptSource = EmailAuthMode | 'restore';
@@ -117,7 +118,8 @@ export const IntroScreen: React.FC<Props> = ({
   } | null>(null);
   const [verificationPromptError, setVerificationPromptError] = useState<string | null>(null);
   const [howDetailsMeasuredHeight, setHowDetailsMeasuredHeight] = useState(HOW_DETAILS_FALLBACK_HEIGHT);
-  const howAnim = useRef(new Animated.Value(0)).current;
+  const howLayoutAnim = useRef(new Animated.Value(0)).current;
+  const howMotionAnim = useRef(new Animated.Value(0)).current;
   const { height: viewportHeight } = useWindowDimensions();
   const authConfigured = isFirebaseConfigured();
   const googleAuthConfigured = isGoogleAuthConfigured();
@@ -129,13 +131,29 @@ export const IntroScreen: React.FC<Props> = ({
   const ctaTopGap = Math.max(28, Math.round(viewportHeight * 0.045));
 
   useEffect(() => {
-    Animated.timing(howAnim, {
-      toValue: showHowItWorks ? 1 : 0,
-      duration: 220,
-      easing: Easing.out(Easing.cubic),
-      useNativeDriver: false,
-    }).start();
-  }, [showHowItWorks, howAnim]);
+    const targetValue = showHowItWorks ? 1 : 0;
+    howLayoutAnim.stopAnimation();
+    howMotionAnim.stopAnimation();
+
+    Animated.parallel([
+      Animated.timing(howLayoutAnim, {
+        toValue: targetValue,
+        duration: showHowItWorks ? 260 : 210,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: false,
+        isInteraction: false,
+      }),
+      Animated.timing(howMotionAnim, {
+        toValue: targetValue,
+        duration: showHowItWorks ? 300 : 230,
+        easing: showHowItWorks
+          ? Easing.bezier(0.22, 1, 0.36, 1)
+          : Easing.out(Easing.cubic),
+        useNativeDriver: true,
+        isInteraction: false,
+      }),
+    ]).start();
+  }, [showHowItWorks, howLayoutAnim, howMotionAnim]);
 
   useEffect(() => {
     if (isAuthenticated || !requiresEmailVerification(authUser) || !authUser?.email) {
@@ -339,27 +357,27 @@ export const IntroScreen: React.FC<Props> = ({
     }
   };
 
-  const chevronRotate = howAnim.interpolate({
+  const chevronRotate = howMotionAnim.interpolate({
     inputRange: [0, 1],
     outputRange: ['0deg', '180deg'],
   });
 
-  const detailsHeight = howAnim.interpolate({
+  const detailsHeight = howLayoutAnim.interpolate({
     inputRange: [0, 1],
     outputRange: [0, howDetailsMeasuredHeight],
   });
 
-  const detailsOpacity = howAnim.interpolate({
+  const detailsOpacity = howMotionAnim.interpolate({
     inputRange: [0, 1],
     outputRange: [0, 1],
   });
 
-  const detailsTranslateY = howAnim.interpolate({
+  const detailsTranslateY = howMotionAnim.interpolate({
     inputRange: [0, 1],
     outputRange: [-8, 0],
   });
 
-  const detailsMarginTop = howAnim.interpolate({
+  const detailsMarginTop = howLayoutAnim.interpolate({
     inputRange: [0, 1],
     outputRange: [0, HOW_DETAILS_EXPAND_MARGIN_TOP],
   });
@@ -371,13 +389,13 @@ export const IntroScreen: React.FC<Props> = ({
     Math.round(viewportHeight * 0.08),
   );
 
-  const howStackTranslateY = howAnim.interpolate({
+  const howStackTranslateY = howMotionAnim.interpolate({
     inputRange: [0, 1],
     outputRange: [0, -howExpandedLift],
   });
 
   const collapsedHowSectionDownShift = Math.round(ctaTopGap * 4.2);
-  const howSectionTranslateY = howAnim.interpolate({
+  const howSectionTranslateY = howMotionAnim.interpolate({
     inputRange: [0, 1],
     outputRange: [collapsedHowSectionDownShift, 0],
   });
@@ -468,13 +486,20 @@ export const IntroScreen: React.FC<Props> = ({
                   styles.howDetailsWrap,
                   {
                     height: detailsHeight,
-                    opacity: detailsOpacity,
                     marginTop: detailsMarginTop,
                   },
                 ]}
                 pointerEvents={showHowItWorks ? 'auto' : 'none'}
               >
-                <Animated.View style={[styles.howDetailsInner, { transform: [{ translateY: detailsTranslateY }] }]}>
+                <Animated.View
+                  style={[
+                    styles.howDetailsInner,
+                    {
+                      opacity: detailsOpacity,
+                      transform: [{ translateY: detailsTranslateY }],
+                    },
+                  ]}
+                >
                   <View
                     style={[
                       styles.howDetails,
@@ -551,7 +576,6 @@ export const IntroScreen: React.FC<Props> = ({
                     styles.guestBtnText,
                     {
                       color: palette.accentPrimary,
-                      textShadowColor: 'rgba(46,233,166,0.55)',
                     },
                   ]}
                   testID="intro-guest"
@@ -797,7 +821,7 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   howDetailsInner: {
-    flex: 1,
+    width: '100%',
   },
   howDetails: {
     borderRadius: theme.borderRadius.lg,
@@ -871,8 +895,9 @@ const styles = StyleSheet.create({
   },
   guestBtnText: {
     letterSpacing: 0.2,
-    textShadowOffset: { width: 0, height: 0 },
-    textShadowRadius: 9,
+    textShadowColor: Platform.OS === 'android' ? 'rgba(46,233,166,0.36)' : 'rgba(46,233,166,0.55)',
+    textShadowOffset: { width: 0, height: Platform.OS === 'android' ? 1 : 0 },
+    textShadowRadius: Platform.OS === 'android' ? 6 : 9,
   },
   footer: {
     textAlign: 'center',

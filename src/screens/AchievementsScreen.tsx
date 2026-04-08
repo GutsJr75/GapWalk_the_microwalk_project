@@ -9,6 +9,7 @@ import { ScreenHeader } from '../components/ScreenHeader';
 import { Card } from '../components/Card';
 import { Text } from '../components/Text';
 import { Button } from '../components/Button';
+import { BrandWalkIcon } from '../components/BrandWalkIcon';
 import { ScreenState } from '../components/ScreenState';
 import { TwoActionBar } from '../components/TwoActionBar';
 import { theme } from '../theme';
@@ -38,6 +39,9 @@ const formatUnlockedDate = (iso: string, language: 'en' | 'es'): string => {
     year: 'numeric',
   });
 };
+
+const isWalkPersonIcon = (iconName: string): boolean =>
+  iconName === 'walk' || iconName === 'walk-outline';
 
 export const AchievementsScreen: React.FC<Props> = ({ navigation, route }) => {
   const palette = useThemePalette();
@@ -157,11 +161,18 @@ export const AchievementsScreen: React.FC<Props> = ({ navigation, route }) => {
                     },
                   ]}
                 >
-                  <Ionicons
-                    name={item.icon as any}
-                    size={18}
-                    color={isUnlocked ? item.color : palette.textMuted}
-                  />
+                  {isWalkPersonIcon(item.icon) ? (
+                    <BrandWalkIcon
+                      size={18}
+                      color={isUnlocked ? item.color : palette.textMuted}
+                    />
+                  ) : (
+                    <Ionicons
+                      name={item.icon as any}
+                      size={18}
+                      color={isUnlocked ? item.color : palette.textMuted}
+                    />
+                  )}
                 </View>
                 {!isUnlocked && (
                   <View style={[styles.lockOverlay, { backgroundColor: palette.bgSurface }]}>

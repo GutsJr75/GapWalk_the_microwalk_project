@@ -1,6 +1,7 @@
 import React from 'react';
 import { Animated, Modal, Pressable, StyleSheet, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { BrandWalkIcon } from '../../components/BrandWalkIcon';
 import { Text } from '../../components/Text';
 import { theme } from '../../theme';
 import { useThemePalette } from '../../theme/palette';
@@ -13,6 +14,9 @@ interface BadgeUnlockedModalProps {
   newBadgeIds: AchievementId[];
   animValue: Animated.Value;
 }
+
+const isWalkPersonIcon = (iconName: string): boolean =>
+  iconName === 'walk' || iconName === 'walk-outline';
 
 export const BadgeUnlockedModal: React.FC<BadgeUnlockedModalProps> = ({
   visible,
@@ -54,7 +58,11 @@ export const BadgeUnlockedModal: React.FC<BadgeUnlockedModalProps> = ({
             return (
               <View key={id} style={styles.item}>
                 <View style={[styles.badgeCircle, { borderColor: def.color }]}>
-                  <Ionicons name={def.icon as any} size={20} color={def.color} />
+                  {isWalkPersonIcon(def.icon) ? (
+                    <BrandWalkIcon size={20} color={def.color} />
+                  ) : (
+                    <Ionicons name={def.icon as any} size={20} color={def.color} />
+                  )}
                 </View>
                 <View style={{ flex: 1 }}>
                   <Text variant="body" style={{ fontWeight: theme.fontWeight.semibold }}>

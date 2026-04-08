@@ -2,7 +2,12 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Animated, AppState, BackHandler, Image, Platform, StyleSheet, Text, ToastAndroid, TouchableOpacity, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import * as Font from 'expo-font';
-import { NavigationContainer, createNavigationContainerRef } from '@react-navigation/native';
+import {
+  DarkTheme as NavigationDarkTheme,
+  DefaultTheme as NavigationDefaultTheme,
+  NavigationContainer,
+  createNavigationContainerRef,
+} from '@react-navigation/native';
 import * as Notifications from 'expo-notifications';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
@@ -1058,6 +1063,18 @@ function App() {
 
   const palette = getThemePalette(themeMode);
   const isDark = themeMode === 'dark';
+  const navigationTheme = {
+    ...(isDark ? NavigationDarkTheme : NavigationDefaultTheme),
+    colors: {
+      ...(isDark ? NavigationDarkTheme.colors : NavigationDefaultTheme.colors),
+      background: palette.bgApp,
+      card: palette.bgApp,
+      border: 'transparent',
+      text: palette.textPrimary,
+      primary: palette.accentPrimary,
+      notification: palette.accentPrimary,
+    },
+  };
   const canOpenDashboard =
     isAuthenticated &&
     hasCompletedOnboarding;
@@ -1255,9 +1272,18 @@ function App() {
     <>
       <StatusBar style={themeMode === 'dark' ? 'light' : 'dark'} />
       <SafeAreaProvider>
-        <Animated.View style={[StyleSheet.absoluteFill, { opacity: fadeAnim }]}>
+        <Animated.View
+          style={[
+            StyleSheet.absoluteFill,
+            {
+              opacity: fadeAnim,
+              backgroundColor: palette.bgApp,
+            },
+          ]}
+        >
           <NavigationContainer
             ref={navigationRef}
+            theme={navigationTheme}
             onReady={() => {
               const pendingRoute = pendingRootRouteRef.current;
               if (pendingRoute && navigationRef.isReady()) {
@@ -1288,7 +1314,8 @@ function App() {
                 contentStyle: { backgroundColor: palette.bgApp },
                 animation: 'slide_from_right',
                 gestureEnabled: true,
-                freezeOnBlur: true,
+                // Avoid white-frame flashes on Android during back transitions.
+                freezeOnBlur: Platform.OS !== 'android',
               }}
             >
               <Stack.Screen

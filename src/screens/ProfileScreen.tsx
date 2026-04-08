@@ -8,6 +8,7 @@ import { Container } from '../components/Container';
 import { Text } from '../components/Text';
 import { Button } from '../components/Button';
 import { Card } from '../components/Card';
+import { BrandWalkIcon } from '../components/BrandWalkIcon';
 import { ScreenState } from '../components/ScreenState';
 import { ScreenHeader } from '../components/ScreenHeader';
 import { SuccessToast } from '../components/SuccessToast';
@@ -657,7 +658,7 @@ export const ProfileScreen: React.FC<Props> = ({ navigation }) => {
                   <Text variant="bodySmall" color={palette.textMuted} style={styles.statLabel}>Streak</Text>
                 </View>
                 <View style={[styles.statColumn, compactProfile && styles.statColumnCompact]}>
-                  <Ionicons name="walk-outline" size={16} color={palette.accentPrimary} style={styles.statIcon} />
+                  <BrandWalkIcon size={16} color={palette.accentPrimary} style={styles.statIcon} />
                   <View style={[styles.statValueGroup, compactProfile && styles.statValueGroupCompact]}>
                     <Text variant="title" style={[styles.statValue, compactProfile && styles.statValueCompact, { color: palette.accentPrimary }]}>
                       {progress.totalWalks}

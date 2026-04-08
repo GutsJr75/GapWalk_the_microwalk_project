@@ -637,6 +637,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
   const nextWeekNavScale = useRef(new Animated.Value(1)).current;
   const prevWeekNavGlow = useRef(new Animated.Value(0)).current;
   const nextWeekNavGlow = useRef(new Animated.Value(0)).current;
+  const weekHeaderDividerOpacity = useRef(new Animated.Value(0)).current;
   const infoTitleFadeOut = useRef(new Animated.Value(1)).current;
   const infoTitleFadeIn = useRef(new Animated.Value(0)).current;
   const infoDeleteIconOpacity = useRef(new Animated.Value(0)).current;
@@ -2712,6 +2713,13 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
       onMoveShouldSetPanResponder: (_, gs) =>
         !weekSlideActiveRef.current && Math.abs(gs.dx) > 10 && Math.abs(gs.dy) < 20,
       onPanResponderGrant: () => {
+        weekHeaderDividerOpacity.stopAnimation();
+        Animated.timing(weekHeaderDividerOpacity, {
+          toValue: 1,
+          duration: 120,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: true,
+        }).start();
         weekSlideX.stopAnimation();
         weekSlideX.setValue(0);
       },
@@ -2720,6 +2728,13 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
         weekSlideX.setValue(clamped);
       },
       onPanResponderRelease: (_, gs) => {
+        weekHeaderDividerOpacity.stopAnimation();
+        Animated.timing(weekHeaderDividerOpacity, {
+          toValue: 0,
+          duration: 180,
+          easing: Easing.in(Easing.cubic),
+          useNativeDriver: true,
+        }).start();
         const swipeThreshold = weekHeaderPagerWidth * 0.25;
         const velocityThreshold = 0.4;
         let direction: -1 | 0 | 1 = 0;
@@ -2752,6 +2767,13 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
         }
       },
       onPanResponderTerminate: () => {
+        weekHeaderDividerOpacity.stopAnimation();
+        Animated.timing(weekHeaderDividerOpacity, {
+          toValue: 0,
+          duration: 180,
+          easing: Easing.in(Easing.cubic),
+          useNativeDriver: true,
+        }).start();
         Animated.spring(weekSlideX, {
           toValue: 0,
           tension: 300,
@@ -2760,7 +2782,17 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
         }).start();
       },
     }),
-  [weekHeaderPagerWidth, weekSlideX]);
+  [weekHeaderDividerOpacity, weekHeaderPagerWidth, weekSlideX]);
+
+  const animateWeekHeaderDivider = useCallback((pressed: boolean) => {
+    weekHeaderDividerOpacity.stopAnimation();
+    Animated.timing(weekHeaderDividerOpacity, {
+      toValue: pressed ? 1 : 0,
+      duration: pressed ? 120 : 180,
+      easing: pressed ? Easing.out(Easing.cubic) : Easing.in(Easing.cubic),
+      useNativeDriver: true,
+    }).start();
+  }, [weekHeaderDividerOpacity]);
 
   const animateWeekHeaderNavPress = useCallback((direction: -1 | 1, pressed: boolean) => {
     const scaleAnim = direction < 0 ? prevWeekNavScale : nextWeekNavScale;
@@ -2969,6 +3001,9 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
                 ]}
                 onAccessibilityAction={handleWeekHeaderAccessibilityAction}
                 testID="manual-week-header-pager"
+                onTouchStart={() => animateWeekHeaderDivider(true)}
+                onTouchEnd={() => animateWeekHeaderDivider(false)}
+                onTouchCancel={() => animateWeekHeaderDivider(false)}
                 {...weekPanResponder.panHandlers}
               >
                 <Animated.View
@@ -2990,10 +3025,11 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
                     return (
                       <View key={page.key} style={[styles.weekHeaderDaysRow, { width: weekGridWidth }]}>
                         {pageIndex > 0 && (
-                          <View
+                          <Animated.View
                             style={[
                               styles.weekDivider,
-                              { backgroundColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(15,23,42,0.08)' },
+                              { backgroundColor: isDark ? 'rgba(255,255,255,0.24)' : 'rgba(15,23,42,0.20)' },
+                              { opacity: weekHeaderDividerOpacity },
                             ]}
                             pointerEvents="none"
                           />
@@ -3007,6 +3043,12 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
                             <Pressable
                               key={`week-day-${dateKey}`}
                               disabled={!isCenteredPage}
+                              onPressIn={() => {
+                                if (isCenteredPage) animateWeekHeaderDivider(true);
+                              }}
+                              onPressOut={() => {
+                                if (isCenteredPage) animateWeekHeaderDivider(false);
+                              }}
                               onPress={() => {
                                 setSelectedDay(dayIndex);
                                 setSelectedGridTarget(null);
@@ -3028,6 +3070,9 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
                             >
                               <Text
                                 variant="bodySmall"
+                                numberOfLines={1}
+                                adjustsFontSizeToFit
+                                minimumFontScale={0.82}
                                 style={[
                                   styles.weekHeaderDayName,
                                   {
@@ -3417,7 +3462,7 @@ export const ManualScheduleScreen: React.FC<Props> = ({ navigation, route }) => 
           {manageMode ? (
             <TwoActionBar
               secondaryAction={{
-                title: 'Change Option',
+                title: 'Manage Source',
                 onPress: handleManageChangeSource,
                 variant: 'secondary',
                 disabled: savingDone,
@@ -4922,12 +4967,12 @@ const styles = StyleSheet.create({
   weekDivider: {
     position: 'absolute',
     left: 0,
-    top: 6,
-    bottom: 6,
-    width: 1.5,
+    top: 4,
+    bottom: 4,
+    width: 2,
     borderRadius: 1,
     zIndex: 1,
-    opacity: 0.6,
+    opacity: 0.92,
   },
   weekHeaderDayCell: {
     paddingVertical: 2,
@@ -4942,9 +4987,12 @@ const styles = StyleSheet.create({
     borderRadius: 8,
   },
   weekHeaderDayName: {
-    fontSize: 11,
+    fontSize: 10.5,
+    lineHeight: 13,
     textTransform: 'uppercase',
-    letterSpacing: 0.2,
+    letterSpacing: 0.1,
+    textAlign: 'center',
+    width: '100%',
   },
   weekHeaderDayDate: {
     fontSize: 15,

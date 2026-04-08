@@ -3,7 +3,9 @@ import { AppRegistry, Platform } from 'react-native';
 import { enableFreeze } from 'react-native-screens';
 import App from './App';
 
-enableFreeze(true);
+// Screen freezing can cause white-frame flashes during Android back transitions.
+// Keep freeze enabled on iOS for perf, disable on Android for smoother pops.
+enableFreeze(Platform.OS !== 'android');
 
 registerRootComponent(App);
 

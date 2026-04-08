@@ -2,6 +2,7 @@ import React from 'react';
 import { StyleSheet, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Button } from './Button';
+import { BrandWalkIcon } from './BrandWalkIcon';
 import { Text } from './Text';
 import { getThemePalette } from '../theme/palette';
 
@@ -20,6 +21,9 @@ interface WalkCompletionSummaryProps {
   actionLabel?: string;
   onAction?: () => void;
 }
+
+const isWalkPersonIcon = (iconName: string): boolean =>
+  iconName === 'walk' || iconName === 'walk-outline';
 
 const formatClock = (seconds: number): string => {
   const clamped = Math.max(0, Math.floor(seconds));
@@ -120,7 +124,11 @@ export const WalkCompletionSummary: React.FC<WalkCompletionSummaryProps> = ({
               },
             ]}
           >
-            <Ionicons name={item.icon} size={16} color={accentColor} />
+            {isWalkPersonIcon(item.icon) ? (
+              <BrandWalkIcon size={16} color={accentColor} />
+            ) : (
+              <Ionicons name={item.icon} size={16} color={accentColor} />
+            )}
             <Text variant="bodySmall" color={palette.textMuted}>
               {item.label}
             </Text>

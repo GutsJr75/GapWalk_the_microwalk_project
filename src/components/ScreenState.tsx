@@ -3,6 +3,7 @@ import { View, StyleSheet, ActivityIndicator } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Text } from './Text';
 import { Button } from './Button';
+import { BrandWalkIcon } from './BrandWalkIcon';
 import { useThemePalette } from '../theme/palette';
 import { theme } from '../theme';
 
@@ -15,6 +16,10 @@ interface ScreenStateProps {
   onRetry?: () => void;
   icon?: React.ComponentProps<typeof Ionicons>['name'];
 }
+
+const isWalkPersonIcon = (
+  iconName: React.ComponentProps<typeof Ionicons>['name'],
+): boolean => iconName === 'walk' || iconName === 'walk-outline';
 
 export const ScreenState: React.FC<ScreenStateProps> = ({
   variant,
@@ -37,15 +42,20 @@ export const ScreenState: React.FC<ScreenStateProps> = ({
   }
 
   const iconName = icon ?? (variant === 'error' ? 'alert-circle-outline' : 'walk-outline');
+  const iconColor = variant === 'error' ? theme.colors.error : palette.accentPrimary;
 
   return (
     <View style={styles.center}>
       <View style={[styles.iconWrap, { backgroundColor: palette.bgSurfaceElevated }]}>
-        <Ionicons
-          name={iconName}
-          size={48}
-          color={variant === 'error' ? theme.colors.error : palette.accentPrimary}
-        />
+        {isWalkPersonIcon(iconName) ? (
+          <BrandWalkIcon size={48} color={iconColor} />
+        ) : (
+          <Ionicons
+            name={iconName}
+            size={48}
+            color={iconColor}
+          />
+        )}
       </View>
       <Text variant="title" style={[styles.title, { color: palette.textPrimary }]}>
         {title}
