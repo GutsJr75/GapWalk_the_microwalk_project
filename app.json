@@ -3,7 +3,7 @@
     "newArchEnabled": true,
     "name": "GapWalk",
     "slug": "gapwalk",
-    "version": "1.0.3",
+    "version": "1.3",
     "orientation": "portrait",
     "userInterfaceStyle": "dark",
     "scheme": "gapwalk",
@@ -13,7 +13,7 @@
     "icon": "./assets/icons/app-icon.png",
     "ios": {
       "supportsTablet": true,
-      "buildNumber": "1.0.3",
+      "buildNumber": "1.1",
       "bundleIdentifier": "com.gapwalk.app",
       "infoPlist": {
         "NSMotionUsageDescription": "GapWalk uses motion data to count your steps during walks.",
@@ -26,7 +26,7 @@
     "android": {
       "googleServicesFile": "./google-services.json",
       "package": "com.gapwalk.app",
-      "versionCode": 10109,
+      "versionCode": 10117,
       "softwareKeyboardLayoutMode": "pan",
       "adaptiveIcon": {
         "foregroundImage": "./assets/icons/adaptive-foreground.png",
