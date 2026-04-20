@@ -33,50 +33,78 @@ export class PushNotificationsService {
       return [];
     }
 
-    const messages: ExpoPushMessage[] = tokens
+    // Keep token <-> message pairing explicit so we can correlate
+    // tickets back to tokens even when chunks fail mid-batch.
+    const validPairs = tokens
       .filter((token) => Expo.isExpoPushToken(token))
       .map((token) => ({
-        to: token,
-        sound: 'default' as const,
-        title,
-        body,
-        data: { planId, type: 'walk_nudge' },
-        categoryId: 'walk_nudge_actions',
-        priority: 'high' as const,
-        channelId: 'gapwalk-nudges',
+        token,
+        message: {
+          to: token,
+          sound: 'default' as const,
+          title,
+          body,
+          data: { planId, type: 'walk_nudge' },
+          categoryId: 'walk_nudge_actions',
+          priority: 'high' as const,
+          channelId: 'gapwalk-nudges',
+        } satisfies ExpoPushMessage,
       }));
 
-    if (messages.length === 0) {
+    if (validPairs.length === 0) {
       this.logger.warn(`No valid Expo push tokens for user ${userId}`);
       return [];
     }
 
+    const messages = validPairs.map((p) => p.message);
     const chunks = this.expo.chunkPushNotifications(messages);
-    const tickets: ExpoPushTicket[] = [];
+    const results: { token: string; ticket: ExpoPushTicket | null }[] = [];
 
+    // Expo SDK preserves order across chunks, so we can walk the pairs array
+    // in parallel with the concatenated ticket output. If a chunk throws, we
+    // record nulls for those positions so the pairing stays aligned.
+    let cursor = 0;
     for (const chunk of chunks) {
+      const chunkSize = chunk.length;
       try {
         const ticketChunk = await this.expo.sendPushNotificationsAsync(chunk);
-        tickets.push(...ticketChunk);
+        for (let i = 0; i < chunkSize; i++) {
+          results.push({
+            token: validPairs[cursor + i].token,
+            ticket: ticketChunk[i] ?? null,
+          });
+        }
       } catch (error) {
         this.logger.error(`Failed to send push chunk: ${error}`);
+        for (let i = 0; i < chunkSize; i++) {
+          results.push({
+            token: validPairs[cursor + i].token,
+            ticket: null,
+          });
+        }
       }
+      cursor += chunkSize;
     }
 
-    // Log push results
-    for (let i = 0; i < tickets.length; i++) {
-      const ticket = tickets[i];
-      const token = tokens[i] ?? 'unknown';
+    const tickets: ExpoPushTicket[] = [];
+    let firstSuccessTicketId: string | null = null;
 
+    for (const { token, ticket } of results) {
       let ticketId: string | null = null;
       let errorMessage: string | null = null;
+      let status: 'sent' | 'failed' = 'failed';
 
-      if (ticket.status === 'ok') {
+      if (ticket && ticket.status === 'ok') {
         ticketId = ticket.id;
-      } else if (ticket.status === 'error') {
-        const errTicket = ticket;
-        errorMessage = `${errTicket.message} (${errTicket.details?.error})`;
+        status = 'sent';
+        if (!firstSuccessTicketId) firstSuccessTicketId = ticket.id;
+      } else if (ticket && ticket.status === 'error') {
+        errorMessage = `${ticket.message} (${ticket.details?.error})`;
+      } else {
+        errorMessage = 'chunk_send_failed';
       }
+
+      if (ticket) tickets.push(ticket);
 
       await this.prisma.pushLog.create({
         data: {
@@ -84,30 +112,26 @@ export class PushNotificationsService {
           nudgePlanId: planId,
           expoPushToken: token,
           ticketId,
-          status: ticket.status === 'ok' ? 'sent' : 'failed',
+          status,
           errorMessage,
           sentAt: new Date(),
         },
       });
 
-      // Deactivate device if not registered
-      if (ticket.status === 'error') {
-        const errTicket = ticket;
-        if (errTicket.details?.error === 'DeviceNotRegistered') {
+      if (ticket && ticket.status === 'error') {
+        if (ticket.details?.error === 'DeviceNotRegistered') {
           await this.devicesService.deactivate(userId, token);
           this.logger.warn(`Deactivated unregistered device token: ${token}`);
         }
       }
     }
 
-    // Update nudge plan with push info
-    if (tickets.length > 0 && tickets[0].status === 'ok') {
+    if (firstSuccessTicketId) {
       try {
-        const successTicket = tickets[0];
         await this.prisma.nudgePlan.update({
           where: { id: planId },
           data: {
-            pushTicketId: successTicket.id,
+            pushTicketId: firstSuccessTicketId,
             pushSentAt: new Date(),
           },
         });
@@ -130,13 +154,32 @@ export class PushNotificationsService {
         status: 'planned',
         walkStart: { lte: now },
         origin: 'server',
+        pushSentAt: null,
       },
       include: { user: true },
     });
 
     this.logger.log(`Found ${duePlans.length} due nudge plans to send`);
 
+    let sent = 0;
     for (const plan of duePlans) {
+      // Atomic claim: flip status + stamp pushSentAt in one UPDATE guarded
+      // by the original (status='planned', pushSentAt=null) conditions.
+      // If a concurrent worker already claimed the plan, count will be 0
+      // and we skip — prevents the "4 duplicates" race.
+      const claim = await this.prisma.nudgePlan.updateMany({
+        where: {
+          id: plan.id,
+          status: 'planned',
+          pushSentAt: null,
+        },
+        data: {
+          status: 'notified',
+          pushSentAt: now,
+        },
+      });
+      if (claim.count === 0) continue;
+
       try {
         const walkStart = new Date(plan.walkStart);
         const dur = plan.suggestedDurationMinutes;
@@ -165,17 +208,13 @@ export class PushNotificationsService {
           `Your ${startTime} walk 🚶`,
           bodies[variant],
         );
-
-        await this.prisma.nudgePlan.update({
-          where: { id: plan.id },
-          data: { status: 'notified' },
-        });
+        sent++;
       } catch (error) {
         this.logger.error(`Failed to send nudge for plan ${plan.id}: ${error}`);
       }
     }
 
-    return { sent: duePlans.length };
+    return { sent };
   }
 
   /**

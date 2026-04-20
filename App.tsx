@@ -608,6 +608,12 @@ function App() {
 
       if (payload.type !== 'walk_nudge' || !payload.planId) return;
 
+      try {
+        await notificationService.clearLocalWalkDuplicates(payload.planId);
+      } catch {
+        // best-effort: locals may already be gone
+      }
+
       if (actionId === WALK_NUDGE_ACTION_SKIP) {
         await notificationPlanActions.skipPlan(payload.planId);
         await refreshDashboardSnapshot();
@@ -690,6 +696,13 @@ function App() {
     }
 
     if (payload.type === 'walk_nudge' && payload.planId) {
+      // Server push is the source of truth for this plan's walk prompt.
+      // Drop the local two-phase duplicates so the user only sees one banner.
+      try {
+        await notificationService.clearLocalWalkDuplicates(payload.planId);
+      } catch (error) {
+        if (__DEV__) console.error('Failed to clear local walk duplicates:', error);
+      }
       await refreshDashboardSnapshot();
     }
   }, [refreshDashboardSnapshot, resolveWalkPromptDetails]);

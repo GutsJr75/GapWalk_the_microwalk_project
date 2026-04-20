@@ -43,6 +43,23 @@ export class DevicesService {
         : Promise.resolve(),
     ]);
 
+    // Deactivate stale device rows that represent the same physical device
+    // but under a previous Expo push token (reinstall / token rotation).
+    // "Same physical device" is approximated by (userId, platform, deviceModel);
+    // users with two literally identical devices are rare and can re-register.
+    if (dto.deviceModel) {
+      await this.prisma.device.updateMany({
+        where: {
+          userId,
+          platform: dto.platform,
+          deviceModel: dto.deviceModel,
+          id: { not: device.id },
+          isActive: true,
+        },
+        data: { isActive: false },
+      });
+    }
+
     return device;
   }
 

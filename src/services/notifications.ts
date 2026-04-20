@@ -1070,6 +1070,22 @@ export const notificationService = {
     await this.dismissNotification(getWalkReadyNotificationId(planId));
   },
 
+  /**
+   * Cancel any still-scheduled local alert/ready for a plan and dismiss any
+   * that have already been presented. Intended to be called when the
+   * server-side walk_nudge push arrives so the user doesn't see the server
+   * push *and* the local two-phase pair for the same plan.
+   * Does NOT touch walk-missed (it still needs to fire at gapEnd).
+   */
+  async clearLocalWalkDuplicates(planId: string): Promise<void> {
+    const alertId = getWalkAlertNotificationId(planId);
+    const readyId = getWalkReadyNotificationId(planId);
+    await this.cancelNotification(alertId);
+    await this.cancelNotification(readyId);
+    await this.dismissNotification(alertId);
+    await this.dismissNotification(readyId);
+  },
+
   async clearPlanNotifications(
     planId: string,
     options?: { dismissMissed?: boolean },
