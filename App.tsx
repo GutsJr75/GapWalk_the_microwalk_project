@@ -331,18 +331,30 @@ function App() {
   }, [clearBootGreetingTimers, isBootstrapDone]);
 
   useEffect(() => {
-    const unsubscribe = firebaseAuthService.onAuthStateChanged((user) => {
-      setAuthUser(user);
-      if (user) {
-        void authStorage.saveUser(user);
-        if (requiresEmailVerification(user)) {
+    let unsubscribe = () => {};
+
+    try {
+      unsubscribe = firebaseAuthService.onAuthStateChanged((user) => {
+        setAuthUser(user);
+        if (user) {
+          void authStorage.saveUser(user);
+          if (requiresEmailVerification(user)) {
+            setIsAuthenticated(false);
+          }
+        } else {
+          void authStorage.clearAll();
           setIsAuthenticated(false);
         }
-      } else {
-        void authStorage.clearAll();
-        setIsAuthenticated(false);
+      });
+    } catch (error) {
+      crashReporting.logError(error, { kind: 'auth_state_listener_init' });
+      if (__DEV__) {
+        console.warn('Failed to initialize Firebase auth state listener:', error);
       }
-    });
+      setAuthUser(null);
+      setIsAuthenticated(false);
+    }
+
     return unsubscribe;
   }, [setAuthUser, setIsAuthenticated]);
 

@@ -116,6 +116,22 @@ esac
 
 CLASSPATH="\\\"\\\""
 
+# Android Studio bundles a JDK on macOS, but the shell environment does not
+# always expose it as JAVA_HOME for CLI builds.
+if [ -z "$JAVA_HOME" ] && "$darwin" ; then
+    for candidate in \
+        "/Applications/Android Studio.app/Contents/jbr/Contents/Home" \
+        "/Applications/Android Studio.app/Contents/jre/Contents/Home" \
+        "$HOME/Applications/Android Studio.app/Contents/jbr/Contents/Home"
+    do
+        if [ -x "$candidate/bin/java" ] ; then
+            JAVA_HOME=$candidate
+            export JAVA_HOME
+            break
+        fi
+    done
+fi
+
 
 # Determine the Java command to use to start the JVM.
 if [ -n "$JAVA_HOME" ] ; then

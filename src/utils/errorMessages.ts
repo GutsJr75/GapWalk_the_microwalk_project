@@ -84,6 +84,9 @@ export function toUserFriendlyError(error: unknown): string {
   if (lower.includes('auth/invalid-email')) {
     return 'Enter a valid email address.';
   }
+  if (lower.includes('auth/invalid-api-key')) {
+    return 'Firebase Authentication is misconfigured for this build. Update google-services.json or the EXPO_PUBLIC_FIREBASE_* values, then rebuild the app.';
+  }
   if (lower.includes('auth/missing-password') || lower.includes('auth/weak-password')) {
     return 'Password must be at least 6 characters.';
   }

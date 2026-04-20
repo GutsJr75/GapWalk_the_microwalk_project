@@ -20,6 +20,7 @@ web-build/
 *.db
 scripts/__pycache__/
 CREDENTIALS_BACKUP.txt
+# Firebase service configs stay local or are injected via EAS file secrets.
 google-services.json
 android/app/google-services.json
 GoogleService-Info.plist

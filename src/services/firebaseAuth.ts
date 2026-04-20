@@ -142,6 +142,23 @@ const missingFirebaseKeys = (): string[] => {
 let cachedAuth:
   | ReturnType<FirebaseAuthModule['getAuth']>
   | null = null;
+let cachedAuthInitializationError: Error | null = null;
+
+const toError = (value: unknown): Error => {
+  if (value instanceof Error) return value;
+  return new Error(typeof value === 'string' ? value : 'Unknown Firebase configuration error.');
+};
+
+const getRuntimeFirebaseConfigurationError = (): string | null => {
+  if (!cachedAuthInitializationError) return null;
+
+  const message = cachedAuthInitializationError.message.toLowerCase();
+  if (message.includes('auth/invalid-api-key') || message.includes('invalid-api-key')) {
+    return 'Firebase Authentication is misconfigured for this build. The Firebase API key is invalid. Update google-services.json or the EXPO_PUBLIC_FIREBASE_* values, then rebuild the app.';
+  }
+
+  return `Firebase Authentication is misconfigured for this build. ${cachedAuthInitializationError.message}`;
+};
 
 const buildStoredAuthUser = (
   user: {
@@ -209,25 +226,31 @@ const getFirebaseApp = () => {
 
 const getConfiguredAuth = () => {
   if (cachedAuth) return cachedAuth;
-
-  const app = getFirebaseApp();
-  const authModule = getFirebaseAuthModule();
-  if (Platform.OS === 'web') {
-    cachedAuth = authModule.getAuth(app);
-    return cachedAuth;
-  }
+  if (cachedAuthInitializationError) throw cachedAuthInitializationError;
 
   try {
-    const reactNativeAuthModule = authModule as ReactNativeFirebaseAuthModule;
-    const persistence = reactNativeAuthModule.getReactNativePersistence?.(AsyncStorage);
-    cachedAuth = persistence
-      ? authModule.initializeAuth(app, { persistence })
-      : authModule.getAuth(app);
-  } catch {
-    cachedAuth = authModule.getAuth(app);
-  }
+    const app = getFirebaseApp();
+    const authModule = getFirebaseAuthModule();
+    if (Platform.OS === 'web') {
+      cachedAuth = authModule.getAuth(app);
+      return cachedAuth;
+    }
 
-  return cachedAuth;
+    try {
+      const reactNativeAuthModule = authModule as ReactNativeFirebaseAuthModule;
+      const persistence = reactNativeAuthModule.getReactNativePersistence?.(AsyncStorage);
+      cachedAuth = persistence
+        ? authModule.initializeAuth(app, { persistence })
+        : authModule.getAuth(app);
+    } catch {
+      cachedAuth = authModule.getAuth(app);
+    }
+
+    return cachedAuth;
+  } catch (error) {
+    cachedAuthInitializationError = toError(error);
+    throw cachedAuthInitializationError;
+  }
 };
 
 const ensureGoogleSigninConfigured = () => {
@@ -245,7 +268,7 @@ export const getFirebaseConfigurationError = (): string | null => {
   if (missing.length > 0) {
     return `Firebase Authentication is not configured. Add ${missing.join(', ')} to your .env file.`;
   }
-  return null;
+  return getRuntimeFirebaseConfigurationError();
 };
 
 export const isFirebaseConfigured = (): boolean =>
