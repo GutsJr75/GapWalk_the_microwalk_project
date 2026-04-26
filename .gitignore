@@ -3,6 +3,13 @@ node_modules/
 .expo-shared/
 .eas/
 .idea/
+# Local editor and AI assistant tooling
+/.vscode/
+/.agents/
+/.claude/
+/.codex
+/.codex/
+skills-lock.json
 android/.kotlin/
 dist/
 .env
