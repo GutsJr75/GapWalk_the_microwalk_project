@@ -10,9 +10,15 @@ dist/
 !.env.example
 npm-debug.*
 *.jks
+*.keystore
 *.p8
 *.p12
+*.pfx
 *.key
+*.pem
+*.cer
+*.crt
+*.der
 *.mobileprovision
 *.orig.*
 web-build/
@@ -27,6 +33,10 @@ GoogleService-Info.plist
 ios/**/GoogleService-Info.plist
 android/app/eas-build.gradle
 credentials.json
+key.properties
+serviceAccountKey.json
+service-account*.json
+firebase-service-account*.json
 test.bundle
 *.aab
 *.apk

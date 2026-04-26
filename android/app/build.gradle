@@ -59,9 +59,12 @@ def googleMapsApiKey = localProps.getProperty(
     System.getenv('GOOGLE_MAPS_API_KEY') ?: dotenvProps.getProperty('GOOGLE_MAPS_API_KEY', '')
 )
 def defaultDebugStoreFile = file("$projectDir/gapwalk-local-debug.jks")
+def repoDebugStoreFile = file("$projectDir/debug.keystore")
+def userDebugStoreFile = file("${System.getProperty('user.home')}/.android/debug.keystore")
+def fallbackDebugStoreFile = [defaultDebugStoreFile, repoDebugStoreFile, userDebugStoreFile].find { it.exists() } ?: userDebugStoreFile
 def debugStoreFilePath = System.getenv('GAPWALK_DEBUG_STORE_FILE') ?: localProps.getProperty(
     'GAPWALK_DEBUG_STORE_FILE',
-    defaultDebugStoreFile.exists() ? defaultDebugStoreFile.absolutePath : "$projectDir/debug.keystore"
+    fallbackDebugStoreFile.absolutePath
 )
 def debugStorePassword = System.getenv('GAPWALK_DEBUG_STORE_PASSWORD') ?: localProps.getProperty('GAPWALK_DEBUG_STORE_PASSWORD', 'android')
 def debugKeyAlias = System.getenv('GAPWALK_DEBUG_KEY_ALIAS') ?: localProps.getProperty('GAPWALK_DEBUG_KEY_ALIAS', 'androiddebugkey')
@@ -175,8 +178,8 @@ android {
         applicationId 'com.gapwalk.app'
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 10117
-        versionName "1.3"
+        versionCode 10121
+        versionName "1.3.3"
 
         manifestPlaceholders = [GOOGLE_MAPS_API_KEY: googleMapsApiKey]
         buildConfigField "String", "REACT_NATIVE_RELEASE_LEVEL", "\"${findProperty('reactNativeReleaseLevel') ?: 'stable'}\""

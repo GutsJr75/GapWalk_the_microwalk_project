@@ -58,7 +58,7 @@ GapWalk's local Android scripts now try to avoid that automatically:
 - `npm run android` and `npm run android:e2e` detect a single connected Android target with `adb`
 - If exactly one device or emulator is connected, they set `ORG_GRADLE_PROJECT_reactNativeArchitectures` to that target ABI before running `expo run:android`
 - If multiple devices are connected, set `ANDROID_SERIAL=<serial>` or `ORG_GRADLE_PROJECT_reactNativeArchitectures=<abi>` yourself
-- Local debug builds prefer `android/app/gapwalk-local-debug.jks` when present, then fall back to `android/app/debug.keystore`
+- Local debug builds prefer `android/app/gapwalk-local-debug.jks` when present, then `android/app/debug.keystore`, then the standard user debug keystore at `~/.android/debug.keystore`
 - Override the debug keystore with `GAPWALK_DEBUG_STORE_FILE`, `GAPWALK_DEBUG_STORE_PASSWORD`, `GAPWALK_DEBUG_KEY_ALIAS`, and `GAPWALK_DEBUG_KEY_PASSWORD` in `local.properties` or the shell if needed
 
 Useful commands when installs start failing:
@@ -67,6 +67,12 @@ Useful commands when installs start failing:
 adb shell df -h /data
 adb -s emulator-5554 uninstall com.gapwalk.app
 keytool -list -v -keystore android/app/gapwalk-local-debug.jks -alias androiddebugkey -storepass android -keypass android | rg "SHA1:"
+```
+
+Debug keystore files are intentionally ignored by Git. If a fresh machine has no debug keystore yet, run any Android debug build once, or generate a local-only project debug keystore:
+
+```bash
+keytool -genkeypair -v -storetype JKS -keystore android/app/gapwalk-local-debug.jks -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
 ```
 
 If the emulator is still nearly full after uninstalling old builds, wipe the AVD data or increase its storage allocation in Android Studio.
@@ -78,6 +84,18 @@ Official production builds should use EAS:
 ```bash
 eas build --platform android --profile production
 ```
+
+For a local EAS production build, pass the local Firebase config path explicitly:
+
+```bash
+GOOGLE_SERVICES_JSON="$PWD/google-services.json" eas build -p android --profile production --local --clear-cache
+```
+
+Why this matters:
+
+- `google-services.json` is gitignored, so cloud builds must receive it through EAS secrets/env and local builds must receive a real local file path.
+- EAS local builds do not behave exactly like cloud builds for secret file materialization. Passing `GOOGLE_SERVICES_JSON="$PWD/google-services.json"` makes Gradle and Expo config resolve the same Firebase project.
+- `app.config.js` reads `google-services.json` at build time and injects the non-secret Android Firebase/Google OAuth values into `Constants.expoConfig.extra.androidGoogleServices`. Runtime code should use those values as a fallback instead of depending on `google-services.json` being bundled as a JS module.
 
 If you need to build a manual local Android release artifact without using EAS, follow these steps from the project root:
 
@@ -173,6 +191,38 @@ Important:
 - Use the same Google project for `google-services.json`, Firebase Auth, and any Google Sign-In or Calendar OAuth clients.
 - If `google-services.json` already contains an Android OAuth client for `com.gapwalk.app`, do not create another Android OAuth client in a different project just to satisfy app configuration.
 - Deleting an OAuth client does not always free the package/SHA-1 immediately. If you are moving the app to a different project, remove the Android app/client from the original Firebase or Google Cloud project and allow time for Google to release the package/SHA registration.
+
+### Current Production Upload Key
+
+As of 2026-04-24, the local production release build is expected to sign with:
+
+- Keystore: `@monkbonk__gapwalk.jks`
+- Alias: `gapwalk-upload`
+- SHA-1: `F9:10:8B:9B:40:1A:FB:E9:23:0D:C5:A5:D5:9C:7F:BC:CD:59:76:F9`
+
+Verify the actual Gradle signing config before diagnosing Firebase or Google OAuth:
+
+```bash
+cd android
+./gradlew signingReport
+```
+
+For the expected local production setup, the `:app:signingReport` `release` variant should show `@monkbonk__gapwalk.jks`, alias `gapwalk-upload`, and SHA-1 `F9:10:8B:9B:40:1A:FB:E9:23:0D:C5:A5:D5:9C:7F:BC:CD:59:76:F9`.
+
+Also verify that the checked local Firebase config contains the package and Android OAuth SHA:
+
+```bash
+jq '.client[] | {package: .client_info.android_client_info.package_name, certificate_hashes: ([.oauth_client[]? | select(.android_info != null) | .android_info.certificate_hash] | unique)}' google-services.json
+```
+
+The expected package is `com.gapwalk.app`, and one of the certificate hashes should be `f9108b9b401afbe9230dc5a5d59c7fbccd5976f9`.
+
+If the app shows `Add google-services.json for com.gapwalk.app and register its SHA-1 in the same Google project`, check these in order:
+
+1. The build command includes `GOOGLE_SERVICES_JSON="$PWD/google-services.json"` for local EAS builds.
+2. `google-services.json` belongs to the same Firebase/Google project that owns the Android OAuth client.
+3. `./gradlew signingReport` shows the SHA-1 you registered for the exact variant you installed.
+4. `app.config.js` still injects `extra.androidGoogleServices`, and the runtime Google Calendar/Auth services still read that fallback.
 
 ---
 

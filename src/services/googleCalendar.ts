@@ -44,6 +44,12 @@ type GoogleServicesJson = {
   }>;
 };
 
+type AndroidGoogleServicesExtra = {
+  hasAndroidOauthClient?: boolean;
+  packageName?: string;
+  webClientId?: string;
+};
+
 interface GoogleCalendarEventDateTime {
   date?: string;
   dateTime?: string;
@@ -258,19 +264,26 @@ const getAndroidGoogleServices = (): GoogleServicesJson | null => {
 };
 
 const androidGoogleServices = getAndroidGoogleServices();
+const androidGoogleServicesExtra = (() => {
+  const extra = Constants.expoConfig?.extra as
+    | { androidGoogleServices?: AndroidGoogleServicesExtra }
+    | undefined;
+  return extra?.androidGoogleServices ?? {};
+})();
 const androidGoogleClient = androidGoogleServices?.client?.[0];
 const androidGoogleWebClientId =
   androidGoogleClient?.oauth_client
     ?.find((client) => client.client_type === 3)
-    ?.client_id?.trim() ?? '';
+    ?.client_id?.trim() || androidGoogleServicesExtra.webClientId?.trim() || '';
+const hasAndroidOauthClientFromJson = androidGoogleClient?.oauth_client?.some(
+  (client) =>
+    client.client_type === 1 &&
+    client.android_info?.package_name ===
+      (androidGoogleClient?.client_info?.android_client_info?.package_name ??
+        FALLBACK_NATIVE_APP_ID)
+);
 const hasAndroidOauthClient =
-  androidGoogleClient?.oauth_client?.some(
-    (client) =>
-      client.client_type === 1 &&
-      client.android_info?.package_name ===
-        (androidGoogleClient?.client_info?.android_client_info?.package_name ??
-          FALLBACK_NATIVE_APP_ID)
-  ) ?? false;
+  hasAndroidOauthClientFromJson ?? androidGoogleServicesExtra.hasAndroidOauthClient;
 
 /*
  * ── Google OAuth Configuration ──
@@ -338,11 +351,11 @@ export function getGoogleConfigurationError(): string | null {
     return null;
   }
 
-  if (!androidGoogleServices) {
-    return `Google Calendar is not configured for Android. Add google-services.json for ${getNativeAppId()} and register its SHA-1 in the same Google project.`;
+  if (isPlaceholderClientId(GOOGLE_WEB_CLIENT_ID)) {
+    return `Google Calendar is not configured for Android. Set EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID or add google-services.json for ${getNativeAppId()}.`;
   }
 
-  if (!hasAndroidOauthClient) {
+  if (hasAndroidOauthClient === false) {
     return `Google Calendar is not configured for Android. Register ${getNativeAppId()} and its signing SHA-1 in the same Google project as google-services.json.`;
   }
 

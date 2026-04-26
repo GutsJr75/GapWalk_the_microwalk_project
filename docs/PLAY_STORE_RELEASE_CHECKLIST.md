@@ -3,8 +3,10 @@
 ## Build
 
 - Build Android production artifacts with `eas build --platform android --profile production`.
+- For local EAS production builds, run `GOOGLE_SERVICES_JSON="$PWD/google-services.json" eas build -p android --profile production --local --clear-cache`.
 - Confirm `google-services.json` and `GOOGLE_MAPS_API_KEY` are available to the production build.
-- If running a local release build, copy `android/local.properties.example` to `android/local.properties`, fill `GOOGLE_MAPS_API_KEY` plus all `GAPWALK_RELEASE_*` values, then run `./gradlew bundleRelease`.
+- Confirm the release signing SHA-1 is registered in the same Firebase/Google project as `google-services.json`. The current local upload key SHA-1 is `F9:10:8B:9B:40:1A:FB:E9:23:0D:C5:A5:D5:9C:7F:BC:CD:59:76:F9`.
+- If running a manual local Gradle release build, copy `android/local.properties.example` to `android/local.properties`, fill `GOOGLE_MAPS_API_KEY` plus all `GAPWALK_RELEASE_*` values, then run `./gradlew bundleRelease`.
 - Increment both `app.json` and `android/app/build.gradle` `versionCode` values before every Play upload.
 
 ## Play Console Declarations

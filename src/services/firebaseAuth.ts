@@ -62,6 +62,15 @@ type GoogleServicesJson = {
   }>;
 };
 
+type AndroidGoogleServicesExtra = {
+  apiKey?: string;
+  appId?: string;
+  messagingSenderId?: string;
+  projectId?: string;
+  storageBucket?: string;
+  webClientId?: string;
+};
+
 const getAndroidGoogleServices = (): GoogleServicesJson | null => {
   if (Platform.OS !== 'android') return null;
   try {
@@ -77,18 +86,38 @@ const getAndroidGoogleServices = (): GoogleServicesJson | null => {
   }
 };
 
+const getAndroidGoogleServicesExtra = (): AndroidGoogleServicesExtra => {
+  const extra = Constants.expoConfig?.extra as
+    | { androidGoogleServices?: AndroidGoogleServicesExtra }
+    | undefined;
+  return extra?.androidGoogleServices ?? {};
+};
+
+const cleanConfigValue = (value: string | undefined): string => value?.trim() ?? '';
+
 const androidGoogleServices = getAndroidGoogleServices();
+const androidGoogleServicesExtra = getAndroidGoogleServicesExtra();
 const androidClient = androidGoogleServices?.client?.[0];
 const androidFirebaseFallback = {
-  apiKey: androidClient?.api_key?.[0]?.current_key?.trim() ?? '',
-  projectId: androidGoogleServices?.project_info?.project_id?.trim() ?? '',
-  storageBucket: androidGoogleServices?.project_info?.storage_bucket?.trim() ?? '',
-  messagingSenderId: androidGoogleServices?.project_info?.project_number?.trim() ?? '',
-  appId: androidClient?.client_info?.mobilesdk_app_id?.trim() ?? '',
+  apiKey:
+    androidClient?.api_key?.[0]?.current_key?.trim() ??
+    cleanConfigValue(androidGoogleServicesExtra.apiKey),
+  projectId:
+    androidGoogleServices?.project_info?.project_id?.trim() ??
+    cleanConfigValue(androidGoogleServicesExtra.projectId),
+  storageBucket:
+    androidGoogleServices?.project_info?.storage_bucket?.trim() ??
+    cleanConfigValue(androidGoogleServicesExtra.storageBucket),
+  messagingSenderId:
+    androidGoogleServices?.project_info?.project_number?.trim() ??
+    cleanConfigValue(androidGoogleServicesExtra.messagingSenderId),
+  appId:
+    androidClient?.client_info?.mobilesdk_app_id?.trim() ??
+    cleanConfigValue(androidGoogleServicesExtra.appId),
   webClientId:
     androidClient?.oauth_client
       ?.find((client) => client.client_type === 3)
-      ?.client_id?.trim() ?? '',
+      ?.client_id?.trim() ?? cleanConfigValue(androidGoogleServicesExtra.webClientId),
 };
 
 const resolveAndroidValue = (fallback: string, envValue: string): string =>

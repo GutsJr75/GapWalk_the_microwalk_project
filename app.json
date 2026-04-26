@@ -3,7 +3,7 @@
     "newArchEnabled": true,
     "name": "GapWalk",
     "slug": "gapwalk",
-    "version": "1.3",
+    "version": "1.3.3",
     "orientation": "portrait",
     "userInterfaceStyle": "dark",
     "scheme": "gapwalk",
@@ -26,7 +26,7 @@
     "android": {
       "googleServicesFile": "./google-services.json",
       "package": "com.gapwalk.app",
-      "versionCode": 10117,
+      "versionCode": 10121,
       "softwareKeyboardLayoutMode": "pan",
       "adaptiveIcon": {
         "foregroundImage": "./assets/icons/adaptive-foreground.png",
