@@ -346,7 +346,7 @@ export async function runBackendSync(): Promise<boolean> {
  */
 export async function registerDevice(params: {
   expoPushToken: string;
-  platform: 'ios' | 'android';
+  platform: 'android';
   appVersion?: string;
   osVersion?: string;
   deviceModel?: string;

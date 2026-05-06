@@ -2289,7 +2289,7 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
         applyAndroidSnapshot(snapshot);
       }
     } else {
-      // iOS fallback: resume if paused
+      // JS fallback: resume if paused.
       const current = fallbackStateRef.current;
       if (current.paused) {
         await togglePause();
@@ -2344,15 +2344,6 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
   }, [navigation]);
 
   const openAppSettings = useCallback(async () => {
-    if (Platform.OS === 'ios') {
-      try {
-        await Linking.openURL('app-settings:');
-        return;
-      } catch {
-        // Fallback below.
-      }
-    }
-
     try {
       await Linking.openSettings();
     } catch (error) {

@@ -225,12 +225,12 @@ export const WalkTimeModal: React.FC<WalkTimeModalProps> = ({
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onRequestClose}>
       <KeyboardAvoidingView
         style={[styles.overlay, { backgroundColor: palette.overlay }]}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        behavior="height"
       >
         <ScrollView
           contentContainerStyle={styles.scrollContent}
           keyboardShouldPersistTaps="handled"
-          keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+          keyboardDismissMode="on-drag"
           showsVerticalScrollIndicator={false}
         >
           <View

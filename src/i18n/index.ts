@@ -529,8 +529,8 @@ const esExact: Record<string, string> = {
   '\uD83C\uDF89 Goal achieved!': '\uD83C\uDF89 Meta alcanzada!',
   'Map is available on mobile app': 'El mapa esta disponible en la app movil',
   'Map view is unavailable on web preview.': 'La vista de mapa no esta disponible en la vista web.',
-  'Web preview supports timer flow, but live map and movement tracking run on Android/iOS builds.':
-    'La vista web soporta el temporizador, pero el mapa en vivo y el seguimiento de movimiento funcionan en Android/iOS.',
+  'Web preview supports timer flow, but live map and movement tracking run on Android builds.':
+    'La vista web soporta el temporizador, pero el mapa en vivo y el seguimiento de movimiento funciona en Android.',
 
   // Setup/import status
   'Opening file picker...': 'Abriendo selector de archivos...',
@@ -608,8 +608,8 @@ const enFriendly: Record<string, string> = {
   'Edit your choices': 'Edit preferences',
   'Map is available on mobile app': 'Map is available in the mobile app',
   'Map view is unavailable on web preview.': 'Map view is not available in web preview.',
-  'Web preview supports timer flow, but live map and movement tracking run on Android/iOS builds.':
-    'Web preview supports the timer only. Live map and movement tracking work on Android and iOS.',
+  'Web preview supports timer flow, but live map and movement tracking run on Android builds.':
+    'Web preview supports the timer only. Live map and movement tracking work on Android.',
   'Enable location to show live route and step count.':
     'Turn on location to show your live route and step count.',
   'No walking detected': 'No walking detected',

@@ -151,7 +151,7 @@ export const Container: React.FC<ContainerProps> = ({
         >
           <KeyboardAvoidingView
             style={styles.keyboardWrap}
-            behavior={keyboardAvoidEnabled && Platform.OS === 'ios' ? 'padding' : undefined}
+            behavior={undefined}
             enabled={keyboardAvoidEnabled}
           >
             {scrollable ? (
@@ -161,7 +161,7 @@ export const Container: React.FC<ContainerProps> = ({
                 contentContainerStyle={styles.scrollContent}
                 showsVerticalScrollIndicator={false}
                 keyboardShouldPersistTaps="handled"
-                keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+                keyboardDismissMode="on-drag"
               >
                 {children}
               </ScrollView>

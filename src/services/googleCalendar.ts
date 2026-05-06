@@ -81,7 +81,6 @@ const configureGoogleSignin = () => {
   GoogleSignin.configure({
     scopes: SCOPES,
     webClientId: GOOGLE_WEB_CLIENT_ID || undefined,
-    iosClientId: GOOGLE_IOS_CLIENT_ID || undefined,
     offlineAccess: false,
   });
   return GoogleSignin;
@@ -295,7 +294,6 @@ const hasAndroidOauthClient =
  * 4. Use one Google project consistently:
  *    a. Create a Web client for browser auth and token exchange.
  *    b. Register Android package name + SHA-1 in the same project as google-services.json.
- *    c. Create an iOS client for your bundle identifier.
  * 5. Do not create duplicate Android OAuth clients in a different Google project.
  *
  * Native builds in this app return to:
@@ -306,7 +304,6 @@ const hasAndroidOauthClient =
 const GOOGLE_WEB_CLIENT_ID =
   (Platform.OS === 'android' && androidGoogleWebClientId) ||
   (process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID ?? '').trim();
-const GOOGLE_IOS_CLIENT_ID = (process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID ?? '').trim();
 
 const SCOPES = ['https://www.googleapis.com/auth/calendar.readonly'];
 
@@ -314,9 +311,6 @@ const isPlaceholderClientId = (value: string): boolean =>
   !value || value.startsWith('YOUR_') || value.startsWith('your_');
 
 const getNativeAppId = (): string => {
-  if (Platform.OS === 'ios') {
-    return Constants.expoConfig?.ios?.bundleIdentifier ?? FALLBACK_NATIVE_APP_ID;
-  }
   if (Platform.OS === 'android') {
     return Constants.expoConfig?.android?.package ?? FALLBACK_NATIVE_APP_ID;
   }
@@ -336,18 +330,6 @@ export function getGoogleConfigurationError(): string | null {
     if (isPlaceholderClientId(GOOGLE_WEB_CLIENT_ID)) {
       return 'Google Calendar is not configured for web. Set EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID in .env.';
     }
-    return null;
-  }
-
-  if (Platform.OS === 'ios') {
-    if (isPlaceholderClientId(GOOGLE_IOS_CLIENT_ID)) {
-      return `Google Calendar is not configured for iOS. Create an iOS OAuth client for ${getNativeAppId()} and set EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID in .env.`;
-    }
-
-    if (GOOGLE_IOS_CLIENT_ID === GOOGLE_WEB_CLIENT_ID) {
-      return 'Google Calendar is misconfigured for iOS. EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID must use an iOS OAuth client ID, not the same value as EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID.';
-    }
-
     return null;
   }
 

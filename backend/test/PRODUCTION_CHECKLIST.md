@@ -4,7 +4,7 @@ Step-by-step guide to verify every data flow works end-to-end from the real app
 on a device to the production database at `http://136.115.63.96:3000`.
 
 **Prerequisites**
-- A physical or emulated Android/iOS device with GapWalk installed (production build)
+- A physical or emulated Android device with GapWalk installed (production build)
 - Access to the production database (Prisma Studio or `psql`)
 - A terminal with `TEST_AUTH_TOKEN` obtained from the device (see §0)
 
@@ -181,7 +181,7 @@ SELECT session_start, session_end, source FROM "AppSession"
 
 | Table | What to check |
 |---|---|
-| `Device` | Row with `expo_push_token` and `platform` (`ios` or `android`) |
+| `Device` | Row with `expo_push_token` and `platform` (`android`) |
 | `Device` | `notification_permission_granted = true` |
 
 **SQL**

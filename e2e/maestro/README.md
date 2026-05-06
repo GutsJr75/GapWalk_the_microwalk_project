@@ -12,7 +12,6 @@ These flows cover the production-critical onboarding and notification paths:
 1. Install Maestro CLI: `curl -Ls "https://get.maestro.mobile.dev" | bash`
 2. Build and install a dev client with E2E hooks enabled:
    - Android: `npm run android:e2e`
-   - iOS: `npm run ios:e2e`
 3. Start Metro in E2E mode:
    - `npm run start:e2e`
 

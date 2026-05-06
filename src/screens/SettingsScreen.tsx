@@ -283,10 +283,7 @@ export const SettingsScreen: React.FC<Props> = ({ navigation }) => {
 
   const handleRateGapWalk = useCallback(() => {
     closeInfoOverlay();
-    const storeUrl =
-      Platform.OS === "ios"
-        ? "https://apps.apple.com/app/gapwalk/id0000000000"
-        : "https://play.google.com/store/apps/details?id=com.gapwalk.app";
+    const storeUrl = "https://play.google.com/store/apps/details?id=com.gapwalk.app";
     Linking.openURL(storeUrl).catch(() => {});
   }, [closeInfoOverlay]);
 

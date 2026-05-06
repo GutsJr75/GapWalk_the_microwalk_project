@@ -2,16 +2,23 @@ const fs = require('fs');
 const path = require('path');
 
 /**
- * Dynamic Expo config — extends app.json and injects the iOS URL scheme
- * required by @react-native-google-signin/google-signin from the env var
- * EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID so it doesn't need to be hardcoded.
+ * Dynamic Expo config - extends app.json and injects Android
+ * Google/Firebase build metadata from local files or environment variables.
  */
 module.exports = ({ config }) => {
-  const iosClientId = process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID || '';
-  const iosUrlScheme = iosClientId
-    ? `com.googleusercontent.apps.${iosClientId.split('.apps.googleusercontent.com')[0]}`
-    : undefined;
-  const googleMapsApiKey = process.env.GOOGLE_MAPS_API_KEY || '';
+  const firstConfiguredValue = (...values) =>
+    values
+      .map((value) => (value ?? '').trim())
+      .find(
+        (value) =>
+          value &&
+          value !== 'your_google_maps_api_key' &&
+          value !== 'your_key_here'
+      ) || '';
+  const googleMapsApiKey = firstConfiguredValue(
+    process.env.GOOGLE_MAPS_API_KEY,
+    process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY
+  );
   const androidPackageName = config.android?.package || 'com.gapwalk.app';
   const androidGoogleServicesCandidates = [
     process.env.GOOGLE_SERVICES_JSON || null,
@@ -62,10 +69,6 @@ module.exports = ({ config }) => {
     return config.android?.googleServicesFile;
   })();
 
-  const googleSignInPlugin = iosUrlScheme
-    ? ['@react-native-google-signin/google-signin', { iosUrlScheme }]
-    : '@react-native-google-signin/google-signin';
-
   return {
     ...config,
     android: {
@@ -92,6 +95,6 @@ module.exports = ({ config }) => {
         webClientId: androidGoogleWebClientId,
       },
     },
-    plugins: [...(config.plugins || []), googleSignInPlugin],
+    plugins: [...(config.plugins || []), '@react-native-google-signin/google-signin'],
   };
 };

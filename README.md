@@ -4,7 +4,7 @@
 
 GapWalk is a privacy-first health intervention app that analyzes your calendar, identifies free windows throughout your day, and sends smart nudges to encourage regular micro-walks. No account required - all core functionality works entirely on-device.
 
-Available on **iOS** and **Android**.
+Available on **Android**.
 
 ---
 
@@ -109,7 +109,7 @@ GapWalk follows a **layered, offline-first architecture** split into a React Nat
 | **SQLite on-device**      | Fast local reads, no data leaves device by default                                       |
 | **Zustand (not Redux)**   | Minimal boilerplate; state slices map directly to UI concerns                            |
 | **Expo managed workflow** | Faster iteration; EAS builds for production                                              |
-| **react-native-maps**     | Already bundled - native Apple/Google map tiles, no extra SDK setup on iOS               |
+| **react-native-maps**     | Google Maps rendering for Android walk routes                                            |
 | **Route stored in SQLite**| GPS path persisted to `walk_routes` table (throttled ≥ 5 m) - enables future replay     |
 | **NestJS backend**        | Modular, decorator-based - mirrors domain model cleanly                                  |
 | **Prisma ORM**            | Type-safe queries, auto-generated migrations                                             |
@@ -217,7 +217,6 @@ GapWalk/
 │   └── icon.png                   # App icon (2048×2048)
 │
 ├── android/                       # Native Android project (Gradle)
-├── ios/                           # Native iOS project (Xcode)
 │
 ├── backend/                       # NestJS research backend (optional)
 │   ├── src/
@@ -304,7 +303,7 @@ During an active walk (`WalkingScreen`), the app:
 - **Idle detection** - automatically pauses if no walking signal is detected for more than 30 consecutive seconds.
 - **Session checkpointing** - serializes the current walk state to SQLite every ~30 seconds so the session survives a force-kill.
 - **Session recovery** - on next app launch, if an incomplete checkpoint exists, the app resumes and saves the session.
-- **Live map** - `react-native-maps` fills the upper hero area of the walking screen. A `Polyline` is drawn over accumulated GPS coordinates in real time. The map uses a custom dark style when the app is in dark mode; Apple Maps on iOS, Google Maps on Android.
+- **Live map** - `react-native-maps` fills the upper hero area of the walking screen. A `Polyline` is drawn over accumulated GPS coordinates in real time. The map uses Google Maps on Android with a custom dark style when the app is in dark mode.
 - **Route persistence** - GPS coordinates are written to the `walk_routes` SQLite table (throttled to every ≥ 5 m) and linked to the `walk_sessions` row via `session_id` for future post-walk route replay.
 
 ### Walk Tracking Architecture
@@ -327,7 +326,6 @@ WalkingScreen.native.tsx
 
 | Platform | Walk tracking path | Route accumulation |
 |---|---|---|
-| iOS | JS fallback (`expo-location` + `expo-sensors`) | Yes - via GPS watcher |
 | Android (standard) | JS fallback | Yes - via GPS watcher |
 | Android (native service) | `androidWalkTracking` native module | Not yet - planned |
 
@@ -399,9 +397,9 @@ Users / Devices / Preferences / BusyEvents / ManualScheduleEntries / NudgePlans 
 
 | Permission             | Platform      | Purpose                                      |
 | ---------------------- | ------------- | -------------------------------------------- |
-| Location (When In Use) | iOS & Android | GPS tracking and route visualization         |
+| Location (When In Use) | Android       | GPS tracking and route visualization         |
 | Background Location    | Android       | Continue tracking if app moves to background |
-| Notifications          | iOS & Android | Deliver walk reminders at scheduled times    |
+| Notifications          | Android       | Deliver walk reminders at scheduled times    |
 | Activity Recognition   | Android       | Access hardware step counter (pedometer)     |
 
 All permissions are optional. The app degrades gracefully:
@@ -409,13 +407,6 @@ All permissions are optional. The app degrades gracefully:
 - **No location** → timer-only walk tracking, no map
 - **No notifications** → user initiates walks manually from the dashboard
 - **No activity recognition** → GPS-based step estimation
-
-**iOS Privacy Strings** (`app.json`):
-
-- `NSLocationWhenInUseUsageDescription` - explains location use to Apple reviewers
-- `UIBackgroundModes: location` - declared for background GPS
-
----
 
 ## Getting Started
 
@@ -438,8 +429,7 @@ All permissions are optional. The app degrades gracefully:
   # Visit https://nodejs.org or use a version manager
   ```
 
-- **Android Studio** (for Android) or **Xcode 15+** (for iOS, Mac only)
-  - Required for building native development builds
+- **Android Studio** - Required for building native Android development builds
 
 The setup script will verify these are installed when you run `npm install`.
 
@@ -449,17 +439,15 @@ The setup script will verify these are installed when you run `npm install`.
 # Install dependencies (will check prerequisites first)
 npm install
 
-# Run on native platforms
+# Run on Android
 npm run android   # Android emulator / connected device (development build)
-npm run ios       # iOS simulator (Mac only, development build)
 npm run start     # Expo dev server (scan QR with Expo Go - limited features)
 
 # For E2E testing
 npm run android:e2e   # Android with test mode enabled
-npm run ios:e2e       # iOS with test mode enabled
 ```
 
-**Note:** Use `npm run android` or `npm run ios` for a full-featured development build with all features (OAuth, notifications, database). Expo Go (`npm run start`) has limitations with OAuth and push notifications.
+**Note:** Use `npm run android` for a full-featured development build with all features (OAuth, notifications, database). Expo Go (`npm run start`) has limitations with OAuth and push notifications.
 
 ---
 
@@ -483,27 +471,20 @@ cp .env.example .env
 
 #### Android Maps API key setup
 
-`react-native-maps` requires a Google Maps API key for tile rendering on Android. iOS uses Apple Maps and needs no key.
+`react-native-maps` requires a Google Maps API key for tile rendering on Android.
 
 1. Create a key at [Google Cloud Console](https://console.cloud.google.com/) → APIs & Services → Credentials.
 2. Enable **Maps SDK for Android** on the key.
-3. Set both `EXPO_PUBLIC_GOOGLE_MAPS_API_KEY` and `GOOGLE_MAPS_API_KEY` before building.
+3. Set `GOOGLE_MAPS_API_KEY` before building. `EXPO_PUBLIC_GOOGLE_MAPS_API_KEY` is also accepted as a fallback, but using both keeps local JS and native build config aligned.
 4. For local native Android builds, you can also place `GOOGLE_MAPS_API_KEY=...` in `android/local.properties`.
 5. For EAS builds, keep the secret outside git and inject it through your build environment or secret configuration.
+6. If the key is restricted, include the SHA-1 certificate for the installed build. Published Play builds usually require the Play App Signing SHA-1, not only the upload or local debug SHA-1.
 
 Without a Maps API key, the walking screen map area shows a blank tile background on Android. Walk tracking (GPS distance, steps, time) and route recording continue to work normally regardless.
 
 ---
 
 ## Building for Production
-
-### iOS (App Store)
-
-```bash
-eas build --platform=ios --profile=production
-```
-
-Requires an Apple Developer account and valid provisioning profiles managed through EAS.
 
 ### Android (Google Play / Local Release)
 
@@ -554,7 +535,7 @@ maestro test e2e/maestro/notification-actions.yaml
 Verify notification permission is granted, no quiet hours are active, and there are upcoming plans on the dashboard. Test on a physical device (simulators have limited notification support).
 
 **Map is blank on Android**
-Set both `EXPO_PUBLIC_GOOGLE_MAPS_API_KEY` and `GOOGLE_MAPS_API_KEY`, then rebuild (`eas build` or `./gradlew assembleRelease`). On local native builds you can supply `GOOGLE_MAPS_API_KEY` through `android/local.properties`. On iOS, Apple Maps works without an API key.
+Set `GOOGLE_MAPS_API_KEY` or `EXPO_PUBLIC_GOOGLE_MAPS_API_KEY`, then rebuild (`eas build` or `./gradlew assembleRelease`). On local native builds you can supply `GOOGLE_MAPS_API_KEY` through `android/local.properties`. If the map only fails after Play publishing, add the Play App Signing SHA-1 to the Google Maps API key restrictions.
 
 **Route polyline does not appear**
 The polyline requires location permission and at least 2 GPS points. Make sure location is granted and walk far enough from the starting point. The polyline draws only on the JS (fallback) tracking path; the Android native service path does not yet emit coordinates to the map.

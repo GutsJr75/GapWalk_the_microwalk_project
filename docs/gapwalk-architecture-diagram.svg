@@ -1,0 +1,105 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900" role="img" aria-labelledby="title desc">
+  <title id="title">GapWalk simplified architecture</title>
+  <desc id="desc">A simplified architecture diagram for GapWalk showing Firebase Auth, the React Native Expo mobile app, local SQLite storage, native Android services, and an optional NestJS research backend.</desc>
+
+  <defs>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+      <path d="M2,2 L10,6 L2,10 Z" fill="#334155"/>
+    </marker>
+    <marker id="arrowMuted" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+      <path d="M2,2 L10,6 L2,10 Z" fill="#64748b"/>
+    </marker>
+    <marker id="arrowStart" markerWidth="12" markerHeight="12" refX="2" refY="6" orient="auto" markerUnits="strokeWidth">
+      <path d="M10,2 L2,6 L10,10 Z" fill="#64748b"/>
+    </marker>
+    <style>
+      .bg { fill: #f8fafc; }
+      .title { font-family: Inter, Aptos, "Segoe UI", Arial, sans-serif; font-size: 38px; font-weight: 750; fill: #0f172a; }
+      .subtitle { font-family: Inter, Aptos, "Segoe UI", Arial, sans-serif; font-size: 20px; font-weight: 500; fill: #475569; }
+      .section { font-family: Inter, Aptos, "Segoe UI", Arial, sans-serif; font-size: 19px; font-weight: 750; fill: #334155; }
+      .box-title { font-family: Inter, Aptos, "Segoe UI", Arial, sans-serif; font-size: 24px; font-weight: 750; fill: #0f172a; }
+      .body { font-family: Inter, Aptos, "Segoe UI", Arial, sans-serif; font-size: 18px; font-weight: 500; fill: #475569; }
+      .small { font-family: Inter, Aptos, "Segoe UI", Arial, sans-serif; font-size: 16px; font-weight: 600; fill: #64748b; }
+      .pill-text { font-family: Inter, Aptos, "Segoe UI", Arial, sans-serif; font-size: 16px; font-weight: 750; fill: #064e3b; }
+      .mobile { fill: #eaf3fc; stroke: #7aa7d9; stroke-width: 2.5; }
+      .local { fill: #ecfdf5; stroke: #65a87b; stroke-width: 2.5; }
+      .native { fill: #e7f6ec; stroke: #5ca276; stroke-width: 2.5; }
+      .backend { fill: #f1f5f9; stroke: #94a3b8; stroke-width: 2.5; }
+      .auth { fill: #fff7dc; stroke: #d9a441; stroke-width: 2.5; }
+      .shade { fill: #ffffff; stroke: #94a3b8; stroke-width: 2.5; }
+      .pill { fill: #dcfce7; stroke: #22a06b; stroke-width: 1.8; }
+      .optional-pill { fill: #e2e8f0; stroke: #94a3b8; stroke-width: 1.5; }
+      .arrow { fill: none; stroke: #334155; stroke-width: 3; marker-end: url(#arrow); }
+      .arrow-muted { fill: none; stroke: #64748b; stroke-width: 2.7; marker-end: url(#arrowMuted); }
+      .arrow-bidir { fill: none; stroke: #64748b; stroke-width: 2.7; stroke-dasharray: 10 8; marker-start: url(#arrowStart); marker-end: url(#arrowMuted); }
+      .dash { fill: none; stroke: #64748b; stroke-width: 2.7; stroke-dasharray: 10 8; marker-end: url(#arrowMuted); }
+    </style>
+  </defs>
+
+  <rect class="bg" width="1600" height="900"/>
+
+  <text class="title" x="80" y="74">GapWalk System Architecture</text>
+  <text class="subtitle" x="80" y="108">Local-first Android app with optional research backend sync</text>
+
+  <rect class="auth" x="80" y="206" width="240" height="148" rx="18"/>
+  <text class="section" x="110" y="244">Identity</text>
+  <text class="box-title" x="110" y="282">Firebase Auth</text>
+  <text class="body" x="110" y="316">Email/password</text>
+  <text class="body" x="110" y="342">Google sign-in</text>
+
+  <rect class="mobile" x="420" y="150" width="470" height="260" rx="22"/>
+  <text class="section" x="455" y="192">Mobile App</text>
+  <text class="box-title" x="455" y="230">React Native + Expo</text>
+  <text class="body" x="455" y="270">Screens: Dashboard, Schedule,</text>
+  <text class="body" x="455" y="296">Preferences, Walking, Achievements</text>
+  <text class="body" x="455" y="332">Zustand state</text>
+  <text class="body" x="455" y="358">gapEngine.ts + notification scheduler</text>
+
+  <rect class="pill" x="455" y="372" width="236" height="38" rx="19"/>
+  <text class="pill-text" x="480" y="397">Guest mode supported</text>
+
+  <rect class="local" x="1000" y="168" width="380" height="224" rx="22"/>
+  <text class="section" x="1035" y="210">On-device Storage</text>
+  <text class="box-title" x="1035" y="248">SQLite</text>
+  <text class="body" x="1035" y="288">expo-sqlite repositories</text>
+  <text class="body" x="1035" y="322">Schedule, preferences, plans</text>
+  <text class="body" x="1035" y="348">Walk sessions and analytics</text>
+
+  <rect class="native" x="420" y="512" width="470" height="218" rx="22"/>
+  <text class="section" x="455" y="554">Native Android Modules</text>
+  <text class="box-title" x="455" y="592">Kotlin Services</text>
+  <text class="body" x="455" y="632">Exact alarm notifications</text>
+  <text class="body" x="455" y="658">Foreground walk tracking</text>
+  <text class="body" x="455" y="684">Notification action receiver</text>
+
+  <rect class="shade" x="80" y="548" width="240" height="126" rx="18"/>
+  <text class="section" x="110" y="586">User</text>
+  <text class="box-title" x="110" y="624">Notification</text>
+  <text class="box-title" x="110" y="654">Shade</text>
+
+  <rect class="backend" x="1000" y="508" width="380" height="250" rx="22"/>
+  <text class="section" x="1035" y="550">Optional Backend</text>
+  <text class="box-title" x="1035" y="588">NestJS Research API</text>
+  <text class="body" x="1035" y="628">REST API + Firebase token guard</text>
+  <text class="body" x="1035" y="654">PostgreSQL via Prisma</text>
+  <text class="body" x="1035" y="680">BullMQ workers + Redis</text>
+  <text class="body" x="1035" y="706">Expo Push Server SDK</text>
+  <rect class="optional-pill" x="1035" y="724" width="218" height="36" rx="18"/>
+  <text class="small" x="1056" y="748">Optional / research only</text>
+
+  <path class="arrow" d="M320 280 H420"/>
+  <path class="arrow" d="M890 280 H1000"/>
+  <path class="arrow-muted" d="M655 410 V512"/>
+  <path class="arrow-muted" d="M420 620 H320"/>
+  <path class="arrow-muted" d="M320 610 H420"/>
+  <path class="arrow-bidir" d="M1190 392 V508"/>
+  <path class="arrow-bidir" d="M890 636 H1000"/>
+
+  <text class="small" x="926" y="260">read/write local data</text>
+  <text class="small" x="676" y="462">React Native bridge</text>
+  <text class="small" x="910" y="620">optional sync</text>
+  <text class="small" x="152" y="716">notification actions start or pause walks</text>
+
+  <rect class="shade" x="80" y="790" width="1300" height="54" rx="16"/>
+  <text class="body" x="112" y="825">Core demo path: Guest Mode -> Manual Schedule -> Preferences -> Dashboard Opportunities -> Start Walk -> Completion Summary</text>
+</svg>

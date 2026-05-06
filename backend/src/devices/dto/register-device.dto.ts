@@ -6,8 +6,8 @@ export class RegisterDeviceDto {
   @IsString()
   expoPushToken: string;
 
-  @ApiProperty({ enum: ['ios', 'android'] })
-  @IsIn(['ios', 'android'])
+  @ApiProperty({ enum: ['android'] })
+  @IsIn(['android'])
   platform: string;
 
   @ApiPropertyOptional()

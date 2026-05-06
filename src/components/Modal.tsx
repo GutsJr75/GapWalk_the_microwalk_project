@@ -4,7 +4,6 @@ import {
   View,
   StyleSheet,
   TouchableWithoutFeedback,
-  Platform,
   ScrollView,
   Keyboard,
   Animated,
@@ -46,8 +45,8 @@ export const Modal: React.FC<ModalProps> = ({
   const [renderVisible, setRenderVisible] = useState(visible);
 
   useEffect(() => {
-    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
-    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const showEvent = 'keyboardDidShow';
+    const hideEvent = 'keyboardDidHide';
 
     const showSub = Keyboard.addListener(showEvent, (event) => {
       setKeyboardHeight(event.endCoordinates?.height ?? 0);

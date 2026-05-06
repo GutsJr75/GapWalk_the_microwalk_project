@@ -119,7 +119,7 @@ If you need to build a manual local Android release artifact without using EAS, 
    GAPWALK_RELEASE_KEY_PASSWORD=your_key_password
    ```
 
-   Shell env vars with the same names also work and override `local.properties` when both are present.
+   Shell env vars with the same names also work and override `local.properties` when both are present. The native build also accepts `EXPO_PUBLIC_GOOGLE_MAPS_API_KEY` as a fallback, but `GOOGLE_MAPS_API_KEY` is preferred for the Android manifest.
 
 3. **Clear generated native caches only if needed**:
    ```bash
@@ -157,7 +157,7 @@ There are two separate places for API keys depending on the build type:
 | `eas.json` + EAS secrets/env | EAS cloud builds | `eas build --platform android` |
 | `.env` | Expo/Metro (JS side only) | All builds, for `EXPO_PUBLIC_*` JS variables |
 
-**Google Maps API key** is injected into `AndroidManifest.xml` at build time via Gradle `manifestPlaceholders`. It must be set in `local.properties` for local builds and supplied through EAS secrets or environment variables referenced by `eas.json` for cloud builds. It cannot be changed at runtime - a new build is required.
+**Google Maps API key** is injected into `AndroidManifest.xml` at build time via Gradle `manifestPlaceholders`. Set `GOOGLE_MAPS_API_KEY` in `local.properties` for local builds and through EAS secrets/env for cloud builds; `EXPO_PUBLIC_GOOGLE_MAPS_API_KEY` is accepted as a fallback. It cannot be changed at runtime - a new build is required.
 
 Start from the checked-in template:
 
@@ -170,6 +170,8 @@ cp android/local.properties.example android/local.properties
 sdk.dir=/home/sadik/Android/Sdk
 GOOGLE_MAPS_API_KEY=your_key_here
 ```
+
+For published Play builds, restricted Maps keys must allow the certificate that signs the app installed from Google Play. In most cases that is the Play App Signing SHA-1 from Play Console, not just the upload keystore SHA-1 used to submit the bundle.
 
 ---
 

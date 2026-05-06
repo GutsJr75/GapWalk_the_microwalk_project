@@ -1,5 +1,5 @@
 import React from 'react';
-import { Platform, Pressable, StyleSheet, ActivityIndicator, View, ViewStyle, TextStyle, StyleProp, Animated } from 'react-native';
+import { Pressable, StyleSheet, ActivityIndicator, View, ViewStyle, TextStyle, StyleProp, Animated } from 'react-native';
 import { theme } from '../theme';
 import { useThemePalette } from '../theme/palette';
 import { Text } from './Text';
@@ -103,7 +103,7 @@ export const Button: React.FC<ButtonProps> = ({
             scaleAnim={scaleAnim}
             pressScale={pressScale}
             glowColor={disabled ? null : palette.accentPrimary}
-            glowOpacity={Platform.OS === 'ios' ? 0.14 : 0.10}
+            glowOpacity={0.10}
             borderRadius={theme.borderRadius.sm}
           />
           <Text

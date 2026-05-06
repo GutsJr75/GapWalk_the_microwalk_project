@@ -122,7 +122,7 @@ Register or update (upsert) an Expo push token. Unique on `(userId, expoPushToke
 ```json
 {
   "expoPushToken": "ExponentPushToken[xxx]",
-  "platform": "ios",
+  "platform": "android",
   "appVersion": "1.2.0"
 }
 ```

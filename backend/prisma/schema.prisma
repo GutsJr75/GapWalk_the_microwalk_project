@@ -101,7 +101,7 @@ model Device {
   id                              String   @id @default(uuid()) @db.Uuid
   userId                          String   @map("user_id") @db.Uuid
   expoPushToken                   String   @map("expo_push_token")
-  platform                        String   // ios | android
+  platform                        String   // android
   appVersion                      String?  @map("app_version")
   osVersion                       String?  @map("os_version")
   deviceModel                     String?  @map("device_model")

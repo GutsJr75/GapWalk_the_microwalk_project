@@ -49,7 +49,7 @@ export async function registerCurrentDeviceForNotifications(): Promise<boolean> 
 
     return registerDevice({
       expoPushToken: tokenData.data,
-      platform: Platform.OS as 'ios' | 'android',
+      platform: 'android',
       appVersion: Constants.expoConfig?.version,
       osVersion: String(Platform.Version),
       deviceModel: Device.modelName ?? undefined,

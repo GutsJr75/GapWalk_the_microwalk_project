@@ -1,4 +1,4 @@
-import { Platform, type TextStyle, type ViewStyle } from 'react-native';
+import { type TextStyle, type ViewStyle } from 'react-native';
 import { theme } from '../theme';
 import { motion } from '../theme/motion';
 import { withAlpha } from '../theme/colorUtils';
@@ -114,7 +114,7 @@ export const getButtonVisualState = (
         spinnerColor: palette.accentOnSolid,
         rippleColor: 'rgba(255,255,255,0.18)',
         glowColor: palette.accentPrimary,
-        glowOpacity: Platform.OS === 'ios' ? 0.32 : 0.2,
+        glowOpacity: 0.2,
       };
     case 'secondary':
       return {
@@ -128,7 +128,7 @@ export const getButtonVisualState = (
         spinnerColor: palette.textPrimary,
         rippleColor: palette.inputBg,
         glowColor: palette.accentPrimary,
-        glowOpacity: Platform.OS === 'ios' ? 0.22 : 0.12,
+        glowOpacity: 0.12,
       };
     case 'outline':
       return {
@@ -142,7 +142,7 @@ export const getButtonVisualState = (
         spinnerColor: palette.textPrimary,
         rippleColor: palette.inputBg,
         glowColor: palette.accentPrimary,
-        glowOpacity: Platform.OS === 'ios' ? 0.2 : 0.1,
+        glowOpacity: 0.1,
       };
     case 'danger':
       return {
@@ -156,7 +156,7 @@ export const getButtonVisualState = (
         spinnerColor: theme.colors.danger,
         rippleColor: withAlpha(theme.colors.danger, 0.18),
         glowColor: theme.colors.danger,
-        glowOpacity: Platform.OS === 'ios' ? 0.26 : 0.16,
+        glowOpacity: 0.16,
       };
     case 'info':
       return {
@@ -170,7 +170,7 @@ export const getButtonVisualState = (
         spinnerColor: palette.info,
         rippleColor: withAlpha(palette.info, 0.18),
         glowColor: palette.info,
-        glowOpacity: Platform.OS === 'ios' ? 0.26 : 0.16,
+        glowOpacity: 0.16,
       };
     case 'muted':
     default:
@@ -187,4 +187,3 @@ export const getButtonVisualState = (
       };
   }
 };
-

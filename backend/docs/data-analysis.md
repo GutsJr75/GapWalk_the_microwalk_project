@@ -616,7 +616,7 @@ LIMIT 20;
 | `preferences_changed` | Any setting modified | `field_name`, `old_value`, `new_value` |
 | `achievement_unlocked` | Achievement granted | `achievement_id` |
 
-> Add `app_version` and `platform` (`'ios'` \| `'android'`) to every event payload.
+> Add `app_version` and `platform` (`'android'`) to every event payload.
 
 ---
 

@@ -1,5 +1,4 @@
 import * as Notifications from 'expo-notifications';
-import * as Device from 'expo-device';
 import Constants from 'expo-constants';
 import { Platform } from 'react-native';
 import { NudgePlan, NotificationTimerMode, NotificationStatsMode, Preferences } from '../types';
@@ -157,7 +156,7 @@ export type PlanNotificationWindowPolicy = {
   missed: PlanNotificationWindow;
 };
 
-const IOS_PLAN_THREAD_PREFIX = 'walk-plan';
+const PLAN_THREAD_PREFIX = 'walk-plan';
 
 const normalizeNotificationDate = (value: Date): Date => {
   const normalized = new Date(value);
@@ -243,7 +242,7 @@ const logPlanNotificationLifecycle = (
 };
 
 const getPlanThreadIdentifier = (planId: string): string =>
-  `${IOS_PLAN_THREAD_PREFIX}:${planId}`;
+  `${PLAN_THREAD_PREFIX}:${planId}`;
 
 export const getPlanMissedNotifyTime = (plan: NudgePlan): Date =>
   normalizeNotificationDate(parseISO(plan.gapEnd));
@@ -662,12 +661,6 @@ export const notificationService = {
   async requestPermissions(): Promise<boolean> {
     if (!isNotificationsSupported) return false;
 
-    // iOS simulator does not support local push reliably; Android emulators can.
-    if (!Device.isDevice && Platform.OS === 'ios') {
-      if (__DEV__) console.log('Use a physical iOS device for notifications');
-      return false;
-    }
-    
     const { status: existingStatus } = await Notifications.getPermissionsAsync();
     let finalStatus = existingStatus;
     
@@ -721,10 +714,7 @@ export const notificationService = {
       },
     ]);
 
-    // Phase 2 walk ready prompt — "Yes" / "Not Now"
-    // iOS: opensAppToForeground must be true because expo-notifications only
-    // delivers response events when the app is foregrounded.
-    // Android: false works because the native BroadcastReceiver can handle it.
+    // Phase 2 walk ready prompt - Android handles this through the native BroadcastReceiver.
     await Notifications.setNotificationCategoryAsync(WALK_READY_CATEGORY_ID, [
       {
         identifier: WALK_READY_ACTION_NOT_NOW,
@@ -738,7 +728,7 @@ export const notificationService = {
         identifier: WALK_READY_ACTION_YES,
         buttonTitle: 'Yes',
         options: {
-          opensAppToForeground: Platform.OS === 'ios',
+          opensAppToForeground: false,
         },
       },
     ]);

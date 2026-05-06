@@ -152,7 +152,6 @@ const GOOGLE_WEB_CLIENT_ID = resolveAndroidValue(
   androidFirebaseFallback.webClientId,
   (process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID ?? '').trim()
 );
-const GOOGLE_IOS_CLIENT_ID = (process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID ?? '').trim();
 
 const missingFirebaseKeys = (): string[] => {
   const missing: string[] = [];
@@ -286,7 +285,6 @@ const ensureGoogleSigninConfigured = () => {
   const { GoogleSignin } = getGoogleSignin();
   GoogleSignin.configure({
     webClientId: GOOGLE_WEB_CLIENT_ID,
-    iosClientId: GOOGLE_IOS_CLIENT_ID || undefined,
     offlineAccess: false,
   });
   return GoogleSignin;

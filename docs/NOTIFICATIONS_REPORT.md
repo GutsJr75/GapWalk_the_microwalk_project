@@ -191,7 +191,7 @@ The claim happens **before** the send, so a worker restart mid-flight or a brief
 
 ### Most likely root cause: **stale tokens never get deactivated on re-install / account re-login**
 
-On iOS and Android, the Expo push token can change across:
+On Android, the Expo push token can change across:
 
 - Re-install
 - App update that triggers token rotation
@@ -214,7 +214,7 @@ Result on first login:
 | No proactive device cleanup on registration | [backend/src/devices/devices.service.ts:9-47](backend/src/devices/devices.service.ts#L9-L47) |
 | Registration call fires before permissions are granted in some flows | `registerCurrentDeviceForNotifications` is called at [App.tsx:1339-1342](App.tsx#L1339-L1342) right after `setIsAuthenticated(true)` with no permission check; inside, if the token fetch fails it silently falls back to a PATCH on timezone ([src/services/deviceRegistration.ts:59-71](src/services/deviceRegistration.ts#L59-L71)). |
 | Fallback is silent + never retried | Same file — no retry schedule, so if the first call fails the device is **never** registered this session. |
-| Expo token is fetched without ensuring the device has an FCM registration (Android) / APNs token (iOS) is ready | There is no `Notifications.getDevicePushTokenAsync` precheck; on cold boot the native token can lag a few seconds. |
+| Expo token is fetched without ensuring the device has an FCM registration ready | There is no `Notifications.getDevicePushTokenAsync` precheck; on cold boot the native token can lag a few seconds. |
 
 ---
 
