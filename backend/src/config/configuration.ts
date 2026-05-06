@@ -2,6 +2,7 @@ export default () => ({
   port: parseInt(process.env.PORT ?? '3000', 10),
   nodeEnv: process.env.NODE_ENV ?? 'development',
   corsOrigin: process.env.CORS_ORIGIN ?? 'http://localhost:8081',
+  swaggerEnabled: process.env.SWAGGER_ENABLED ?? '',
 
   database: {
     url: process.env.DATABASE_URL,
@@ -20,6 +21,15 @@ export default () => ({
 
   expo: {
     accessToken: process.env.EXPO_ACCESS_TOKEN,
+  },
+
+  rateLimit: {
+    ttlMs: parseInt(process.env.RATE_LIMIT_TTL_MS ?? '60000', 10),
+    max: parseInt(process.env.RATE_LIMIT_MAX ?? '120', 10),
+    blockDurationMs: parseInt(
+      process.env.RATE_LIMIT_BLOCK_DURATION_MS ?? '60000',
+      10,
+    ),
   },
 
   google: {

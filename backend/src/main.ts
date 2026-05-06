@@ -6,12 +6,14 @@ import { NestFactory } from '@nestjs/core';
 import { ValidationPipe, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import { NestExpressApplication } from '@nestjs/platform-express';
+import helmet from 'helmet';
 import { AppModule } from './app.module';
 import { PrismaExceptionFilter } from './common/filters/prisma-exception.filter';
 import { TransformInterceptor } from './common/interceptors/transform.interceptor';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule, {
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, {
     logger:
       process.env.NODE_ENV === 'production'
         ? ['error', 'warn', 'log']
@@ -19,9 +21,19 @@ async function bootstrap() {
   });
   const configService = app.get(ConfigService);
   const logger = new Logger('Bootstrap');
+  const nodeEnv = configService.get<string>('nodeEnv') ?? 'development';
+  const swaggerFlag = (configService.get<string>('swaggerEnabled') ?? '')
+    .trim()
+    .toLowerCase();
+  const enableSwagger =
+    swaggerFlag === 'true' || (nodeEnv !== 'production' && swaggerFlag !== 'false');
 
   // Enable graceful shutdown hooks
   app.enableShutdownHooks();
+  // Requests arrive through Caddy in production. Trust one proxy hop so
+  // req.ip and req.secure are derived from X-Forwarded-* correctly.
+  app.set('trust proxy', 1);
+  app.use(helmet());
 
   // Global prefix
   app.setGlobalPrefix('api', {
@@ -50,14 +62,19 @@ async function bootstrap() {
   app.useGlobalInterceptors(new TransformInterceptor());
 
   // Swagger docs
-  const swaggerConfig = new DocumentBuilder()
-    .setTitle('GapWalk API')
-    .setDescription('GapWalk micro-walk research platform API')
-    .setVersion('1.0')
-    .addBearerAuth()
-    .build();
-  const document = SwaggerModule.createDocument(app, swaggerConfig);
-  SwaggerModule.setup('docs', app, document);
+  if (enableSwagger) {
+    const swaggerConfig = new DocumentBuilder()
+      .setTitle('GapWalk API')
+      .setDescription('GapWalk micro-walk research platform API')
+      .setVersion('1.0')
+      .addBearerAuth()
+      .build();
+    const document = SwaggerModule.createDocument(app, swaggerConfig);
+    SwaggerModule.setup('docs', app, document);
+    logger.log('Swagger docs enabled at /docs');
+  } else {
+    logger.log('Swagger docs disabled in this environment');
+  }
 
   // Health check endpoint (for Docker healthcheck)
   const expressApp = app.getHttpAdapter().getInstance() as {
@@ -76,6 +93,8 @@ async function bootstrap() {
   const port = configService.get<number>('port') ?? 3000;
   await app.listen(port);
   logger.log(`GapWalk API running on port ${port}`);
-  logger.log(`Swagger docs at http://localhost:${port}/docs`);
+  if (enableSwagger) {
+    logger.log(`Swagger docs at http://localhost:${port}/docs`);
+  }
 }
 void bootstrap();

@@ -1,4 +1,6 @@
 import { Module } from '@nestjs/common';
+import { APP_GUARD } from '@nestjs/core';
+import { ThrottlerModule } from '@nestjs/throttler';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 
@@ -24,14 +26,32 @@ import { ResearcherModule } from './researcher/researcher.module';
 import { DashboardSpaModule } from './dashboard-spa/dashboard-spa.module';
 import { WorkersModule } from './workers/workers.module';
 import { AppSessionsModule } from './app-sessions/app-sessions.module';
+import { ThrottlerBehindProxyGuard } from './common/guards/throttler-behind-proxy.guard';
 
 const enableWorkers =
   process.env.ENABLE_WORKERS !== 'false' && process.env.NODE_ENV !== 'test';
+const toPositiveInt = (value: string | undefined, fallback: number): number => {
+  const parsed = Number.parseInt(value ?? '', 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+};
+const rateLimitTtlMs = toPositiveInt(process.env.RATE_LIMIT_TTL_MS, 60_000);
+const rateLimitMax = toPositiveInt(process.env.RATE_LIMIT_MAX, 120);
+const rateLimitBlockDurationMs = toPositiveInt(
+  process.env.RATE_LIMIT_BLOCK_DURATION_MS,
+  60_000,
+);
 
 @Module({
   imports: [
     // Infrastructure
     ConfigModule,
+    ThrottlerModule.forRoot([
+      {
+        ttl: rateLimitTtlMs,
+        limit: rateLimitMax,
+        blockDuration: rateLimitBlockDurationMs,
+      },
+    ]),
     PrismaModule,
     AuthModule,
 
@@ -54,6 +74,12 @@ const enableWorkers =
     ...(enableWorkers ? [WorkersModule] : []),
   ],
   controllers: [AppController],
-  providers: [AppService],
+  providers: [
+    AppService,
+    {
+      provide: APP_GUARD,
+      useClass: ThrottlerBehindProxyGuard,
+    },
+  ],
 })
 export class AppModule {}
