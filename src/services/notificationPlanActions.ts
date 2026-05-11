@@ -81,6 +81,30 @@ export const notificationPlanActions = {
     return false;
   },
 
+  async markPlanMissed(planId: string): Promise<boolean> {
+    const plan = await plansRepo.getById(planId);
+    if (!plan) return false;
+    if (plan.status === 'completed' || plan.status === 'skipped') return false;
+
+    const alreadyMissed =
+      plan.status === 'cancelled' &&
+      plan.reason === 'missed';
+
+    if (!alreadyMissed) {
+      await plansRepo.updateStatusWithReason(plan.id, 'cancelled', 'missed');
+      analyticsService.track('plan_marked_missed', {
+        planId: plan.id,
+        previousStatus: plan.status,
+      });
+    }
+
+    if (isNotificationsSupported) {
+      await notificationService.clearPlanNotifications(plan.id, { dismissMissed: false });
+    }
+
+    return true;
+  },
+
   async skipPlan(planId: string): Promise<boolean> {
     const plan = await plansRepo.getById(planId);
     if (!plan || terminalStatuses.has(plan.status)) return false;

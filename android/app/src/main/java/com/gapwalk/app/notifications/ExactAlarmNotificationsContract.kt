@@ -130,12 +130,16 @@ fun buildDeliveredPayload(
   notificationId: String,
   planId: String?,
   type: String,
+  scheduledAtMs: Long?,
+  deliveredAtMs: Long,
 ): JSONObject =
   JSONObject().apply {
     put("notificationId", notificationId)
     put("planId", planId ?: JSONObject.NULL)
     put("type", type)
     put("sessionId", sessionIdForNotification(notificationId, type) ?: JSONObject.NULL)
+    put("scheduledAtMs", scheduledAtMs ?: JSONObject.NULL)
+    put("deliveredAtMs", deliveredAtMs)
   }
 
 private fun readPendingDeliveries(context: Context): JSONArray {
@@ -287,6 +291,12 @@ fun deliveredPayloadToWritableMap(payload: JSONObject?): WritableMap? {
     if (type.isNotEmpty()) putString("type", type)
     val sessionId = payload.optString("sessionId")
     if (sessionId.isNotEmpty()) putString("sessionId", sessionId)
+    if (!payload.isNull("scheduledAtMs")) {
+      putDouble("scheduledAtMs", payload.optDouble("scheduledAtMs"))
+    }
+    if (!payload.isNull("deliveredAtMs")) {
+      putDouble("deliveredAtMs", payload.optDouble("deliveredAtMs"))
+    }
   }
 }
 

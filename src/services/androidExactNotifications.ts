@@ -24,10 +24,13 @@ export interface ExactNotificationDeliveryPayload {
   planId?: string;
   sessionId?: string;
   type?: ExactNotificationType;
+  scheduledAtMs?: number;
+  deliveredAtMs?: number;
 }
 
 type NativeExactNotificationsModule = {
   canScheduleExactAlarms(): Promise<boolean>;
+  openExactAlarmSettings?(): Promise<boolean>;
   setReminderVibrationEnabled(enabled: boolean): Promise<void>;
   scheduleNotification(input: ExactNotificationScheduleInput): Promise<boolean>;
   cancelNotification(notificationId: string): Promise<void>;
@@ -80,6 +83,8 @@ const normalizeDelivery = (
     planId: value.planId || undefined,
     sessionId: value.sessionId || undefined,
     type: value.type && VALID_NOTIFICATION_TYPES.has(value.type) ? value.type : undefined,
+    scheduledAtMs: typeof value.scheduledAtMs === 'number' ? value.scheduledAtMs : undefined,
+    deliveredAtMs: typeof value.deliveredAtMs === 'number' ? value.deliveredAtMs : undefined,
   };
 };
 
@@ -92,6 +97,17 @@ export const androidExactNotifications = {
     if (!nativeModule) return false;
     try {
       return await nativeModule.canScheduleExactAlarms();
+    } catch {
+      return false;
+    }
+  },
+
+  async openExactAlarmSettings(): Promise<boolean> {
+    if (!nativeModule || typeof nativeModule.openExactAlarmSettings !== 'function') {
+      return false;
+    }
+    try {
+      return await nativeModule.openExactAlarmSettings();
     } catch {
       return false;
     }

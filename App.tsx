@@ -145,7 +145,31 @@ type UnifiedNotificationPayload = {
   type?: string;
   planId?: string;
   sessionId?: string;
+  scheduledAtMs?: number;
+  deliveredAtMs?: number;
 };
+
+const readNotificationString = (value: unknown): string | undefined =>
+  typeof value === 'string' ? value : undefined;
+
+const readNotificationNumber = (value: unknown): number | undefined => {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string') {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return undefined;
+};
+
+const extractUnifiedNotificationData = (
+  data: Record<string, unknown> | null | undefined,
+): Omit<UnifiedNotificationPayload, 'notificationId' | 'actionIdentifier'> => ({
+  type: readNotificationString(data?.type),
+  planId: readNotificationString(data?.planId),
+  sessionId: readNotificationString(data?.sessionId),
+  scheduledAtMs: readNotificationNumber(data?.scheduledAtMs),
+  deliveredAtMs: readNotificationNumber(data?.deliveredAtMs),
+});
 
 type PendingRootRoute =
   | {
@@ -537,6 +561,53 @@ function App() {
     };
   }, []);
 
+  const showWalkReadyPrompt = useCallback(async (planId?: string) => {
+    const promptDetails = await resolveWalkPromptDetails(planId);
+    if (!promptDetails) return false;
+    const { setPendingInAppWalkPrompt } = useAppStore.getState();
+    setPendingInAppWalkPrompt(promptDetails);
+    return true;
+  }, [resolveWalkPromptDetails]);
+
+  const logExactNotificationDrift = useCallback((payload: UnifiedNotificationPayload) => {
+    if (
+      payload.type !== WALK_READY_NOTIFICATION_TYPE &&
+      payload.type !== 'walk_nudge' &&
+      payload.type !== WALK_MISSED_NOTIFICATION_TYPE
+    ) {
+      return;
+    }
+    if (
+      typeof payload.scheduledAtMs !== 'number' ||
+      typeof payload.deliveredAtMs !== 'number'
+    ) {
+      return;
+    }
+
+    const driftMs = payload.deliveredAtMs - payload.scheduledAtMs;
+    analyticsService.track('exact_notification_delivery_drift', {
+      notificationId: payload.notificationId,
+      planId: payload.planId ?? null,
+      type: payload.type,
+      driftMs,
+      scheduledAtMs: payload.scheduledAtMs,
+      deliveredAtMs: payload.deliveredAtMs,
+      deliveryKind:
+        payload.type === WALK_MISSED_NOTIFICATION_TYPE ? 'missed' : 'ready',
+    });
+
+    if (__DEV__) {
+      console.log('[notifications]', 'exact_delivery_drift', {
+        notificationId: payload.notificationId,
+        planId: payload.planId ?? null,
+        type: payload.type,
+        scheduledAtMs: payload.scheduledAtMs,
+        deliveredAtMs: payload.deliveredAtMs,
+        driftMs,
+      });
+    }
+  }, []);
+
   const handleUnifiedNotificationResponse = useCallback(async (payload: UnifiedNotificationPayload) => {
     const actionId = payload.actionIdentifier ?? Notifications.DEFAULT_ACTION_IDENTIFIER;
     const responseKey = `${payload.notificationId}:${actionId}`;
@@ -580,11 +651,22 @@ function App() {
           return;
         }
 
-        if (Platform.OS === 'android') {
-          await notificationPlanActions.skipPlanSilently(payload.planId);
+        if (actionId === Notifications.DEFAULT_ACTION_IDENTIFIER) {
+          await refreshDashboardSnapshot();
+          await showWalkReadyPrompt(payload.planId);
+          navigateToDashboard({});
+          return;
         }
-        navigateToDashboard({ scrollToOpportunities: true });
+
         await refreshDashboardSnapshot();
+        navigateToDashboard({ scrollToOpportunities: true });
+        return;
+      }
+
+      if (payload.type === WALK_MISSED_NOTIFICATION_TYPE && payload.planId) {
+        await notificationPlanActions.markPlanMissed(payload.planId);
+        await refreshDashboardSnapshot();
+        navigateToDashboard({ scrollToOpportunities: true });
         return;
       }
 
@@ -637,7 +719,7 @@ function App() {
     } catch (error) {
       if (__DEV__) console.error('Failed to process notification response:', error);
     }
-  }, [navigateToActiveWalk, navigateToDashboard, refreshDashboardSnapshot]);
+  }, [navigateToActiveWalk, navigateToDashboard, refreshDashboardSnapshot, showWalkReadyPrompt]);
 
   const handleUnifiedNotificationDelivery = useCallback(async (payload: UnifiedNotificationPayload) => {
     if (handledDeliveryIdsRef.current.has(payload.notificationId)) return;
@@ -650,8 +732,16 @@ function App() {
         type: payload.type ?? null,
         planId: payload.planId ?? null,
         source: 'app_delivery_listener',
+        scheduledAtMs: payload.scheduledAtMs ?? null,
+        deliveredAtMs: payload.deliveredAtMs ?? null,
+        driftMs:
+          typeof payload.scheduledAtMs === 'number' && typeof payload.deliveredAtMs === 'number'
+            ? payload.deliveredAtMs - payload.scheduledAtMs
+            : null,
       });
     }
+
+    logExactNotificationDrift(payload);
 
     if (
       payload.planId &&
@@ -670,7 +760,7 @@ function App() {
 
     if (payload.type === WALK_MISSED_NOTIFICATION_TYPE && payload.planId) {
       try {
-        await notificationService.dismissWalkReminderNotification(payload.planId);
+        await notificationPlanActions.markPlanMissed(payload.planId);
       } catch (error) {
         if (__DEV__) console.error('Failed to dismiss stale reminders after missed delivery:', error);
       }
@@ -686,11 +776,7 @@ function App() {
         // Phase 1 may not exist
       }
 
-      const promptDetails = await resolveWalkPromptDetails(payload.planId);
-      if (promptDetails) {
-        const { setPendingInAppWalkPrompt } = useAppStore.getState();
-        setPendingInAppWalkPrompt(promptDetails);
-      }
+      await showWalkReadyPrompt(payload.planId);
       await refreshDashboardSnapshot();
       return;
     }
@@ -705,23 +791,19 @@ function App() {
       }
       await refreshDashboardSnapshot();
     }
-  }, [refreshDashboardSnapshot, resolveWalkPromptDetails]);
+  }, [logExactNotificationDrift, refreshDashboardSnapshot, showWalkReadyPrompt]);
 
   useEffect(() => {
     if (!isNotificationsSupported) return;
 
     const responseSubscription = notificationService.addNotificationResponseListener((response) => {
-      const data = response.notification.request.content.data as {
-        type?: string;
-        planId?: string;
-        sessionId?: string;
-      };
+      const data = extractUnifiedNotificationData(
+        response.notification.request.content.data as Record<string, unknown> | undefined,
+      );
       void handleUnifiedNotificationResponse({
         notificationId: response.notification.request.identifier,
         actionIdentifier: response.actionIdentifier,
-        type: data.type,
-        planId: data.planId,
-        sessionId: data.sessionId,
+        ...data,
       });
     });
 
@@ -735,17 +817,13 @@ function App() {
           if (storedKey === responseKey) return;
         } catch { /* proceed */ }
 
-        const data = response.notification.request.content.data as {
-          type?: string;
-          planId?: string;
-          sessionId?: string;
-        };
+        const data = extractUnifiedNotificationData(
+          response.notification.request.content.data as Record<string, unknown> | undefined,
+        );
         void handleUnifiedNotificationResponse({
           notificationId: response.notification.request.identifier,
           actionIdentifier: response.actionIdentifier,
-          type: data.type,
-          planId: data.planId,
-          sessionId: data.sessionId,
+          ...data,
         });
         void authStorage.saveLastHandledNotificationKey(responseKey);
         const clearLastResponse = (Notifications as any).clearLastNotificationResponseAsync;
@@ -758,16 +836,12 @@ function App() {
       });
 
     const receivedSubscription = notificationService.addNotificationReceivedListener(async (notification) => {
-      const data = notification.request.content.data as {
-        type?: string;
-        planId?: string;
-        sessionId?: string;
-      };
+      const data = extractUnifiedNotificationData(
+        notification.request.content.data as Record<string, unknown> | undefined,
+      );
       void handleUnifiedNotificationDelivery({
         notificationId: notification.request.identifier,
-        type: data.type,
-        planId: data.planId,
-        sessionId: data.sessionId,
+        ...data,
       });
     });
 
@@ -790,6 +864,8 @@ function App() {
             type: payload.type,
             planId: payload.planId,
             sessionId: payload.sessionId,
+            scheduledAtMs: payload.scheduledAtMs,
+            deliveredAtMs: payload.deliveredAtMs,
           });
         })
       : null;
@@ -815,6 +891,8 @@ function App() {
               type: pendingExactDelivery.type,
               planId: pendingExactDelivery.planId,
               sessionId: pendingExactDelivery.sessionId,
+              scheduledAtMs: pendingExactDelivery.scheduledAtMs,
+              deliveredAtMs: pendingExactDelivery.deliveredAtMs,
             });
           }
         } catch (error) {

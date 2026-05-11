@@ -4,6 +4,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
+import com.facebook.react.HeadlessJsTaskService
 
 /**
  * Receives Yes / Not Now button taps from walk_ready exact-alarm notifications.
@@ -39,6 +40,7 @@ class ExactNotificationActionReceiver : BroadcastReceiver() {
 
     try {
       context.startService(serviceIntent)
+      HeadlessJsTaskService.acquireWakeLockNow(context)
     } catch (e: Exception) {
       // On Android 12+ background start restrictions may block startService.
       // Fall back to saving a pending response so the app handles it on next foreground.

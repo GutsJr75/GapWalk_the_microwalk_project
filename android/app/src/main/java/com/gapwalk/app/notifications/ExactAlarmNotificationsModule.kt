@@ -5,6 +5,8 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.os.Build
+import android.provider.Settings
+import android.net.Uri
 import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReactContextBaseJavaModule
@@ -30,8 +32,16 @@ class ExactAlarmNotificationsModule(
       notificationId: String,
       planId: String?,
       type: String,
+      scheduledAtMs: Long?,
+      deliveredAtMs: Long,
     ) {
-      val payload = buildDeliveredPayload(notificationId, planId, type)
+      val payload = buildDeliveredPayload(
+        notificationId,
+        planId,
+        type,
+        scheduledAtMs,
+        deliveredAtMs,
+      )
       savePendingDelivery(context, payload)
       instance?.emitDelivered(payload)
     }
@@ -53,6 +63,25 @@ class ExactAlarmNotificationsModule(
   @ReactMethod
   fun canScheduleExactAlarms(promise: Promise) {
     promise.resolve(canScheduleExactAlarmsInternal())
+  }
+
+  @ReactMethod
+  fun openExactAlarmSettings(promise: Promise) {
+    try {
+      if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+        promise.resolve(false)
+        return
+      }
+
+      val intent = Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM).apply {
+        data = Uri.parse("package:${reactApplicationContext.packageName}")
+        flags = Intent.FLAG_ACTIVITY_NEW_TASK
+      }
+      reactApplicationContext.startActivity(intent)
+      promise.resolve(true)
+    } catch (error: Throwable) {
+      promise.reject("exact_alarm_open_settings_failed", error)
+    }
   }
 
   @ReactMethod

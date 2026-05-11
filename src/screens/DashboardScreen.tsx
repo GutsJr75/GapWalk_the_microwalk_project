@@ -25,6 +25,7 @@ import { eventsRepo } from '../data/repositories/eventsRepo';
 import { achievementsRepo, type UnlockedAchievement, type AchievementId } from '../data/repositories/achievementsRepo';
 import { gapEngine, NO_SCHEDULE_FALLBACK_REASON } from '../services/gapEngine';
 import {
+  type ExactAlarmHealthState,
   getPlanNotifyTime,
   isNotificationsSupported,
   normalizeManualNotifyLeadMinutes,
@@ -209,6 +210,7 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
   const [completedPlans, setCompletedPlans] = useState<NudgePlan[]>([]);
   const [missedPlans, setMissedPlans] = useState<NudgePlan[]>([]);
   const [isNoScheduleFallbackActive, setIsNoScheduleFallbackActive] = useState(false);
+  const [exactAlarmHealth, setExactAlarmHealth] = useState<ExactAlarmHealthState | null>(null);
   // Staggered card entrance animations
   const cardAnims = useRef(
     Array.from({ length: 6 }, () => new Animated.Value(0))
@@ -488,6 +490,7 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
   }, []);
 
   const load = useCallback(async (): Promise<NudgePlan[]> => {
+    setExactAlarmHealth(await notificationService.getExactAlarmHealthState());
     const prefsFromDb = await preferencesRepo.get();
     if (prefsFromDb) { setPreferences(prefsFromDb); setHasSetPreferences(true); }
     const mins = await sessionsRepo.getTodayMinutes();
@@ -539,6 +542,10 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
     return refreshedUpcoming;
   }, [reconcileTodayPlans, setHasSetPreferences, setPreferences, setTodayStats, setUpcomingPlans]);
 
+  const refreshExactAlarmHealth = useCallback(async (): Promise<void> => {
+    setExactAlarmHealth(await notificationService.getExactAlarmHealthState());
+  }, []);
+
   const applyNotificationPermissionGrant = useCallback(async () => {
     const resolvedPrefs = preferencesRef.current ?? (await preferencesRepo.get());
 
@@ -562,8 +569,9 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
     }
 
     await registerCurrentDeviceForNotifications();
+    await refreshExactAlarmHealth();
     await load();
-  }, [load]);
+  }, [load, refreshExactAlarmHealth]);
 
   const refreshRequiredPermissionState = useCallback(async (
     options: { syncOnGrantTransition?: boolean } = {},
@@ -663,6 +671,7 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
   useFocusEffect(
     useCallback(() => {
       load().catch((e) => console.error('Dashboard load failed:', e));
+      void refreshExactAlarmHealth();
       void refreshRequiredPermissionState({ syncOnGrantTransition: true });
       // Stagger card entrance animations
       cardAnims.forEach((a) => a.setValue(0));
@@ -677,17 +686,18 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
           })
         )
       ).start();
-    }, [load, refreshRequiredPermissionState])
+    }, [load, refreshExactAlarmHealth, refreshRequiredPermissionState])
   );
 
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (nextState) => {
       if (nextState === 'active') {
+        void refreshExactAlarmHealth();
         void refreshRequiredPermissionState({ syncOnGrantTransition: true });
       }
     });
     return () => subscription.remove();
-  }, [refreshRequiredPermissionState]);
+  }, [refreshExactAlarmHealth, refreshRequiredPermissionState]);
 
   // ── Celebration trigger ──
   useEffect(() => {
@@ -858,10 +868,9 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
       LayoutAnimation.Types.easeInEaseOut,
       LayoutAnimation.Properties.opacity,
     ));
-    const refreshedUpcoming = await plansRepo.getUpcomingPlans(20);
-    setUpcomingPlans(refreshedUpcoming);
+    await load();
     analyticsService.track('walk_ready_not_now_inapp', { planId: prompt.planId });
-  }, [pendingInAppWalkPrompt, setPendingInAppWalkPrompt, setUpcomingPlans]);
+  }, [load, pendingInAppWalkPrompt, setPendingInAppWalkPrompt]);
 
   const handleWalkPromptDismiss = useCallback(() => {
     if (!pendingInAppWalkPrompt) return;
@@ -1477,6 +1486,25 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
       ? 'GapWalk needs notifications and activity tracking permissions to continue on dashboard.'
       : `GapWalk needs ${missingRequiredPermissions[0] ?? 'required'} permission to continue on dashboard.`;
   const shouldShowPermissionSettingsButton = !canRequestMissingPermissions;
+  const shouldShowExactAlarmRepairCard =
+    Platform.OS === 'android' &&
+    exactAlarmHealth?.isUsingFallback === true &&
+    (
+      !shouldEnforceRequiredPermissionGate ||
+      notificationPermissionState?.granted === true
+    ) &&
+    !shouldShowRequiredPermissionOverlay;
+
+  const handleOpenExactAlarmSettings = useCallback(() => {
+    void (async () => {
+      const opened = await notificationService.openExactAlarmSettings();
+      if (!opened) {
+        await openAppSettings();
+      }
+    })().catch((error) => {
+      if (__DEV__) console.warn('Failed to open exact alarm settings:', error);
+    });
+  }, []);
 
   // ── Variant A: no preferences ──
   if (!hasSetPreferences || !preferences) {
@@ -1553,6 +1581,31 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
                       title="Manage Schedule Now"
                       variant="secondary"
                       onPress={navigateToManageSchedule}
+                      style={styles.fallbackHintButton}
+                    />
+                  </View>
+                </Card>
+              )}
+              {shouldShowExactAlarmRepairCard && (
+                <Card elevated style={styles.fallbackHintCard}>
+                  <View style={styles.fallbackHintHeader}>
+                    <View
+                      style={[
+                        styles.fallbackHintIconWrap,
+                        { backgroundColor: withAlpha(theme.colors.warning, themeMode === 'dark' ? 0.2 : 0.12) },
+                      ]}
+                    >
+                      <Ionicons name="alarm-outline" size={16} color={theme.colors.warning} />
+                    </View>
+                    <Text variant="bodySmall" color={palette.textMuted} style={styles.fallbackHintBody}>
+                      Reminder timing may be less reliable until Exact alarms are allowed for GapWalk.
+                    </Text>
+                  </View>
+                  <View style={styles.fallbackHintButtonRow}>
+                    <Button
+                      title="Open Alarm Settings"
+                      variant="secondary"
+                      onPress={handleOpenExactAlarmSettings}
                       style={styles.fallbackHintButton}
                     />
                   </View>

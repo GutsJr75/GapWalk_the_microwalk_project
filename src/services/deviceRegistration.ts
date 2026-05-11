@@ -3,6 +3,7 @@ import Constants from 'expo-constants';
 import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
 import { apiFetch, registerDevice } from './backendSync';
+import { useAppStore } from '../store';
 
 import {
   getExpoPushProjectId,
@@ -13,6 +14,10 @@ import {
 import { getNotificationPermissionState } from './permissions';
 
 export async function registerCurrentDeviceForNotifications(): Promise<boolean> {
+  if (!useAppStore.getState().isAuthenticated) {
+    return false;
+  }
+
   const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
   const updateTimezoneFallback = async (): Promise<boolean> => {

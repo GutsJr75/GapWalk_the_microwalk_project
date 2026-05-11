@@ -58,6 +58,12 @@ export const isNotificationsSupported =
   !isExpoGo &&
   hasNativeNotificationApis;
 
+export type ExactAlarmHealthState = {
+  isSupported: boolean;
+  canScheduleExactAlarms: boolean;
+  isUsingFallback: boolean;
+};
+
 let reminderVibrationEnabled = true;
 
 const getDefaultAndroidChannelConfig = () => ({
@@ -450,11 +456,21 @@ const getPolicySuppressionReason = (
   return undefined;
 };
 
-const shouldUseExactAndroidPlanNotifications = async (): Promise<boolean> => {
+const getExactAlarmHealthState = async (): Promise<ExactAlarmHealthState> => {
   if (Platform.OS !== 'android' || !androidExactNotifications.isSupported()) {
-    return false;
+    return {
+      isSupported: false,
+      canScheduleExactAlarms: false,
+      isUsingFallback: false,
+    };
   }
-  return androidExactNotifications.canScheduleExactAlarms();
+
+  const canScheduleExactAlarms = await androidExactNotifications.canScheduleExactAlarms();
+  return {
+    isSupported: true,
+    canScheduleExactAlarms,
+    isUsingFallback: !canScheduleExactAlarms,
+  };
 };
 
 const hasMetNotificationGoals = async (prefs?: Preferences): Promise<boolean> => {
@@ -529,7 +545,8 @@ const schedulePlanNotification = async (input: {
   categoryIdentifier?: string;
   extraData?: Record<string, unknown>;
 }): Promise<string | null> => {
-  const useExactAndroid = await shouldUseExactAndroidPlanNotifications();
+  const exactAlarmHealth = await getExactAlarmHealthState();
+  const useExactAndroid = exactAlarmHealth.canScheduleExactAlarms;
   if (useExactAndroid) {
     try {
       const scheduled = await androidExactNotifications.scheduleNotification({
@@ -562,7 +579,10 @@ const schedulePlanNotification = async (input: {
       notificationId,
       type: input.type,
       planId: input.planId,
-      source: 'expo_local',
+      source:
+        exactAlarmHealth.isSupported && exactAlarmHealth.isUsingFallback
+          ? 'expo_local_android_fallback'
+          : 'expo_local',
     });
     return notificationId;
   } catch (error) {
@@ -642,6 +662,15 @@ const canAttemptNotificationRecovery = async (requestPermissions: boolean): Prom
 };
 
 export const notificationService = {
+  async getExactAlarmHealthState(): Promise<ExactAlarmHealthState> {
+    return getExactAlarmHealthState();
+  },
+
+  async openExactAlarmSettings(): Promise<boolean> {
+    if (Platform.OS !== 'android') return false;
+    return androidExactNotifications.openExactAlarmSettings();
+  },
+
   async setReminderVibrationEnabled(enabled: boolean): Promise<void> {
     reminderVibrationEnabled = enabled;
     if (isNotificationsSupported && Platform.OS === 'android') {
