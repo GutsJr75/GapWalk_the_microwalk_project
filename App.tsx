@@ -47,8 +47,13 @@ import { androidExactNotifications } from './src/services/androidExactNotificati
 import { getActivityRecognitionPermissionState, getNotificationPermissionState } from './src/services/permissions';
 import { authStorage } from './src/data/authStorage';
 import { GUIDANCE_KEYS, guidanceStorage, type GuidanceKey } from './src/data/guidanceStorage';
-import { runBackendSync } from './src/services/backendSync';
-import { registerCurrentDeviceForNotifications } from './src/services/deviceRegistration';
+import { acknowledgeLocalPlanDelivery, runBackendSync } from './src/services/backendSync';
+import {
+  getCurrentDeviceTimezone,
+  heartbeatCurrentDevice,
+  registerCurrentDeviceForNotifications,
+} from './src/services/deviceRegistration';
+import { syncNudgePlansForCurrentSchedule } from './src/services/scheduleSync';
 import {
   firebaseAuthService,
   requiresEmailVerification,
@@ -147,6 +152,7 @@ type UnifiedNotificationPayload = {
   sessionId?: string;
   scheduledAtMs?: number;
   deliveredAtMs?: number;
+  notificationSource?: string;
 };
 
 const readNotificationString = (value: unknown): string | undefined =>
@@ -169,6 +175,7 @@ const extractUnifiedNotificationData = (
   sessionId: readNotificationString(data?.sessionId),
   scheduledAtMs: readNotificationNumber(data?.scheduledAtMs),
   deliveredAtMs: readNotificationNumber(data?.deliveredAtMs),
+  notificationSource: readNotificationString(data?.notificationSource),
 });
 
 type PendingRootRoute =
@@ -392,6 +399,7 @@ function App() {
   }, [setTodayStats, setTodaySteps, setUpcomingPlans]);
 
   const lastNotificationRecoveryAtRef = useRef<number>(0);
+  const deviceTimezoneRef = useRef<string | null>(null);
   const emptyGuidanceFlags = useRef(
     Object.fromEntries(GUIDANCE_KEYS.map((key) => [key, false])) as Record<GuidanceKey, boolean>,
   ).current;
@@ -516,6 +524,42 @@ function App() {
     }
   }, [refreshDashboardSnapshot]);
 
+  const syncDevicePresence = useCallback(async () => {
+    if (!isAuthenticated) return false;
+
+    const currentTimezone = await getCurrentDeviceTimezone();
+    const previousTimezone =
+      deviceTimezoneRef.current ?? await authStorage.getDeviceTimezone();
+    deviceTimezoneRef.current = currentTimezone;
+    await authStorage.saveDeviceTimezone(currentTimezone);
+
+    await heartbeatCurrentDevice();
+
+    if (previousTimezone && previousTimezone !== currentTimezone) {
+      analyticsService.track('device_timezone_changed', {
+        previousTimezone,
+        currentTimezone,
+      });
+
+      if (hasCompletedOnboarding) {
+        const prefs = await preferencesRepo.get();
+        if (prefs) {
+          await syncNudgePlansForCurrentSchedule(prefs);
+        }
+      }
+
+      await runScheduledNotificationRecovery({
+        force: true,
+        refreshDashboard: true,
+        reason: 'timezone_changed',
+      });
+      void runBackendSync();
+      return true;
+    }
+
+    return false;
+  }, [hasCompletedOnboarding, isAuthenticated, runScheduledNotificationRecovery]);
+
   const navigateToActiveWalk = useCallback((params: {
     planId?: string;
     prompt?: 'end_confirmation';
@@ -545,6 +589,8 @@ function App() {
 
   const resolveWalkPromptDetails = useCallback(async (planId?: string) => {
     if (!planId) return null;
+    const startCheck = await notificationPlanActions.canStartPlan(planId);
+    if (!startCheck.allowed) return null;
     const plan = await plansRepo.getById(planId);
     if (!plan) return null;
 
@@ -566,6 +612,7 @@ function App() {
     if (!promptDetails) return false;
     const { setPendingInAppWalkPrompt } = useAppStore.getState();
     setPendingInAppWalkPrompt(promptDetails);
+    analyticsService.track('walk_ready_prompt_shown', { planId: promptDetails.planId });
     return true;
   }, [resolveWalkPromptDetails]);
 
@@ -769,6 +816,22 @@ function App() {
     }
 
     if (payload.type === WALK_READY_NOTIFICATION_TYPE && payload.planId) {
+      if (payload.notificationSource !== 'backup_push') {
+        void acknowledgeLocalPlanDelivery({
+          localId: payload.planId,
+          deliveredAt: new Date(payload.deliveredAtMs ?? Date.now()).toISOString(),
+          scheduledAt:
+            typeof payload.scheduledAtMs === 'number'
+              ? new Date(payload.scheduledAtMs).toISOString()
+              : undefined,
+          source:
+            typeof payload.scheduledAtMs === 'number' &&
+            typeof payload.deliveredAtMs === 'number'
+              ? 'android_exact'
+              : 'expo_local',
+        });
+      }
+
       try {
         await notificationService.cancelNotification(getWalkAlertNotificationId(payload.planId));
         await notificationService.dismissNotification(getWalkAlertNotificationId(payload.planId));
@@ -1080,6 +1143,8 @@ function App() {
         if (storedTheme) setThemeMode(storedTheme);
         const storedLang = await authStorage.getLanguage();
         if (storedLang) setLanguage(storedLang);
+        const storedTimezone = await authStorage.getDeviceTimezone();
+        deviceTimezoneRef.current = storedTimezone ?? await getCurrentDeviceTimezone();
         const storedNotificationTimerMode = await authStorage.getNotificationTimerMode();
         if (storedNotificationTimerMode) setNotificationTimerMode(storedNotificationTimerMode);
         const storedNotificationStatsMode = await authStorage.getNotificationStatsMode();
@@ -1154,6 +1219,7 @@ function App() {
         });
         if (hasRestoredAuthenticatedSession && notificationGateGranted) {
           void registerCurrentDeviceForNotifications();
+          void syncDevicePresence();
         }
       }
     } catch (error) {
@@ -1276,6 +1342,27 @@ function App() {
 
     return () => subscription.remove();
   }, [navigateToActiveWalk, refreshNotificationGateState, setActiveWalkSnapshot, setPendingWalkPrompt]);
+
+  useEffect(() => {
+    if (!isAuthenticated) return;
+
+    void syncDevicePresence();
+
+    const heartbeatIntervalId = setInterval(() => {
+      if (AppState.currentState !== 'active') return;
+      void syncDevicePresence();
+    }, 2 * 60 * 1000);
+
+    const subscription = AppState.addEventListener('change', (nextState) => {
+      if (nextState !== 'active') return;
+      void syncDevicePresence();
+    });
+
+    return () => {
+      clearInterval(heartbeatIntervalId);
+      subscription.remove();
+    };
+  }, [isAuthenticated, syncDevicePresence]);
 
   // Listen for Android quick-end walk events (End Walk from notification in quick mode)
   useEffect(() => {

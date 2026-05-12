@@ -11,7 +11,7 @@ import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { DevicesService } from './devices.service';
-import { RegisterDeviceDto } from './dto/register-device.dto';
+import { DeviceHeartbeatDto, RegisterDeviceDto } from './dto/register-device.dto';
 
 @ApiTags('devices')
 @ApiBearerAuth()
@@ -27,6 +27,15 @@ export class DevicesController {
     @Body() dto: RegisterDeviceDto,
   ) {
     return this.devicesService.register(userId, dto);
+  }
+
+  @Post('heartbeat')
+  @ApiOperation({ summary: 'Refresh last-seen state for the current device' })
+  heartbeat(
+    @CurrentUser('userId') userId: string,
+    @Body() dto: DeviceHeartbeatDto,
+  ) {
+    return this.devicesService.heartbeat(userId, dto);
   }
 
   @Get()

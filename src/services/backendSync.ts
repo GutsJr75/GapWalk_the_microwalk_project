@@ -263,6 +263,7 @@ export async function runBackendSync(): Promise<boolean> {
         gapEnd: p.gapEnd,
         walkStart: p.walkStart,
         suggestedDurationMinutes: p.suggestedDurationMinutes,
+        notificationsEnabled: p.notificationsEnabled !== false,
         status: p.status,
         reason: p.reason,
       })),
@@ -370,6 +371,54 @@ export async function registerDevice(params: {
     return true;
   } catch (error) {
     if (__DEV__) console.warn('[BackendSync] Device registration failed:', error);
+    return false;
+  }
+}
+
+export async function heartbeatDevice(params: {
+  expoPushToken: string;
+  timezone?: string;
+}): Promise<boolean> {
+  const configurationError = getBackendConfigurationError();
+  if (!isBackendSyncEnabled()) return false;
+  if (configurationError) {
+    warnBackendConfigurationOnce(configurationError);
+    return false;
+  }
+
+  const token = await firebaseAuthService.getIdToken();
+  if (!token) return false;
+
+  try {
+    await apiFetch('/devices/heartbeat', params);
+    return true;
+  } catch (error) {
+    if (__DEV__) console.warn('[BackendSync] Device heartbeat failed:', error);
+    return false;
+  }
+}
+
+export async function acknowledgeLocalPlanDelivery(params: {
+  localId: string;
+  deliveredAt: string;
+  scheduledAt?: string;
+  source: 'android_exact' | 'expo_local';
+}): Promise<boolean> {
+  const configurationError = getBackendConfigurationError();
+  if (!isBackendSyncEnabled()) return false;
+  if (configurationError) {
+    warnBackendConfigurationOnce(configurationError);
+    return false;
+  }
+
+  const token = await firebaseAuthService.getIdToken();
+  if (!token) return false;
+
+  try {
+    await apiFetch('/nudge-plans/local-delivery', params);
+    return true;
+  } catch (error) {
+    if (__DEV__) console.warn('[BackendSync] Local delivery acknowledgement failed:', error);
     return false;
   }
 }

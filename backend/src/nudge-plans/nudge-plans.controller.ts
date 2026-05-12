@@ -16,6 +16,7 @@ import { NudgePlansService } from './nudge-plans.service';
 import { NudgeEngineService } from '../nudge-engine/nudge-engine.service';
 import {
   CreateNudgePlanDto,
+  RecordLocalDeliveryDto,
   UpdateNudgePlanStatusDto,
   QueryNudgePlansDto,
 } from './dto/nudge-plans.dto';
@@ -49,6 +50,15 @@ export class NudgePlansController {
   @ApiOperation({ summary: 'Get upcoming active plans' })
   getUpcoming(@CurrentUser('userId') userId: string) {
     return this.nudgePlansService.getUpcomingPlans(userId);
+  }
+
+  @Post('local-delivery')
+  @ApiOperation({ summary: 'Record that the local walk-ready reminder was delivered' })
+  recordLocalDelivery(
+    @CurrentUser('userId') userId: string,
+    @Body() dto: RecordLocalDeliveryDto,
+  ) {
+    return this.nudgePlansService.recordLocalDelivery(userId, dto);
   }
 
   @Get(':id')

@@ -371,9 +371,11 @@ export const notificationPlanActions = {
    * and adds it to walking opportunities WITHOUT sending any notification
    * about the new gap. Used by "Not Now" on Phase 2 walk ready prompt.
    */
-  async skipPlanSilently(planId: string): Promise<boolean> {
+  async skipPlanSilently(planId: string): Promise<{ skipped: boolean; replacementPlan: NudgePlan | null }> {
     const plan = await plansRepo.getById(planId);
-    if (!plan || terminalStatuses.has(plan.status)) return false;
+    if (!plan || terminalStatuses.has(plan.status)) {
+      return { skipped: false, replacementPlan: null };
+    }
 
     await plansRepo.updateStatus(plan.id, 'skipped');
     if (isNotificationsSupported) {
@@ -386,12 +388,15 @@ export const notificationPlanActions = {
     });
 
     // Find and add replacement gap silently (no notification about it)
-    void this.findAndAddAlternativeGapSilently(planId).catch((e) => {
+    let replacementPlan: NudgePlan | null = null;
+    try {
+      replacementPlan = await this.findAndAddAlternativeGapSilently(planId);
+    } catch (e) {
       if (__DEV__) console.warn('Silent alt gap failed:', e);
-    });
+    }
 
     await rescheduleFutureNudges();
-    return true;
+    return { skipped: true, replacementPlan };
   },
 
   /**
@@ -399,9 +404,9 @@ export const notificationPlanActions = {
    * WITHOUT sending any notification about the new gap itself.
    * The new opportunity will just appear on the Dashboard silently.
    */
-  async findAndAddAlternativeGapSilently(skippedPlanId: string): Promise<boolean> {
+  async findAndAddAlternativeGapSilently(skippedPlanId: string): Promise<NudgePlan | null> {
     const prefs = await preferencesRepo.get();
-    if (!prefs) return false;
+    if (!prefs) return null;
 
     const events = await eventsRepo.getAll();
     const now = new Date();
@@ -446,7 +451,7 @@ export const notificationPlanActions = {
       return remainingMinutes >= minRequired;
     });
 
-    if (!nextGap) return false;
+    if (!nextGap) return null;
 
     const effectiveGapStart = nextGap.start > now ? nextGap.start : now;
     const walkStart = addMinutes(effectiveGapStart, bufferMinutes + gracePeriod);
@@ -484,6 +489,6 @@ export const notificationPlanActions = {
       gapEnd: newPlan.gapEnd,
     });
 
-    return true;
+    return newPlan;
   },
 };

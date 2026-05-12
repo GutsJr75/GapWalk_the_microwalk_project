@@ -174,6 +174,8 @@ interface WalkTimeModalProps {
   onRequestClose: () => void;
   title: string;
   subtitle: string;
+  contextLabel?: string;
+  helperText?: string;
   saveLabel: string;
   saving: boolean;
   saveDisabled?: boolean;
@@ -199,6 +201,8 @@ export const WalkTimeModal: React.FC<WalkTimeModalProps> = ({
   onRequestClose,
   title,
   subtitle,
+  contextLabel,
+  helperText,
   saveLabel,
   saving,
   saveDisabled = false,
@@ -225,12 +229,12 @@ export const WalkTimeModal: React.FC<WalkTimeModalProps> = ({
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onRequestClose}>
       <KeyboardAvoidingView
         style={[styles.overlay, { backgroundColor: palette.overlay }]}
-        behavior="height"
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       >
         <ScrollView
           contentContainerStyle={styles.scrollContent}
           keyboardShouldPersistTaps="handled"
-          keyboardDismissMode="on-drag"
+          keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
           showsVerticalScrollIndicator={false}
         >
           <View
@@ -245,6 +249,16 @@ export const WalkTimeModal: React.FC<WalkTimeModalProps> = ({
             <Text variant="bodySmall" color={palette.textMuted} style={styles.subtitle}>
               {subtitle}
             </Text>
+            {!!contextLabel && (
+              <Text variant="bodySmall" color={palette.textMuted} style={styles.contextLabel}>
+                {contextLabel}
+              </Text>
+            )}
+            {!!helperText && (
+              <Text variant="bodySmall" color={palette.textMuted} style={styles.helperText}>
+                {helperText}
+              </Text>
+            )}
             <View style={styles.formSections}>
               <View style={styles.fieldSection}>
                 <Text variant="bodySmall" style={styles.label}>
@@ -444,6 +458,21 @@ const styles = StyleSheet.create({
     marginBottom: theme.spacing.lg,
     fontFamily: theme.fontFamily.regular,
     lineHeight: 20,
+  },
+  contextLabel: {
+    textAlign: 'center',
+    marginTop: -theme.spacing.sm,
+    marginBottom: theme.spacing.lg,
+    fontFamily: theme.fontFamily.medium,
+    lineHeight: 20,
+  },
+  helperText: {
+    textAlign: 'center',
+    marginTop: -theme.spacing.sm,
+    marginBottom: theme.spacing.lg,
+    fontFamily: theme.fontFamily.regular,
+    lineHeight: 19,
+    paddingHorizontal: theme.spacing.sm,
   },
   formSections: {
     gap: theme.spacing.lg,

@@ -1,11 +1,11 @@
 package com.gapwalk.app.notifications
 
-import android.app.ActivityManager
 import android.app.Notification
 import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.graphics.BitmapFactory
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
@@ -43,9 +43,6 @@ class ExactAlarmNotificationReceiver : BroadcastReceiver() {
     }
     if (type == WALK_READY_NOTIFICATION_TYPE) {
       cancelPresentedNotification(context, getWalkAlertNotificationId(planId))
-      if (isAppInForeground()) {
-        return
-      }
     }
 
     NotificationManagerCompat.from(context).notify(
@@ -78,6 +75,7 @@ class ExactAlarmNotificationReceiver : BroadcastReceiver() {
 
     val builder = NotificationCompat.Builder(context, EXACT_NOTIFICATION_CHANNEL_ID)
       .setSmallIcon(R.drawable.ic_notification_walk)
+      .setLargeIcon(BitmapFactory.decodeResource(context.resources, R.mipmap.ic_launcher))
       .setColor(ContextCompat.getColor(context, R.color.gapwalk_accent))
       .setColorized(false)
       .setContentTitle(title)
@@ -135,17 +133,11 @@ class ExactAlarmNotificationReceiver : BroadcastReceiver() {
       )
 
       builder
-        .addAction(0, "Yes", yesIntent)
-        .addAction(0, "Not Now", notNowIntent)
+        .addAction(0, "Start Walk", yesIntent)
+        .addAction(0, "Skip This Walk", notNowIntent)
     }
 
     return builder.build()
-  }
-
-  private fun isAppInForeground(): Boolean {
-    val appProcessInfo = ActivityManager.RunningAppProcessInfo()
-    ActivityManager.getMyMemoryState(appProcessInfo)
-    return appProcessInfo.importance == ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND
   }
 
   private fun pendingIntentImmutableFlag(): Int = PendingIntent.FLAG_IMMUTABLE

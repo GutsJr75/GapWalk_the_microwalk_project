@@ -51,7 +51,13 @@ export class PushSendProcessor extends WorkerHost {
     const title = '🚶 Time for a walk!';
     const body = `Your ${plan.suggestedDurationMinutes}-minute micro-walk is scheduled now.`;
 
-    await this.pushService.sendWalkNudge(plan.userId, nudgePlanId, title, body);
+    await this.pushService.sendWalkNudge(
+      plan.userId,
+      nudgePlanId,
+      plan.localId ?? nudgePlanId,
+      title,
+      body,
+    );
 
     this.logger.log(`Push sent for plan ${nudgePlanId}`);
   }

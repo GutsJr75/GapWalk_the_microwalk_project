@@ -113,6 +113,12 @@ export class SyncService {
             await this.prisma.nudgePlan.update({
               where: { id: existing.id },
               data: {
+                date: plan.date,
+                gapStart: new Date(plan.gapStart),
+                gapEnd: new Date(plan.gapEnd),
+                walkStart: new Date(plan.walkStart),
+                suggestedDurationMinutes: plan.suggestedDurationMinutes,
+                notificationsEnabled: plan.notificationsEnabled ?? true,
                 status: plan.status,
                 reason: plan.reason,
               },
@@ -130,6 +136,7 @@ export class SyncService {
             gapEnd: new Date(plan.gapEnd),
             walkStart: new Date(plan.walkStart),
             suggestedDurationMinutes: plan.suggestedDurationMinutes,
+            notificationsEnabled: plan.notificationsEnabled ?? true,
             status: plan.status,
             reason: plan.reason,
             origin: 'local_fallback',

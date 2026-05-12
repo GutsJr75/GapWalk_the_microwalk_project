@@ -118,13 +118,11 @@ if (isNotificationsSupported) {
     handleNotification: async (notification) => {
       const data = notification.request.content.data as Record<string, unknown> | undefined;
       const isWalkSession = data?.type === 'walk_session';
-      // Suppress walk_ready when app is foregrounded — in-app prompt handles it instead
-      const isWalkReady = data?.type === WALK_READY_NOTIFICATION_TYPE;
       return {
-        shouldPlaySound: !isWalkSession && !isWalkReady,
+        shouldPlaySound: !isWalkSession,
         shouldSetBadge: false,
-        shouldShowBanner: !isWalkSession && !isWalkReady,
-        shouldShowList: !isWalkReady,
+        shouldShowBanner: !isWalkSession,
+        shouldShowList: !isWalkSession,
       };
     },
   });
@@ -747,7 +745,7 @@ export const notificationService = {
     await Notifications.setNotificationCategoryAsync(WALK_READY_CATEGORY_ID, [
       {
         identifier: WALK_READY_ACTION_NOT_NOW,
-        buttonTitle: 'Not Now',
+        buttonTitle: 'Skip This Walk',
         options: {
           opensAppToForeground: false,
           isDestructive: true,
@@ -755,7 +753,7 @@ export const notificationService = {
       },
       {
         identifier: WALK_READY_ACTION_YES,
-        buttonTitle: 'Yes',
+        buttonTitle: 'Start Walk',
         options: {
           opensAppToForeground: false,
         },
@@ -787,6 +785,7 @@ export const notificationService = {
     plan: NudgePlan,
     prefs?: Preferences,
     existingScheduledIds?: Set<string>,
+    opts?: { bypassQuietHours?: boolean },
   ): Promise<{ nudgeId: string | null; missedId: string | null }> {
     if (!isNotificationsSupported) {
       return { nudgeId: null, missedId: null };
@@ -798,10 +797,14 @@ export const notificationService = {
 
     const nudgePolicy: PlanNotificationWindow = goalReached
       ? { ...windowPolicy.nudge, allowed: false, reason: 'goal_reached' }
-      : windowPolicy.nudge;
+      : opts?.bypassQuietHours && windowPolicy.nudge.reason === 'quiet_hours'
+        ? { ...windowPolicy.nudge, allowed: true, reason: undefined }
+        : windowPolicy.nudge;
     const missedPolicy: PlanNotificationWindow = goalReached
       ? { ...windowPolicy.missed, allowed: false, reason: 'goal_reached' }
-      : windowPolicy.missed;
+      : opts?.bypassQuietHours && windowPolicy.missed.reason === 'quiet_hours'
+        ? { ...windowPolicy.missed, allowed: true, reason: undefined }
+        : windowPolicy.missed;
 
     let nudgeId: string | null = null;
     let missedId: string | null = null;
@@ -840,7 +843,7 @@ export const notificationService = {
           }
         }
 
-        // Phase 2 (Ready) — action prompt with Yes / Not Now
+        // Phase 2 (Ready) uses direct action labels that match the in-app prompt.
         if (!existingScheduledIds?.has(readyId)) {
           const walkStartFormatted = format(walkStart, 'h:mm a');
           const walkEndFormatted = format(walkEnd, 'h:mm a');
@@ -848,8 +851,8 @@ export const notificationService = {
             notificationId: readyId,
             planId: plan.id,
             type: WALK_READY_NOTIFICATION_TYPE,
-            title: `Ready now for your ${walkStartFormatted} - ${walkEndFormatted} MicroWalk session?`,
-            body: `${durationMinutes} min walk window is open.`,
+            title: 'Walk ready now',
+            body: `${durationMinutes} min walk window, ${walkStartFormatted} - ${walkEndFormatted}`,
             triggerAt: readyTime,
             categoryIdentifier: WALK_READY_CATEGORY_ID,
             extraData: {
@@ -915,8 +918,12 @@ export const notificationService = {
    * Schedule plan notifications for a manually-created walk plan.
    * Manual walks follow the same notification rules as the rest of the app.
    */
-  async scheduleManualNudge(plan: NudgePlan, prefs?: Preferences): Promise<string | null> {
-    const { nudgeId } = await this.schedulePlanNotifications(plan, prefs);
+  async scheduleManualNudge(
+    plan: NudgePlan,
+    prefs?: Preferences,
+    opts?: { bypassQuietHours?: boolean },
+  ): Promise<string | null> {
+    const { nudgeId } = await this.schedulePlanNotifications(plan, prefs, undefined, opts);
     return nudgeId;
   },
 
@@ -1459,7 +1466,6 @@ export const notificationService = {
         elapsedSeconds,
         isPaused,
         targetDurationMinutes = null,
-        startedFromNotification = false,
         timerMode = 'smart',
         statsMode = 'all',
         steps = 0,
@@ -1467,41 +1473,44 @@ export const notificationService = {
         distanceUnit = 'mi',
       } = options;
       const categoryId = isPaused ? WALK_SESSION_PAUSED_CATEGORY : WALK_SESSION_ACTIVE_CATEGORY;
-      
-      const elapsedMinutes = Math.max(0, Math.floor(elapsedSeconds / 60));
-      const elapsedRemainderSeconds = Math.max(0, Math.floor(elapsedSeconds % 60));
-      
+      const formatCompactTimer = (totalSeconds: number): string => {
+        const safeSeconds = Math.max(0, Math.floor(totalSeconds));
+        const minutes = Math.floor(safeSeconds / 60);
+        const seconds = safeSeconds % 60;
+        return `${minutes}:${String(seconds).padStart(2, '0')}`;
+      };
+
       const targetSeconds = (targetDurationMinutes ?? 0) * 60;
       let showRemaining = false;
       if (timerMode === 'remaining') {
         showRemaining = targetDurationMinutes !== null && elapsedSeconds < targetSeconds;
       } else if (timerMode === 'smart') {
-        showRemaining = startedFromNotification && targetDurationMinutes !== null && elapsedSeconds < targetSeconds;
+        showRemaining = targetDurationMinutes !== null && elapsedSeconds < targetSeconds;
       }
 
-      let timerLine = `Walk Duration: ${elapsedMinutes} min ${elapsedRemainderSeconds} seconds`;
+      let timerLine = `${formatCompactTimer(elapsedSeconds)} walked`;
       if (showRemaining) {
         const remainingSecondsTotal = Math.max(0, targetSeconds - elapsedSeconds);
-        const remainingMinutes = Math.floor(remainingSecondsTotal / 60);
-        const remainingSecondsRemainder = Math.floor(remainingSecondsTotal % 60);
-        timerLine = `Remaining time: ${remainingMinutes} min ${remainingSecondsRemainder} seconds`;
+        timerLine = `${formatCompactTimer(remainingSecondsTotal)} left`;
       }
 
       const normalizedUnit = distanceUnit === 'km' ? 'km' : 'mi';
       const normalizedDistance = normalizedUnit === 'km'
         ? Math.max(0, distanceMeters) / 1000
         : Math.max(0, distanceMeters) / 1609.34;
-      
-      const title = 'MicroWalk Session';
-      
-      const bodyLines = [timerLine];
+
+      const title = isPaused ? 'Walk paused' : 'Walk in progress';
+
+      const statParts: string[] = [];
       if (statsMode === 'all' || statsMode === 'steps') {
-        bodyLines.push(`Steps: ${Math.max(0, steps).toLocaleString()}`);
+        statParts.push(`${Math.max(0, steps).toLocaleString()} steps`);
       }
       if (statsMode === 'all' || statsMode === 'distance') {
-        bodyLines.push(`Distance: ${normalizedDistance.toFixed(2)} ${normalizedUnit}`);
+        statParts.push(`${normalizedDistance.toFixed(2)} ${normalizedUnit}`);
       }
-      const body = bodyLines.join('\n');
+      const body = statParts.length > 0
+        ? `${timerLine}\n${statParts.join(', ')}`
+        : timerLine;
 
       await Notifications.scheduleNotificationAsync({
         identifier: WALK_SESSION_NOTIFICATION_ID,
@@ -1523,7 +1532,7 @@ export const notificationService = {
 
   /**
    * Show an immediate notification suggesting an alternative gap after a skip/miss.
-   * Actions (Yes/No) do not open the app - acceptance is handled in the background.
+   * Actions do not open the app. Acceptance is handled in the background.
    */
   async scheduleAlternativeGapNotification(
     planId: string,

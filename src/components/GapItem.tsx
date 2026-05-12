@@ -6,22 +6,22 @@ import { useAppStore } from '../store';
 import { useThemePalette } from '../theme/palette';
 import { Button } from './Button';
 import { compactActionTokens } from './buttonSystem';
+import { withAlpha } from '../theme/colorUtils';
+import type { OpportunityPrimaryAction, OpportunityState } from '../types';
 
 interface GapItemProps {
-  /** Time range when gap is available (e.g. "3:00 PM - 7:00 PM") */
   timeRange: string;
-  /** Exact suggested walk window (e.g. "Walk: 3:05 PM - 3:17 PM") */
   walkWindowLabel: string;
-  /** Exact notification timing for this opportunity */
   notifyLabel: string;
-  /** Suggested walk minutes for this opportunity */
   duration: number;
-  /** Minutes already walked in this range */
   usedMinutes?: number;
-  /** Cancel this opportunity and move to the next best one */
-  onCancel: () => void;
-  /** Change walk window and duration for this opportunity */
-  onChange: () => void;
+  state: OpportunityState;
+  statusLabel?: string;
+  primaryAction: OpportunityPrimaryAction;
+  primaryActionLabel: string;
+  onPrimaryAction: () => void;
+  onCancel?: () => void;
+  showCancel?: boolean;
 }
 
 export const GapItem: React.FC<GapItemProps> = ({
@@ -30,8 +30,13 @@ export const GapItem: React.FC<GapItemProps> = ({
   notifyLabel,
   duration,
   usedMinutes = 0,
+  state,
+  statusLabel,
+  primaryAction,
+  primaryActionLabel,
+  onPrimaryAction,
   onCancel,
-  onChange,
+  showCancel = true,
 }) => {
   const { themeMode } = useAppStore();
   const isDark = themeMode === 'dark';
@@ -39,25 +44,56 @@ export const GapItem: React.FC<GapItemProps> = ({
 
   const remaining = Math.max(0, duration - usedMinutes);
   const pct = duration > 0 ? Math.min(1, usedMinutes / duration) : 0;
+  const isHighlighted = state === 'live' || state === 'active';
+  const isStartAction = primaryAction === 'start' || primaryAction === 'go';
 
-  const containerTheme = {
-    backgroundColor: palette.bgSurfaceElevated,
-    borderColor: palette.borderSoft,
-  };
+  const containerTheme = isHighlighted
+    ? {
+        backgroundColor: palette.bgSurfaceElevated,
+        borderColor: withAlpha(palette.accentPrimary, isDark ? 0.52 : 0.34),
+        shadowColor: palette.accentPrimary,
+        shadowOpacity: isDark ? 0.34 : 0.22,
+        shadowRadius: 16,
+        shadowOffset: { width: 0, height: 0 },
+        elevation: 10,
+      }
+    : {
+        backgroundColor: palette.bgSurfaceElevated,
+        borderColor: palette.borderSoft,
+      };
 
-  const badgeTheme = {
-    backgroundColor: palette.accentMuted,
-  };
+  const badgeTheme = isHighlighted
+    ? { backgroundColor: withAlpha(palette.accentPrimary, isDark ? 0.24 : 0.18) }
+    : { backgroundColor: palette.accentMuted };
 
   const barTrackTheme = {
     backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(15,23,42,0.14)',
   };
-  const badgeTextColor = palette.accentOnTint;
+
+  const badgeTextColor = isHighlighted ? palette.accentPrimary : palette.accentOnTint;
+  const statusPillTheme = {
+    backgroundColor: isHighlighted
+      ? withAlpha(palette.accentPrimary, isDark ? 0.24 : 0.16)
+      : withAlpha(palette.info, isDark ? 0.22 : 0.14),
+  };
+  const statusTextColor = isHighlighted ? palette.accentPrimary : palette.info;
+  const primaryVariant = isStartAction ? 'primary' : 'info';
 
   return (
-    <View style={[styles.container, containerTheme]}>
+    <View style={[styles.container, containerTheme, isHighlighted && styles.highlightedContainer]}>
       <View style={styles.left}>
-        <Text variant="body" style={styles.time}>{timeRange}</Text>
+        <View style={styles.headerRow}>
+          <Text variant="body" style={styles.time} numberOfLines={1}>
+            {timeRange}
+          </Text>
+          {statusLabel ? (
+            <View style={[styles.statusPill, statusPillTheme]}>
+              <Text variant="bodySmall" style={[styles.statusText, { color: statusTextColor }]}>
+                {statusLabel}
+              </Text>
+            </View>
+          ) : null}
+        </View>
         <Text variant="muted" style={styles.gapLabel}>{walkWindowLabel}</Text>
         <Text variant="muted" style={styles.notifyLabel}>{notifyLabel}</Text>
         <View style={styles.meta}>
@@ -78,19 +114,21 @@ export const GapItem: React.FC<GapItemProps> = ({
 
       <View style={styles.actions}>
         <Button
-          title="Change"
-          onPress={onChange}
-          variant="info"
+          title={primaryActionLabel}
+          onPress={onPrimaryAction}
+          variant={primaryVariant}
           size="compact"
           style={styles.actionBtn}
         />
-        <Button
-          title="Cancel"
-          onPress={onCancel}
-          variant="danger"
-          size="compact"
-          style={styles.actionBtn}
-        />
+        {showCancel && onCancel ? (
+          <Button
+            title="Cancel"
+            onPress={onCancel}
+            variant="danger"
+            size="compact"
+            style={styles.actionBtn}
+          />
+        ) : null}
       </View>
     </View>
   );
@@ -104,12 +142,33 @@ const styles = StyleSheet.create({
     paddingVertical: theme.spacing.md,
     paddingHorizontal: theme.spacing.md,
     borderWidth: 1,
-    // native depth
     ...theme.shadow.card,
   },
+  highlightedContainer: {
+    borderWidth: 1.5,
+  },
   left: { flex: 1 },
-  time: { fontWeight: theme.fontWeight.semibold, marginBottom: 2 },
-  gapLabel: { fontSize: theme.fontSize.xs, marginBottom: 2 },
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: theme.spacing.sm,
+    marginBottom: 8,
+  },
+  time: {
+    fontWeight: theme.fontWeight.semibold,
+    flexShrink: 1,
+  },
+  statusPill: {
+    borderRadius: 999,
+    paddingHorizontal: 9,
+    paddingVertical: 2,
+  },
+  statusText: {
+    fontSize: 9,
+    fontWeight: theme.fontWeight.semibold,
+  },
+  gapLabel: { fontSize: theme.fontSize.xs, marginBottom: 4 },
   notifyLabel: { fontSize: theme.fontSize.xs, marginBottom: theme.spacing.ms },
   meta: { flexDirection: 'row', alignItems: 'center', marginBottom: 8 },
   badge: {
@@ -134,7 +193,16 @@ const styles = StyleSheet.create({
   barLabel: {
     fontSize: theme.fontSize.xxs,
   },
-  actions: { alignItems: 'stretch' as const, marginLeft: theme.spacing.ml, paddingTop: 2, gap: theme.spacing.sm, minWidth: 80, maxWidth: 96, flexShrink: 0 },
+  actions: {
+    alignItems: 'stretch',
+    alignSelf: 'stretch',
+    justifyContent: 'center',
+    marginLeft: theme.spacing.ml,
+    gap: theme.spacing.sm,
+    minWidth: 80,
+    maxWidth: 96,
+    flexShrink: 0,
+  },
   actionBtn: {
     width: '100%',
     minHeight: compactActionTokens.minHeight,

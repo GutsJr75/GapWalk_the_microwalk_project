@@ -112,6 +112,8 @@ export type WalkPrompt = 'end_confirmation';
 export type WalkDisplayCard = 'walkDuration' | 'steps' | 'distance' | 'calories' | 'speed' | 'goalProgress';
 export type NotificationTimerMode = 'smart' | 'elapsed' | 'remaining';
 export type NotificationStatsMode = 'all' | 'steps' | 'distance' | 'none';
+export type OpportunityState = 'scheduled' | 'prestart_ready' | 'live' | 'active';
+export type OpportunityPrimaryAction = 'change' | 'start' | 'go';
 
 export const NOTIFICATION_STATS_MODE_LABELS: Record<NotificationStatsMode, string> = {
   all: 'Steps and distance',

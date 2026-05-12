@@ -245,6 +245,7 @@ model NudgePlan {
   gapEnd                   DateTime        @map("gap_end")
   walkStart                DateTime        @map("walk_start")
   suggestedDurationMinutes Int             @map("suggested_duration_minutes")
+  notificationsEnabled     Boolean         @default(true) @map("notifications_enabled")
   status                   NudgePlanStatus @default(planned)
   reason                   String?
   origin                   NudgePlanOrigin @default(server)
@@ -252,6 +253,8 @@ model NudgePlan {
   notificationVariant      String?         @map("notification_variant")
   manuallyTriggeredBy      String?         @map("manually_triggered_by") @db.Uuid
   manualNudgeNote          String?         @map("manual_nudge_note")
+  localReminderScheduledAt DateTime?       @map("local_reminder_scheduled_at")
+  localReminderDeliveredAt DateTime?       @map("local_reminder_delivered_at")
   pushTicketId             String?         @map("push_ticket_id")
   pushSentAt               DateTime?       @map("push_sent_at")
   pushDeliveredAt          DateTime?       @map("push_delivered_at")

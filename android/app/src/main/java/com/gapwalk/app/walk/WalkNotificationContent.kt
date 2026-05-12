@@ -42,27 +42,29 @@ internal object WalkNotificationContent {
     }
   }
 
+  private fun formatCompactTimer(totalSeconds: Int): String {
+    val safeSeconds = max(0, totalSeconds)
+    val minutes = safeSeconds / SECONDS_PER_MINUTE
+    val secondsRemainder = safeSeconds % SECONDS_PER_MINUTE
+    return String.format(Locale.US, "%d:%02d", minutes, secondsRemainder)
+  }
+
   fun resolveTimerLine(snapshot: WalkTrackingSnapshot): String {
-    val elapsedMinutes = max(0, snapshot.elapsedSeconds / SECONDS_PER_MINUTE)
-    val elapsedSecondsRemainder = max(0, snapshot.elapsedSeconds % SECONDS_PER_MINUTE)
-    
     val mode = normalizeTimerMode(snapshot.notificationTimerMode)
     val targetSeconds = (snapshot.targetDurationMinutes ?: 0) * SECONDS_PER_MINUTE
 
     val showRemaining = when (mode) {
       TIMER_MODE_REMAINING -> snapshot.targetDurationMinutes != null && snapshot.elapsedSeconds < targetSeconds
-      TIMER_MODE_SMART -> snapshot.startedFromNotification && snapshot.targetDurationMinutes != null && snapshot.elapsedSeconds < targetSeconds
+      TIMER_MODE_SMART -> snapshot.targetDurationMinutes != null && snapshot.elapsedSeconds < targetSeconds
       else -> false
     }
 
     if (showRemaining) {
       val remainingSecondsTotal = max(0, targetSeconds - snapshot.elapsedSeconds)
-      val remainingMinutes = remainingSecondsTotal / SECONDS_PER_MINUTE
-      val remainingSecondsRemainder = remainingSecondsTotal % SECONDS_PER_MINUTE
-      return "Remaining time: $remainingMinutes min $remainingSecondsRemainder seconds"
+      return "${formatCompactTimer(remainingSecondsTotal)} left"
     }
 
-    return "Walk Duration: $elapsedMinutes min $elapsedSecondsRemainder seconds"
+    return "${formatCompactTimer(snapshot.elapsedSeconds)} walked"
   }
 
   fun buildDistanceLine(snapshot: WalkTrackingSnapshot): String {
@@ -72,33 +74,35 @@ internal object WalkNotificationContent {
     } else {
       snapshot.distanceMeters / METERS_PER_KILOMETER
     }
-    val distanceLabel = String.format(Locale.US, "%.2f %s", distanceValue, unit)
-    return "Distance: $distanceLabel"
+    return String.format(Locale.US, "%.2f %s", distanceValue, unit)
   }
 
   fun buildStepsLine(snapshot: WalkTrackingSnapshot): String {
     val stepsLabel = String.format(Locale.US, "%,d", snapshot.steps)
-    return "Steps: $stepsLabel"
+    return "$stepsLabel steps"
   }
 
   fun buildSummaryLine(snapshot: WalkTrackingSnapshot): String {
     val timerLine = resolveTimerLine(snapshot)
-    
     val statsMode = normalizeStatsMode(snapshot.notificationStatsMode)
     if (statsMode == STATS_MODE_NONE) {
       return timerLine
     }
 
-    val lines = mutableListOf(timerLine)
-    
+    val statParts = mutableListOf<String>()
+
     if (statsMode == STATS_MODE_ALL || statsMode == STATS_MODE_STEPS) {
-      lines.add(buildStepsLine(snapshot))
-    }
-    
-    if (statsMode == STATS_MODE_ALL || statsMode == STATS_MODE_DISTANCE) {
-      lines.add(buildDistanceLine(snapshot))
+      statParts.add(buildStepsLine(snapshot))
     }
 
-    return lines.joinToString("\n")
+    if (statsMode == STATS_MODE_ALL || statsMode == STATS_MODE_DISTANCE) {
+      statParts.add(buildDistanceLine(snapshot))
+    }
+
+    if (statParts.isEmpty()) {
+      return timerLine
+    }
+
+    return "$timerLine\n${statParts.joinToString(", ")}"
   }
 }

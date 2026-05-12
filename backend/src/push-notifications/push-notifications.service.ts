@@ -4,6 +4,10 @@ import { PrismaService } from '../prisma/prisma.service';
 import { DevicesService } from '../devices/devices.service';
 import Expo, { ExpoPushMessage, ExpoPushTicket } from 'expo-server-sdk';
 
+const BACKUP_PUSH_GRACE_MS = 90_000;
+const DEVICE_STALE_MS = 3 * 60_000;
+const SYNC_STALE_MS = 5 * 60_000;
+
 @Injectable()
 export class PushNotificationsService {
   private readonly logger = new Logger(PushNotificationsService.name);
@@ -23,7 +27,8 @@ export class PushNotificationsService {
    */
   async sendWalkNudge(
     userId: string,
-    planId: string,
+    serverPlanId: string,
+    localPlanId: string,
     title: string,
     body: string,
   ) {
@@ -44,8 +49,8 @@ export class PushNotificationsService {
           sound: 'default' as const,
           title,
           body,
-          data: { planId, type: 'walk_nudge' },
-          categoryId: 'walk_nudge_actions',
+          data: { planId: localPlanId, type: 'walk_ready', notificationSource: 'backup_push' },
+          categoryId: 'walk_ready_actions',
           priority: 'high' as const,
           channelId: 'gapwalk-nudges',
         } satisfies ExpoPushMessage,
@@ -109,7 +114,7 @@ export class PushNotificationsService {
       await this.prisma.pushLog.create({
         data: {
           userId,
-          nudgePlanId: planId,
+          nudgePlanId: serverPlanId,
           expoPushToken: token,
           ticketId,
           status,
@@ -129,7 +134,7 @@ export class PushNotificationsService {
     if (firstSuccessTicketId) {
       try {
         await this.prisma.nudgePlan.update({
-          where: { id: planId },
+          where: { id: serverPlanId },
           data: {
             pushTicketId: firstSuccessTicketId,
             pushSentAt: new Date(),
@@ -149,33 +154,57 @@ export class PushNotificationsService {
    */
   async sendDueNudges() {
     const now = new Date();
+    const dueThreshold = new Date(now.getTime() - BACKUP_PUSH_GRACE_MS);
     const duePlans = await this.prisma.nudgePlan.findMany({
       where: {
-        status: 'planned',
-        walkStart: { lte: now },
-        origin: 'server',
+        status: { in: ['planned', 'notified'] },
+        walkStart: { lte: dueThreshold },
+        notificationsEnabled: true,
+        localReminderDeliveredAt: null,
+        localId: { not: null },
         pushSentAt: null,
       },
-      include: { user: true },
+      include: {
+        user: {
+          select: {
+            timezone: true,
+            lastSyncedAt: true,
+            devices: {
+              where: { isActive: true },
+              select: { lastSeenAt: true },
+            },
+          },
+        },
+      },
     });
 
     this.logger.log(`Found ${duePlans.length} due nudge plans to send`);
 
     let sent = 0;
     for (const plan of duePlans) {
-      // Atomic claim: flip status + stamp pushSentAt in one UPDATE guarded
-      // by the original (status='planned', pushSentAt=null) conditions.
-      // If a concurrent worker already claimed the plan, count will be 0
-      // and we skip — prevents the "4 duplicates" race.
+      const deviceFresh = !!plan.user?.devices?.some((device) =>
+        !!device.lastSeenAt && now.getTime() - device.lastSeenAt.getTime() <= DEVICE_STALE_MS,
+      );
+      const syncFresh =
+        !!plan.user?.lastSyncedAt &&
+        now.getTime() - plan.user.lastSyncedAt.getTime() <= SYNC_STALE_MS;
+
+      if (deviceFresh || syncFresh) {
+        this.logger.log(`Suppressing backup push for plan ${plan.id}: device/sync still fresh`);
+        continue;
+      }
+
       const claim = await this.prisma.nudgePlan.updateMany({
         where: {
           id: plan.id,
-          status: 'planned',
+          status: { in: ['planned', 'notified'] },
+          notificationsEnabled: true,
+          localReminderDeliveredAt: null,
+          localId: { not: null },
           pushSentAt: null,
         },
         data: {
           status: 'notified',
-          pushSentAt: now,
         },
       });
       if (claim.count === 0) continue;
@@ -191,22 +220,12 @@ export class PushNotificationsService {
           timeZone: userTimezone,
         });
 
-        // Rotate body variant by day-of-month for daily variety
-        const variant = walkStart.getDate() % 6;
-        const bodies = [
-          `It's time! Head out for a ${dur}-minute walk. Your body will thank you.`,
-          `Walk o'clock. ${dur} minutes is all it takes. Let's go!`,
-          `Step outside for ${dur} minutes. A little movement goes a long way.`,
-          `Your ${dur}-minute walking window is open. Time to move!`,
-          `Fresh air awaits. Your ${dur}-minute walk starts now.`,
-          `A ${dur}-minute walk is the reset your day needs. Let's do it!`,
-        ];
-
         await this.sendWalkNudge(
           plan.userId,
           plan.id,
-          `Your ${startTime} walk 🚶`,
-          bodies[variant],
+          plan.localId!,
+          `Walk ready now`,
+          `${dur} min walk window is open at ${startTime}.`,
         );
         sent++;
       } catch (error) {

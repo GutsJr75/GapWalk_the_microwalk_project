@@ -16,6 +16,9 @@ const SETTINGS_NOTIFICATION_STATS_MODE_KEY = 'gapwalk_settings_notification_stat
 const LAST_SYNCED_AT_KEY = 'gapwalk_last_synced_at';
 const LAST_LOGIN_AT_KEY = 'gapwalk_last_login_at';
 const SETTINGS_END_WALK_MODE_KEY = 'gapwalk_settings_end_walk_mode';
+const EXACT_ALARM_BANNER_SNOOZE_UNTIL_KEY = 'gapwalk_exact_alarm_banner_snooze_until';
+const EXACT_ALARM_BANNER_NEVER_KEY = 'gapwalk_exact_alarm_banner_never';
+const DEVICE_TIMEZONE_KEY = 'gapwalk_device_timezone';
 
 export interface StoredAuthUser {
   email?: string;
@@ -179,6 +182,66 @@ export const authStorage = {
     return null;
   },
 
+  async getExactAlarmBannerSnoozeUntil(): Promise<string | null> {
+    if (Platform.OS === 'web') return null;
+    try {
+      return await SecureStore.getItemAsync(EXACT_ALARM_BANNER_SNOOZE_UNTIL_KEY);
+    } catch {
+      return null;
+    }
+  },
+
+  async setExactAlarmBannerSnoozeUntil(isoString: string | null): Promise<void> {
+    if (Platform.OS === 'web') return;
+    try {
+      if (isoString) {
+        await SecureStore.setItemAsync(EXACT_ALARM_BANNER_SNOOZE_UNTIL_KEY, isoString);
+      } else {
+        await SecureStore.deleteItemAsync(EXACT_ALARM_BANNER_SNOOZE_UNTIL_KEY);
+      }
+    } catch { /* ignore */ }
+  },
+
+  async getExactAlarmBannerNever(): Promise<boolean> {
+    if (Platform.OS === 'web') return false;
+    try {
+      return (await SecureStore.getItemAsync(EXACT_ALARM_BANNER_NEVER_KEY)) === '1';
+    } catch {
+      return false;
+    }
+  },
+
+  async setExactAlarmBannerNever(never: boolean): Promise<void> {
+    if (Platform.OS === 'web') return;
+    try {
+      if (never) {
+        await SecureStore.setItemAsync(EXACT_ALARM_BANNER_NEVER_KEY, '1');
+      } else {
+        await SecureStore.deleteItemAsync(EXACT_ALARM_BANNER_NEVER_KEY);
+      }
+    } catch { /* ignore */ }
+  },
+
+  async clearExactAlarmBannerDismissState(): Promise<void> {
+    if (Platform.OS === 'web') return;
+    try {
+      await SecureStore.deleteItemAsync(EXACT_ALARM_BANNER_SNOOZE_UNTIL_KEY);
+    } catch { /* ignore */ }
+    try {
+      await SecureStore.deleteItemAsync(EXACT_ALARM_BANNER_NEVER_KEY);
+    } catch { /* ignore */ }
+  },
+
+  async saveDeviceTimezone(timezone: string): Promise<void> {
+    if (Platform.OS === 'web') return;
+    try { await SecureStore.setItemAsync(DEVICE_TIMEZONE_KEY, timezone); } catch { /* ignore */ }
+  },
+
+  async getDeviceTimezone(): Promise<string | null> {
+    if (Platform.OS === 'web') return Intl.DateTimeFormat().resolvedOptions().timeZone || null;
+    try { return await SecureStore.getItemAsync(DEVICE_TIMEZONE_KEY); } catch { return null; }
+  },
+
   async saveLastSyncedAt(syncedAt: string): Promise<void> {
     if (Platform.OS === 'web') return;
     try { await SecureStore.setItemAsync(LAST_SYNCED_AT_KEY, syncedAt); } catch { /* ignore */ }
@@ -210,5 +273,8 @@ export const authStorage = {
     await SecureStore.deleteItemAsync(AUTH_USER_KEY);
     await SecureStore.deleteItemAsync(LAST_LOGIN_AT_KEY);
     await SecureStore.deleteItemAsync(LAST_SYNCED_AT_KEY);
+    await SecureStore.deleteItemAsync(EXACT_ALARM_BANNER_SNOOZE_UNTIL_KEY);
+    await SecureStore.deleteItemAsync(EXACT_ALARM_BANNER_NEVER_KEY);
+    await SecureStore.deleteItemAsync(DEVICE_TIMEZONE_KEY);
   },
 };

@@ -12,6 +12,7 @@ import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
+import android.graphics.BitmapFactory
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
@@ -358,9 +359,10 @@ class WalkTrackingService : Service(), SensorEventListener {
 
     val timerLine = WalkNotificationContent.resolveTimerLine(snapshot)
     val summaryLine = WalkNotificationContent.buildSummaryLine(snapshot)
-    val notifTitle = "MicroWalk Session"
+    val notifTitle = if (snapshot.paused) "Walk paused" else "Walk in progress"
     val builder = NotificationCompat.Builder(this, CHANNEL_ID)
       .setSmallIcon(R.drawable.ic_notification_walk)
+      .setLargeIcon(BitmapFactory.decodeResource(resources, R.mipmap.ic_launcher))
       .setColor(ContextCompat.getColor(this, R.color.gapwalk_accent))
       .setColorized(false)
       .setContentTitle(notifTitle)

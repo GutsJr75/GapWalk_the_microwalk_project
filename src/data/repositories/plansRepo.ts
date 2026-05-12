@@ -199,7 +199,7 @@ export const plansRepo = {
       created_at: string;
     }>(
       `SELECT * FROM nudge_plans 
-       WHERE walk_start > ? AND status IN ('planned', 'notified')
+       WHERE gap_end > ? AND status IN ('planned', 'notified', 'started')
        ORDER BY walk_start ASC LIMIT ?`,
       [now, limit]
     );
@@ -225,7 +225,7 @@ export const plansRepo = {
       created_at: string;
     }>(
       `SELECT * FROM nudge_plans
-       WHERE walk_start > ? AND walk_start <= ? AND status IN ('planned', 'notified')
+       WHERE gap_end > ? AND walk_start <= ? AND status IN ('planned', 'notified', 'started')
        ORDER BY walk_start ASC LIMIT ?`,
       [now, endIso, limit]
     );

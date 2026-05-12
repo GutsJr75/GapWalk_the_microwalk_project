@@ -42,6 +42,7 @@ class SyncNudgePlanDto {
   @IsDateString() gapEnd: string;
   @IsDateString() walkStart: string;
   @IsInt() suggestedDurationMinutes: number;
+  @IsOptional() @IsBoolean() notificationsEnabled?: boolean;
   @IsEnum(NudgePlanStatus) status: NudgePlanStatus;
   @IsOptional() @IsString() reason?: string;
 }

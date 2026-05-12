@@ -651,7 +651,7 @@ export const SettingsScreen: React.FC<Props> = ({ navigation }) => {
             title="Live Notification Timer"
             description="Control what the active walk notification focuses on."
             infoText={
-              "Smart switches automatically. If you start a walk from a GapWalk reminder, it shows minutes left. Otherwise it shows minutes walked.\n\nMinutes walked always shows how long you have been walking.\n\nMinutes left shows the time remaining toward the current walk target."
+              "Smart switches automatically. Planned walks count down with time left. Open-ended manual walks count up with time walked.\n\nMinutes walked always shows how long you have been walking.\n\nMinutes left shows the time remaining toward the current walk target."
             }
             infoId="live-notification-timer"
             activeInfoId={activeInfo?.id ?? null}

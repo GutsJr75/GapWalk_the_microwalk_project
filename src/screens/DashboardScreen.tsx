@@ -33,9 +33,15 @@ import {
 } from '../services/notifications';
 import { notificationPlanActions } from '../services/notificationPlanActions';
 import { analyticsService } from '../services/analytics';
-import { NudgePlan, Preferences, WalkSession } from '../types';
+import type {
+  NudgePlan,
+  OpportunityPrimaryAction,
+  OpportunityState,
+  Preferences,
+  WalkSession,
+} from '../types';
 import { calculateStreak, calculateWeeklyStats, getMotivationalMessage, StreakData, WeeklyStats } from '../utils/statsUtils';
-import { addMinutes, format, isAfter, isBefore, parseISO, subMinutes, subDays } from 'date-fns';
+import { addDays, addMinutes, format, isAfter, isBefore, parseISO, subMinutes, subDays } from 'date-fns';
 import { timeUtils } from '../utils/time';
 import {
   getActivityRecognitionPermissionState,
@@ -47,6 +53,7 @@ import {
   type NotificationPermissionState,
 } from '../services/permissions';
 import { toUserFriendlyError } from '../utils/errorMessages';
+import { shouldShowExactAlarmBanner } from '../utils/exactAlarmBannerState';
 import { authStorage } from '../data/authStorage';
 import { firebaseAuthService } from '../services/firebaseAuth';
 import { guidanceStorage } from '../data/guidanceStorage';
@@ -88,6 +95,12 @@ interface PlanOpportunity {
   timeRange: string;
   walkWindowLabel: string;
   notifyLabel: string;
+  state: OpportunityState;
+  isPromotedLiveCard: boolean;
+  statusLabel?: string;
+  primaryAction: OpportunityPrimaryAction;
+  primaryActionLabel: string;
+  showCancel: boolean;
 }
 
 type TimePeriod = 'AM' | 'PM';
@@ -97,6 +110,7 @@ const MENU_WIDTH_RATIO = 0.78;
 const MENU_MAX_WIDTH = 360;
 const DASHBOARD_TOUR_READINESS_MAX_ATTEMPTS = 10;
 const DASHBOARD_TOUR_READINESS_POLL_INTERVAL_MS = 90;
+const PRESTART_WINDOW_MS = 5 * 60 * 1000;
 
 const MANUAL_REMINDER_OPTIONS: Array<{ value: ManualReminderChoice; label: string }> = [
   { value: 'atTime', label: 'At walk time' },
@@ -140,6 +154,111 @@ const to12HourParts = (iso: string): { hour: string; minute: string; period: Tim
     minute: String(date.getMinutes()).padStart(2, '0'),
     period,
   };
+};
+
+const to12HourPartsFromDate = (date: Date): { hour: string; minute: string; period: TimePeriod } => {
+  const period: TimePeriod = date.getHours() >= 12 ? 'PM' : 'AM';
+  const hour12 = date.getHours() % 12 === 0 ? 12 : date.getHours() % 12;
+  return {
+    hour: String(hour12).padStart(2, '0'),
+    minute: String(date.getMinutes()).padStart(2, '0'),
+    period,
+  };
+};
+
+const buildDraftDateFromParts = (
+  baseIso: string,
+  hour: string,
+  minute: string,
+  period: TimePeriod,
+): Date | null => {
+  const parsedHour = parseInt(hour, 10);
+  const parsedMinute = parseInt(minute, 10);
+  if (
+    !Number.isInteger(parsedHour) ||
+    parsedHour < 1 ||
+    parsedHour > 12 ||
+    !Number.isInteger(parsedMinute) ||
+    parsedMinute < 0 ||
+    parsedMinute > 59
+  ) {
+    return null;
+  }
+
+  const nextDate = parseISO(baseIso);
+  let hour24 = parsedHour % 12;
+  if (period === 'PM') hour24 += 12;
+  nextDate.setHours(hour24, parsedMinute, 0, 0);
+  return nextDate;
+};
+
+const getNonManualChangeLimits = (
+  opportunity: PlanOpportunity,
+  prefs: Preferences,
+  now: Date = new Date(),
+): {
+  earliestStart: Date;
+  latestStart: Date;
+  maxDurationMinutes: number;
+  notifyLeadMinutes: number;
+} | null => {
+  const gapStartMs = parseISO(opportunity.plan.gapStart).getTime();
+  const gapEndMs = parseISO(opportunity.plan.gapEnd).getTime();
+  const notifyLeadMinutes =
+    prefs.whenToNotify === 'delay' ? Math.max(0, prefs.notifyDelayMinutes ?? 5) : 0;
+  const earliestStartMs = Math.max(
+    gapStartMs + notifyLeadMinutes * 60_000,
+    now.getTime() + 60_000,
+  );
+
+  if (!Number.isFinite(gapStartMs) || !Number.isFinite(gapEndMs) || earliestStartMs >= gapEndMs) {
+    return null;
+  }
+
+  return {
+    earliestStart: new Date(earliestStartMs),
+    latestStart: new Date(gapEndMs - 60_000),
+    maxDurationMinutes: Math.max(
+      1,
+      Math.floor((gapEndMs - earliestStartMs) / 60_000),
+    ),
+    notifyLeadMinutes,
+  };
+};
+
+const getPlanWindowOverlap = (
+  startA: Date,
+  endA: Date,
+  startB: Date,
+  endB: Date,
+): boolean => startA < endB && endA > startB;
+
+const getWalkPlanConflict = (
+  plans: NudgePlan[],
+  nextStart: Date,
+  nextEnd: Date,
+  excludedPlanId?: string,
+): NudgePlan | null => {
+  for (const plan of plans) {
+    if (plan.id === excludedPlanId) continue;
+    if (plan.status === 'completed' || plan.status === 'cancelled' || plan.status === 'skipped') {
+      continue;
+    }
+
+    const existingStart = parseISO(plan.walkStart);
+    const existingEnd = getPlanWalkEnd(plan);
+    if (getPlanWindowOverlap(nextStart, nextEnd, existingStart, existingEnd)) {
+      return plan;
+    }
+  }
+
+  return null;
+};
+
+const getWalkPlanConflictMessage = (plan: NudgePlan): string => {
+  const conflictStart = parseISO(plan.walkStart);
+  const conflictEnd = getPlanWalkEnd(plan);
+  return `This overlaps another walk from ${format(conflictStart, 'h:mm a')} - ${format(conflictEnd, 'h:mm a')}. Change the time or edit the existing walk instead.`;
 };
 
 const BurgerIcon = ({
@@ -201,6 +320,7 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
   const menuPanelWidth = Math.min(Math.round(width * MENU_WIDTH_RATIO), MENU_MAX_WIDTH);
   const dashboardScrollRef = useRef<ScrollView>(null);
   const scrollYRef = useRef(0);
+  const lastPromotedLivePlanIdRef = useRef<string | null>(null);
   const [unlockedAchievements, setUnlockedAchievements] = useState<UnlockedAchievement[]>([]);
   const [newBadgeIds, setNewBadgeIds] = useState<AchievementId[]>([]);
   const [showBadgeModal, setShowBadgeModal] = useState(false);
@@ -211,6 +331,7 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
   const [missedPlans, setMissedPlans] = useState<NudgePlan[]>([]);
   const [isNoScheduleFallbackActive, setIsNoScheduleFallbackActive] = useState(false);
   const [exactAlarmHealth, setExactAlarmHealth] = useState<ExactAlarmHealthState | null>(null);
+  const [showExactAlarmReliabilityBanner, setShowExactAlarmReliabilityBanner] = useState(false);
   // Staggered card entrance animations
   const cardAnims = useRef(
     Array.from({ length: 6 }, () => new Animated.Value(0))
@@ -280,12 +401,16 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
   const preferencesRef = useRef(preferences);
   preferencesRef.current = preferences;
   const hasActiveWalkSession = !!activeWalkSnapshot?.sessionId;
-  const walkActionTitle = hasActiveWalkSession
-    ? (activeWalkSnapshot?.paused ? 'Resume Walk Session' : 'Go to Walk Session')
+  const hasActivePlannedWalkSession = hasActiveWalkSession && !!activeWalkSnapshot?.planId;
+  const hasActiveManualWalkSession = hasActiveWalkSession && !activeWalkSnapshot?.planId;
+  const walkActionTitle = hasActiveManualWalkSession
+    ? 'Go to Walk'
     : 'Start Manual Walk';
-  const walkActionHint = hasActiveWalkSession
-    ? 'Your walk is still running in the background. Jump back in anytime.'
-    : 'Your privacy matters. So does your health.';
+  const walkActionHint = hasActivePlannedWalkSession
+    ? 'Your active planned walk is above. Use that card to jump back in.'
+    : hasActiveManualWalkSession
+      ? 'Your manual walk is still running in the background.'
+      : 'Your privacy matters. So does your health.';
 
   // ── Add walk modal state ──
   const [showAddWalkModal, setShowAddWalkModal] = useState(false);
@@ -489,8 +614,42 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
     }
   }, []);
 
+  const syncExactAlarmState = useCallback(async (
+    healthOverride?: ExactAlarmHealthState | null,
+  ): Promise<ExactAlarmHealthState> => {
+    const health = healthOverride ?? (await notificationService.getExactAlarmHealthState());
+    setExactAlarmHealth(health);
+
+    if (Platform.OS !== 'android' || !health.isSupported) {
+      setShowExactAlarmReliabilityBanner(false);
+      return health;
+    }
+
+    if (health.canScheduleExactAlarms) {
+      await authStorage.clearExactAlarmBannerDismissState();
+      setShowExactAlarmReliabilityBanner(false);
+      return health;
+    }
+
+    const [never, snoozeUntilIso] = await Promise.all([
+      authStorage.getExactAlarmBannerNever(),
+      authStorage.getExactAlarmBannerSnoozeUntil(),
+    ]);
+    setShowExactAlarmReliabilityBanner(
+      shouldShowExactAlarmBanner({
+        isAndroid: true,
+        moduleSupported: health.isSupported,
+        canScheduleExactAlarms: health.canScheduleExactAlarms,
+        never,
+        snoozeUntilIso,
+        now: new Date(),
+      }),
+    );
+    return health;
+  }, []);
+
   const load = useCallback(async (): Promise<NudgePlan[]> => {
-    setExactAlarmHealth(await notificationService.getExactAlarmHealthState());
+    await syncExactAlarmState();
     const prefsFromDb = await preferencesRepo.get();
     if (prefsFromDb) { setPreferences(prefsFromDb); setHasSetPreferences(true); }
     const mins = await sessionsRepo.getTodayMinutes();
@@ -540,11 +699,7 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
       });
     }
     return refreshedUpcoming;
-  }, [reconcileTodayPlans, setHasSetPreferences, setPreferences, setTodayStats, setUpcomingPlans]);
-
-  const refreshExactAlarmHealth = useCallback(async (): Promise<void> => {
-    setExactAlarmHealth(await notificationService.getExactAlarmHealthState());
-  }, []);
+  }, [reconcileTodayPlans, setHasSetPreferences, setPreferences, setTodayStats, setUpcomingPlans, syncExactAlarmState]);
 
   const applyNotificationPermissionGrant = useCallback(async () => {
     const resolvedPrefs = preferencesRef.current ?? (await preferencesRepo.get());
@@ -569,9 +724,9 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
     }
 
     await registerCurrentDeviceForNotifications();
-    await refreshExactAlarmHealth();
+    await syncExactAlarmState();
     await load();
-  }, [load, refreshExactAlarmHealth]);
+  }, [load, syncExactAlarmState]);
 
   const refreshRequiredPermissionState = useCallback(async (
     options: { syncOnGrantTransition?: boolean } = {},
@@ -671,7 +826,7 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
   useFocusEffect(
     useCallback(() => {
       load().catch((e) => console.error('Dashboard load failed:', e));
-      void refreshExactAlarmHealth();
+      void syncExactAlarmState();
       void refreshRequiredPermissionState({ syncOnGrantTransition: true });
       // Stagger card entrance animations
       cardAnims.forEach((a) => a.setValue(0));
@@ -686,18 +841,18 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
           })
         )
       ).start();
-    }, [load, refreshExactAlarmHealth, refreshRequiredPermissionState])
+    }, [load, refreshRequiredPermissionState, syncExactAlarmState])
   );
 
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (nextState) => {
       if (nextState === 'active') {
-        void refreshExactAlarmHealth();
+        void syncExactAlarmState();
         void refreshRequiredPermissionState({ syncOnGrantTransition: true });
       }
     });
     return () => subscription.remove();
-  }, [refreshExactAlarmHealth, refreshRequiredPermissionState]);
+  }, [refreshRequiredPermissionState, syncExactAlarmState]);
 
   // ── Celebration trigger ──
   useEffect(() => {
@@ -759,7 +914,11 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
   }, [load, refreshRequiredPermissionState]);
 
   const handleWalkActionPress = useCallback(() => {
-    if (hasActiveWalkSession && activeWalkSnapshot) {
+    if (hasActivePlannedWalkSession) {
+      return;
+    }
+
+    if (hasActiveManualWalkSession && activeWalkSnapshot) {
       navigation.navigate('Walking', {
         planId: activeWalkSnapshot.planId,
         prompt: activeWalkSnapshot.prompt,
@@ -769,7 +928,7 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
     }
 
     navigation.navigate('Walking', {});
-  }, [activeWalkSnapshot, hasActiveWalkSession, navigation]);
+  }, [activeWalkSnapshot, hasActiveManualWalkSession, hasActivePlannedWalkSession, navigation]);
 
   // ── Cancel / change opportunity handlers ──
   const cancelOpportunity = useCallback((opportunity: PlanOpportunity) => {
@@ -834,6 +993,7 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
     const prompt = pendingInAppWalkPrompt;
     if (!prompt) return;
     setPendingInAppWalkPrompt(null);
+    analyticsService.track('walk_ready_prompt_start', { planId: prompt.planId });
 
     // Run 3-2-1 countdown
     for (let i = 3; i >= 1; i--) {
@@ -861,7 +1021,7 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
     if (!prompt) return;
     setPendingInAppWalkPrompt(null);
 
-    await notificationPlanActions.skipPlanSilently(prompt.planId);
+    const result = await notificationPlanActions.skipPlanSilently(prompt.planId);
     // Animate the list change when opportunities update
     LayoutAnimation.configureNext(LayoutAnimation.create(
       300,
@@ -869,11 +1029,23 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
       LayoutAnimation.Properties.opacity,
     ));
     await load();
-    analyticsService.track('walk_ready_not_now_inapp', { planId: prompt.planId });
+    if (result.replacementPlan) {
+      setSaveToastMessage(
+        `This walk was skipped. Your next best walk is at ${format(parseISO(result.replacementPlan.walkStart), 'h:mm a')}.`,
+      );
+      setShowSaveToast(true);
+    }
+    analyticsService.track('walk_ready_prompt_skip_and_replace', {
+      planId: prompt.planId,
+      replacementPlanId: result.replacementPlan?.id ?? null,
+    });
   }, [load, pendingInAppWalkPrompt, setPendingInAppWalkPrompt]);
 
   const handleWalkPromptDismiss = useCallback(() => {
     if (!pendingInAppWalkPrompt) return;
+    analyticsService.track('walk_ready_prompt_dismissed', {
+      planId: pendingInAppWalkPrompt.planId,
+    });
     setPendingInAppWalkPrompt(null);
     // Scroll to opportunities section
     setTimeout(() => {
@@ -882,6 +1054,37 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
       });
     }, 200);
   }, [pendingInAppWalkPrompt, setPendingInAppWalkPrompt, smoothScrollTo]);
+
+  useEffect(() => {
+    if (!pendingInAppWalkPrompt) return;
+
+    let cancelled = false;
+    void (async () => {
+      const plan = await plansRepo.getById(pendingInAppWalkPrompt.planId);
+      if (cancelled) return;
+
+      if (!plan) {
+        setPendingInAppWalkPrompt(null);
+        return;
+      }
+
+      const isTerminal =
+        plan.status === 'completed' ||
+        plan.status === 'cancelled' ||
+        plan.status === 'skipped';
+      const isExpired = !isAfter(parseISO(plan.gapEnd), new Date());
+
+      if (isTerminal || isExpired) {
+        setPendingInAppWalkPrompt(null);
+      }
+    })().catch((error) => {
+      if (__DEV__) console.warn('Failed to validate in-app walk prompt state:', error);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [pendingInAppWalkPrompt, setPendingInAppWalkPrompt]);
 
   const closePostWalkSummary = useCallback(() => {
     setPostWalkSummarySession(null);
@@ -909,6 +1112,33 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
     setChangeQuietHoursBypass(false); setChangeError(null); setShowChangeModal(true);
   };
 
+  const handleOpportunityPrimaryAction = useCallback(async (opportunity: PlanOpportunity) => {
+    if (opportunity.primaryAction === 'change') {
+      openChangeOpportunity(opportunity);
+      return;
+    }
+
+    if (opportunity.state === 'active' && activeWalkSnapshot?.sessionId) {
+      navigation.navigate('Walking', {
+        planId: activeWalkSnapshot.planId,
+        prompt: activeWalkSnapshot.prompt,
+        startedFromNotification: activeWalkSnapshot.startedFromNotification ?? false,
+      });
+      return;
+    }
+
+    const startCheck = await notificationPlanActions.canStartPlan(opportunity.plan.id);
+    if (!startCheck.allowed) {
+      await load();
+      return;
+    }
+
+    navigation.navigate('Walking', {
+      planId: opportunity.plan.id,
+      startedFromNotification: false,
+    });
+  }, [activeWalkSnapshot, load, navigation]);
+
   const closeChangeModal = () => {
     if (savingChange) return;
     const closeNow = () => {
@@ -927,6 +1157,23 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
     }
     showBinaryConfirm(title, message, 'Yes', closeNow, 'destructive');
   };
+
+  const changeConstraintHelperText = useMemo(() => {
+    if (!editingOpportunity || editingOpportunity.plan.reason === 'manual' || !preferences) {
+      return undefined;
+    }
+
+    const limits = getNonManualChangeLimits(editingOpportunity, preferences);
+    if (!limits) {
+      return undefined;
+    }
+
+    if (limits.notifyLeadMinutes <= 0) {
+      return undefined;
+    }
+
+    return `Reminder sends ${limits.notifyLeadMinutes} minutes before your walk, so the earliest start in this window is ${format(limits.earliestStart, 'h:mm a')}.`;
+  }, [editingOpportunity, preferences]);
 
   const shouldAllowChangeQuietHoursBypass = useCallback((opportunity: PlanOpportunity) => {
     if (!preferences) return false;
@@ -984,6 +1231,16 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
     const oldGapStart = parseISO(editingOpportunity.plan.gapStart);
     const oldGapEnd = parseISO(editingOpportunity.plan.gapEnd);
     const walkEnd = addMinutes(nextStart, duration);
+    const conflictingPlan = getWalkPlanConflict(
+      await plansRepo.getTodayPlans(),
+      nextStart,
+      walkEnd,
+      editingOpportunity.plan.id,
+    );
+    if (conflictingPlan) {
+      setChangeError(getWalkPlanConflictMessage(conflictingPlan));
+      return;
+    }
     if (!validateChangedWalkQuietHours(nextStart, walkEnd)) return;
     if (isManualPlan) {
       const manualNotifyTime = subMinutes(nextStart, manualNotifyLeadMinutes);
@@ -1033,7 +1290,7 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
     } finally { setSavingChange(false); }
   };
 
-  const requestSaveWalkChange = () => {
+  const requestSaveWalkChange = async () => {
     if (savingChange || !hasChangeDraft) return;
     const hour = parseInt(changeHour, 10); const minute = parseInt(changeMinute, 10);
     const duration = parseInt(changeDuration, 10);
@@ -1050,6 +1307,16 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
       previewStart.setHours(hour24, minute, 0, 0);
       const previewEnd = addMinutes(previewStart, duration);
       if (!isAfter(previewStart, new Date())) { setChangeError('Choose a future time for this walk.'); return; }
+      const overlappingPlan = getWalkPlanConflict(
+        await plansRepo.getTodayPlans(),
+        previewStart,
+        previewEnd,
+        editingOpportunity.plan.id,
+      );
+      if (overlappingPlan) {
+        setChangeError(getWalkPlanConflictMessage(overlappingPlan));
+        return;
+      }
       if (isManualPlan) {
         const previewNotifyTime = subMinutes(previewStart, getManualReminderLeadFromChoice(changeNotifyChoice));
         if (previewNotifyTime <= new Date()) {
@@ -1062,7 +1329,8 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
         const notifyLead = preferences?.whenToNotify === 'delay' ? Math.max(0, preferences.notifyDelayMinutes ?? 5) : 0;
         const previewNotifyStart = subMinutes(previewStart, notifyLead);
         if (isBefore(previewNotifyStart, previewGapStart)) {
-          setChangeError(`Notification would fall before the gap start (${format(previewGapStart, 'h:mm a')}). Move the walk later or reduce the notification lead time.`);
+          const earliestAllowedStart = addMinutes(previewGapStart, notifyLead);
+          setChangeError(`This reminder sends ${notifyLead} minutes early, so the earliest start you can choose in this window is ${format(earliestAllowedStart, 'h:mm a')}.`);
           return;
         }
         if (isAfter(previewEnd, previewGapEnd)) {
@@ -1140,6 +1408,15 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
     const walkStart = new Date(); walkStart.setHours(hour24, minute, 0, 0);
     if (!isAfter(walkStart, new Date())) { setAddWalkError('Choose a future time.'); return; }
     const walkEnd = addMinutes(walkStart, duration);
+    const conflictingPlan = getWalkPlanConflict(
+      await plansRepo.getTodayPlans(),
+      walkStart,
+      walkEnd,
+    );
+    if (conflictingPlan) {
+      setAddWalkError(getWalkPlanConflictMessage(conflictingPlan));
+      return;
+    }
     if (!bypassQuiet && (timeUtils.isInQuietHours(walkStart, preferences.quietHoursStart, preferences.quietHoursEnd) ||
       timeUtils.isInQuietHours(walkEnd, preferences.quietHoursStart, preferences.quietHoursEnd))) {
       setQuietHoursBypass(true);
@@ -1161,11 +1438,25 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
         return;
       }
       await plansRepo.save(plan);
-      if (isNotificationsSupported) await notificationService.scheduleManualNudge(plan);
-      const refreshedUpcoming = await plansRepo.getUpcomingPlans(20);
-      setUpcomingPlans(refreshedUpcoming);
+      let nudgeScheduled = false;
+      if (isNotificationsSupported) {
+        const nudgeId = await notificationService.scheduleManualNudge(plan, preferences, {
+          bypassQuietHours: bypassQuiet,
+        });
+        nudgeScheduled = nudgeId != null;
+        await notificationService.recoverScheduledNotifications({
+          prefs: preferences,
+          requestPermissions: false,
+          force: true,
+        });
+      }
+      await load();
       setShowAddWalkModal(false); setAddWalkError(null); setAddWalkInitialState(null);
-      setSaveToastMessage('Walk added');
+      setSaveToastMessage(
+        isNotificationsSupported && !nudgeScheduled
+          ? 'Walk added without reminder'
+          : 'Walk added',
+      );
       setShowSaveToast(true);
     } catch (error) {
       if (__DEV__) console.error('Failed to create manual walk:', error);
@@ -1173,7 +1464,7 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
     } finally { setSavingAddWalk(false); }
   };
 
-  const requestSaveManualWalk = () => {
+  const requestSaveManualWalk = async () => {
     if (savingAddWalk) return;
     const hour = parseInt(addWalkHour, 10);
     const minute = parseInt(addWalkMinute, 10);
@@ -1188,6 +1479,15 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
     const previewStart = new Date();
     previewStart.setHours(hour24, minute, 0, 0);
     if (!isAfter(previewStart, new Date())) { setAddWalkError('Choose a future time.'); return; }
+    const overlappingPlan = getWalkPlanConflict(
+      await plansRepo.getTodayPlans(),
+      previewStart,
+      addMinutes(previewStart, duration),
+    );
+    if (overlappingPlan) {
+      setAddWalkError(getWalkPlanConflictMessage(overlappingPlan));
+      return;
+    }
     const previewPlan: NudgePlan = {
       id: 'preview-manual-plan',
       date: format(previewStart, 'yyyy-MM-dd'),
@@ -1428,13 +1728,14 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
   const activeTodayPlans = useMemo(
     () => upcomingPlans
       .filter((plan) => plan.date === todayKey)
-      .filter((plan) => plan.status === 'planned' || plan.status === 'notified')
+      .filter((plan) => plan.status === 'planned' || plan.status === 'notified' || plan.status === 'started')
       .sort((a, b) => a.walkStart.localeCompare(b.walkStart)),
     [todayKey, upcomingPlans]
   );
 
   const opportunities = useMemo<PlanOpportunity[]>(() => {
     if (!preferences) return [];
+    const nowMs = Date.now();
     return activeTodayPlans
       .filter((plan) => !goalReached || plan.reason === 'manual')
       .map((plan) => {
@@ -1444,14 +1745,91 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
         const gapEnd = parseISO(plan.gapEnd);
         const notifyAt = getPlanNotifyTime(plan, preferences);
         const isManual = plan.reason === 'manual';
+        const walkStartMs = walkStart.getTime();
+        const walkEndMs = walkEnd.getTime();
+        const isActive = activeWalkSnapshot?.planId === plan.id && hasActivePlannedWalkSession;
+        const isLive = !isActive && nowMs >= walkStartMs && nowMs <= walkEndMs;
+        const isPrestartReady =
+          !isActive &&
+          !isLive &&
+          nowMs >= walkStartMs - PRESTART_WINDOW_MS &&
+          nowMs < walkStartMs;
+        const state: OpportunityState = isActive
+          ? 'active'
+          : isLive
+            ? 'live'
+            : isPrestartReady
+              ? 'prestart_ready'
+              : 'scheduled';
+        const primaryAction: OpportunityPrimaryAction =
+          state === 'scheduled'
+            ? 'change'
+            : state === 'active'
+              ? 'go'
+              : 'start';
+        const primaryActionLabel =
+          state === 'scheduled'
+            ? 'Change'
+            : state === 'active'
+              ? 'Go to Walk'
+              : 'Start Walk';
+        const statusLabel =
+          state === 'active'
+            ? 'Walk in progress'
+            : state === 'live'
+              ? 'Live now'
+              : state === 'prestart_ready'
+                ? 'Starts soon'
+                : isManual
+                  ? 'Manual walk'
+                  : 'Scheduled';
+        const notifyLabel = state === 'active'
+          ? 'Resume your active walk from this card'
+          : state === 'live'
+            ? `Window closes at ${format(walkEnd, 'h:mm a')}`
+            : `Notification time: ${format(notifyAt, 'h:mm a')}`;
         return {
-          key: plan.id, plan,
+          key: plan.id,
+          plan,
           timeRange: `${format(walkStart, 'h:mm a')} - ${format(walkEnd, 'h:mm a')}`,
-          walkWindowLabel: isManual ? 'Personally scheduled walk' : `Available window: ${format(gapStart, 'h:mm a')} - ${format(gapEnd, 'h:mm a')}`,
-          notifyLabel: `Notification time: ${format(notifyAt, 'h:mm a')}`,
+          walkWindowLabel: isManual
+            ? 'Personally scheduled walk'
+            : `Available window: ${format(gapStart, 'h:mm a')} - ${format(gapEnd, 'h:mm a')}`,
+          notifyLabel,
+          state,
+          isPromotedLiveCard: state === 'live' || state === 'active',
+          statusLabel,
+          primaryAction,
+          primaryActionLabel,
+          showCancel: state !== 'active',
         };
+      })
+      .sort((a, b) => {
+        const priority: Record<OpportunityState, number> = {
+          active: 0,
+          live: 1,
+          prestart_ready: 2,
+          scheduled: 3,
+        };
+        const byState = priority[a.state] - priority[b.state];
+        if (byState !== 0) return byState;
+        return a.plan.walkStart.localeCompare(b.plan.walkStart);
       });
-  }, [activeTodayPlans, goalReached, preferences]);
+  }, [activeTodayPlans, activeWalkSnapshot?.planId, goalReached, hasActivePlannedWalkSession, preferences]);
+
+  useEffect(() => {
+    const promoted = opportunities.find((opportunity) => opportunity.isPromotedLiveCard);
+    if (!promoted) {
+      lastPromotedLivePlanIdRef.current = null;
+      return;
+    }
+    if (lastPromotedLivePlanIdRef.current === promoted.plan.id) return;
+    lastPromotedLivePlanIdRef.current = promoted.plan.id;
+    analyticsService.track('walk_opportunity_promoted', {
+      planId: promoted.plan.id,
+      state: promoted.state,
+    });
+  }, [opportunities]);
 
   const horizontalPadding = width >= 768 ? 32 : width >= 480 ? 20 : 16;
   const verticalPadding = Math.max(height * 0.05, 16);
@@ -1488,6 +1866,7 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
   const shouldShowPermissionSettingsButton = !canRequestMissingPermissions;
   const shouldShowExactAlarmRepairCard =
     Platform.OS === 'android' &&
+    showExactAlarmReliabilityBanner &&
     exactAlarmHealth?.isUsingFallback === true &&
     (
       !shouldEnforceRequiredPermissionGate ||
@@ -1495,14 +1874,32 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
     ) &&
     !shouldShowRequiredPermissionOverlay;
 
+  useEffect(() => {
+    if (!hasActivePlannedWalkSession) return;
+    analyticsService.track('manual_walk_cta_disabled_for_planned_walk', {
+      planId: activeWalkSnapshot?.planId ?? null,
+    });
+  }, [activeWalkSnapshot?.planId, hasActivePlannedWalkSession]);
+
   const handleOpenExactAlarmSettings = useCallback(() => {
     void (async () => {
+      analyticsService.track('exact_alarm_banner_open_settings', {});
       const opened = await notificationService.openExactAlarmSettings();
       if (!opened) {
         await openAppSettings();
       }
     })().catch((error) => {
       if (__DEV__) console.warn('Failed to open exact alarm settings:', error);
+    });
+  }, []);
+
+  const handleSnoozeExactAlarmRepairCard = useCallback(() => {
+    void (async () => {
+      await authStorage.setExactAlarmBannerSnoozeUntil(addDays(new Date(), 7).toISOString());
+      analyticsService.track('exact_alarm_banner_snooze', { days: 7 });
+      setShowExactAlarmReliabilityBanner(false);
+    })().catch((error) => {
+      if (__DEV__) console.warn('Failed to snooze exact alarm banner:', error);
     });
   }, []);
 
@@ -1602,6 +1999,12 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
                     </Text>
                   </View>
                   <View style={styles.fallbackHintButtonRow}>
+                    <Button
+                      title="Not now"
+                      variant="outline"
+                      onPress={handleSnoozeExactAlarmRepairCard}
+                      style={styles.fallbackHintButton}
+                    />
                     <Button
                       title="Open Alarm Settings"
                       variant="secondary"
@@ -1722,8 +2125,13 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
                       notifyLabel={opportunity.notifyLabel}
                       duration={opportunity.plan.suggestedDurationMinutes}
                       usedMinutes={0}
-                      onCancel={() => cancelOpportunity(opportunity)}
-                      onChange={() => openChangeOpportunity(opportunity)}
+                      state={opportunity.state}
+                      statusLabel={opportunity.statusLabel}
+                      primaryAction={opportunity.primaryAction}
+                      primaryActionLabel={opportunity.primaryActionLabel}
+                      onPrimaryAction={() => { void handleOpportunityPrimaryAction(opportunity); }}
+                      onCancel={opportunity.showCancel ? () => cancelOpportunity(opportunity) : undefined}
+                      showCancel={opportunity.showCancel}
                     />
                   ))}
                 </View>
@@ -1738,7 +2146,12 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
               </View>
 
               <View ref={tourManualWalkRef} style={styles.footerStack} collapsable={false}>
-                <Button title={walkActionTitle} onPress={handleWalkActionPress} testID="dashboard-start-manual-walk" />
+                <Button
+                  title={walkActionTitle}
+                  onPress={handleWalkActionPress}
+                  disabled={hasActivePlannedWalkSession}
+                  testID="dashboard-start-manual-walk"
+                />
                 <Text variant="muted" style={styles.dashboardFooter}>{walkActionHint}</Text>
               </View>
             </View>
@@ -1752,6 +2165,8 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
         onRequestClose={closeChangeModal}
         title="Change walk window"
         subtitle="Set your preferred start time and walk duration."
+        contextLabel={editingOpportunity?.plan.reason === 'manual' ? 'Personally scheduled walk' : editingOpportunity?.walkWindowLabel}
+        helperText={editingOpportunity?.plan.reason === 'manual' ? undefined : changeConstraintHelperText}
         saveLabel={changeQuietHoursBypass ? 'Update anyway' : 'Update'}
         saving={savingChange}
         saveDisabled={!hasChangeDraft}
@@ -1770,7 +2185,7 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
         onNotificationTimingChange={editingOpportunity?.plan.reason === 'manual'
           ? (value) => setChangeNotifyChoice(value as ManualReminderChoice)
           : undefined}
-        onSave={requestSaveWalkChange}
+        onSave={() => { void requestSaveWalkChange(); }}
         onCancel={closeChangeModal}
       />
 
@@ -1795,7 +2210,7 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
         notificationTimingValue={addNotifyChoice}
         notificationTimingOptions={MANUAL_REMINDER_OPTIONS}
         onNotificationTimingChange={(value) => setAddNotifyChoice(value as ManualReminderChoice)}
-        onSave={requestSaveManualWalk}
+        onSave={() => { void requestSaveManualWalk(); }}
         onCancel={closeAddWalkModal}
       />
 
@@ -1874,21 +2289,23 @@ const DashboardScreenInner: React.FC<Props> = ({ navigation, route }) => {
       <AppModal
         visible={pendingInAppWalkPrompt !== null && walkCountdown === null}
         onClose={handleWalkPromptDismiss}
-        title={pendingInAppWalkPrompt ? `Ready for your ${pendingInAppWalkPrompt.walkStart} - ${pendingInAppWalkPrompt.walkEnd} MicroWalk?` : ''}
+        title={pendingInAppWalkPrompt ? 'Walk ready now' : ''}
       >
         <View style={{ paddingBottom: 8 }}>
-          <Text variant="body" style={{ color: palette.textMuted, textAlign: 'center', marginBottom: 24 }}>
-            {pendingInAppWalkPrompt ? `${pendingInAppWalkPrompt.duration} min walk session` : ''}
+            <Text variant="body" style={{ color: palette.textMuted, textAlign: 'center', marginBottom: 24 }}>
+            {pendingInAppWalkPrompt
+              ? `${pendingInAppWalkPrompt.duration} min walk window, ${pendingInAppWalkPrompt.walkStart} - ${pendingInAppWalkPrompt.walkEnd}`
+              : ''}
           </Text>
           <View style={{ flexDirection: 'row', gap: 12 }}>
             <Button
-              title="Not Now"
+              title="Skip This Walk"
               onPress={() => { void handleWalkPromptNotNow(); }}
               variant="danger"
               style={{ flex: 1 }}
             />
             <Button
-              title="Yes"
+              title="Start Walk"
               onPress={() => { void handleWalkPromptYes(); }}
               variant="primary"
               style={{ flex: 1 }}
@@ -2067,7 +2484,12 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   fallbackHintBody: { flex: 1, lineHeight: 20 },
-  fallbackHintButtonRow: { alignItems: 'flex-end' },
+  fallbackHintButtonRow: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 10,
+    flexWrap: 'wrap',
+  },
   fallbackHintButton: {},
   dashboardFooter: { textAlign: 'center', lineHeight: 20 },
   readyText: { textAlign: 'center', fontSize: theme.fontSize.lg, fontWeight: theme.fontWeight.semibold },

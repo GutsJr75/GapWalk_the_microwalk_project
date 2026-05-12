@@ -50,3 +50,14 @@ export class RegisterDeviceDto {
   @IsString()
   timezone?: string;
 }
+
+export class DeviceHeartbeatDto {
+  @ApiProperty({ description: 'Expo push token' })
+  @IsString()
+  expoPushToken: string;
+
+  @ApiPropertyOptional({ description: 'IANA timezone, e.g. America/Chicago' })
+  @IsOptional()
+  @IsString()
+  timezone?: string;
+}

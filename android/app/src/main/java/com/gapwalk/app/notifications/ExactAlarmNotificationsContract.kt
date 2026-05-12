@@ -32,7 +32,7 @@ const val EXTRA_NOTIFICATION_TITLE = "notification_title"
 const val EXTRA_NOTIFICATION_BODY = "notification_body"
 const val EXTRA_NOTIFICATION_TRIGGER_AT_MS = "notification_trigger_at_ms"
 const val DEFAULT_NOTIFICATION_ACTION_IDENTIFIER = "expo.modules.notifications.actions.DEFAULT"
-const val EXACT_NOTIFICATION_CHANNEL_ID = "gapwalk-nudges"
+const val EXACT_NOTIFICATION_CHANNEL_ID = "gapwalk-exact-reminders-v2"
 private const val NOTIFICATION_PREFERENCES_NAME = "gapwalk_exact_notification_prefs"
 private const val PREF_SCHEDULED_IDS = "scheduled_ids"
 private const val PREF_PENDING_RESPONSE_JSON = "pending_response_json"
@@ -211,10 +211,10 @@ fun ensureNotificationChannel(context: Context) {
   val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
   val channel = NotificationChannel(
     EXACT_NOTIFICATION_CHANNEL_ID,
-    "GapWalk Nudges",
+    "GapWalk Ready Alerts",
     NotificationManager.IMPORTANCE_HIGH,
   ).apply {
-    description = "GapWalk walk reminders"
+    description = "GapWalk walk ready alerts and exact reminders"
     enableVibration(isReminderVibrationEnabled(context))
     setShowBadge(false)
     lightColor = 0xFF6366F1.toInt()

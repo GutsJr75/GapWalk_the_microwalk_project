@@ -2,6 +2,7 @@ import { Injectable, NotFoundException, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   CreateNudgePlanDto,
+  RecordLocalDeliveryDto,
   UpdateNudgePlanStatusDto,
   QueryNudgePlansDto,
 } from './dto/nudge-plans.dto';
@@ -97,6 +98,7 @@ export class NudgePlansService {
         gapEnd: new Date(dto.gapEnd),
         walkStart: new Date(dto.walkStart),
         suggestedDurationMinutes: dto.suggestedDurationMinutes,
+        notificationsEnabled: dto.notificationsEnabled ?? true,
         reason: dto.reason,
         origin: 'local_fallback',
       },
@@ -247,5 +249,34 @@ export class NudgePlansService {
         status: { in: ['notified', 'started', 'completed'] },
       },
     });
+  }
+
+  async recordLocalDelivery(userId: string, dto: RecordLocalDeliveryDto) {
+    const plan = await this.prisma.nudgePlan.findFirst({
+      where: {
+        userId,
+        localId: dto.localId,
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    if (!plan) {
+      throw new NotFoundException('Nudge plan not found');
+    }
+
+    await this.prisma.nudgePlan.update({
+      where: { id: plan.id },
+      data: {
+        localReminderDeliveredAt: new Date(dto.deliveredAt),
+        localReminderScheduledAt: dto.scheduledAt ? new Date(dto.scheduledAt) : undefined,
+      },
+    });
+
+    return {
+      recorded: true,
+      source: dto.source,
+    };
   }
 }

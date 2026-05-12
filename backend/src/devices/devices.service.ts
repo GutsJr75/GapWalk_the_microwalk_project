@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { RegisterDeviceDto } from './dto/register-device.dto';
+import { DeviceHeartbeatDto, RegisterDeviceDto } from './dto/register-device.dto';
 
 @Injectable()
 export class DevicesService {
@@ -68,6 +68,31 @@ export class DevicesService {
       where: { userId, expoPushToken },
       data: { isActive: false },
     });
+  }
+
+  async heartbeat(userId: string, dto: DeviceHeartbeatDto) {
+    const [updated] = await Promise.all([
+      this.prisma.device.updateMany({
+        where: {
+          userId,
+          expoPushToken: dto.expoPushToken,
+          isActive: true,
+        },
+        data: {
+          lastSeenAt: new Date(),
+        },
+      }),
+      dto.timezone
+        ? this.prisma.user.update({
+            where: { id: userId },
+            data: { timezone: dto.timezone },
+          })
+        : Promise.resolve(),
+    ]);
+
+    return {
+      refreshed: updated.count > 0,
+    };
   }
 
   async getActiveDevices(userId: string) {
