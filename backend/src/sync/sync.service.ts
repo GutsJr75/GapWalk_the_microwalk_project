@@ -26,12 +26,16 @@ export class SyncService {
         update: {
           type: dto.scheduleSource.type,
           filename: dto.scheduleSource.filename,
+          ...(dto.scheduleSource.googleConnected !== undefined
+            ? { googleConnected: dto.scheduleSource.googleConnected }
+            : {}),
           lastImportedAt: syncTimestamp,
         },
         create: {
           userId,
           type: dto.scheduleSource.type,
           filename: dto.scheduleSource.filename,
+          googleConnected: dto.scheduleSource.googleConnected ?? false,
           lastImportedAt: syncTimestamp,
         },
       });

@@ -109,7 +109,7 @@ function buildFullSyncPayload() {
     },
 
     // 3. ScheduleSource
-    scheduleSource: { type: 'manual' },
+    scheduleSource: { type: 'manual', googleConnected: false },
 
     // 4. BusyEvents
     busyEvents: [
@@ -269,8 +269,11 @@ describe('POST /api/sync — Full sync payload (11 categories)', () => {
   });
 
   it('ScheduleSource — sync writes schedule source', async () => {
-    const { status } = await authed('POST', '/sync', { scheduleSource: { type: 'manual' } });
+    const { status, data } = await authed('POST', '/sync', {
+      scheduleSource: { type: 'google', googleConnected: true },
+    });
     expect([200, 201]).toContain(status);
+    expect(data).toHaveProperty('scheduleSource.googleConnected', true);
   });
 
   it('BusyEvents — sync appends busy events', async () => {

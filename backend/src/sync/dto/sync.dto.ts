@@ -111,6 +111,7 @@ class SyncPreferencesDto {
 class SyncScheduleSourceDto {
   @IsEnum(ScheduleSourceType) type: ScheduleSourceType;
   @IsOptional() @IsString() filename?: string;
+  @IsOptional() @IsBoolean() googleConnected?: boolean;
 }
 
 class SyncAnalyticsEventDto {

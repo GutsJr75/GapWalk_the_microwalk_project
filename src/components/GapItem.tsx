@@ -199,8 +199,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     marginLeft: theme.spacing.ml,
     gap: theme.spacing.sm,
-    minWidth: 80,
-    maxWidth: 96,
+    minWidth: 72,
+    maxWidth: 86,
     flexShrink: 0,
   },
   actionBtn: {

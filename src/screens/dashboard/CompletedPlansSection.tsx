@@ -3,26 +3,37 @@ import { View, StyleSheet } from 'react-native';
 import { Text } from '../../components/Text';
 import { theme } from '../../theme';
 import { useThemePalette } from '../../theme/palette';
-import { NudgePlan } from '../../types';
-import { parseISO, format } from 'date-fns';
+import { withAlpha } from '../../theme/colorUtils';
 
-interface CompletedPlansSectionProps {
-  completedPlans: NudgePlan[];
-  todayMinutesWalked?: number;
+export interface WalkedTodayEntry {
+  id: string;
+  title: string;
+  walkedMinutes: number;
+  plannedMinutes: number;
+  status: 'partial' | 'incomplete' | 'completed';
 }
 
-export const CompletedPlansSection: React.FC<CompletedPlansSectionProps> = ({ completedPlans, todayMinutesWalked = 0 }) => {
+interface WalkedTodaySectionProps {
+  entries: WalkedTodayEntry[];
+}
+
+const STATUS_LABELS: Record<WalkedTodayEntry['status'], string> = {
+  partial: 'Partial',
+  incomplete: 'Incomplete',
+  completed: 'Completed',
+};
+
+export const WalkedTodaySection: React.FC<WalkedTodaySectionProps> = ({ entries }) => {
   const palette = useThemePalette();
 
-  if (completedPlans.length === 0) {
-    if (todayMinutesWalked > 0) return null;
+  if (entries.length === 0) {
     return (
       <View style={styles.section}>
         <Text variant="bodySmall" color={palette.textMuted} style={styles.label}>
-          Completed today
+          Walked today
         </Text>
         <Text variant="bodySmall" color={palette.textMuted} style={styles.emptyHint}>
-          No completed walks yet today. Start one from your opportunities above or tap &quot;Start Manual Walk&quot; below.
+          No walks logged yet today. Start one from your opportunities above or tap &quot;Start Manual Walk&quot; below.
         </Text>
       </View>
     );
@@ -31,36 +42,41 @@ export const CompletedPlansSection: React.FC<CompletedPlansSectionProps> = ({ co
   return (
     <View style={styles.section}>
       <Text variant="bodySmall" color={palette.textMuted} style={styles.label}>
-        Completed today
+        Walked today
       </Text>
-      {completedPlans.map((plan) => {
-        const walkStart = parseISO(plan.walkStart);
-        const gapStart = parseISO(plan.gapStart);
-        const gapEnd = parseISO(plan.gapEnd);
+      {entries.map((entry) => {
+        const isCompleted = entry.status === 'completed';
+        const badgeBackground = isCompleted
+          ? palette.accentMuted
+          : withAlpha(theme.colors.warning, 0.18);
+        const badgeTextColor = isCompleted
+          ? palette.accentOnTint
+          : theme.colors.warning;
+
         return (
           <View
-            key={plan.id}
+            key={entry.id}
             style={[styles.card, { backgroundColor: palette.bgSurface, borderColor: palette.borderSoft }]}
           >
             <View style={styles.cardRow}>
               <Text variant="body" style={[styles.time, { color: palette.textPrimary }]}>
-                {format(walkStart, 'h:mm a')}
+                {entry.title}
               </Text>
-              <View style={[styles.badge, { backgroundColor: palette.accentMuted }]}>
+              <View style={[styles.badge, { backgroundColor: badgeBackground }]}>
                 <Text
                   variant="bodySmall"
                   style={{
-                    color: palette.accentOnTint,
+                    color: badgeTextColor,
                     fontWeight: theme.fontWeight.medium,
                     fontSize: theme.fontSize.xs,
                   }}
                 >
-                  Done
+                  {STATUS_LABELS[entry.status]}
                 </Text>
               </View>
             </View>
-            <Text variant="muted" style={{ fontSize: theme.fontSize.xs }}>
-              {format(gapStart, 'h:mm a')} - {format(gapEnd, 'h:mm a')} ({plan.suggestedDurationMinutes} min)
+            <Text variant="muted" style={styles.progressText}>
+              {entry.walkedMinutes}/{entry.plannedMinutes} min walked
             </Text>
           </View>
         );
@@ -96,6 +112,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     paddingVertical: 2,
     borderRadius: 999,
+    marginLeft: theme.spacing.sm,
+    flexShrink: 0,
+  },
+  progressText: {
+    fontSize: theme.fontSize.xs,
+    marginTop: theme.spacing.xs,
   },
   emptyHint: {
     lineHeight: 18,

@@ -51,13 +51,26 @@ export class PushSendProcessor extends WorkerHost {
     const title = '🚶 Time for a walk!';
     const body = `Your ${plan.suggestedDurationMinutes}-minute micro-walk is scheduled now.`;
 
-    await this.pushService.sendWalkNudge(
+    const pushResult = await this.pushService.sendWalkNudge(
       plan.userId,
       nudgePlanId,
       plan.localId ?? nudgePlanId,
       title,
       body,
     );
+
+    if (!pushResult.firstSuccessTicketId) {
+      this.logger.warn(`No backup push sent for plan ${nudgePlanId}`);
+      return;
+    }
+
+    await this.prisma.nudgePlan.update({
+      where: { id: nudgePlanId },
+      data: {
+        pushTicketId: pushResult.firstSuccessTicketId,
+        pushSentAt: new Date(),
+      },
+    });
 
     this.logger.log(`Push sent for plan ${nudgePlanId}`);
   }

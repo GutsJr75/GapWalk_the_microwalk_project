@@ -533,6 +533,43 @@ const scheduleExpoPlanNotification = async (input: {
   });
 };
 
+const scheduleImmediateWalkReadyNotification = async (input: {
+  notificationId: string;
+  planId: string;
+  durationMinutes: number;
+  walkStart: string;
+  walkEnd: string;
+}): Promise<string | null> => {
+  try {
+    const walkStartFormatted = format(parseISO(input.walkStart), 'h:mm a');
+    const walkEndFormatted = format(parseISO(input.walkEnd), 'h:mm a');
+    await Notifications.scheduleNotificationAsync({
+      identifier: input.notificationId,
+      content: {
+        title: 'Walk ready now',
+        body: `${input.durationMinutes} min walk window, ${walkStartFormatted} - ${walkEndFormatted}`,
+        categoryIdentifier: WALK_READY_CATEGORY_ID,
+        data: {
+          planId: input.planId,
+          type: WALK_READY_NOTIFICATION_TYPE,
+          walkStart: input.walkStart,
+          walkEnd: input.walkEnd,
+          duration: input.durationMinutes,
+        },
+        sound: true,
+        ...(Platform.OS === 'android'
+          ? { channelId: ANDROID_CHANNEL_DEFAULT, priority: Notifications.AndroidNotificationPriority.MAX }
+          : {}),
+      },
+      trigger: null,
+    });
+    return input.notificationId;
+  } catch (error) {
+    if (__DEV__) console.error('Failed to schedule immediate walk-ready notification:', error);
+    return null;
+  }
+};
+
 const schedulePlanNotification = async (input: {
   notificationId: string;
   planId: string;
@@ -808,58 +845,80 @@ export const notificationService = {
 
     let nudgeId: string | null = null;
     let missedId: string | null = null;
+    const now = new Date();
+    const walkStart = parseISO(plan.walkStart);
+    const walkEnd = parseISO(plan.gapEnd);
+    const durationMinutes = plan.suggestedDurationMinutes;
+    const alertTime = nudgePolicy.triggerAt;
+    const readyTime = normalizeNotificationDate(walkStart);
+    const alertId = getWalkAlertNotificationId(plan.id);
+    const readyId = getWalkReadyNotificationId(plan.id);
+    const liveReadyRecoveryEligible =
+      plan.status === 'planned' &&
+      !nudgePolicy.allowed &&
+      nudgePolicy.reason === 'past' &&
+      !goalReached &&
+      walkStart.getTime() <= now.getTime() &&
+      walkEnd.getTime() > now.getTime();
 
     if (
       plan.status === 'planned' &&
-      nudgePolicy.allowed &&
-      !existingScheduledIds?.has(nudgePolicy.notificationId)
+      (
+        (nudgePolicy.allowed && !existingScheduledIds?.has(nudgePolicy.notificationId)) ||
+        (liveReadyRecoveryEligible && !existingScheduledIds?.has(readyId))
+      )
     ) {
       try {
-        const walkStart = parseISO(plan.walkStart);
-        const walkEnd = parseISO(plan.gapEnd);
-        const durationMinutes = plan.suggestedDurationMinutes;
-        const alertTime = nudgePolicy.triggerAt;
-        const readyTime = normalizeNotificationDate(walkStart);
-        const alertId = getWalkAlertNotificationId(plan.id);
-        const readyId = getWalkReadyNotificationId(plan.id);
+        if (nudgePolicy.allowed) {
+          // Phase 1 (Alert) — informational, no action buttons
+          // Only schedule if alert time is meaningfully before walk start (> 1 min gap)
+          const alertAndReadyAreDifferent =
+            Math.abs(alertTime.getTime() - readyTime.getTime()) > 60_000;
 
-        // Phase 1 (Alert) — informational, no action buttons
-        // Only schedule if alert time is meaningfully before walk start (> 1 min gap)
-        const alertAndReadyAreDifferent =
-          Math.abs(alertTime.getTime() - readyTime.getTime()) > 60_000;
-
-        if (alertAndReadyAreDifferent && !existingScheduledIds?.has(alertId)) {
-          const phase1Id = await schedulePlanNotification({
-            notificationId: alertId,
-            planId: plan.id,
-            type: WALK_ALERT_NOTIFICATION_TYPE,
-            title: `Upcoming MicroWalk at ${format(walkStart, 'h:mm a')}`,
-            body: `${durationMinutes} min walk coming up`,
-            triggerAt: alertTime,
-            // No categoryIdentifier — purely informational
-          });
-          if (phase1Id) {
-            existingScheduledIds?.add(phase1Id);
+          if (alertAndReadyAreDifferent && !existingScheduledIds?.has(alertId)) {
+            const phase1Id = await schedulePlanNotification({
+              notificationId: alertId,
+              planId: plan.id,
+              type: WALK_ALERT_NOTIFICATION_TYPE,
+              title: `Upcoming MicroWalk at ${format(walkStart, 'h:mm a')}`,
+              body: `${durationMinutes} min walk coming up`,
+              triggerAt: alertTime,
+              // No categoryIdentifier — purely informational
+            });
+            if (phase1Id) {
+              existingScheduledIds?.add(phase1Id);
+            }
           }
-        }
 
-        // Phase 2 (Ready) uses direct action labels that match the in-app prompt.
-        if (!existingScheduledIds?.has(readyId)) {
-          const walkStartFormatted = format(walkStart, 'h:mm a');
-          const walkEndFormatted = format(walkEnd, 'h:mm a');
-          nudgeId = await schedulePlanNotification({
+          // Phase 2 (Ready) uses direct action labels that match the in-app prompt.
+          if (!existingScheduledIds?.has(readyId)) {
+            const walkStartFormatted = format(walkStart, 'h:mm a');
+            const walkEndFormatted = format(walkEnd, 'h:mm a');
+            nudgeId = await schedulePlanNotification({
+              notificationId: readyId,
+              planId: plan.id,
+              type: WALK_READY_NOTIFICATION_TYPE,
+              title: 'Walk ready now',
+              body: `${durationMinutes} min walk window, ${walkStartFormatted} - ${walkEndFormatted}`,
+              triggerAt: readyTime,
+              categoryIdentifier: WALK_READY_CATEGORY_ID,
+              extraData: {
+                walkStart: plan.walkStart,
+                walkEnd: plan.gapEnd,
+                duration: durationMinutes,
+              },
+            });
+            if (nudgeId) {
+              existingScheduledIds?.add(nudgeId);
+            }
+          }
+        } else if (liveReadyRecoveryEligible) {
+          nudgeId = await scheduleImmediateWalkReadyNotification({
             notificationId: readyId,
             planId: plan.id,
-            type: WALK_READY_NOTIFICATION_TYPE,
-            title: 'Walk ready now',
-            body: `${durationMinutes} min walk window, ${walkStartFormatted} - ${walkEndFormatted}`,
-            triggerAt: readyTime,
-            categoryIdentifier: WALK_READY_CATEGORY_ID,
-            extraData: {
-              walkStart: plan.walkStart,
-              walkEnd: plan.gapEnd,
-              duration: durationMinutes,
-            },
+            durationMinutes,
+            walkStart: plan.walkStart,
+            walkEnd: plan.gapEnd,
           });
           if (nudgeId) {
             existingScheduledIds?.add(nudgeId);
@@ -1241,29 +1300,13 @@ export const notificationService = {
    */
   async showImmediateNudge(planId: string, durationMinutes: number, walkStart?: string, walkEnd?: string): Promise<void> {
     if (!isNotificationsSupported) return;
-    const now = new Date();
-    const walkStartFormatted = walkStart ? format(parseISO(walkStart), 'h:mm a') : format(now, 'h:mm a');
-    const walkEndFormatted = walkEnd ? format(parseISO(walkEnd), 'h:mm a') : '';
-    const title = walkEnd
-      ? `Ready now for your ${walkStartFormatted} - ${walkEndFormatted} MicroWalk session?`
-      : `Ready for a quick ${durationMinutes} min MicroWalk?`;
-    await Notifications.scheduleNotificationAsync({
-      identifier: getWalkReadyNotificationId(planId),
-      content: {
-        title,
-        body: `${durationMinutes} min walk window is open.`,
-        categoryIdentifier: WALK_READY_CATEGORY_ID,
-        data: {
-          planId,
-          type: WALK_READY_NOTIFICATION_TYPE,
-          walkStart: walkStart ?? now.toISOString(),
-          walkEnd: walkEnd ?? '',
-          duration: durationMinutes,
-        },
-        sound: true,
-        ...(Platform.OS === 'android' ? { channelId: ANDROID_CHANNEL_DEFAULT, priority: Notifications.AndroidNotificationPriority.MAX } : {}),
-      },
-      trigger: null,
+    const now = new Date().toISOString();
+    await scheduleImmediateWalkReadyNotification({
+      notificationId: getWalkReadyNotificationId(planId),
+      planId,
+      durationMinutes,
+      walkStart: walkStart ?? now,
+      walkEnd: walkEnd ?? now,
     });
   },
 

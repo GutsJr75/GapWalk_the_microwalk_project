@@ -199,7 +199,8 @@ export const plansRepo = {
       created_at: string;
     }>(
       `SELECT * FROM nudge_plans 
-       WHERE gap_end > ? AND status IN ('planned', 'notified', 'started')
+       WHERE status = 'started'
+          OR (gap_end > ? AND status IN ('planned', 'notified'))
        ORDER BY walk_start ASC LIMIT ?`,
       [now, limit]
     );

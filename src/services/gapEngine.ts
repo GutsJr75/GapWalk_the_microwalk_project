@@ -50,6 +50,20 @@ const clamp = (value: number, min: number, max: number): number =>
 const sameDateKey = (a: Date, b: Date): boolean =>
   format(a, 'yyyy-MM-dd') === format(b, 'yyyy-MM-dd');
 
+const isBlockingPlan = (plan: NudgePlan): boolean =>
+  plan.status === 'planned' || plan.status === 'notified' || plan.status === 'started';
+
+const getPlanWalkInterval = (plan: NudgePlan): TimeInterval | null => {
+  const start = parseISO(plan.walkStart);
+  const gapEnd = parseISO(plan.gapEnd);
+  const rawEnd = addMinutes(start, Math.max(1, plan.suggestedDurationMinutes));
+  const end = isAfter(rawEnd, gapEnd) ? gapEnd : rawEnd;
+  if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime()) || !isBefore(start, end)) {
+    return null;
+  }
+  return { start, end };
+};
+
 export const NO_SCHEDULE_FALLBACK_REASON = 'no_schedule_fallback';
 
 const NO_SCHEDULE_CANDIDATE_STEP_MINUTES = 15;
@@ -76,14 +90,15 @@ export const gapEngine = {
   async generatePlansForDate(
     date: Date,
     events: BusyEvent[],
-    prefs: Preferences
+    prefs: Preferences,
+    blockingPlans: NudgePlan[] = [],
   ): Promise<NudgePlan[]> {
     if (prefs.dailyTargetMinutes <= 0 || prefs.notificationCountPerDay <= 0) {
       return [];
     }
 
     if (events.length === 0) {
-      return this.generateNoScheduleFallbackPlans(date, prefs);
+      return this.generateNoScheduleFallbackPlans(date, prefs, blockingPlans);
     }
 
     const dayStart = startOfDay(date);
@@ -101,7 +116,7 @@ export const gapEngine = {
       );
     });
 
-    const rawGaps = this.findGaps(dayStart, dayEnd, dayEvents, prefs);
+    const rawGaps = this.findGaps(dayStart, dayEnd, dayEvents, prefs, blockingPlans);
     const candidateGaps = rawGaps
       .map((gap) => {
         if (!isToday) return gap;
@@ -181,6 +196,7 @@ export const gapEngine = {
   async generateNoScheduleFallbackPlans(
     date: Date,
     prefs: Preferences,
+    blockingPlans: NudgePlan[] = [],
   ): Promise<NudgePlan[]> {
     const now = new Date();
     const isToday = sameDateKey(date, now);
@@ -194,7 +210,7 @@ export const gapEngine = {
       360,
     );
 
-    const freeWindows = this.findGaps(dayStart, dayEnd, [], prefs);
+    const freeWindows = this.findGaps(dayStart, dayEnd, [], prefs, blockingPlans);
     if (freeWindows.length === 0) return [];
 
     const historySince = startOfDay(
@@ -399,7 +415,8 @@ export const gapEngine = {
     dayStart: Date,
     dayEnd: Date,
     events: BusyEvent[],
-    prefs: Preferences
+    prefs: Preferences,
+    blockingPlans: NudgePlan[] = [],
   ): TimeInterval[] {
     const timedEvents = events.filter((e) => !e.isAllDay);
 
@@ -410,9 +427,20 @@ export const gapEngine = {
       }))
       .sort((a, b) => a.start.getTime() - b.start.getTime());
 
+    const planBusyIntervals: TimeInterval[] = blockingPlans
+      .filter((plan) => isBlockingPlan(plan))
+      .map((plan) => getPlanWalkInterval(plan))
+      .filter((interval): interval is TimeInterval => interval != null)
+      .map((interval) => ({
+        start: isBefore(interval.start, dayStart) ? dayStart : interval.start,
+        end: isAfter(interval.end, dayEnd) ? dayEnd : interval.end,
+      }))
+      .filter((interval) => isBefore(interval.start, interval.end))
+      .sort((a, b) => a.start.getTime() - b.start.getTime());
+
     // Treat quiet hours as blocked time so we never generate plans inside them.
     const quietIntervals = this.expandTimeRangeForDay(dayStart, prefs.quietHoursStart, prefs.quietHoursEnd);
-    const busyIntervals = [...eventBusyIntervals, ...quietIntervals]
+    const busyIntervals = [...eventBusyIntervals, ...planBusyIntervals, ...quietIntervals]
       .sort((a, b) => a.start.getTime() - b.start.getTime());
 
     const merged = this.mergeIntervals(busyIntervals);

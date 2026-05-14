@@ -91,13 +91,14 @@ export class AnalyticsController {
   @ApiOperation({ summary: 'Get daily aggregations' })
   getDailyAggregations(
     @CurrentUser('userId') userId: string,
+    @CurrentUser('role') role: UserRole | undefined,
     @Query() query: QueryAggregationsDto,
   ) {
-    // Participants can only see their own; for researchers, userId query param is used
-    const targetUserId = query.userId ?? userId;
+    const canQueryAnyUser =
+      role === UserRole.researcher || role === UserRole.admin;
     return this.analyticsService.getDailyAggregations({
       ...query,
-      userId: targetUserId,
+      userId: canQueryAnyUser ? (query.userId ?? userId) : userId,
     });
   }
 
@@ -105,12 +106,14 @@ export class AnalyticsController {
   @ApiOperation({ summary: 'Get weekly aggregations' })
   getWeeklyAggregations(
     @CurrentUser('userId') userId: string,
+    @CurrentUser('role') role: UserRole | undefined,
     @Query() query: QueryAggregationsDto,
   ) {
-    const targetUserId = query.userId ?? userId;
+    const canQueryAnyUser =
+      role === UserRole.researcher || role === UserRole.admin;
     return this.analyticsService.getWeeklyAggregations({
       ...query,
-      userId: targetUserId,
+      userId: canQueryAnyUser ? (query.userId ?? userId) : userId,
     });
   }
 

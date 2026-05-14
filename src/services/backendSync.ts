@@ -302,6 +302,7 @@ export async function runBackendSync(): Promise<boolean> {
             scheduleSource: {
               type: scheduleSource.type,
               filename: scheduleSource.filename,
+              googleConnected: scheduleSource.googleConnected,
             },
           }
         : {}),

@@ -7,8 +7,6 @@ export interface ScheduleSource {
   filename?: string;
   lastImportedAt?: string;
   googleConnected?: boolean;
-  googleAccessToken?: string;
-  googleRefreshToken?: string;
 }
 
 export interface BusyEvent {

@@ -90,8 +90,6 @@ The API will be available at `http://localhost:3000`.
 | `CORS_ORIGIN`            | No       | `http://localhost:8081`  | Allowed CORS origin                                         |
 | `ENABLE_WORKERS`         | No       | `true`                   | Set `false` to disable BullMQ schedulers/processors         |
 | `PRISMA_CONNECT_IN_TEST` | No       | `false`                  | When `NODE_ENV=test`, set `true` to force Prisma DB connect |
-| `GOOGLE_CLIENT_ID`       | No       | -                        | Google Calendar OAuth client ID                             |
-| `GOOGLE_CLIENT_SECRET`   | No       | -                        | Google Calendar OAuth client secret                         |
 
 ## NPM Scripts
 

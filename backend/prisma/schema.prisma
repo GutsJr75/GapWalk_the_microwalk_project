@@ -135,9 +135,6 @@ model ScheduleSource {
   filename           String?
   lastImportedAt     DateTime?          @map("last_imported_at")
   googleConnected    Boolean            @default(false) @map("google_connected")
-  googleAccessToken  String?            @map("google_access_token")
-  googleRefreshToken String?            @map("google_refresh_token")
-  googleTokenExpiry  DateTime?          @map("google_token_expiry")
   createdAt          DateTime           @default(now()) @map("created_at")
   updatedAt          DateTime           @updatedAt @map("updated_at")
 

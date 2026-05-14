@@ -40,8 +40,6 @@ const initializeTables = async () => {
       filename TEXT,
       last_imported_at TEXT,
       google_connected INTEGER DEFAULT 0,
-      google_access_token TEXT,
-      google_refresh_token TEXT,
       updated_at TEXT DEFAULT CURRENT_TIMESTAMP
     );
 
@@ -184,22 +182,28 @@ const initializeTables = async () => {
   // Ensure older local databases are upgraded with newer columns.
   await runMigrations();
 
-  // Security hardening: keep Google OAuth tokens out of local SQLite.
-  await db.runAsync(
-    `UPDATE schedule_source
-     SET google_access_token = NULL,
-         google_refresh_token = NULL
-     WHERE google_access_token IS NOT NULL
-        OR google_refresh_token IS NOT NULL`
+  const scheduleSourceColumns = await db.getAllAsync<{ name: string }>(
+    'PRAGMA table_info(schedule_source)'
   );
+  const scheduleSourceColumnNames = new Set(scheduleSourceColumns.map((column) => column.name));
+  if (
+    scheduleSourceColumnNames.has('google_access_token') ||
+    scheduleSourceColumnNames.has('google_refresh_token')
+  ) {
+    await db.runAsync(
+      `UPDATE schedule_source
+       SET google_access_token = NULL,
+           google_refresh_token = NULL
+       WHERE google_access_token IS NOT NULL
+          OR google_refresh_token IS NOT NULL`
+    );
+  }
 };
 
 // Migration column definitions grouped by table.
 const MIGRATION_COLUMNS: Record<string, [column: string, definition: string][]> = {
   schedule_source: [
     ['google_connected', 'INTEGER DEFAULT 0'],
-    ['google_access_token', 'TEXT'],
-    ['google_refresh_token', 'TEXT'],
     ['updated_at', 'TEXT DEFAULT CURRENT_TIMESTAMP'],
   ],
   busy_events: [

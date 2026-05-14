@@ -1,10 +1,8 @@
 import {
   Controller,
   Post,
-  Delete,
   Get,
   Body,
-  Param,
   UseGuards,
 } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
@@ -42,14 +40,5 @@ export class DevicesController {
   @ApiOperation({ summary: 'List active devices' })
   listActive(@CurrentUser('userId') userId: string) {
     return this.devicesService.getActiveDevices(userId);
-  }
-
-  @Delete(':token')
-  @ApiOperation({ summary: 'Deactivate a device' })
-  deactivate(
-    @CurrentUser('userId') userId: string,
-    @Param('token') token: string,
-  ) {
-    return this.devicesService.deactivate(userId, token);
   }
 }

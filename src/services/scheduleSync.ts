@@ -30,6 +30,11 @@ export async function syncNudgePlansForCurrentSchedule(
         (plan.status === 'planned' || plan.status === 'notified') &&
         plan.reason !== 'manual',
     );
+    const protectedPlans = existing.filter(
+      (plan) =>
+        (plan.status === 'planned' || plan.status === 'notified' || plan.status === 'started') &&
+        (plan.reason === 'manual' || plan.reason === 'customized' || plan.status === 'started'),
+    );
     for (const plan of activeAutoPlans) {
       await plansRepo.updateStatus(plan.id, 'cancelled');
       if (isNotificationsSupported) {
@@ -37,7 +42,7 @@ export async function syncNudgePlansForCurrentSchedule(
       }
     }
 
-    const plans = await gapEngine.generatePlansForDate(date, events, prefs);
+    const plans = await gapEngine.generatePlansForDate(date, events, prefs, protectedPlans);
     await plansRepo.saveMany(plans);
     rebuiltPlans.push(...plans);
   }

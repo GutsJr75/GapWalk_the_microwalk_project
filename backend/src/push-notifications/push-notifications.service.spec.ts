@@ -39,6 +39,7 @@ describe('PushNotificationsService', () => {
       },
       nudgePlan: {
         update: jest.fn().mockResolvedValue({}),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
         findMany: jest.fn().mockResolvedValue([]),
       },
     };
@@ -61,22 +62,27 @@ describe('PushNotificationsService', () => {
       const result = await service.sendWalkNudge(
         'user-1',
         'plan-1',
+        'local-plan-1',
         'Walk time!',
         'Go!',
       );
-      expect(result).toEqual([]);
+      expect(result).toEqual({
+        tickets: [],
+        firstSuccessTicketId: null,
+      });
     });
 
     it('should send push and log the result', async () => {
       const result = await service.sendWalkNudge(
         'user-1',
         'plan-1',
+        'local-plan-1',
         'Walk time!',
         'Go walking!',
       );
-      expect(result.length).toBeGreaterThan(0);
+      expect(result.tickets.length).toBeGreaterThan(0);
+      expect(result.firstSuccessTicketId).toBe('ticket-1');
       expect(mockPrisma.pushLog.create).toHaveBeenCalled();
-      expect(mockPrisma.nudgePlan.update).toHaveBeenCalled();
     });
   });
 
@@ -85,15 +91,114 @@ describe('PushNotificationsService', () => {
       mockPrisma.nudgePlan.findMany.mockResolvedValue([
         {
           id: 'plan-1',
+          localId: 'local-plan-1',
           userId: 'user-1',
+          walkStart: new Date(Date.now() - 2 * 60_000).toISOString(),
           suggestedDurationMinutes: 10,
           status: 'planned',
-          user: { id: 'user-1' },
+          user: {
+            id: 'user-1',
+            timezone: 'America/Los_Angeles',
+            lastSyncedAt: null,
+            devices: [],
+          },
         },
       ]);
 
       const result = await service.sendDueNudges();
       expect(result.sent).toBe(1);
+      expect(mockPrisma.nudgePlan.updateMany).toHaveBeenCalled();
+    });
+
+    it('should not count a plan as sent when no push tokens are available', async () => {
+      (mockDevices.getActiveTokens as jest.Mock).mockResolvedValue([]);
+      mockPrisma.nudgePlan.findMany.mockResolvedValue([
+        {
+          id: 'plan-1',
+          localId: 'local-plan-1',
+          userId: 'user-1',
+          walkStart: new Date(Date.now() - 2 * 60_000).toISOString(),
+          suggestedDurationMinutes: 10,
+          status: 'planned',
+          user: {
+            id: 'user-1',
+            timezone: 'America/Los_Angeles',
+            lastSyncedAt: null,
+            devices: [],
+          },
+        },
+      ]);
+
+      const result = await service.sendDueNudges();
+      expect(result.sent).toBe(0);
+    });
+
+    it('should only send one backup push when two workers race on the same due plan', async () => {
+      const planState = {
+        status: 'planned',
+        pushSentAt: null as Date | null,
+        pushTicketId: null as string | null,
+      };
+
+      mockPrisma.nudgePlan.findMany.mockResolvedValue([
+        {
+          id: 'plan-1',
+          localId: 'local-plan-1',
+          userId: 'user-1',
+          walkStart: new Date(Date.now() - 2 * 60_000).toISOString(),
+          suggestedDurationMinutes: 10,
+          status: 'planned',
+          user: {
+            id: 'user-1',
+            timezone: 'America/Los_Angeles',
+            lastSyncedAt: null,
+            devices: [],
+          },
+        },
+      ]);
+
+      mockPrisma.nudgePlan.updateMany.mockImplementation(
+        async ({ where, data }: { where: any; data: any }) => {
+          const statusFilter = where?.status?.in ?? [];
+          const matchesStatus = statusFilter.includes(planState.status);
+          const expectsNullClaim = Object.prototype.hasOwnProperty.call(
+            where,
+            'pushTicketId',
+          );
+          const claimMatches = !expectsNullClaim || planState.pushTicketId === null;
+
+          if (
+            where?.id !== 'plan-1' ||
+            !matchesStatus ||
+            !claimMatches ||
+            planState.pushSentAt !== null
+          ) {
+            return { count: 0 };
+          }
+
+          planState.status = data.status ?? planState.status;
+          if (Object.prototype.hasOwnProperty.call(data, 'pushTicketId')) {
+            planState.pushTicketId = data.pushTicketId;
+          }
+          return { count: 1 };
+        },
+      );
+
+      mockPrisma.nudgePlan.update.mockImplementation(
+        async ({ data }: { data: any }) => {
+          planState.pushTicketId = data.pushTicketId ?? planState.pushTicketId;
+          planState.pushSentAt = data.pushSentAt ?? planState.pushSentAt;
+          return {};
+        },
+      );
+
+      const [first, second] = await Promise.all([
+        service.sendDueNudges(),
+        service.sendDueNudges(),
+      ]);
+
+      expect(first.sent + second.sent).toBe(1);
+      expect(mockPrisma.pushLog.create).toHaveBeenCalledTimes(1);
     });
 
     it('should return 0 when no due plans', async () => {

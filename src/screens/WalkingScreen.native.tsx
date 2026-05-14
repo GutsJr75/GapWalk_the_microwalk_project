@@ -166,6 +166,7 @@ interface WalkNoticeCardProps {
   actionLabel?: string;
   onAction?: () => void;
   actionBusy?: boolean;
+  onDismiss?: () => void;
 }
 
 const WalkNoticeCard: React.FC<WalkNoticeCardProps> = ({
@@ -178,6 +179,7 @@ const WalkNoticeCard: React.FC<WalkNoticeCardProps> = ({
   actionLabel,
   onAction,
   actionBusy = false,
+  onDismiss,
 }) => {
   const isDanger = tone === 'danger';
   const accentColor = isDanger ? '#dc2626' : '#b45309';
@@ -228,7 +230,18 @@ const WalkNoticeCard: React.FC<WalkNoticeCardProps> = ({
     <View style={[styles.noticeCard, { backgroundColor, borderColor }]}>
       <Ionicons name={iconName} size={18} color={accentColor} />
       <View style={styles.noticeCopy}>
-        <Text variant="body" style={[styles.noticeTitle, { color: titleColor }]}>{title}</Text>
+        <View style={styles.noticeHeader}>
+          <Text variant="body" style={[styles.noticeTitle, { color: titleColor }]}>{title}</Text>
+          {onDismiss ? (
+            <Pressable
+              onPress={onDismiss}
+              hitSlop={6}
+              style={({ pressed }) => [styles.warningDismiss, pressed && { opacity: 0.72 }]}
+            >
+              <Ionicons name="close" size={14} color={messageColor} />
+            </Pressable>
+          ) : null}
+        </View>
         <Text variant="bodySmall" style={[styles.noticeMessage, { color: messageColor }]}>{message}</Text>
         {actionLabel ? (
           <AnimatedPressable
@@ -509,6 +522,7 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
   const [showWalkStartLocationOverlay, setShowWalkStartLocationOverlay] = useState(false);
   const [showBackgroundDisclosureModal, setShowBackgroundDisclosureModal] = useState(false);
   const [isRequestingBackgroundUpgrade, setIsRequestingBackgroundUpgrade] = useState(false);
+  const [plannedDurationNoticeDismissed, setPlannedDurationNoticeDismissed] = useState(false);
 
   const mapRef = useRef<MapView>(null);
   const isMountedRef = useRef(true);
@@ -542,6 +556,7 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
     new Animated.Value(0),
   ]).current;
   const completionDismissLockedRef = useRef(false);
+  const androidAutoStartAttemptedRef = useRef(false);
   const stepScaleAnim = useRef(new Animated.Value(1)).current;
   const distanceScaleAnim = useRef(new Animated.Value(1)).current;
   const speedScaleAnim = useRef(new Animated.Value(1)).current;
@@ -555,6 +570,7 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
   const lastMilestoneRef = useRef(0);
   const walkStartLocationOverlayResolverRef = useRef<(() => void) | null>(null);
   const backgroundDisclosureResolverRef = useRef<((value: boolean) => void) | null>(null);
+  const durationReachedHapticSentRef = useRef(false);
 
   const animateMetricScale = useCallback((
     value: Animated.Value,
@@ -848,6 +864,9 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
     ? (displayedSnapshot?.steps ?? 0)
     : fallbackState.steps;
   const hasStartupIssue = !hasLiveSession && startupError != null;
+  const liveSessionId = isAndroidService
+    ? (displayedSnapshot?.sessionId ?? null)
+    : (sessionStarted ? fallbackState.sessionId : null);
   const locationLostMidWalk = !isAndroidService
     && sessionStarted
     && fallbackState.hadWalkingSignal
@@ -959,6 +978,18 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
       },
     };
   }, [mapPermissionScale]);
+  const plannedDurationMinutes = useMemo(() => {
+    if (plan?.suggestedDurationMinutes && plan.suggestedDurationMinutes > 0) {
+      return plan.suggestedDurationMinutes;
+    }
+    if (displayedSnapshot?.targetDurationMinutes && displayedSnapshot.targetDurationMinutes > 0) {
+      return displayedSnapshot.targetDurationMinutes;
+    }
+    return null;
+  }, [displayedSnapshot?.targetDurationMinutes, plan?.suggestedDurationMinutes]);
+  const hasReachedPlannedDuration = hasLiveSession &&
+    plannedDurationMinutes != null &&
+    activeSeconds >= plannedDurationMinutes * 60;
   const remainingSeconds = useMemo(() => {
     const elapsedSeconds = hasLiveSession ? activeSeconds : 0;
     if (!plan) return elapsedSeconds;
@@ -1067,6 +1098,23 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
       }
     }
   }, [steps]);
+
+  useEffect(() => {
+    setPlannedDurationNoticeDismissed(false);
+    durationReachedHapticSentRef.current = false;
+  }, [liveSessionId]);
+
+  useEffect(() => {
+    if (!hasReachedPlannedDuration) {
+      durationReachedHapticSentRef.current = false;
+      return;
+    }
+    if (durationReachedHapticSentRef.current || Platform.OS === 'web') {
+      return;
+    }
+    durationReachedHapticSentRef.current = true;
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => { });
+  }, [hasReachedPlannedDuration]);
 
   // Dock border glow while walking
   useEffect(() => {
@@ -1192,7 +1240,9 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
       if (cancelled) return;
 
       if (snapshot) {
-        await markPlanStarted();
+        if (!planId || snapshot.planId === planId) {
+          await markPlanStarted();
+        }
         applyAndroidSnapshot(snapshot);
         setIsStartingWalk(false);
         startFlowLockedRef.current = false;
@@ -1204,6 +1254,11 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
         startFlowLockedRef.current = false;
         return;
       }
+
+      if (androidAutoStartAttemptedRef.current) {
+        return;
+      }
+      androidAutoStartAttemptedRef.current = true;
 
       startFlowLockedRef.current = true;
       setStartupError(null);
@@ -1271,6 +1326,7 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
     return () => {
       cancelled = true;
       clearStartCountdown();
+      androidAutoStartAttemptedRef.current = false;
       startFlowLockedRef.current = false;
       subscription.remove();
       appStateSubscription.remove();
@@ -2737,6 +2793,18 @@ export const WalkingScreen: React.FC<Props> = ({ navigation, route }) => {
                       actionBusy={isRequestingBackgroundUpgrade}
                     />
                   )}
+                  {hasReachedPlannedDuration && !plannedDurationNoticeDismissed && plannedDurationMinutes != null && (
+                    <WalkNoticeCard
+                      palette={palette}
+                      themeMode={themeMode}
+                      iconName="time-outline"
+                      title="Planned walk time reached"
+                      message={`You have completed the planned ${plannedDurationMinutes} min walk. Keep walking or end when you're ready.`}
+                      actionLabel="End walk"
+                      onAction={() => { void handleEndWalkPress(); }}
+                      onDismiss={() => setPlannedDurationNoticeDismissed(true)}
+                    />
+                  )}
                 </View>
               </View>
             </>
@@ -3456,8 +3524,15 @@ const styles = StyleSheet.create({
     flex: 1,
     gap: 6,
   },
+  noticeHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
   noticeTitle: {
     fontWeight: theme.fontWeight.semibold,
+    flex: 1,
   },
   noticeMessage: {
     lineHeight: 22,

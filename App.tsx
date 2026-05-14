@@ -261,6 +261,7 @@ function App() {
     setProfileDisplayName,
     setActiveWalkSnapshot,
     setPendingWalkPrompt,
+    setPendingInAppWalkPrompt,
     setWalkDisplayCards,
     setNotificationTimerMode,
     setNotificationStatsMode,
@@ -566,6 +567,7 @@ function App() {
     startedFromNotification?: boolean;
     skipStartCountdown?: boolean;
   }) => {
+    setPendingInAppWalkPrompt(null);
     if (navigationRef.isReady()) {
       navigationRef.navigate('Walking', params);
       return;
@@ -574,7 +576,7 @@ function App() {
       name: 'Walking',
       params,
     };
-  }, []);
+  }, [setPendingInAppWalkPrompt]);
 
   const navigateToDashboard = useCallback((params: RootStackParamList['Dashboard']) => {
     if (navigationRef.isReady()) {
@@ -692,6 +694,7 @@ function App() {
         }
 
         if (actionId === WALK_READY_ACTION_NOT_NOW) {
+          setPendingInAppWalkPrompt(null);
           await notificationPlanActions.skipPlanSilently(payload.planId);
           await refreshDashboardSnapshot();
           analyticsService.track('walk_ready_not_now', { planId: payload.planId });

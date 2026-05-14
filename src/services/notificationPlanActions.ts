@@ -180,6 +180,7 @@ export const notificationPlanActions = {
     if (!plan || terminalStatuses.has(plan.status)) {
       return { allowed: false, planExists: !!plan };
     }
+    const isUserInitiatedExtraWalk = plan.reason === 'manual' || plan.reason === 'customized';
 
     if (isAfter(new Date(), parseISO(plan.gapEnd))) {
       await plansRepo.updateStatusWithReason(plan.id, 'cancelled', 'missed');
@@ -196,7 +197,7 @@ export const notificationPlanActions = {
     const prefs = await preferencesRepo.get();
     if (prefs) {
       const minsToday = await sessionsRepo.getTodayMinutes();
-      if (minsToday >= prefs.dailyTargetMinutes) {
+      if (!isUserInitiatedExtraWalk && minsToday >= prefs.dailyTargetMinutes) {
         await plansRepo.updateStatus(plan.id, 'cancelled');
         if (isNotificationsSupported) {
           await notificationService.clearPlanNotifications(plan.id);
@@ -210,7 +211,7 @@ export const notificationPlanActions = {
       }
 
       // Also check step goal if enabled
-      if (prefs.stepGoalEnabled && prefs.stepGoal > 0) {
+      if (!isUserInitiatedExtraWalk && prefs.stepGoalEnabled && prefs.stepGoal > 0) {
         const stepsToday = await sessionsRepo.getTodaySteps();
         if (stepsToday >= prefs.stepGoal) {
           await plansRepo.updateStatus(plan.id, 'cancelled');
@@ -252,7 +253,12 @@ export const notificationPlanActions = {
     const dayStart = startOfDay(now);
     const dayEnd = endOfDay(now);
 
-    const rawGaps = gapEngine.findGaps(dayStart, dayEnd, events, prefs);
+    const blockingPlans = todayPlans.filter(
+      (plan) =>
+        plan.id !== skippedPlanId &&
+        (plan.status === 'planned' || plan.status === 'notified' || plan.status === 'started'),
+    );
+    const rawGaps = gapEngine.findGaps(dayStart, dayEnd, events, prefs, blockingPlans);
 
     // Get the skipped plan to avoid suggesting the same gap
     const skippedPlan = await plansRepo.getById(skippedPlanId);
@@ -412,8 +418,13 @@ export const notificationPlanActions = {
     const now = new Date();
     const dayStart = startOfDay(now);
     const dayEnd = endOfDay(now);
-
-    const rawGaps = gapEngine.findGaps(dayStart, dayEnd, events, prefs);
+    const todayPlans = await plansRepo.getTodayPlans();
+    const blockingPlans = todayPlans.filter(
+      (plan) =>
+        plan.id !== skippedPlanId &&
+        (plan.status === 'planned' || plan.status === 'notified' || plan.status === 'started'),
+    );
+    const rawGaps = gapEngine.findGaps(dayStart, dayEnd, events, prefs, blockingPlans);
 
     const skippedPlan = await plansRepo.getById(skippedPlanId);
 
@@ -423,7 +434,6 @@ export const notificationPlanActions = {
     const minRequired = bufferMinutes + gracePeriod + minWalkMinutes;
 
     // Also exclude gaps that already have active plans
-    const todayPlans = await plansRepo.getTodayPlans();
     const activePlanGapKeys = new Set(
       todayPlans
         .filter((p) => p.status === 'planned' || p.status === 'notified')

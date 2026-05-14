@@ -3,10 +3,12 @@ import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
 import { DevicesService } from '../devices/devices.service';
 import Expo, { ExpoPushMessage, ExpoPushTicket } from 'expo-server-sdk';
+import { randomUUID } from 'crypto';
 
 const BACKUP_PUSH_GRACE_MS = 90_000;
 const DEVICE_STALE_MS = 3 * 60_000;
 const SYNC_STALE_MS = 5 * 60_000;
+const BACKUP_PUSH_CLAIM_PREFIX = 'claim:';
 
 @Injectable()
 export class PushNotificationsService {
@@ -35,7 +37,7 @@ export class PushNotificationsService {
     const tokens = await this.devicesService.getActiveTokens(userId);
     if (tokens.length === 0) {
       this.logger.warn(`No active push tokens for user ${userId}`);
-      return [];
+      return { tickets: [], firstSuccessTicketId: null };
     }
 
     // Keep token <-> message pairing explicit so we can correlate
@@ -58,7 +60,7 @@ export class PushNotificationsService {
 
     if (validPairs.length === 0) {
       this.logger.warn(`No valid Expo push tokens for user ${userId}`);
-      return [];
+      return { tickets: [], firstSuccessTicketId: null };
     }
 
     const messages = validPairs.map((p) => p.message);
@@ -131,21 +133,23 @@ export class PushNotificationsService {
       }
     }
 
-    if (firstSuccessTicketId) {
-      try {
-        await this.prisma.nudgePlan.update({
-          where: { id: serverPlanId },
-          data: {
-            pushTicketId: firstSuccessTicketId,
-            pushSentAt: new Date(),
-          },
-        });
-      } catch (e) {
-        this.logger.warn(`Could not update plan push info: ${e}`);
-      }
-    }
+    return { tickets, firstSuccessTicketId };
+  }
 
-    return tickets;
+  private async releaseBackupPushClaim(
+    planId: string,
+    claimToken: string,
+  ): Promise<void> {
+    await this.prisma.nudgePlan.updateMany({
+      where: {
+        id: planId,
+        pushTicketId: claimToken,
+        pushSentAt: null,
+      },
+      data: {
+        pushTicketId: null,
+      },
+    });
   }
 
   /**
@@ -194,7 +198,8 @@ export class PushNotificationsService {
         continue;
       }
 
-      const claim = await this.prisma.nudgePlan.updateMany({
+      const claimToken = `${BACKUP_PUSH_CLAIM_PREFIX}${randomUUID()}`;
+      const claimed = await this.prisma.nudgePlan.updateMany({
         where: {
           id: plan.id,
           status: { in: ['planned', 'notified'] },
@@ -202,12 +207,14 @@ export class PushNotificationsService {
           localReminderDeliveredAt: null,
           localId: { not: null },
           pushSentAt: null,
+          pushTicketId: null,
         },
         data: {
           status: 'notified',
+          pushTicketId: claimToken,
         },
       });
-      if (claim.count === 0) continue;
+      if (claimed.count === 0) continue;
 
       try {
         const walkStart = new Date(plan.walkStart);
@@ -220,16 +227,34 @@ export class PushNotificationsService {
           timeZone: userTimezone,
         });
 
-        await this.sendWalkNudge(
+        const pushResult = await this.sendWalkNudge(
           plan.userId,
           plan.id,
           plan.localId!,
           `Walk ready now`,
           `${dur} min walk window is open at ${startTime}.`,
         );
+        if (!pushResult.firstSuccessTicketId) {
+          await this.releaseBackupPushClaim(plan.id, claimToken);
+          continue;
+        }
+
+        await this.prisma.nudgePlan.updateMany({
+          where: {
+            id: plan.id,
+            pushTicketId: claimToken,
+            pushSentAt: null,
+          },
+          data: {
+            pushTicketId: pushResult.firstSuccessTicketId,
+            pushSentAt: new Date(),
+          },
+        });
+
         sent++;
       } catch (error) {
         this.logger.error(`Failed to send nudge for plan ${plan.id}: ${error}`);
+        await this.releaseBackupPushClaim(plan.id, claimToken);
       }
     }
 

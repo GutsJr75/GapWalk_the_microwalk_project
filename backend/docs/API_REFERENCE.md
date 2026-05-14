@@ -133,12 +133,6 @@ List active devices for the current user.
 
 **Auth:** JWT
 
-### `DELETE /api/devices/:token`
-
-Deactivate a device by its push token.
-
-**Auth:** JWT
-
 ---
 
 ## Preferences
@@ -628,11 +622,15 @@ Get daily aggregations.
 
 **Query params:** `userId`, `date`, `startDate`, `endDate`
 
+Participants are scoped to their own `userId`. Researchers and admins may query another `userId`.
+
 ### `GET /api/analytics/weekly`
 
 Get weekly aggregations.
 
 **Auth:** JWT
+
+Participants are scoped to their own `userId`. Researchers and admins may query another `userId`.
 
 **Query params:** `userId`, `weekStart`, `startDate`, `endDate`
 

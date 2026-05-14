@@ -28,6 +28,14 @@ LAUNCHER_SIZES = {
     "mipmap-xxxhdpi": 192,
 }
 
+NOTIFICATION_ICON_SIZES = {
+    "drawable-mdpi": 24,
+    "drawable-hdpi": 36,
+    "drawable-xhdpi": 48,
+    "drawable-xxhdpi": 72,
+    "drawable-xxxhdpi": 96,
+}
+
 SPLASH_STYLE = {
     "dark": {
         "tile": (7, 26, 46),
@@ -168,6 +176,20 @@ def write_launcher_assets(source_rgb: Image.Image) -> None:
                 os.remove(tmp_png)
 
 
+def write_notification_icons(mark_mask: Image.Image) -> None:
+    for folder, size in NOTIFICATION_ICON_SIZES.items():
+        scale = size / mark_mask.height
+        target_w = max(1, int(round(mark_mask.width * scale)))
+        resized = mark_mask.resize((target_w, size), Image.LANCZOS)
+        canvas = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+        x = (size - target_w) // 2
+        canvas.alpha_composite(resized, (x, 0))
+        out_path = os.path.join(RES, folder, "ic_notification_walk.png")
+        os.makedirs(os.path.dirname(out_path), exist_ok=True)
+        canvas.save(out_path, "PNG")
+        print(f"  Notification: {folder}/ic_notification_walk.png ({size}x{size})")
+
+
 def main() -> None:
     source_rgb = Image.open(SRC).convert("RGB")
     print(f"Source icon: {source_rgb.size[0]}x{source_rgb.size[1]}")
@@ -179,6 +201,7 @@ def main() -> None:
 
     write_splash_assets(mark_mask)
     write_launcher_assets(source_rgb)
+    write_notification_icons(mark_mask)
     print("Done - all icons updated")
 
 

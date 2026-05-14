@@ -31,9 +31,4 @@ export default () => ({
       10,
     ),
   },
-
-  google: {
-    clientId: process.env.GOOGLE_CLIENT_ID,
-    clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-  },
 });

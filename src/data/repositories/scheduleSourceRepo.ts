@@ -29,8 +29,6 @@ export const scheduleSourceRepo = {
       filename: string | null;
       last_imported_at: string | null;
       google_connected: number;
-      google_access_token: string | null;
-      google_refresh_token: string | null;
     }>('SELECT * FROM schedule_source ORDER BY id DESC LIMIT 1');
     
     if (!row) return null;
