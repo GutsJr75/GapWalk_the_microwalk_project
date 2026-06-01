@@ -30,6 +30,7 @@ All successful responses are wrapped by the global `TransformInterceptor`:
 - [Manual Schedule](#manual-schedule)
 - [Nudge Plans](#nudge-plans)
 - [Walk Sessions](#walk-sessions)
+- [App Sessions](#app-sessions)
 - [Sync](#sync)
 - [Analytics](#analytics)
 - [Behavior Log](#behavior-log)
@@ -159,6 +160,22 @@ Register or update (upsert) an Expo push token. Unique on `(userId, expoPushToke
   "expoPushToken": "ExponentPushToken[xxx]",
   "platform": "android",
   "appVersion": "1.2.0"
+}
+```
+
+### `POST /api/devices/heartbeat`
+
+Refresh the last-seen state (and optionally timezone) for the current device.
+Called on foreground transitions, so it carries a higher rate limit (240/min).
+
+**Auth:** JWT
+
+**Body:**
+
+```json
+{
+  "expoPushToken": "ExponentPushToken[xxx]",
+  "timezone": "America/Chicago"
 }
 ```
 
@@ -370,6 +387,27 @@ Get upcoming plans with status `planned` or `notified`.
 
 **Auth:** JWT
 
+### `POST /api/nudge-plans/local-delivery`
+
+Record that the client locally delivered a walk-ready reminder (used to keep
+server-side delivery state in sync with on-device notifications). Carries a
+higher rate limit (240/min) since a busy day can fire many reminders.
+
+**Auth:** JWT
+
+**Body:**
+
+```json
+{
+  "localId": "plan-local-id-123",
+  "deliveredAt": "2026-02-17T10:05:00.000Z",
+  "scheduledAt": "2026-02-17T10:05:00.000Z",
+  "source": "android_exact"
+}
+```
+
+`source` is one of `android_exact` | `expo_local`.
+
 ### `GET /api/nudge-plans/:id`
 
 Get a nudge plan by UUID.
@@ -508,6 +546,72 @@ Aggregate today's walking statistics in the user's timezone.
 ### `GET /api/walk-sessions/all`
 
 Get all walk sessions for the current user.
+
+**Auth:** JWT
+
+### `GET /api/walk-sessions/:sessionId/pauses`
+
+Get the pause/resume events recorded for a given walk session.
+
+**Auth:** JWT
+
+### `GET /api/walk-sessions/:sessionId/route`
+
+Get the ordered GPS route points recorded for a given walk session.
+
+**Auth:** JWT
+
+---
+
+## App Sessions
+
+### `POST /api/app-sessions`
+
+Record an app usage session (foreground time, screens visited, open source).
+
+**Auth:** JWT
+
+**Body:**
+
+```json
+{
+  "sessionStart": "2026-02-17T10:00:00.000Z",
+  "sessionEnd": "2026-02-17T10:04:30.000Z",
+  "foregroundSeconds": 270,
+  "screensVisited": ["DashboardScreen", "WalkingScreen"],
+  "source": "notification"
+}
+```
+
+### `GET /api/app-sessions`
+
+Get app sessions for the current user.
+
+**Auth:** JWT
+
+### `POST /api/app-sessions/achievements/sync`
+
+Sync locally-unlocked achievements to the server (device is the source of truth).
+
+**Auth:** JWT
+
+**Body:**
+
+```json
+{
+  "achievements": [
+    {
+      "achievementId": "first_walk",
+      "unlockedAt": "2026-02-17T10:13:00.000Z",
+      "notifiedAt": "2026-02-17T10:13:05.000Z"
+    }
+  ]
+}
+```
+
+### `GET /api/app-sessions/achievements`
+
+Get all unlocked achievements for the current user.
 
 **Auth:** JWT
 

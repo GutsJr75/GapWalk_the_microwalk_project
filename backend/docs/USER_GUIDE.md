@@ -104,7 +104,7 @@ Create a weekly recurring schedule by entering your regular commitments:
 | **End Time** | `HH:MM` 24-hour format | `17:00` |
 | **One-time** | Override for a single date | Optional |
 
-The manual template is expanded **14 days forward** into concrete busy events whenever you save changes.
+The manual template is expanded **4 weeks (28 days) forward** into concrete busy events whenever you save changes.
 
 ### Switching Schedule Sources
 

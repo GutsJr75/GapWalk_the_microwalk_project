@@ -130,7 +130,7 @@ All services have health checks, restart policies (`unless-stopped`), and proper
 ```
 backend/
 ├── prisma/
-│   ├── schema.prisma          # Database schema (20 models, 9 enums)
+│   ├── schema.prisma          # Database schema (20 models, 12 enums)
 │   └── migrations/            # SQL migration history
 │       ├── 0001_initial/
 │       ├── 0002_research_tracking/
