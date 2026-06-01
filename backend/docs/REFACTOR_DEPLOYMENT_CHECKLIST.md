@@ -100,24 +100,44 @@ curl -s -o /dev/null -w '%{http_code}\n' -X DELETE $BASE/api/users/me    # expec
 curl -s -o /dev/null -w '%{http_code}\n' -X POST $BASE/api/sync           # expect 401
 ```
 
-After a real app session, confirm data persisted (inside the postgres container):
+After a real app session, confirm data persisted (inside the postgres container).
+These are the tables the **current shipped app actually populates** — via
+`POST /api/sync` (most) and `POST /api/devices` (devices):
 
 ```bash
 docker compose exec postgres psql -U gapwalk -d gapwalk -c "
 SELECT 'devices', count(*) FROM devices
 UNION ALL SELECT 'walk_sessions', count(*) FROM walk_sessions
 UNION ALL SELECT 'walk_route_points', count(*) FROM walk_route_points
-UNION ALL SELECT 'behavior_logs', count(*) FROM behavior_logs
+UNION ALL SELECT 'walk_pause_events', count(*) FROM walk_pause_events
 UNION ALL SELECT 'nudge_plans', count(*) FROM nudge_plans
 UNION ALL SELECT 'analytics_events', count(*) FROM analytics_events
-UNION ALL SELECT 'app_sessions', count(*) FROM app_sessions;"
+UNION ALL SELECT 'busy_events', count(*) FROM busy_events
+UNION ALL SELECT 'crash_reports', count(*) FROM crash_reports;"
 ```
 
 - [ ] Counts > 0 for the tables you exercised.
-- [ ] `behavior_logs` shows the nudge funnel (received/opened/started/etc.) — the
-      key user-behavior signal.
+- [ ] **User behavior lands in `analytics_events`**, not `behavior_logs`. The app
+      syncs interaction events by name — e.g. `nudge_scheduled`, `nudge_tapped`,
+      `nudge_swiped_away`, `nudge_action_skip`, `notification_opened`,
+      `walk_ready_prompt_start`, `walk_ready_not_now`, `walk_completed`,
+      `walk_missed`. Inspect the funnel:
+      ```bash
+      docker compose exec postgres psql -U gapwalk -d gapwalk -c \
+        "SELECT name, count(*) FROM analytics_events GROUP BY name ORDER BY 2 DESC;"
+      ```
+      The nudge lifecycle is also visible in `nudge_plans.status`
+      (planned → notified → started → completed/skipped).
 - [ ] `DELETE /api/users/me` with a valid token returns 204 and wipes that
       user's rows (GDPR — confirm before claiming deletion in Play Store).
+
+> **Tables that stay empty with the current app:** `behavior_logs`,
+> `app_sessions`, `user_achievements`. The backend supports them (DTOs +
+> endpoints exist), but today's app build does not send them — it reports
+> behavior as `analytics_events` instead. They would only populate if a future
+> app build adds them to the sync payload. `daily_aggregations` /
+> `weekly_aggregations` are filled by the aggregation worker (02:00 / Mon 03:00
+> UTC), not by sync.
 
 ---
 
