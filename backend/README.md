@@ -1,6 +1,6 @@
 # GapWalk Backend
 
-REST API server for **GapWalk** - a micro-walk research intervention platform that identifies schedule gaps and sends nudge notifications encouraging short walks throughout the day.
+REST API server for **GapWalk** - a published micro-walk app that identifies free gaps in a user's schedule and sends nudge notifications encouraging short walks throughout the day. The backend is the optional cloud layer for cross-device sync, server-side nudge generation, and push delivery; the app itself works fully offline-first.
 
 ## Tech Stack
 
@@ -12,7 +12,6 @@ REST API server for **GapWalk** - a micro-walk research intervention platform th
 | Auth      | Firebase Authentication + Admin SDK   |
 | Push      | Expo Server SDK                       |
 | Docs      | Swagger (OpenAPI 3) at `/docs`        |
-| Dashboard | Served at `/dashboard` (Chart.js SPA) |
 
 ## Quick Start
 
@@ -62,12 +61,11 @@ npm run start:prod
 
 The API will be available at `http://localhost:3000`.
 
-| Endpoint     | Description              |
-| ------------ | ------------------------ |
-| `/api`       | API base path            |
-| `/docs`      | Interactive Swagger UI   |
-| `/health`    | Health check             |
-| `/dashboard` | Researcher dashboard SPA |
+| Endpoint  | Description                                          |
+| --------- | ---------------------------------------------------- |
+| `/api`    | API base path                                        |
+| `/docs`   | Interactive Swagger UI                               |
+| `/health` | Health check (HTTP + PostgreSQL + Redis reachability) |
 
 ## Runtime Notes
 
@@ -89,7 +87,14 @@ The API will be available at `http://localhost:3000`.
 | `NODE_ENV`               | No       | `development`            | `development` or `production`                               |
 | `CORS_ORIGIN`            | No       | `http://localhost:8081`  | Allowed CORS origin                                         |
 | `ENABLE_WORKERS`         | No       | `true`                   | Set `false` to disable BullMQ schedulers/processors         |
+| `SWAGGER_ENABLED`        | No       | (off in prod)            | Set `true`/`false` to force Swagger UI on/off               |
+| `RATE_LIMIT_TTL_MS`      | No       | `60000`                  | Throttler window in ms                                      |
+| `RATE_LIMIT_MAX`         | No       | `120`                    | Default max requests per window per IP                      |
+| `RATE_LIMIT_BLOCK_DURATION_MS` | No | `60000`                | How long to block after exceeding the limit                 |
+| `NUDGE_GENERATION_BATCH_SIZE` | No  | `500`                    | Active users processed per page in the daily nudge job      |
 | `PRISMA_CONNECT_IN_TEST` | No       | `false`                  | When `NODE_ENV=test`, set `true` to force Prisma DB connect |
+
+> **Startup validation:** these variables are validated at boot via `ConfigModule`'s `validate` function ([src/config/env.validation.ts](src/config/env.validation.ts)). The process fails fast with a clear message if `DATABASE_URL`/`REDIS_URL` are missing or no Firebase Admin credentials are supplied.
 
 ## NPM Scripts
 
@@ -125,27 +130,29 @@ All services have health checks, restart policies (`unless-stopped`), and proper
 ```
 backend/
 ├── prisma/
-│   ├── schema.prisma          # Database schema (23 models, 11 enums)
+│   ├── schema.prisma          # Database schema (20 models, 9 enums)
 │   └── migrations/            # SQL migration history
-│       ├── 0001_init/
-│       └── 0002_research_tracking/  # User profiles, app sessions, route points, achievements
-├── dashboard/
-│   └── public/index.html      # Researcher dashboard SPA
+│       ├── 0001_initial/
+│       ├── 0002_research_tracking/
+│       ├── 0003_firebase_auth/
+│       ├── 0004_notification_backup_signals/
+│       ├── 0005_remove_schedule_source_google_tokens/
+│       └── 0006_remove_research/  # Drops study/researcher models, simplifies roles
 ├── docs/
 │   ├── USER_GUIDE.md          # User & feature documentation
 │   ├── API_REFERENCE.md       # Complete REST API reference
 │   ├── ARCHITECTURE.md        # System architecture & algorithms
 │   ├── DEPLOYMENT.md          # Production deployment guide
-│   ├── PRODUCTION_AUDIT.md    # Production readiness audit
-│   └── data-analysis.md       # Data analysis & research queries
+│   └── PRODUCTION_AUDIT.md    # Production readiness audit
 ├── src/
 │   ├── main.ts                # Bootstrap, CORS, Swagger, global pipes/filters
-│   ├── app.module.ts          # Root module (19 modules)
+│   ├── app.module.ts          # Root module + request-id middleware wiring
 │   ├── prisma/                # PrismaService (global DB client)
-│   ├── config/                # ConfigModule (typed env config)
-│   ├── common/                # Guards, filters, interceptors, decorators, DTOs
+│   ├── config/                # ConfigModule + startup env validation
+│   ├── common/                # Guards, filters, interceptors, decorators, middleware, DTOs
+│   ├── health/                # GET /health — DB + Redis connectivity probe
 │   ├── auth/                  # Firebase token verification, auto-registration
-│   ├── users/                 # User profile CRUD + user-profile DTO
+│   ├── users/                 # GET/PATCH/DELETE /users/me + personalization profile
 │   ├── devices/               # Expo push token management
 │   ├── preferences/           # Walk goals, notification settings
 │   ├── schedule/              # Schedule sources & busy events
@@ -153,14 +160,12 @@ backend/
 │   ├── nudge-engine/          # Gap-finding algorithm, plan generation
 │   ├── nudge-plans/           # Nudge plan lifecycle
 │   ├── walk-sessions/         # Walk recording, route points & stats
-│   ├── app-sessions/          # App session lifecycle tracking (research)
+│   ├── app-sessions/          # App session lifecycle + achievements sync
 │   ├── push-notifications/    # Expo push sending, receipt checking
 │   ├── sync/                  # Bidirectional offline-first sync
-│   ├── analytics/             # Events, crash reports, aggregations
+│   ├── analytics/             # Events, crash reports, per-user aggregations
 │   ├── behavior-log/          # Nudge response behavior tracking
-│   ├── researcher/            # Study management, data export
-│   ├── dashboard-spa/         # Dashboard API + static serving
-│   └── workers/               # BullMQ background job processors
+│   └── workers/               # BullMQ background job processors (batched, graceful shutdown)
 ├── Dockerfile                 # Multi-stage build (non-root, healthcheck)
 └── docker-compose.yml         # Full production stack
 ```
@@ -174,7 +179,8 @@ backend/
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)         | System architecture, data flow, algorithms       |
 | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)             | Production deployment guide                      |
 | [docs/PRODUCTION_AUDIT.md](docs/PRODUCTION_AUDIT.md) | Production readiness audit & changes applied     |
-| [docs/data-analysis.md](docs/data-analysis.md)       | Data analysis, metrics, SQL queries for research |
+| [docs/REFACTOR_DEPLOYMENT_CHECKLIST.md](docs/REFACTOR_DEPLOYMENT_CHECKLIST.md) | Go-live checklist for the refactor + app release |
+| [CHANGELOG.md](CHANGELOG.md)                         | Notable changes by release                       |
 | `/docs` (runtime)                                    | Interactive Swagger UI                           |
 
 ## Production Deployment
@@ -207,4 +213,4 @@ See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for detailed deployment instruction
 
 ## License
 
-Private - Research use only.
+Private.

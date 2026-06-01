@@ -6,6 +6,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { DevicesService } from './devices.service';
@@ -28,6 +29,9 @@ export class DevicesController {
   }
 
   @Post('heartbeat')
+  // Heartbeats can fire on every foreground transition; allow a higher rate
+  // than the default so frequent app switching never trips the limiter.
+  @Throttle({ default: { limit: 240, ttl: 60_000 } })
   @ApiOperation({ summary: 'Refresh last-seen state for the current device' })
   heartbeat(
     @CurrentUser('userId') userId: string,

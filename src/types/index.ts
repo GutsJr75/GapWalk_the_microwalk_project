@@ -59,7 +59,7 @@ export interface WalkSession {
   calories?: number;
   usedLocation: boolean;
   createdAt: string;
-  // Research tracking fields
+  // Extended walk metrics
   pauseCount?: number;
   maxSpeedMps?: number;
   avgSpeedMps?: number;

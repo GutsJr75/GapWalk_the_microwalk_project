@@ -141,8 +141,8 @@ curl -s http://localhost:3000/docs | head -5
         ▲                                              │
         │                                              │
 ┌───────┴─────────┐                             ┌──────┴──────────┐
-│  Prisma Migrate │                             │   Dashboard     │
-│  (init → exit)  │                             │  /dashboard     │
+│  Prisma Migrate │                             │     /health     │
+│  (init → exit)  │                             │  DB+Redis probe │
 └─────────────────┘                             └─────────────────┘
 ```
 

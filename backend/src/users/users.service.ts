@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { UpsertUserProfileDto } from './dto/user-profile.dto';
@@ -6,6 +6,8 @@ import { User } from '@prisma/client';
 
 @Injectable()
 export class UsersService {
+  private readonly logger = new Logger(UsersService.name);
+
   constructor(private readonly prisma: PrismaService) {}
 
   async findById(id: string): Promise<User> {
@@ -42,38 +44,33 @@ export class UsersService {
     await this.findById(userId);
     return this.prisma.userProfile.upsert({
       where: { userId },
-      update: {
-        ...dto,
-        consentGivenAt: dto.consentGivenAt ? new Date(dto.consentGivenAt) : undefined,
-        onboardingCompletedAt: dto.onboardingCompletedAt
-          ? new Date(dto.onboardingCompletedAt)
-          : undefined,
-      },
-      create: {
-        userId,
-        ...dto,
-        consentGivenAt: dto.consentGivenAt ? new Date(dto.consentGivenAt) : undefined,
-        onboardingCompletedAt: dto.onboardingCompletedAt
-          ? new Date(dto.onboardingCompletedAt)
-          : undefined,
-      },
+      update: { ...dto },
+      create: { userId, ...dto },
     });
   }
 
-  /** For researcher dashboard: list all participants */
-  async listParticipants(page: number, limit: number) {
-    const [data, total] = await Promise.all([
-      this.prisma.user.findMany({
-        where: { role: 'participant', isActive: true },
-        skip: (page - 1) * limit,
-        take: limit,
-        orderBy: { createdAt: 'desc' },
-        include: { preferences: true, profile: true },
-      }),
-      this.prisma.user.count({
-        where: { role: 'participant', isActive: true },
-      }),
+  /**
+   * GDPR hard delete: permanently remove the user and every row that belongs
+   * to them. Most relations cascade from the User FK, but several analytics
+   * tables (daily/weekly aggregations, push logs, gap opportunities) store a
+   * bare user_id with no foreign key, so they must be deleted explicitly.
+   * Everything runs in one transaction so a partial delete is impossible.
+   */
+  async deleteAccount(userId: string): Promise<void> {
+    await this.findById(userId);
+
+    await this.prisma.$transaction([
+      this.prisma.dailyAggregation.deleteMany({ where: { userId } }),
+      this.prisma.weeklyAggregation.deleteMany({ where: { userId } }),
+      this.prisma.pushLog.deleteMany({ where: { userId } }),
+      this.prisma.gapOpportunity.deleteMany({ where: { userId } }),
+      // Cascades to: devices, profile, preferences, scheduleSource,
+      // busyEvents, manualScheduleEntries, nudgePlans, walkSessions,
+      // walkPauseEvents, walkRoutePoints, analyticsEvents, appSessions,
+      // crashReports, behaviorLogs, achievements.
+      this.prisma.user.delete({ where: { id: userId } }),
     ]);
-    return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
+
+    this.logger.log(`Hard-deleted user ${userId} and all associated data`);
   }
 }

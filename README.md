@@ -20,7 +20,7 @@ Available on **Android**.
 - [Walk Tracking](#walk-tracking)
 - [Notification System](#notification-system)
 - [Offline-First Design](#offline-first-design)
-- [Backend (Research Layer)](#backend-research-layer)
+- [Backend (Cloud Layer)](#backend-cloud-layer)
 - [Permissions](#permissions)
 - [Getting Started](#getting-started)
 - [Environment Variables](#environment-variables)
@@ -34,7 +34,7 @@ Available on **Android**.
 
 ## Overview
 
-GapWalk is a **behavior-change mobile application** designed around the concept of _micro-walks_: short, 5–15 minute walks taken during natural gaps between meetings and tasks. It was built as a research-grade health intervention tool for studying how intelligent, context-aware nudging affects physical activity in knowledge workers.
+GapWalk is a **published behavior-change mobile application** built around the concept of _micro-walks_: short, 5–15 minute walks taken during natural gaps between meetings and tasks. It uses intelligent, context-aware nudging to help knowledge workers fit more physical activity into their day. The app is fully offline-first; an optional NestJS cloud backend adds cross-device sync, server-side nudge generation, and push delivery at scale.
 
 The app works by:
 
@@ -58,13 +58,13 @@ The app works by:
 - **Dark and light themes** - user-selectable, persists across sessions
 - **Bilingual** - full English and Spanish support
 - **Fully offline** - no account, no network required for core functionality
-- **Optional cloud backend** - bidirectional sync for research data collection (opt-in)
+- **Optional cloud backend** - bidirectional sync for cross-device continuity (opt-in)
 
 ---
 
 ## Architecture
 
-GapWalk follows a **layered, offline-first architecture** split into a React Native mobile client and an optional NestJS research backend.
+GapWalk follows a **layered, offline-first architecture** split into a React Native mobile client and an optional NestJS cloud backend.
 
 ```
 ┌─────────────────────────────────────────────────────────┐
@@ -86,7 +86,7 @@ GapWalk follows a **layered, offline-first architecture** split into a React Nat
 └────────────────────│────────────────────────────────────┘
                      │ HTTPS / Firebase ID Token
 ┌────────────────────▼────────────────────────────────────┐
-│                  Research Backend                       │
+│                    Cloud Backend                        │
 │                                                         │
 │  ┌──────────┐  ┌──────────┐  ┌──────────┐              │
 │  │  NestJS  │  │ Prisma   │  │ BullMQ   │              │
@@ -138,7 +138,7 @@ GapWalk follows a **layered, offline-first architecture** split into a React Nat
 | Build System     | Expo EAS + Metro bundler                |
 | E2E Tests        | Maestro                                 |
 
-### Backend (Research Layer)
+### Backend (Cloud Layer)
 
 | Layer             | Technology                   |
 | ----------------- | ---------------------------- |
@@ -190,7 +190,7 @@ GapWalk/
 │   │   ├── scheduleSync.ts        # Rebuild plans after schedule changes
 │   │   ├── walkCheckpoint.ts      # Persist in-progress session every ~30s
 │   │   ├── androidWalkTracking.ts # Bridge to native Android walk service
-│   │   ├── backendSync.ts         # Sync local SQLite data to research backend
+│   │   ├── backendSync.ts         # Sync local SQLite data to the cloud backend
 │   │   ├── googleCalendar.ts      # Google Calendar OAuth + event fetch
 │   │   ├── permissions.ts         # Centralized permission request helpers
 │   │   └── analytics.ts           # Local analytics event tracking
@@ -218,28 +218,27 @@ GapWalk/
 │
 ├── android/                       # Native Android project (Gradle)
 │
-├── backend/                       # NestJS research backend (optional)
+├── backend/                       # NestJS cloud backend (optional)
 │   ├── src/
-│   │   ├── modules/               # 19 NestJS feature modules
-│   │   │   ├── auth               # Firebase token verification + auto-registration
-│   │   │   ├── users              # Profile management (with user-profile DTO)
-│   │   │   ├── devices            # Expo push token tracking
-│   │   │   ├── preferences        # Settings CRUD
-│   │   │   ├── schedule           # ICS / Google Calendar import
-│   │   │   ├── manual-schedule    # Template → busy event generation
-│   │   │   ├── nudge-engine       # Server-side gap algorithm (mirrors frontend)
-│   │   │   ├── nudge-plans        # Plan lifecycle management
-│   │   │   ├── walk-sessions      # Recording completed sessions + route points
-│   │   │   ├── app-sessions       # App session lifecycle tracking (research)
-│   │   │   ├── push-notifications # Expo push delivery & receipt checking
-│   │   │   ├── sync               # Bidirectional offline-first sync
-│   │   │   ├── analytics          # Event ingestion & aggregation
-│   │   │   ├── behavior-log       # Nudge response tracking
-│   │   │   ├── researcher         # Study management & data export
-│   │   │   └── workers            # BullMQ background jobs
+│   │   ├── auth                   # Firebase token verification + auto-registration
+│   │   ├── users                 # GET/PATCH/DELETE /users/me + personalization profile
+│   │   ├── devices               # Expo push token tracking
+│   │   ├── preferences           # Settings CRUD
+│   │   ├── schedule              # ICS / Google Calendar import
+│   │   ├── manual-schedule       # Template → busy event generation
+│   │   ├── nudge-engine          # Server-side gap algorithm (mirrors frontend)
+│   │   ├── nudge-plans           # Plan lifecycle management
+│   │   ├── walk-sessions         # Recording completed sessions + route points
+│   │   ├── app-sessions          # App session lifecycle + achievements sync
+│   │   ├── push-notifications    # Expo push delivery & receipt checking
+│   │   ├── sync                  # Bidirectional offline-first sync
+│   │   ├── analytics             # Event ingestion & per-user aggregation
+│   │   ├── behavior-log          # Nudge response tracking (write-only)
+│   │   ├── health                # GET /health — DB + Redis connectivity probe
+│   │   ├── workers               # BullMQ background jobs (batched, graceful drain)
 │   │   └── main.ts
 │   └── prisma/
-│       └── schema.prisma          # 23 Prisma models
+│       └── schema.prisma          # 20 Prisma models
 │
 └── e2e/
     └── maestro/                   # End-to-end test flows
@@ -372,24 +371,25 @@ GapWalk is designed to function completely without a network connection.
 
 ---
 
-## Backend (Research Layer)
+## Backend (Cloud Layer)
 
-The optional NestJS backend enables research use cases: behavior logging, push notification delivery at scale, cross-device sync, study enrollment, and aggregate analytics.
+The optional NestJS backend provides cross-device continuity and scale: cross-device sync, server-side nudge generation, push notification delivery, behavior logging, and per-user aggregate analytics. It is a clean production API — see [backend/README.md](backend/README.md) and [backend/docs/](backend/docs/) for full detail.
 
 **Key backend capabilities:**
 
-- Bidirectional sync (`POST /sync`) - client sends local delta; server returns merged state + 7-day nudge plan
+- Bidirectional sync (`POST /api/sync`) - client sends local delta; server returns merged state + nudge plan
+- Account deletion (`DELETE /api/users/me`) - GDPR hard delete of the user and all their data
 - Behavior logging - records nudge reception, walk start, completion, and skip events
 - Background workers (BullMQ):
-  - `nudge-generation` - recalculates daily plans for all active users
+  - `nudge-generation` - recalculates daily plans for all active users (cursor-batched)
   - `push-send` - dispatches Expo push notifications in batches
   - `receipt-check` - verifies delivery receipts from Expo push service
   - `aggregation` - computes daily/weekly stats rollups
-- Research endpoints - study enrollment, anonymized cohort exports
+- Health probe (`GET /health`) reporting PostgreSQL + Redis connectivity
 - Swagger UI at `/docs`
 
-**Backend data model (PostgreSQL, 16 Prisma models):**
-Users / Devices / Preferences / BusyEvents / ManualScheduleEntries / NudgePlans / WalkSessions / ScheduleSources / AnalyticsEvents / CrashReports / BehaviorLogs / DailyAggregation / WeeklyAggregation / PushLogs / Studies / StudyEnrollments
+**Backend data model (PostgreSQL, 20 Prisma models):**
+User / UserProfile / Device / Preference / ScheduleSource / BusyEvent / ManualScheduleEntry / NudgePlan / GapOpportunity / WalkSession / WalkPauseEvent / WalkRoutePoint / AnalyticsEvent / CrashReport / BehaviorLog / DailyAggregation / WeeklyAggregation / PushLog / AppSession / UserAchievement
 
 ---
 
@@ -467,7 +467,7 @@ cp .env.example .env
 | `EXPO_PUBLIC_FIREBASE_API_KEY`     | Optional | Firebase API key (required for app auth)         |
 | `EXPO_PUBLIC_FIREBASE_PROJECT_ID`  | Optional | Firebase project ID (required for app auth)      |
 | `EXPO_PUBLIC_FIREBASE_APP_ID`      | Optional | Firebase app ID (required for app auth)          |
-| `EXPO_PUBLIC_API_URL`              | Optional | Backend API URL (required for research sync)     |
+| `EXPO_PUBLIC_API_URL`              | Optional | Backend API URL (required for cloud sync)        |
 
 #### Android Maps API key setup
 
@@ -557,7 +557,7 @@ GapWalk is designed with a privacy-first philosophy:
 - **No advertising or tracking** - the app contains no analytics SDKs, ad networks, or third-party tracking
 - **Minimal permissions** - permissions are requested only when the relevant feature is used, with clear in-app explanations
 - **Active-walk background location only** - if enabled, background location is used only while a walk is in progress so distance can continue updating when the app is not in use
-- **Optional sync** - the research backend is opt-in; users who do not enable it share no data externally
+- **Optional sync** - the cloud backend is opt-in; users who do not enable it share no data externally. Users who do can permanently delete all server-side data via `DELETE /api/users/me`
 
 ---
 

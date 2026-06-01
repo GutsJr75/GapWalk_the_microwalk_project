@@ -38,30 +38,3 @@ export class BulkCreateBehaviorLogsDto {
   @Type(() => CreateBehaviorLogDto)
   logs: CreateBehaviorLogDto[];
 }
-
-export class QueryBehaviorLogsDto {
-  @ApiPropertyOptional()
-  @IsOptional()
-  @IsString()
-  userId?: string;
-
-  @ApiPropertyOptional({ enum: BehaviorEventType })
-  @IsOptional()
-  @IsEnum(BehaviorEventType)
-  eventType?: BehaviorEventType;
-
-  @ApiPropertyOptional()
-  @IsOptional()
-  @IsString()
-  nudgePlanId?: string;
-
-  @ApiPropertyOptional()
-  @IsOptional()
-  @IsDateString()
-  startDate?: string;
-
-  @ApiPropertyOptional()
-  @IsOptional()
-  @IsDateString()
-  endDate?: string;
-}

@@ -74,28 +74,6 @@ export class BulkCreateCrashReportsDto {
 
 // ── Query ──
 
-export class QueryAnalyticsDto {
-  @ApiPropertyOptional()
-  @IsOptional()
-  @IsString()
-  name?: string;
-
-  @ApiPropertyOptional()
-  @IsOptional()
-  @IsDateString()
-  startDate?: string;
-
-  @ApiPropertyOptional()
-  @IsOptional()
-  @IsDateString()
-  endDate?: string;
-
-  @ApiPropertyOptional()
-  @IsOptional()
-  @IsString()
-  userId?: string;
-}
-
 export class QueryAggregationsDto {
   @ApiPropertyOptional()
   @IsOptional()

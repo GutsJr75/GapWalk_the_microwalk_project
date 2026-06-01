@@ -10,6 +10,7 @@ import {
   ParseUUIDPipe,
 } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { NudgePlansService } from './nudge-plans.service';
@@ -53,6 +54,9 @@ export class NudgePlansController {
   }
 
   @Post('local-delivery')
+  // The client reports each locally-delivered reminder; a busy day with many
+  // nudges plus retries warrants a higher ceiling than the default.
+  @Throttle({ default: { limit: 240, ttl: 60_000 } })
   @ApiOperation({ summary: 'Record that the local walk-ready reminder was delivered' })
   recordLocalDelivery(
     @CurrentUser('userId') userId: string,

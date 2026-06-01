@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule as NestConfigModule } from '@nestjs/config';
 import configuration from './configuration';
+import { validate } from './env.validation';
 
 @Module({
   imports: [
@@ -8,6 +9,7 @@ import configuration from './configuration';
       isGlobal: true,
       load: [configuration],
       envFilePath: ['.env'],
+      validate,
     }),
   ],
 })

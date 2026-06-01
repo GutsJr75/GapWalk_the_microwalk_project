@@ -1,20 +1,16 @@
-import { Controller, Get, Post, Body, Query, UseGuards } from '@nestjs/common';
+import { Controller, Post, Body, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
-import { RolesGuard } from '../common/guards/roles.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
-import { Roles } from '../common/decorators/roles.decorator';
-import { UserRole } from '@prisma/client';
 import { BehaviorLogService } from './behavior-log.service';
 import {
   CreateBehaviorLogDto,
   BulkCreateBehaviorLogsDto,
-  QueryBehaviorLogsDto,
 } from './dto/behavior-log.dto';
 
 @ApiTags('behavior-log')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard)
 @Controller('behavior-log')
 export class BehaviorLogController {
   constructor(private readonly behaviorLogService: BehaviorLogService) {}
@@ -35,30 +31,5 @@ export class BehaviorLogController {
     @Body() dto: BulkCreateBehaviorLogsDto,
   ) {
     return this.behaviorLogService.bulkCreate(userId, dto.logs);
-  }
-
-  @Get()
-  @Roles(UserRole.researcher, UserRole.admin)
-  @ApiOperation({ summary: 'Query behavior logs (researcher/admin)' })
-  query(@Query() query: QueryBehaviorLogsDto) {
-    return this.behaviorLogService.query(query);
-  }
-
-  @Get('counts')
-  @Roles(UserRole.researcher, UserRole.admin)
-  @ApiOperation({ summary: 'Get event type counts (researcher/admin)' })
-  getCounts(@Query() query: QueryBehaviorLogsDto) {
-    return this.behaviorLogService.getEventTypeCounts(query);
-  }
-
-  @Get('nudge-funnel')
-  @Roles(UserRole.researcher, UserRole.admin)
-  @ApiOperation({ summary: 'Get nudge response funnel (researcher/admin)' })
-  getNudgeFunnel(
-    @Query('userId') userId?: string,
-    @Query('startDate') startDate?: string,
-    @Query('endDate') endDate?: string,
-  ) {
-    return this.behaviorLogService.getNudgeFunnel(userId, startDate, endDate);
   }
 }

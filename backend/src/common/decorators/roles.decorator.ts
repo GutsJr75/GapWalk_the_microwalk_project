@@ -4,7 +4,7 @@ import { UserRole } from '@prisma/client';
 export const ROLES_KEY = 'roles';
 
 /**
- * Restrict endpoint to specific roles.
- * Usage: @Roles(UserRole.researcher, UserRole.admin)
+ * Restrict an endpoint to specific roles (e.g. internal admin tooling).
+ * Usage: @Roles(UserRole.admin)
  */
 export const Roles = (...roles: UserRole[]) => SetMetadata(ROLES_KEY, roles);

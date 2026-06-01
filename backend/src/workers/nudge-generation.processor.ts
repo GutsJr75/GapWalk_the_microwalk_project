@@ -15,11 +15,26 @@ interface NudgeGenerationJobData {
 export class NudgeGenerationProcessor extends WorkerHost {
   private readonly logger = new Logger(NudgeGenerationProcessor.name);
 
+  /**
+   * How many active users to pull per page when generating plans for everyone.
+   * Configurable via NUDGE_GENERATION_BATCH_SIZE so the daily job scales to
+   * large user counts without loading every user into memory at once.
+   */
+  private readonly batchSize = this.resolveBatchSize();
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly nudgeEngine: NudgeEngineService,
   ) {
     super();
+  }
+
+  private resolveBatchSize(): number {
+    const parsed = Number.parseInt(
+      process.env.NUDGE_GENERATION_BATCH_SIZE ?? '',
+      10,
+    );
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : 500;
   }
 
   async process(job: Job<NudgeGenerationJobData>) {
@@ -37,32 +52,50 @@ export class NudgeGenerationProcessor extends WorkerHost {
   }
 
   private async generateForAllUsers() {
-    const users = await this.prisma.user.findMany({
-      where: { isActive: true },
-      select: { id: true },
-    });
-
-    this.logger.log(`Generating nudge plans for ${users.length} users`);
+    this.logger.log(
+      `Generating nudge plans for all active users (batch size ${this.batchSize})`,
+    );
 
     let success = 0;
     let failed = 0;
+    let total = 0;
+    let cursor: string | undefined;
 
-    for (const user of users) {
-      try {
-        await this.nudgeEngine.generateAndSavePlans(user.id);
-        success++;
-      } catch (err) {
-        failed++;
-        this.logger.error(
-          `Failed for user ${user.id}: ${(err as Error).message}`,
-        );
+    // Cursor-based pagination: page through active users by id so the daily
+    // job never holds more than `batchSize` users in memory regardless of how
+    // large the user base grows.
+    for (;;) {
+      const users = await this.prisma.user.findMany({
+        where: { isActive: true },
+        select: { id: true },
+        orderBy: { id: 'asc' },
+        take: this.batchSize,
+        ...(cursor ? { skip: 1, cursor: { id: cursor } } : {}),
+      });
+
+      if (users.length === 0) break;
+
+      for (const user of users) {
+        total++;
+        try {
+          await this.nudgeEngine.generateAndSavePlans(user.id);
+          success++;
+        } catch (err) {
+          failed++;
+          this.logger.error(
+            `Failed for user ${user.id}: ${(err as Error).message}`,
+          );
+        }
       }
+
+      cursor = users[users.length - 1].id;
+      if (users.length < this.batchSize) break;
     }
 
     this.logger.log(
-      `Nudge generation complete: ${success} ok, ${failed} failed`,
+      `Nudge generation complete: ${success} ok, ${failed} failed, ${total} total`,
     );
-    return { success, failed, total: users.length };
+    return { success, failed, total };
   }
 
   private async generateForUser(userId: string, date: string) {

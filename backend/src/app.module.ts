@@ -1,8 +1,10 @@
-import { Module } from '@nestjs/common';
+import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
+import { RequestIdMiddleware } from './common/middleware/request-id.middleware';
+import { HealthModule } from './health/health.module';
 
 // Infrastructure
 import { ConfigModule } from './config/config.module';
@@ -22,8 +24,6 @@ import { PushNotificationsModule } from './push-notifications/push-notifications
 import { SyncModule } from './sync/sync.module';
 import { AnalyticsModule } from './analytics/analytics.module';
 import { BehaviorLogModule } from './behavior-log/behavior-log.module';
-import { ResearcherModule } from './researcher/researcher.module';
-import { DashboardSpaModule } from './dashboard-spa/dashboard-spa.module';
 import { WorkersModule } from './workers/workers.module';
 import { AppSessionsModule } from './app-sessions/app-sessions.module';
 import { ThrottlerBehindProxyGuard } from './common/guards/throttler-behind-proxy.guard';
@@ -54,6 +54,7 @@ const rateLimitBlockDurationMs = toPositiveInt(
     ]),
     PrismaModule,
     AuthModule,
+    HealthModule,
 
     // Feature modules
     UsersModule,
@@ -68,8 +69,6 @@ const rateLimitBlockDurationMs = toPositiveInt(
     SyncModule,
     AnalyticsModule,
     BehaviorLogModule,
-    ResearcherModule,
-    DashboardSpaModule,
     AppSessionsModule,
     ...(enableWorkers ? [WorkersModule] : []),
   ],
@@ -82,4 +81,8 @@ const rateLimitBlockDurationMs = toPositiveInt(
     },
   ],
 })
-export class AppModule {}
+export class AppModule implements NestModule {
+  configure(consumer: MiddlewareConsumer) {
+    consumer.apply(RequestIdMiddleware).forRoutes('*');
+  }
+}
