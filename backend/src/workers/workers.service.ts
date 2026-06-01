@@ -1,4 +1,9 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  OnModuleInit,
+  OnApplicationShutdown,
+} from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import {
@@ -12,7 +17,7 @@ import {
  * Service to enqueue background jobs and set up recurring schedules.
  */
 @Injectable()
-export class WorkersService implements OnModuleInit {
+export class WorkersService implements OnModuleInit, OnApplicationShutdown {
   private readonly logger = new Logger(WorkersService.name);
 
   constructor(
@@ -28,6 +33,26 @@ export class WorkersService implements OnModuleInit {
 
   async onModuleInit() {
     await this.setupRepeatingJobs();
+  }
+
+  /**
+   * Graceful shutdown. `app.enableShutdownHooks()` (main.ts) wires SIGTERM/
+   * SIGINT to Nest's lifecycle; @nestjs/bullmq's WorkerHost processors close on
+   * shutdown, and worker.close() waits for any in-flight job to finish before
+   * exiting. We also close the producer queue connections here so the process
+   * can exit cleanly instead of hanging on open Redis sockets.
+   */
+  async onApplicationShutdown(signal?: string) {
+    this.logger.log(
+      `Shutting down workers (signal: ${signal ?? 'n/a'}); draining in-flight jobs`,
+    );
+    await Promise.allSettled([
+      this.nudgeQueue.close(),
+      this.pushQueue.close(),
+      this.aggQueue.close(),
+      this.receiptQueue.close(),
+    ]);
+    this.logger.log('Worker queues closed');
   }
 
   /**

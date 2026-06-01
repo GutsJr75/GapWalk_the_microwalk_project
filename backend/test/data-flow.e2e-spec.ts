@@ -501,13 +501,13 @@ describe('POST /api/nudge-plans/generate — Nudge plan generation', () => {
   });
 });
 
-describe('POST /api/users/me/profile — User profile demographics', () => {
-  it('saves demographic profile fields', async () => {
+describe('POST /api/users/me/profile — Optional personalization profile', () => {
+  it('saves personalization profile fields', async () => {
     const { status } = await authed('POST', '/users/me/profile', {
-      age: 35,
-      sex: 'prefer_not_to_say',
-      occupation: 'researcher',
-      consentGiven: true,
+      ageGroup: '25-34',
+      biologicalSex: 'prefer_not_to_say',
+      occupationType: 'sedentary_desk',
+      selfReportedActivityLevel: 'lightly_active',
     });
     expect([200, 201, 400]).toContain(status);
   });

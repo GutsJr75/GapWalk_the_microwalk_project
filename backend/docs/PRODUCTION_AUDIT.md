@@ -12,6 +12,46 @@ The GapWalk backend is a well-structured NestJS 11 application with PostgreSQL, 
 
 ---
 
+## Update: Production Refactor (May 28, 2026)
+
+The backend was converted from a research-grade data-collection system into a clean production API for the published app. Entries in the historical "Changes Applied" sections below that reference research infrastructure (e.g. the `dashboard/` Docker copy, study data export) are **superseded** by this refactor.
+
+### Removed (research infrastructure)
+
+| Item | Notes |
+|---|---|
+| `researcher/` module | Study management, enrollment, data export endpoints deleted |
+| `dashboard-spa/` module + `dashboard/` static SPA | Researcher dashboard removed (and dropped from the Dockerfile) |
+| `Study`, `StudyEnrollment`, `ResearcherAction` models | Dropped in migration `0006_remove_research` |
+| `UserProfile` research fields | `studyGroup`, `consentVersion`, `consentGivenAt`, `onboardingCompletedAt` dropped; profile repurposed as optional personalization |
+| `researcher` role + role-gated query endpoints | `UserRole` collapsed to `user` \| `admin`; researcher GET endpoints on analytics/behavior-log removed |
+
+### Added / hardened (production)
+
+| Change | File | Details |
+|---|---|---|
+| **GDPR account deletion** | `users.service.ts` | `DELETE /users/me` hard-deletes the user and all data (incl. FK-less aggregation/push/gap tables that cascade misses) in one transaction; returns 204 |
+| **Privilege-escalation fix** | `dto/update-user.dto.ts` | Removed `role` from `PATCH /users/me` body — clients can no longer self-promote to `admin` |
+| **Scalable nudge generation** | `nudge-generation.processor.ts` | Cursor-based batching via `NUDGE_GENERATION_BATCH_SIZE` (default 500) replaces a full `findMany()` |
+| **Request ID tracking** | `common/middleware/request-id.middleware.ts` | `X-Request-ID` on every response + error body; reuses inbound id |
+| **Health enrichment** | `health/` | `GET /health` now probes PostgreSQL + Redis and returns 503 when degraded |
+| **Startup env validation** | `config/env.validation.ts` | `ConfigModule` validates required env (DB, Redis, Firebase) and fails fast |
+| **Per-route rate limits** | `sync`, `devices/heartbeat`, `nudge-plans/local-delivery` | Higher `@Throttle` ceilings (240/min) on critical bursty paths vs the 120/min default |
+| **Graceful worker shutdown** | `workers.service.ts` | `OnApplicationShutdown` drains in-flight jobs and closes queue connections |
+
+### Security audit (confirmed in place)
+
+| Control | Status |
+|---|---|
+| Helmet headers on all responses | ✅ `main.ts` |
+| CORS restricted to env-configured origin | ✅ `CORS_ORIGIN` |
+| All endpoints except `GET /health` require JWT | ✅ |
+| No secrets logged at any level | ✅ (verified: 0 `console.*` in `src/`; Logger used throughout) |
+| Prisma parameterized queries only (no raw interpolation) | ✅ (only `$queryRaw\`SELECT 1\`` in health check, no interpolation) |
+| `.env` validated at startup | ✅ (added — see above) |
+
+---
+
 ## Changes Applied
 
 ### 🔒 Security

@@ -33,8 +33,6 @@ All successful responses are wrapped by the global `TransformInterceptor`:
 - [Sync](#sync)
 - [Analytics](#analytics)
 - [Behavior Log](#behavior-log)
-- [Researcher - Studies](#researcher--studies)
-- [Dashboard API](#dashboard-api)
 - [Error Codes](#error-codes)
 - [Data Types & Enums](#data-types--enums)
 
@@ -44,13 +42,22 @@ All successful responses are wrapped by the global `TransformInterceptor`:
 
 ### `GET /health`
 
-Health check (no auth required).
+Health check (no auth required, not rate-limited). Reports HTTP liveness plus
+PostgreSQL and Redis connectivity. Returns **200** when all checks pass and
+**503** when any dependency is down (so orchestrators/Docker treat a degraded
+instance as unhealthy).
 
-**Response:**
+**Response (200):**
 
 ```json
-{ "status": "ok", "timestamp": "2026-02-17T12:00:00.000Z" }
+{
+  "status": "ok",
+  "timestamp": "2026-02-17T12:00:00.000Z",
+  "checks": { "database": "up", "redis": "up" }
+}
 ```
+
+When degraded, `status` is `"degraded"`, the failing check reads `"down"`, and the HTTP status is `503`.
 
 ### `GET /api`
 
@@ -74,38 +81,66 @@ Get the authenticated user's profile, including preferences, schedule source, an
   "firebaseUid": "firebase-uid-123",
   "email": "user@example.com",
   "displayName": "Jane",
-  "role": "participant",
+  "role": "user",
   "timezone": "America/New_York",
   "isActive": true,
   "lastSyncedAt": "2026-02-17T00:00:00.000Z",
   "preferences": { ... },
   "scheduleSource": { ... },
-  "devices": [ ... ]
+  "devices": [ ... ],
+  "profile": { ... }
 }
 ```
 
 ### `PATCH /api/users/me`
 
-Update current user profile.
+Update current user base info. `role` cannot be set through this endpoint (it is
+managed server-side only).
 
-**Auth:** JWT (any role)
+**Auth:** JWT
 
 **Body:**
 
 ```json
 {
   "displayName": "Jane Doe",
-  "timezone": "Europe/Berlin"
+  "timezone": "Europe/Berlin",
+  "email": "jane@example.com"
 }
 ```
 
-### `GET /api/users/participants`
+### `POST /api/users/me/profile`
 
-List all active participants. Paginated.
+Upsert the optional personalization profile (used for tailoring suggestions).
 
-**Auth:** JWT - `researcher` or `admin` only
+**Auth:** JWT
 
-**Query params:** `page` (default 1), `limit` (default 50, max 200)
+**Body (all fields optional):**
+
+```json
+{
+  "ageGroup": "25-34",
+  "biologicalSex": "prefer_not_to_say",
+  "heightCm": 175,
+  "weightKg": 70,
+  "occupationType": "sedentary_desk",
+  "selfReportedActivityLevel": "lightly_active",
+  "referralSource": "app_store",
+  "locale": "en-US"
+}
+```
+
+### `DELETE /api/users/me`
+
+Permanently delete the authenticated user and **all** associated data
+(GDPR hard delete): devices, preferences, schedule sources, busy events, manual
+schedule entries, nudge plans, walk sessions/routes/pauses, analytics events,
+crash reports, behavior logs, app sessions, achievements, aggregations, push
+logs, and gap opportunities. Runs in a single transaction.
+
+**Auth:** JWT
+
+**Response:** `204 No Content`
 
 ---
 
@@ -590,49 +625,21 @@ Batch upload crash reports.
 
 **Auth:** JWT
 
-### `GET /api/analytics/events`
-
-Query analytics events.
-
-**Auth:** JWT - `researcher` or `admin` only
-
-**Query params:** `userId`, `name`, `startDate`, `endDate`
-
-### `GET /api/analytics/events/counts`
-
-Get event name counts (grouped).
-
-**Auth:** JWT - `researcher` or `admin` only
-
-**Query params:** `userId`, `startDate`, `endDate`
-
-### `GET /api/analytics/crashes`
-
-Query crash reports.
-
-**Auth:** JWT - `researcher` or `admin` only
-
-**Query params:** `userId`, `startDate`, `endDate`
-
 ### `GET /api/analytics/daily`
 
-Get daily aggregations.
+Get the current user's daily aggregations.
 
 **Auth:** JWT
 
-**Query params:** `userId`, `date`, `startDate`, `endDate`
-
-Participants are scoped to their own `userId`. Researchers and admins may query another `userId`.
+**Query params:** `date`, `startDate`, `endDate` (always scoped to the caller)
 
 ### `GET /api/analytics/weekly`
 
-Get weekly aggregations.
+Get the current user's weekly aggregations.
 
 **Auth:** JWT
 
-Participants are scoped to their own `userId`. Researchers and admins may query another `userId`.
-
-**Query params:** `userId`, `weekStart`, `startDate`, `endDate`
+**Query params:** `weekStart`, `startDate`, `endDate` (always scoped to the caller)
 
 ### `POST /api/analytics/aggregate/daily`
 
@@ -700,214 +707,8 @@ Batch upload behavior logs.
 }
 ```
 
-### `GET /api/behavior-log`
-
-Query behavior logs.
-
-**Auth:** JWT - `researcher` or `admin` only
-
-**Query params:** `userId`, `eventType`, `nudgePlanId`, `startDate`, `endDate`
-
-### `GET /api/behavior-log/counts`
-
-Get event type counts.
-
-**Auth:** JWT - `researcher` or `admin` only
-
-**Query params:** `userId`, `startDate`, `endDate`
-
-### `GET /api/behavior-log/nudge-funnel`
-
-Get the nudge response funnel (received → opened → started → completed/dismissed/cancelled).
-
-**Auth:** JWT - `researcher` or `admin` only
-
-**Query params:** `userId`, `startDate`, `endDate`
-
-**Response:**
-
-```json
-{
-  "nudge_received": 48,
-  "nudge_opened": 32,
-  "nudge_dismissed": 8,
-  "nudge_expired": 4,
-  "walk_started": 24,
-  "walk_completed": 20,
-  "walk_cancelled": 4
-}
-```
-
----
-
-## Researcher - Studies
-
-All researcher endpoints require `researcher` or `admin` role.
-
-### `POST /api/researcher/studies`
-
-Create a new study.
-
-**Body:**
-
-```json
-{
-  "name": "Micro-walk Pilot Q1 2026",
-  "description": "8-week intervention study",
-  "startDate": "2026-03-01",
-  "endDate": "2026-04-26",
-  "config": { "minParticipants": 30 }
-}
-```
-
-### `GET /api/researcher/studies`
-
-List all studies with enrollment counts.
-
-### `GET /api/researcher/studies/:studyId`
-
-Get a study with full enrollment details.
-
-### `PATCH /api/researcher/studies/:studyId`
-
-Update study fields.
-
-### `DELETE /api/researcher/studies/:studyId`
-
-Delete a study (cascades enrollments).
-
-### `POST /api/researcher/studies/:studyId/enroll`
-
-Enroll a participant.
-
-**Body:**
-
-```json
-{ "userId": "uuid" }
-```
-
-### `POST /api/researcher/studies/:studyId/withdraw/:userId`
-
-Withdraw a participant (sets `withdrawnAt`, `isActive: false`).
-
-### `GET /api/researcher/studies/:studyId/export`
-
-Export all study data for enrolled participants. Returns walk sessions, nudge plans, behavior logs, daily and weekly aggregations.
-
-**Response:**
-
-```json
-{
-  "study": { "id": "...", "name": "..." },
-  "participantCount": 25,
-  "users": [ ... ],
-  "walkSessions": [ ... ],
-  "nudgePlans": [ ... ],
-  "behaviorLogs": [ ... ],
-  "dailyAggregations": [ ... ],
-  "weeklyAggregations": [ ... ]
-}
-```
-
-### `GET /api/researcher/studies/:studyId/summaries`
-
-Per-participant summary statistics.
-
-**Response:**
-
-```json
-[
-  {
-    "userId": "uuid",
-    "displayName": "Jane",
-    "email": "jane@example.com",
-    "enrolledAt": "2026-03-01T00:00:00.000Z",
-    "totalSessions": 42,
-    "totalMinutes": 336,
-    "totalSteps": 45000,
-    "totalDistanceMeters": 34000,
-    "nudgePlanned": 120,
-    "nudgeCompleted": 84,
-    "nudgeSkipped": 12,
-    "nudgeMissed": 24
-  }
-]
-```
-
----
-
-## Dashboard API
-
-All dashboard endpoints require `researcher` or `admin` role.
-
-### `GET /api/dashboard-api/overview`
-
-Dashboard overview statistics.
-
-**Response:**
-
-```json
-{
-  "totalUsers": 52,
-  "totalSessions": 1284,
-  "totalPlans": 3600,
-  "activeStudies": 2,
-  "totalMinutesWalked": 10272,
-  "totalSteps": 1368000
-}
-```
-
-### `GET /api/dashboard-api/daily-activity`
-
-Daily walk activity for the last N days.
-
-**Query params:** `days` (default 30)
-
-**Response:**
-
-```json
-[
-  { "date": "2026-02-16", "minutes": 340, "sessions": 42, "steps": 45000 },
-  { "date": "2026-02-15", "minutes": 290, "sessions": 38, "steps": 39000 }
-]
-```
-
-### `GET /api/dashboard-api/nudge-adherence`
-
-Nudge plan adherence breakdown by status.
-
-**Response:**
-
-```json
-{
-  "planned": 120,
-  "completed": 840,
-  "skipped": 96,
-  "cancelled": 48,
-  "notified": 60
-}
-```
-
-### `GET /api/dashboard-api/leaderboard`
-
-Top walkers leaderboard.
-
-**Query params:** `limit` (default 20)
-
-**Response:**
-
-```json
-[
-  {
-    "userId": "uuid",
-    "displayName": "Jane",
-    "email": "jane@example.com",
-    "totalMinutes": 452,
-    "totalSteps": 60000,
-    "sessionCount": 56
-  }
-]
-```
+Behavior logs are write-only from the client; there are no client-facing query
+endpoints. They are consumed internally for product analytics.
 
 ---
 
@@ -930,11 +731,10 @@ Validation errors return `400` with field-level details from `class-validator`.
 
 ### UserRole
 
-| Value         | Description                              |
-| ------------- | ---------------------------------------- |
-| `participant` | Standard app user                        |
-| `researcher`  | Can access studies, analytics, dashboard |
-| `admin`       | Full access                              |
+| Value   | Description                                    |
+| ------- | ---------------------------------------------- |
+| `user`  | Standard app user (default)                    |
+| `admin` | Reserved for internal tooling (assigned server-side) |
 
 ### ScheduleSourceType
 

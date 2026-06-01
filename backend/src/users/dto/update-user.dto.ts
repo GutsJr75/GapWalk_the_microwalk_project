@@ -1,7 +1,9 @@
-import { IsOptional, IsString, IsEmail, IsEnum } from 'class-validator';
+import { IsOptional, IsString, IsEmail } from 'class-validator';
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { UserRole } from '@prisma/client';
 
+// NOTE: `role` is intentionally NOT exposed here. The mobile app calls
+// PATCH /users/me, so allowing role through this DTO would let any client
+// escalate themselves to admin. Roles are managed server-side only.
 export class UpdateUserDto {
   @ApiPropertyOptional()
   @IsOptional()
@@ -17,9 +19,4 @@ export class UpdateUserDto {
   @IsOptional()
   @IsString()
   timezone?: string;
-
-  @ApiPropertyOptional({ enum: UserRole })
-  @IsOptional()
-  @IsEnum(UserRole)
-  role?: UserRole;
 }

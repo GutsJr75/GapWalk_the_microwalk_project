@@ -1,6 +1,6 @@
 # GapWalk Backend - User & Feature Guide
 
-> For app users, study participants, and anyone wanting to understand what GapWalk does and how it works.
+> For app users and anyone wanting to understand what GapWalk does and how it works.
 
 ---
 
@@ -15,7 +15,7 @@
 7. [Preferences & Customization](#7-preferences--customization)
 8. [Achievements & Progress](#8-achievements--progress)
 9. [Offline Support & Sync](#9-offline-support--sync)
-10. [Researcher Dashboard](#10-researcher-dashboard)
+10. [Account & Data Deletion](#10-account--data-deletion)
 11. [Privacy & Data](#11-privacy--data)
 12. [FAQ](#12-faq)
 
@@ -23,14 +23,14 @@
 
 ## 1. What is GapWalk?
 
-**GapWalk** is a micro-walk research intervention platform. It analyzes your daily schedule to find free gaps in your day and sends you gentle nudge notifications encouraging short walks (typically 6–15 minutes). The goal is to help you build a sustainable walking habit by fitting micro-walks into your existing routine - not by asking you to carve out separate exercise time.
+**GapWalk** is a micro-walk app. It analyzes your daily schedule to find free gaps in your day and sends you gentle nudge notifications encouraging short walks (typically 6–15 minutes). The goal is to help you build a sustainable walking habit by fitting micro-walks into your existing routine - not by asking you to carve out separate exercise time.
 
 ### Key Principles
 
 - **Schedule-aware**: GapWalk only suggests walks during genuinely free times
 - **Non-intrusive**: Respects quiet hours, buffer times, and your notification preferences
 - **Offline-first**: The app works fully offline; data syncs when connectivity returns
-- **Research-backed**: Built for academic research studies with full data export capabilities
+- **Privacy-first**: Your data is scoped to you and can be permanently deleted at any time
 
 ---
 
@@ -75,7 +75,7 @@
 | **Daily Goals** | Configurable daily walking target in minutes |
 | **Quiet Hours** | No notifications during sleep or designated quiet periods |
 | **Achievements** | Milestone badges for streaks, total walks, and more |
-| **Research Mode** | Study enrollment, data export, and researcher dashboard |
+| **Account Deletion** | One-tap GDPR hard delete of your account and all data |
 | **Multi-device** | Register multiple devices for push notification delivery |
 
 ---
@@ -300,29 +300,20 @@ When you have internet connectivity, the app syncs with the server via `POST /ap
 
 ---
 
-## 10. Researcher Dashboard
+## 10. Account & Data Deletion
 
-### Accessing the Dashboard
+Users own their data and can erase it at any time.
 
-The researcher dashboard is available at `/dashboard` on the server. It requires a JWT token with `researcher` or `admin` role.
+### Delete Account (`DELETE /api/users/me`)
 
-### Dashboard Features
+Permanently and irreversibly deletes the authenticated user and **all** of their
+data in a single transaction (GDPR hard delete): devices, preferences, schedule
+sources, busy events, manual schedule entries, nudge plans, walk
+sessions/routes/pause events, analytics events, crash reports, behavior logs,
+app sessions, achievements, daily/weekly aggregations, push logs, and gap
+opportunities. The endpoint returns `204 No Content`.
 
-| Feature | Description |
-|---|---|
-| **Overview Cards** | Total users, sessions, minutes walked, steps, plans, active studies |
-| **Daily Activity Chart** | Bar chart of walking activity over the last 30 days |
-| **Nudge Adherence** | Doughnut chart showing planned/completed/skipped/cancelled breakdown |
-| **Leaderboard** | Top walkers ranked by total minutes |
-
-### Study Management
-
-Researchers can:
-- **Create studies** with name, description, date range, and configuration
-- **Enroll participants** by user ID
-- **Withdraw participants** (preserves data, marks as withdrawn)
-- **Export all study data** - walk sessions, nudge plans, behavior logs, aggregations
-- **View per-participant summaries** - totals for sessions, minutes, steps, nudge adherence
+There is no soft-delete or recovery window — once deleted, the data is gone.
 
 ---
 
@@ -345,13 +336,14 @@ Researchers can:
 - All data is stored in PostgreSQL on the server
 - Walk route points are high-volume (~720 rows per 1-hour walk)
 - No data is shared with third parties
-- Researchers can only access data for participants enrolled in their studies
+- Each user can only ever access their own data (every endpoint is scoped to the authenticated `userId`)
 
 ### User Control
 
 - Users can update their profile and preferences at any time
 - Device push tokens can be deactivated
 - Inactive users are excluded from nudge generation and aggregation processing
+- Users can permanently delete their account and all data via `DELETE /api/users/me` (see §10)
 
 ---
 
@@ -377,9 +369,9 @@ The app works fully offline. Your walks, schedule changes, and preferences are s
 
 Step accuracy depends on your device's pedometer sensor. The app reports the step source (`sensor`, `gps_fallback`, or `none`) so you know how steps were counted.
 
-### Q: Can I participate in a research study?
+### Q: How do I delete my account and data?
 
-Yes - a researcher can enroll you in a study using your user ID. You'll continue using the app normally; your data will be included in the study's exports.
+Use **Delete Account** in the app (or call `DELETE /api/users/me`). This permanently removes your account and all associated data immediately and irreversibly — there is no recovery window. See §10.
 
 ### Q: How do I stop receiving notifications?
 

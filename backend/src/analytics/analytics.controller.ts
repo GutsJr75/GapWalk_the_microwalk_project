@@ -1,28 +1,24 @@
 import { Controller, Get, Post, Body, Query, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
-import { RolesGuard } from '../common/guards/roles.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
-import { Roles } from '../common/decorators/roles.decorator';
-import { UserRole } from '@prisma/client';
 import { AnalyticsService } from './analytics.service';
 import {
   CreateAnalyticsEventDto,
   BulkCreateAnalyticsEventsDto,
   CreateCrashReportDto,
   BulkCreateCrashReportsDto,
-  QueryAnalyticsDto,
   QueryAggregationsDto,
 } from './dto/analytics.dto';
 
 @ApiTags('analytics')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard)
 @Controller('analytics')
 export class AnalyticsController {
   constructor(private readonly analyticsService: AnalyticsService) {}
 
-  // ── Events (participant) ──
+  // ── Events ──
 
   @Post('events')
   @ApiOperation({ summary: 'Track an analytics event' })
@@ -42,7 +38,7 @@ export class AnalyticsController {
     return this.analyticsService.bulkCreateEvents(userId, dto.events);
   }
 
-  // ── Crash Reports (participant) ──
+  // ── Crash Reports ──
 
   @Post('crashes')
   @ApiOperation({ summary: 'Report a crash' })
@@ -62,59 +58,24 @@ export class AnalyticsController {
     return this.analyticsService.bulkCreateCrashReports(userId, dto.reports);
   }
 
-  // ── Query (researcher / admin) ──
-
-  @Get('events')
-  @Roles(UserRole.researcher, UserRole.admin)
-  @ApiOperation({ summary: 'Query analytics events (researcher/admin)' })
-  queryEvents(@Query() query: QueryAnalyticsDto) {
-    return this.analyticsService.queryEvents(query);
-  }
-
-  @Get('events/counts')
-  @Roles(UserRole.researcher, UserRole.admin)
-  @ApiOperation({ summary: 'Get event name counts (researcher/admin)' })
-  getEventCounts(@Query() query: QueryAnalyticsDto) {
-    return this.analyticsService.getEventCounts(query);
-  }
-
-  @Get('crashes')
-  @Roles(UserRole.researcher, UserRole.admin)
-  @ApiOperation({ summary: 'Query crash reports (researcher/admin)' })
-  queryCrashes(@Query() query: QueryAnalyticsDto) {
-    return this.analyticsService.queryCrashReports(query);
-  }
-
-  // ── Aggregations ──
+  // ── Aggregations (always scoped to the current user) ──
 
   @Get('daily')
-  @ApiOperation({ summary: 'Get daily aggregations' })
+  @ApiOperation({ summary: 'Get daily aggregations for the current user' })
   getDailyAggregations(
     @CurrentUser('userId') userId: string,
-    @CurrentUser('role') role: UserRole | undefined,
     @Query() query: QueryAggregationsDto,
   ) {
-    const canQueryAnyUser =
-      role === UserRole.researcher || role === UserRole.admin;
-    return this.analyticsService.getDailyAggregations({
-      ...query,
-      userId: canQueryAnyUser ? (query.userId ?? userId) : userId,
-    });
+    return this.analyticsService.getDailyAggregations({ ...query, userId });
   }
 
   @Get('weekly')
-  @ApiOperation({ summary: 'Get weekly aggregations' })
+  @ApiOperation({ summary: 'Get weekly aggregations for the current user' })
   getWeeklyAggregations(
     @CurrentUser('userId') userId: string,
-    @CurrentUser('role') role: UserRole | undefined,
     @Query() query: QueryAggregationsDto,
   ) {
-    const canQueryAnyUser =
-      role === UserRole.researcher || role === UserRole.admin;
-    return this.analyticsService.getWeeklyAggregations({
-      ...query,
-      userId: canQueryAnyUser ? (query.userId ?? userId) : userId,
-    });
+    return this.analyticsService.getWeeklyAggregations({ ...query, userId });
   }
 
   @Post('aggregate/daily')

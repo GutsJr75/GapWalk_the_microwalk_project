@@ -17,7 +17,6 @@ COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/prisma ./prisma
 COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
-COPY --from=builder /app/dashboard ./dashboard
 COPY --from=builder /app/package.json ./
 
 # Switch to non-root user

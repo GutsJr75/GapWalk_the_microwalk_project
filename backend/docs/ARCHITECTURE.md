@@ -2,7 +2,7 @@
 
 ## System Overview
 
-GapWalk is a **hybrid nudging** platform for micro-walk research interventions. The backend computes _when to nudge_ (scheduling), while the mobile app handles _nudge delivery_ (local fallback) and _behavior logging_.
+GapWalk is a **hybrid nudging** system for micro-walks. The backend computes _when to nudge_ (scheduling) and delivers push notifications, while the mobile app handles offline-first operation, _nudge delivery_ (local fallback), and _behavior logging_.
 
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
@@ -29,10 +29,10 @@ GapWalk is a **hybrid nudging** platform for micro-walk research interventions. 
 │  └──────────┘ └──────────┘ └────┬─────┘ └──────────┘ └──────────┘  │
 │                                  │                                   │
 │  ┌──────────┐ ┌─────────────────┼──────────────────┐ ┌──────────┐  │
-│  │ Push     │ │      BullMQ Workers                │ │ Research │  │
-│  │ Notifi-  │ │  ┌────────┐ ┌────────┐ ┌────────┐ │ │ Studies  │  │
-│  │ cations  │◄┤  │ Nudge  │ │ Push   │ │ Agg    │ │ │ Dashboard│  │
-│  │ (Expo)   │ │  │ Gen    │ │ Send   │ │ Compute│ │ │ Export   │  │
+│  │ Push     │ │      BullMQ Workers                │ │ Health   │  │
+│  │ Notifi-  │ │  ┌────────┐ ┌────────┐ ┌────────┐ │ │ DB+Redis │  │
+│  │ cations  │◄┤  │ Nudge  │ │ Push   │ │ Agg    │ │ │ probe    │  │
+│  │ (Expo)   │ │  │ Gen    │ │ Send   │ │ Compute│ │ │          │  │
 │  └──────────┘ │  └────────┘ └────────┘ └────────┘ │ └──────────┘  │
 │               └────────────────────────────────────┘                │
 └────────────────────────┬──────────────────────┬─────────────────────┘
@@ -65,11 +65,12 @@ PushNotificationsModule ←── PrismaModule, DevicesModule, ConfigModule
 SyncModule          ←── PrismaModule
 AnalyticsModule     ←── PrismaModule
 BehaviorLogModule   ←── PrismaModule
-ResearcherModule    ←── PrismaModule
-DashboardSpaModule  ←── PrismaModule, ServeStaticModule
+HealthModule        ←── PrismaModule (+ ioredis ping)
 WorkersModule       ←── BullModule, PrismaModule, NudgeEngineModule,
                         PushNotificationsModule, AnalyticsModule
 ```
+
+A global `RequestIdMiddleware` attaches an `X-Request-ID` to every request/response (and to error bodies) for support tracing.
 
 ---
 
@@ -80,16 +81,15 @@ WorkersModule       ←── BullModule, PrismaModule, NudgeEngineModule,
 1. Mobile app authenticates with **Firebase Authentication** and receives a Firebase ID token.
 2. Every API request includes `Authorization: Bearer <token>`.
 3. `JwtStrategy` validates the token using Firebase Admin token verification.
-4. On first valid token, if no user exists with that `firebaseUid`, a `User` record is **auto-created** with role `participant`.
-5. `RolesGuard` checks the `@Roles()` decorator on each endpoint. No decorator = open to all authenticated users.
+4. On first valid token, if no user exists with that `firebaseUid`, a `User` record is **auto-created** with role `user`.
+5. `RolesGuard` checks the `@Roles()` decorator on each endpoint. No decorator = open to all authenticated users. All product endpoints are currently role-agnostic; the guard/`admin` role remain available for future internal tooling.
 
 ### Roles
 
-| Role          | Access                                                                  |
-| ------------- | ----------------------------------------------------------------------- |
-| `participant` | Own data: profile, preferences, schedule, walk sessions, nudge plans    |
-| `researcher`  | All of participant + studies, analytics queries, dashboard, data export |
-| `admin`       | Full access                                                             |
+| Role    | Access                                                               |
+| ------- | -------------------------------------------------------------------- |
+| `user`  | Own data: profile, preferences, schedule, walk sessions, nudge plans |
+| `admin` | Reserved for internal tooling (assigned server-side, not via the API) |
 
 ### Request Flow
 
@@ -350,37 +350,19 @@ Every 15 minutes, the system:
 
 ## Database Schema Summary
 
-**23 models** across 5 domains:
+**20 models** across 4 domains:
 
-| Domain         | Models                                                                                                                                 |
-| -------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| Identity       | `User`, `Device`, `UserProfile`                                                                                                        |
-| Schedule       | `ScheduleSource`, `BusyEvent`, `ManualScheduleEntry`, `Preference`, `GapOpportunity`                                                   |
-| Nudging        | `NudgePlan`, `WalkSession`, `WalkPauseEvent`, `WalkRoutePoint`                                                                         |
-| Analytics      | `AnalyticsEvent`, `CrashReport`, `BehaviorLog`, `DailyAggregation`, `WeeklyAggregation`, `AppSession`, `UserAchievement`, `ResearcherAction` |
-| Research       | `Study`, `StudyEnrollment`                                                                                                             |
-| Infrastructure | `PushLog`                                                                                                                              |
+| Domain         | Models                                                                                                          |
+| -------------- | --------------------------------------------------------------------------------------------------------------- |
+| Identity       | `User`, `Device`, `UserProfile`                                                                                 |
+| Schedule       | `ScheduleSource`, `BusyEvent`, `ManualScheduleEntry`, `Preference`, `GapOpportunity`                            |
+| Nudging        | `NudgePlan`, `WalkSession`, `WalkPauseEvent`, `WalkRoutePoint`                                                  |
+| Analytics      | `AnalyticsEvent`, `CrashReport`, `BehaviorLog`, `DailyAggregation`, `WeeklyAggregation`, `AppSession`, `UserAchievement` |
+| Infrastructure | `PushLog`                                                                                                       |
 
-**11 enums:** `UserRole`, `ScheduleSourceType`, `WhenToNotify`, `StrictnessMode`, `NudgePlanStatus`, `NudgePlanOrigin`, `BehaviorEventType`, `PushStatus`, `BiologicalSex`, `OccupationType`, `ActivityLevel`
+**12 enums:** `UserRole` (`user` \| `admin`), `ScheduleSourceType`, `WhenToNotify`, `StrictnessMode`, `NudgePlanStatus`, `NudgePlanOrigin`, `BehaviorEventType`, `PushStatus`, `AppOpenSource`, `BiologicalSex`, `OccupationType`, `ActivityLevel`
 
----
-
-## Researcher Dashboard
-
-A static HTML/JS SPA served at `/dashboard`, backed by the `/api/dashboard-api/*` endpoints.
-
-### Features
-
-| Feature              | Chart Type     | Data Source                                                       |
-| -------------------- | -------------- | ----------------------------------------------------------------- |
-| Overview stats cards | -              | `GET /overview` (users, sessions, minutes, steps, plans, studies) |
-| Daily walk activity  | Bar chart      | `GET /daily-activity` (last 30 days)                              |
-| Nudge adherence      | Doughnut chart | `GET /nudge-adherence` (planned/completed/skipped/cancelled)      |
-| Top walkers          | Table          | `GET /leaderboard` (name, minutes, steps, sessions)               |
-
-### Authentication
-
-Simple JWT token paste form. In production, this should use a Firebase-authenticated researcher token.
+> Note: `UserProfile` is an optional personalization profile (age group, biological sex, height/weight, occupation, activity level, referral source, locale). Research framing (consent, study group, onboarding/enrollment timestamps) was removed in migration `0006_remove_research`.
 
 ---
 
@@ -429,9 +411,9 @@ Simple JWT token paste form. In production, this should use a Firebase-authentic
        ▲                                       │
        │                                       │
 ┌──────┴──────┐                         ┌──────┴──────┐
-│   Prisma    │                         │  Dashboard  │
-│   Migrate   │                         │  /dashboard │
-│  (init job) │                         │  (static)   │
+│   Prisma    │                         │   /health   │
+│   Migrate   │                         │  DB + Redis │
+│  (init job) │                         │    probe    │
 └─────────────┘                         └─────────────┘
 ```
 
@@ -440,7 +422,7 @@ Simple JWT token paste form. In production, this should use a Firebase-authentic
 Multi-stage Dockerfile:
 
 1. **Builder:** `npm ci --ignore-scripts` → `prisma generate` → `nest build`
-2. **Runner:** Copies `dist/`, `node_modules/`, `prisma/`, `dashboard/`
+2. **Runner:** Copies `dist/`, `node_modules/`, `prisma/`
 3. **Security:** Runs as non-root `appuser`, includes `HEALTHCHECK`
 
 ### Startup Order

@@ -10,6 +10,7 @@ import { NestExpressApplication } from '@nestjs/platform-express';
 import helmet from 'helmet';
 import { AppModule } from './app.module';
 import { PrismaExceptionFilter } from './common/filters/prisma-exception.filter';
+import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import { TransformInterceptor } from './common/interceptors/transform.interceptor';
 
 async function bootstrap() {
@@ -58,14 +59,14 @@ async function bootstrap() {
   );
 
   // Global filters and interceptors
-  app.useGlobalFilters(new PrismaExceptionFilter());
+  app.useGlobalFilters(new PrismaExceptionFilter(), new HttpExceptionFilter());
   app.useGlobalInterceptors(new TransformInterceptor());
 
   // Swagger docs
   if (enableSwagger) {
     const swaggerConfig = new DocumentBuilder()
       .setTitle('GapWalk API')
-      .setDescription('GapWalk micro-walk research platform API')
+      .setDescription('GapWalk micro-walk app backend API')
       .setVersion('1.0')
       .addBearerAuth()
       .build();
@@ -76,19 +77,9 @@ async function bootstrap() {
     logger.log('Swagger docs disabled in this environment');
   }
 
-  // Health check endpoint (for Docker healthcheck)
-  const expressApp = app.getHttpAdapter().getInstance() as {
-    get: (
-      path: string,
-      handler: (
-        req: Record<string, unknown>,
-        res: { status: (code: number) => { json: (body: unknown) => void } },
-      ) => void,
-    ) => void;
-  };
-  expressApp.get('/health', (_req, res) => {
-    res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
-  });
+  // GET /health is served by HealthModule's controller (reports DB + Redis
+  // connectivity, returns 503 when a dependency is down). It is excluded from
+  // the global 'api' prefix above and skips throttling/auth.
 
   const port = configService.get<number>('port') ?? 3000;
   await app.listen(port);

@@ -82,7 +82,7 @@ export const canUseBackendSync = (): boolean =>
 
 const ensureBackendApiBase = (): string => {
   if (!API_BASE) {
-    throw new Error('Backend API is not configured. Add EXPO_PUBLIC_API_URL to enable research sync.');
+    throw new Error('Backend API is not configured. Add EXPO_PUBLIC_API_URL to enable cloud sync.');
   }
 
   const configurationError = getBackendConfigurationError();

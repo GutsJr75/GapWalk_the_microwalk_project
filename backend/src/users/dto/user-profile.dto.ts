@@ -2,7 +2,6 @@ import {
   IsOptional,
   IsString,
   IsNumber,
-  IsDateString,
   IsEnum,
   Min,
   Max,
@@ -57,27 +56,4 @@ export class UpsertUserProfileDto {
   @IsOptional()
   @IsString()
   locale?: string;
-
-  @ApiPropertyOptional({ description: 'ISO timestamp of consent', example: '2026-01-01T00:00:00Z' })
-  @IsOptional()
-  @IsDateString()
-  consentGivenAt?: string;
-
-  @ApiPropertyOptional({ description: 'Version of the consent form agreed to', example: 'v1.2' })
-  @IsOptional()
-  @IsString()
-  consentVersion?: string;
-
-  @ApiPropertyOptional({ description: 'ISO timestamp when onboarding was completed' })
-  @IsOptional()
-  @IsDateString()
-  onboardingCompletedAt?: string;
-
-  @ApiPropertyOptional({
-    description: 'Research study arm/group e.g. "control" or "intervention"',
-    example: 'intervention',
-  })
-  @IsOptional()
-  @IsString()
-  studyGroup?: string;
 }

@@ -4,7 +4,6 @@ import { PrismaService } from '../prisma/prisma.service';
 import {
   CreateAnalyticsEventDto,
   CreateCrashReportDto,
-  QueryAnalyticsDto,
   QueryAggregationsDto,
 } from './dto/analytics.dto';
 import { startOfDay, endOfDay } from 'date-fns';
@@ -41,42 +40,6 @@ export class AnalyticsService {
     });
   }
 
-  async queryEvents(query: QueryAnalyticsDto) {
-    const where: Prisma.AnalyticsEventWhereInput = {};
-    if (query.userId) where.userId = query.userId;
-    if (query.name) where.name = query.name;
-    if (query.startDate || query.endDate) {
-      where.createdAt = {};
-      if (query.startDate) where.createdAt.gte = new Date(query.startDate);
-      if (query.endDate) where.createdAt.lte = new Date(query.endDate);
-    }
-
-    return this.prisma.analyticsEvent.findMany({
-      where,
-      orderBy: { createdAt: 'desc' },
-      take: 500,
-    });
-  }
-
-  async getEventCounts(query: QueryAnalyticsDto) {
-    const where: Prisma.AnalyticsEventWhereInput = {};
-    if (query.userId) where.userId = query.userId;
-    if (query.startDate || query.endDate) {
-      where.createdAt = {};
-      if (query.startDate) where.createdAt.gte = new Date(query.startDate);
-      if (query.endDate) where.createdAt.lte = new Date(query.endDate);
-    }
-
-    const events = await this.prisma.analyticsEvent.groupBy({
-      by: ['name'],
-      where,
-      _count: { id: true },
-      orderBy: { _count: { id: 'desc' } },
-    });
-
-    return events.map((e) => ({ name: e.name, count: e._count.id }));
-  }
-
   // ── Crash Reports ──
 
   async createCrashReport(userId: string, dto: CreateCrashReportDto) {
@@ -107,22 +70,6 @@ export class AnalyticsService {
         context: r.context ?? Prisma.JsonNull,
         clientCreatedAt: r.clientCreatedAt ? new Date(r.clientCreatedAt) : null,
       })),
-    });
-  }
-
-  async queryCrashReports(query: QueryAnalyticsDto) {
-    const where: Prisma.CrashReportWhereInput = {};
-    if (query.userId) where.userId = query.userId;
-    if (query.startDate || query.endDate) {
-      where.createdAt = {};
-      if (query.startDate) where.createdAt.gte = new Date(query.startDate);
-      if (query.endDate) where.createdAt.lte = new Date(query.endDate);
-    }
-
-    return this.prisma.crashReport.findMany({
-      where,
-      orderBy: { createdAt: 'desc' },
-      take: 200,
     });
   }
 

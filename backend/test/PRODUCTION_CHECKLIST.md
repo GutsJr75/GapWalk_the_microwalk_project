@@ -234,25 +234,19 @@ SELECT 'UserProfile',                  COUNT(*) FROM "UserProfile"            WH
 
 -- Backend-only / shared tables (global counts)
 UNION ALL
-SELECT 'Study',                        COUNT(*) FROM "Study"
-UNION ALL
-SELECT 'StudyEnrollment',              COUNT(*) FROM "StudyEnrollment"
-UNION ALL
 SELECT 'PushLog',                      COUNT(*) FROM "PushLog"
 UNION ALL
 SELECT 'GapOpportunity',               COUNT(*) FROM "GapOpportunity"
 UNION ALL
-SELECT 'ResearcherAction',             COUNT(*) FROM "ResearcherAction"
+SELECT 'DailyAggregation',             COUNT(*) FROM "DailyAggregation"
 UNION ALL
-SELECT 'DailyAnalyticsSummary',        COUNT(*) FROM "DailyAnalyticsSummary"
-UNION ALL
-SELECT 'WeeklyAnalyticsSummary',       COUNT(*) FROM "WeeklyAnalyticsSummary"
+SELECT 'WeeklyAggregation',            COUNT(*) FROM "WeeklyAggregation"
 ORDER BY 1;
 ```
 
 **Pass criteria:** every row in the result should show `count >= 1`.
 Any zero count indicates a broken data path that must be investigated before
-the study goes live.
+going live.
 
 ---
 

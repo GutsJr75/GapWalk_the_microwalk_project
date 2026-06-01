@@ -10,8 +10,7 @@ datasource db {
 // ─── USERS & AUTH ───────────────────────────────────────────
 
 enum UserRole {
-  participant
-  researcher
+  user
   admin
 }
 
@@ -20,7 +19,7 @@ model User {
   firebaseUid  String    @unique @map("firebase_uid")
   email        String?
   displayName  String?   @map("display_name")
-  role         UserRole  @default(participant)
+  role         UserRole  @default(user)
   timezone     String    @default("America/New_York")
   isActive     Boolean   @default(true) @map("is_active")
   lastSyncedAt DateTime? @map("last_synced_at")
@@ -41,15 +40,12 @@ model User {
   appSessions           AppSession[]
   crashReports          CrashReport[]
   behaviorLogs          BehaviorLog[]
-  studyEnrollments      StudyEnrollment[]
   achievements          UserAchievement[]
-  researcherActions     ResearcherAction[]   @relation("ResearcherActorActions")
-  researcherTargets     ResearcherAction[]   @relation("ResearcherTargetActions")
 
   @@map("users")
 }
 
-// ─── USER PROFILE (demographics / research metadata) ────────
+// ─── USER PROFILE (optional personalization) ────────────────
 
 enum ActivityLevel {
   sedentary
@@ -85,10 +81,6 @@ model UserProfile {
   selfReportedActivityLevel ActivityLevel? @map("self_reported_activity_level")
   referralSource           String?        @map("referral_source")
   locale                   String?
-  consentGivenAt           DateTime?      @map("consent_given_at")
-  consentVersion           String?        @map("consent_version")
-  onboardingCompletedAt    DateTime?      @map("onboarding_completed_at")
-  studyGroup               String?        @map("study_group")        // "control" | "intervention" | arm label
   createdAt                DateTime       @default(now()) @map("created_at")
   updatedAt                DateTime       @updatedAt @map("updated_at")
 
@@ -432,39 +424,6 @@ model BehaviorLog {
   @@map("behavior_logs")
 }
 
-// ─── RESEARCH STUDIES ───────────────────────────────────────
-
-model Study {
-  id          String    @id @default(uuid()) @db.Uuid
-  name        String
-  description String?
-  startDate   DateTime  @map("start_date")
-  endDate     DateTime? @map("end_date")
-  isActive    Boolean   @default(true) @map("is_active")
-  config      Json?
-  createdAt   DateTime  @default(now()) @map("created_at")
-  updatedAt   DateTime  @updatedAt @map("updated_at")
-
-  enrollments StudyEnrollment[]
-
-  @@map("studies")
-}
-
-model StudyEnrollment {
-  id          String    @id @default(uuid()) @db.Uuid
-  studyId     String    @map("study_id") @db.Uuid
-  userId      String    @map("user_id") @db.Uuid
-  enrolledAt  DateTime  @default(now()) @map("enrolled_at")
-  withdrawnAt DateTime? @map("withdrawn_at")
-  isActive    Boolean   @default(true) @map("is_active")
-
-  study Study @relation(fields: [studyId], references: [id], onDelete: Cascade)
-  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@unique([studyId, userId])
-  @@map("study_enrollments")
-}
-
 // ─── ANALYTICS AGGREGATION ──────────────────────────────────
 
 model DailyAggregation {
@@ -594,33 +553,4 @@ model GapOpportunity {
 
   @@index([userId, date])
   @@map("gap_opportunities")
-}
-
-// ─── RESEARCHER ACTIONS (audit log) ──────────────────────────
-
-enum ResearcherActionType {
-  manual_nudge
-  export_data
-  view_profile
-  modify_study
-  enroll_participant
-  withdraw_participant
-  send_message
-}
-
-model ResearcherAction {
-  id             String               @id @default(uuid()) @db.Uuid
-  researcherId   String               @map("researcher_id") @db.Uuid
-  targetUserId   String?              @map("target_user_id") @db.Uuid
-  actionType     ResearcherActionType @map("action_type")
-  payload        Json?
-  performedAt    DateTime             @default(now()) @map("performed_at")
-
-  researcher  User  @relation("ResearcherActorActions", fields: [researcherId], references: [id], onDelete: Cascade)
-  targetUser  User? @relation("ResearcherTargetActions", fields: [targetUserId], references: [id], onDelete: SetNull)
-
-  @@index([researcherId])
-  @@index([targetUserId])
-  @@index([performedAt])
-  @@map("researcher_actions")
 }
