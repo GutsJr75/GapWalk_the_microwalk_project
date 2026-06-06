@@ -510,6 +510,7 @@ const scheduleExpoPlanNotification = async (input: {
     data: {
       planId: input.planId,
       type: input.type,
+      scheduledAtMs: input.triggerAt.getTime(),
       ...input.extraData,
     },
     sound: true,
@@ -579,8 +580,10 @@ const schedulePlanNotification = async (input: {
   triggerAt: Date;
   categoryIdentifier?: string;
   extraData?: Record<string, unknown>;
+  walkStartAtMs?: number;
+  exactAlarmHealth?: ExactAlarmHealthState;
 }): Promise<string | null> => {
-  const exactAlarmHealth = await getExactAlarmHealthState();
+  const exactAlarmHealth = input.exactAlarmHealth ?? await getExactAlarmHealthState();
   const useExactAndroid = exactAlarmHealth.canScheduleExactAlarms;
   if (useExactAndroid) {
     try {
@@ -591,6 +594,7 @@ const schedulePlanNotification = async (input: {
         title: input.title,
         body: input.body,
         scheduledAtMs: input.triggerAt.getTime(),
+        walkStartAtMs: input.walkStartAtMs,
       });
       if (scheduled) {
         logPlanNotificationLifecycle('scheduled', {
@@ -853,6 +857,12 @@ export const notificationService = {
     const readyTime = normalizeNotificationDate(walkStart);
     const alertId = getWalkAlertNotificationId(plan.id);
     const readyId = getWalkReadyNotificationId(plan.id);
+    const androidExactAlarmHealth =
+      Platform.OS === 'android' ? await getExactAlarmHealthState() : null;
+    const exactAlarmHealth =
+      androidExactAlarmHealth === null ? undefined : androidExactAlarmHealth;
+    const canScheduleTimelyPhase1Alert =
+      Platform.OS !== 'android' || androidExactAlarmHealth?.canScheduleExactAlarms === true;
     const liveReadyRecoveryEligible =
       plan.status === 'planned' &&
       !nudgePolicy.allowed &&
@@ -875,7 +885,11 @@ export const notificationService = {
           const alertAndReadyAreDifferent =
             Math.abs(alertTime.getTime() - readyTime.getTime()) > 60_000;
 
-          if (alertAndReadyAreDifferent && !existingScheduledIds?.has(alertId)) {
+          if (
+            alertAndReadyAreDifferent &&
+            canScheduleTimelyPhase1Alert &&
+            !existingScheduledIds?.has(alertId)
+          ) {
             const phase1Id = await schedulePlanNotification({
               notificationId: alertId,
               planId: plan.id,
@@ -883,6 +897,13 @@ export const notificationService = {
               title: `Upcoming MicroWalk at ${format(walkStart, 'h:mm a')}`,
               body: `${durationMinutes} min walk coming up`,
               triggerAt: alertTime,
+              walkStartAtMs: readyTime.getTime(),
+              exactAlarmHealth,
+              extraData: {
+                walkStart: plan.walkStart,
+                walkEnd: plan.gapEnd,
+                duration: durationMinutes,
+              },
               // No categoryIdentifier — purely informational
             });
             if (phase1Id) {
@@ -902,6 +923,8 @@ export const notificationService = {
               body: `${durationMinutes} min walk window, ${walkStartFormatted} - ${walkEndFormatted}`,
               triggerAt: readyTime,
               categoryIdentifier: WALK_READY_CATEGORY_ID,
+              walkStartAtMs: readyTime.getTime(),
+              exactAlarmHealth,
               extraData: {
                 walkStart: plan.walkStart,
                 walkEnd: plan.gapEnd,
@@ -952,6 +975,8 @@ export const notificationService = {
             durationMinutes: plan.suggestedDurationMinutes,
           }),
           triggerAt: missedPolicy.triggerAt,
+          walkStartAtMs: walkStart.getTime(),
+          exactAlarmHealth,
         });
         if (missedId) {
           existingScheduledIds?.add(missedId);

@@ -22,10 +22,22 @@ class ExactAlarmNotificationReceiver : BroadcastReceiver() {
     val body = intent.getStringExtra(EXTRA_NOTIFICATION_BODY) ?: return
     val scheduledAtMs =
       intent.getLongExtra(EXTRA_NOTIFICATION_TRIGGER_AT_MS, 0L).takeIf { it > 0L }
+    val walkStartAtMs =
+      intent.getLongExtra(EXTRA_WALK_START_AT_MS, 0L).takeIf { it > 0L }
     val deliveredAtMs = System.currentTimeMillis()
 
     ensureNotificationChannel(context)
     removeScheduledId(context, notificationId)
+
+    if (
+      type == WALK_ALERT_NOTIFICATION_TYPE &&
+      walkStartAtMs != null &&
+      deliveredAtMs >= walkStartAtMs
+    ) {
+      cancelPresentedNotification(context, notificationId)
+      return
+    }
+
     ExactAlarmNotificationsModule.handleNotificationDelivered(
       context,
       notificationId,

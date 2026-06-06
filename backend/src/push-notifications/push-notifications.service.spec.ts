@@ -88,12 +88,14 @@ describe('PushNotificationsService', () => {
 
   describe('sendDueNudges', () => {
     it('should process due plans', async () => {
+      const now = Date.now();
       mockPrisma.nudgePlan.findMany.mockResolvedValue([
         {
           id: 'plan-1',
           localId: 'local-plan-1',
           userId: 'user-1',
-          walkStart: new Date(Date.now() - 2 * 60_000).toISOString(),
+          walkStart: new Date(now - 6 * 60_000).toISOString(),
+          gapEnd: new Date(now + 4 * 60_000).toISOString(),
           suggestedDurationMinutes: 10,
           status: 'planned',
           user: {
@@ -107,17 +109,26 @@ describe('PushNotificationsService', () => {
 
       const result = await service.sendDueNudges();
       expect(result.sent).toBe(1);
+      expect(mockPrisma.nudgePlan.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            gapEnd: { gt: expect.any(Date) },
+          }),
+        }),
+      );
       expect(mockPrisma.nudgePlan.updateMany).toHaveBeenCalled();
     });
 
     it('should not count a plan as sent when no push tokens are available', async () => {
+      const now = Date.now();
       (mockDevices.getActiveTokens as jest.Mock).mockResolvedValue([]);
       mockPrisma.nudgePlan.findMany.mockResolvedValue([
         {
           id: 'plan-1',
           localId: 'local-plan-1',
           userId: 'user-1',
-          walkStart: new Date(Date.now() - 2 * 60_000).toISOString(),
+          walkStart: new Date(now - 6 * 60_000).toISOString(),
+          gapEnd: new Date(now + 4 * 60_000).toISOString(),
           suggestedDurationMinutes: 10,
           status: 'planned',
           user: {
@@ -134,6 +145,7 @@ describe('PushNotificationsService', () => {
     });
 
     it('should only send one backup push when two workers race on the same due plan', async () => {
+      const now = Date.now();
       const planState = {
         status: 'planned',
         pushSentAt: null as Date | null,
@@ -145,7 +157,8 @@ describe('PushNotificationsService', () => {
           id: 'plan-1',
           localId: 'local-plan-1',
           userId: 'user-1',
-          walkStart: new Date(Date.now() - 2 * 60_000).toISOString(),
+          walkStart: new Date(now - 6 * 60_000).toISOString(),
+          gapEnd: new Date(now + 4 * 60_000).toISOString(),
           suggestedDurationMinutes: 10,
           status: 'planned',
           user: {

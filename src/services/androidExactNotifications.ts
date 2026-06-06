@@ -9,6 +9,7 @@ export interface ExactNotificationScheduleInput {
   title: string;
   body: string;
   scheduledAtMs: number;
+  walkStartAtMs?: number;
 }
 
 export interface ExactNotificationResponsePayload {

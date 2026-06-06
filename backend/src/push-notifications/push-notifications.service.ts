@@ -5,7 +5,7 @@ import { DevicesService } from '../devices/devices.service';
 import Expo, { ExpoPushMessage, ExpoPushTicket } from 'expo-server-sdk';
 import { randomUUID } from 'crypto';
 
-const BACKUP_PUSH_GRACE_MS = 90_000;
+const BACKUP_PUSH_GRACE_MS = 5 * 60_000;
 const DEVICE_STALE_MS = 3 * 60_000;
 const SYNC_STALE_MS = 5 * 60_000;
 const BACKUP_PUSH_CLAIM_PREFIX = 'claim:';
@@ -163,6 +163,7 @@ export class PushNotificationsService {
       where: {
         status: { in: ['planned', 'notified'] },
         walkStart: { lte: dueThreshold },
+        gapEnd: { gt: now },
         notificationsEnabled: true,
         localReminderDeliveredAt: null,
         localId: { not: null },
@@ -203,6 +204,7 @@ export class PushNotificationsService {
         where: {
           id: plan.id,
           status: { in: ['planned', 'notified'] },
+          gapEnd: { gt: now },
           notificationsEnabled: true,
           localReminderDeliveredAt: null,
           localId: { not: null },

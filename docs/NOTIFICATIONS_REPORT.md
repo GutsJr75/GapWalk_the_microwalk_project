@@ -117,6 +117,8 @@ Per plan, `schedulePlanNotifications` in [src/services/notifications.ts:780-883]
 | `walk-ready:<planId>` | walkStart | `WALK_READY_CATEGORY_ID` | Yes / Not Now prompt |
 | `walk-missed:<planId>` | gapEnd | — | missed walk |
 
+On Android, `walk-alert:<planId>` is scheduled only when the native exact-alarm path is available. If the app must fall back to Expo local scheduling, GapWalk skips the phase-1 alert and keeps only the actionable ready prompt plus the missed-walk cleanup notification; delayed Expo local alerts were the source of stale "Upcoming MicroWalk" cards appearing next to the ready prompt.
+
 Foreground handler ([src/services/notifications.ts:111-126](src/services/notifications.ts#L111-L126)) suppresses sound/banner for `walk_session` and `walk_ready` so the app can render an in-app prompt instead.
 
 ### 2.4 Recovery & cleanup
@@ -220,7 +222,7 @@ Result on first login:
 
 ## 5. Bug B — "sometimes 4 notifications come in at once"
 
-> **Status: all three multipliers mitigated.** See §7 fixes (1), (2), (3). Worst remaining case is one local + one server banner with ≥90 s overlap, not four.
+> **Status: all three multipliers mitigated.** See §7 fixes (1), (2), (3), and the 2026-06-06 follow-up. The backend backup push now waits five minutes, will not send after `gapEnd`, and Android Expo-fallback scheduling no longer creates the stale phase-1 alert card.
 
 Three independent multipliers stack on top of each other. Any two of them hitting at once gives you 3–4 banners.
 
@@ -239,7 +241,7 @@ Because old device rows are never cleaned up (see Bug A), a user who has reinsta
 
 ### Multiplier 3 — walk-alert + walk-ready land close together
 
-If `nudgePolicy.triggerAt` is within a minute or two of `walkStart`, the client can fire `walk-alert` and `walk-ready` effectively simultaneously. The 60-second guard at [src/services/notifications.ts:806-807](src/services/notifications.ts#L806-L807) only skips the alert if the gap is **< 60 s**, so a 70-second gap produces two banners side by side.
+If `nudgePolicy.triggerAt` is within a minute or two of `walkStart`, the client can fire `walk-alert` and `walk-ready` effectively simultaneously. This is now constrained in two ways: Android Expo fallback does not schedule `walk-alert`, and native exact alerts carry `walkStartAtMs` so the receiver can silently drop a stale alert that arrives at or after the walk start.
 
 ### Why exactly "4"
 
@@ -248,7 +250,7 @@ A realistic worst case during a first-login session:
 ```
 t = walkStart − 2 min   local walk-alert          (1)
 t = walkStart           local walk-ready          (2)
-t = walkStart           server walk_nudge → old token fan-out (3, 4)
+t = walkStart + grace   server backup push → old token fan-out (3, 4)
 ```
 
 That's four banners within ~2 minutes, which matches the reported symptom.
@@ -290,6 +292,11 @@ If two workers pick up the same `send-due-nudges` job (BullMQ is generally safe 
 2. **Atomic claim in `sendDueNudges`.** ✅ The `findMany` now filters `pushSentAt: null`, and each plan is claimed with a conditional `updateMany` (`status='planned' AND pushSentAt IS NULL → status='notified', pushSentAt=now`) *before* the send. If another worker claimed it, `count === 0` and we skip. See [push-notifications.service.ts:150-200](backend/src/push-notifications/push-notifications.service.ts#L150-L200).
 3. **Client-side dedupe of local walk duplicates when server push arrives.** ✅ New helper `notificationService.clearLocalWalkDuplicates(planId)` cancels + dismisses `walk-alert:<planId>` and `walk-ready:<planId>` (but preserves `walk-missed:<planId>`). Invoked in the received listener ([App.tsx:692-702](App.tsx#L692-L702)) and the response handler ([App.tsx:611-615](App.tsx#L611-L615)) for `type === 'walk_nudge'`.
 
+### Follow-up — stale local alert / backup push race *(landed 2026-06-06)*
+
+1. **Android fallback skips phase-1 alerts.** ✅ If native exact alarms are unavailable, Android schedules the actionable `walk-ready` and missed-walk notifications but not the informational `walk-alert`. Native exact alerts also self-drop if delivered at or after `walkStart`.
+2. **Backup push waits for local delivery.** ✅ `sendDueNudges()` now waits five minutes after `walkStart` before sending a backup push and requires `gapEnd > now`, giving delayed local ready notifications time to acknowledge without producing a second banner.
+
 ### P1 — correctness
 
 4. **Token/ticket alignment in `sendWalkNudge`.** ✅ Rewritten to track `{ token, message }` pairs explicitly and walk a cursor through them as chunks resolve. A chunk throw records nulls at the right positions instead of shifting all subsequent tickets onto wrong tokens. See [push-notifications.service.ts:36-143](backend/src/push-notifications/push-notifications.service.ts#L36-L143).
@@ -308,5 +315,5 @@ If two workers pick up the same `send-due-nudges` job (BullMQ is generally safe 
 ## 8. TL;DR — *post-fix*
 
 - **Bug A (wrong device):** root cause was stale `Device` rows with `isActive=true` surviving reinstalls / token rotation. The backend now collapses them on register by `(platform, deviceModel)`. Fan-out is now ~1 row per physical device.
-- **Bug B (4 at once):** root cause was three overlapping nudge sources (local walk-alert + local walk-ready + server walk_nudge) multiplied by stale-token fan-out. Fan-out is gone (fix 1); server-side race between cron ticks is gone (atomic claim, fix 2); local duplicates of an incoming server push are now cancelled + dismissed (fix 3). Worst realistic remaining case is 1 local + 1 server banner during a push-delivery window — not 4.
+- **Bug B (4 at once):** root cause was three overlapping nudge sources (local walk-alert + local walk-ready + server backup push) multiplied by stale-token fan-out. Fan-out is gone (fix 1); server-side race between cron ticks is gone (atomic claim, fix 2); local duplicates of an incoming server push are cancelled + dismissed (fix 3); Android fallback no longer schedules stale phase-1 alerts, and backup pushes wait five minutes while the walk window remains open.
 - **Still open (P1/P2):** chunk retry/backoff, no-device-gate on nudge generation, richer registration status on the client, and the long-term structural fix of swapping the device unique key to `(userId, deviceId)`.

@@ -128,6 +128,7 @@ class ExactAlarmNotificationsModule(
         promise.resolve(false)
         return
       }
+      val walkStartAtMs = if (input.hasKey("walkStartAtMs")) input.getDouble("walkStartAtMs").toLong() else 0L
 
       ensureNotificationChannel(reactApplicationContext)
       val alarmManager =
@@ -140,6 +141,9 @@ class ExactAlarmNotificationsModule(
         putExtra(EXTRA_NOTIFICATION_TITLE, title)
         putExtra(EXTRA_NOTIFICATION_BODY, body)
         putExtra(EXTRA_NOTIFICATION_TRIGGER_AT_MS, scheduledAtMs)
+        if (walkStartAtMs > 0L) {
+          putExtra(EXTRA_WALK_START_AT_MS, walkStartAtMs)
+        }
       }
 
       val pendingIntent = PendingIntent.getBroadcast(
