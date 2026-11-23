@@ -1,0 +1,36 @@
+% GapWalk resume entry (drafted 2026-11-23)
+% Where each number comes from: gapwalk-bullets-notes.md
+
+\projectEntry
+  {GapWalk |
+   \href{https://github.com/GutsJr75/GapWalk_the_microwalk_project}
+   {GitHub} |
+   \href{https://play.google.com/store/apps/details?id=com.gapwalk.app}
+   {Google Play}}
+  {UC Irvine Faculty-Guided Team Project |
+   React Native, TypeScript, Kotlin, SQLite, Figma}
+  {Jan 2026 -- Jun 2026}
+
+\begin{resumeBullets}
+
+  \item Designed GapWalk in Figma and built 91\% of
+  its Android client, now live on Google Play
+  (36K of 39K TypeScript lines, 11 screens), then
+  refined onboarding and calendar setup through
+  5 think-aloud usability sessions across 7 tasks.
+
+  \item Cut daily walk reminders by 83\% compared
+  with hourly wearable prompts (2 vs.\ up to 12) by
+  building an on-device gap engine that finds free
+  windows between calendar events, ranks them by
+  length and time of day, and schedules actionable
+  notifications outside quiet hours.
+
+  \item Engineered offline-first walk tracking that
+  recovers a session after a force-kill with at most
+  30\,s lost, using SQLite checkpoints, GPS and
+  pedometer fusion with an 80\,m outlier filter, and
+  $\sim$3K lines of native Kotlin for an Android
+  foreground tracking service.
+
+\end{resumeBullets}
